@@ -34,44 +34,42 @@ class CreatureExtractor(BaseExtractor):
         """
         items = []
 
-        # Extract creature name
-        name_obj = gff_data.get("FirstName", {})
-        first_name = self._extract_text_from_local_string(name_obj)
-
-        # Extract last name
-        last_name_obj = gff_data.get("LastName", {})
-        last_name = self._extract_text_from_local_string(last_name_obj)
-
-        # Combine names
-        full_name = ""
-        if first_name and last_name:
-            full_name = f"{first_name} {last_name}"
-        elif first_name:
-            full_name = first_name
-        elif last_name:
-            full_name = last_name
-
-        # Extract description
-        desc_obj = gff_data.get("Description", {})
-        description = self._extract_text_from_local_string(desc_obj)
-
         # Get tag for reference
         tag = gff_data.get("Tag", file_path.stem)
 
-        # Create item for full name
-        if full_name:
+        # Extract first name as separate item
+        name_obj = gff_data.get("FirstName", {})
+        first_name = self._extract_text_from_local_string(name_obj)
+        if first_name:
             items.append(TranslatableItem(
-                text=full_name,
-                context=f"Creature name: {tag}",
-                item_id=f"{tag}_name",
+                text=first_name,
+                context=f"Creature first name: {tag}",
+                item_id=f"{tag}_first_name",
                 location=str(file_path),
                 metadata={
-                    "type": "creature_name",
+                    "type": "creature_first_name",
                     "tag": tag,
                 }
             ))
 
-        # Create item for description
+        # Extract last name as separate item
+        last_name_obj = gff_data.get("LastName", {})
+        last_name = self._extract_text_from_local_string(last_name_obj)
+        if last_name:
+            items.append(TranslatableItem(
+                text=last_name,
+                context=f"Creature last name: {tag}",
+                item_id=f"{tag}_last_name",
+                location=str(file_path),
+                metadata={
+                    "type": "creature_last_name",
+                    "tag": tag,
+                }
+            ))
+
+        # Extract description as separate item
+        desc_obj = gff_data.get("Description", {})
+        description = self._extract_text_from_local_string(desc_obj)
         if description:
             items.append(TranslatableItem(
                 text=description,

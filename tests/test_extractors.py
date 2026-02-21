@@ -98,15 +98,14 @@ class TestJournalExtractor:
 
         gff_data = {
             "StructType": "JRL",
-            "CategoriesList": [
+            "Categories": [
                 {
                     "Name": {"StrRef": -1, "Value": "Main Quest"},
-                    "Description": {"StrRef": -1, "Value": "The main story line"},
                     "Priority": 1,
                     "Tag": "main_quest",
+                    "EntryList": [],
                 }
             ],
-            "EntriesList": [],
         }
 
         result = extractor.extract(file_path, gff_data)
@@ -121,20 +120,26 @@ class TestJournalExtractor:
 
         gff_data = {
             "StructType": "JRL",
-            "CategoriesList": [],
-            "EntriesList": [
+            "Categories": [
                 {
-                    "Text": {"StrRef": -1, "Value": "You discovered a secret."},
-                    "Category": 0,
+                    "Name": {"StrRef": -1, "Value": "Side Quest"},
                     "Priority": 1,
-                    "Tag": "discovery",
+                    "Tag": "side_quest",
+                    "EntryList": [
+                        {
+                            "ID": 10,
+                            "End": 0,
+                            "Text": {"StrRef": -1, "Value": "You discovered a secret."},
+                        }
+                    ],
                 }
             ],
         }
 
         result = extractor.extract(file_path, gff_data)
 
-        assert len(result.items) >= 1
+        # 1 category name + 1 entry text
+        assert len(result.items) >= 2
 
 
 class TestItemExtractor:

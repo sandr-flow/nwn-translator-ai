@@ -4,7 +4,7 @@ This module handles extraction of journal entries and categories from .jrl GFF f
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .base import BaseExtractor, ExtractedContent, TranslatableItem
 
@@ -34,19 +34,19 @@ class JournalExtractor(BaseExtractor):
         """
         items = []
 
-        # Extract journal categories
-        categories = self._get_list_value(gff_data, "CategoriesList")
+        # Extract journal categories (GFF field is "Categories", not "CategoriesList")
+        categories = self._get_list_value(gff_data, "Categories")
         for i, category in enumerate(categories):
-            item = self._extract_category(category, i, file_path)
-            if item and item.has_text():
-                items.append(item)
+            # Extract category name
+            category_items = self._extract_category(category, i, file_path)
+            items.extend(category_items)
 
-        # Extract journal entries
-        entries = self._get_list_value(gff_data, "EntriesList")
-        for i, entry in enumerate(entries):
-            item = self._extract_entry(entry, i, file_path)
-            if item and item.has_text():
-                items.append(item)
+            # Entries are nested inside each category as "EntryList"
+            entries = self._get_list_value(category, "EntryList")
+            for j, entry in enumerate(entries):
+                item = self._extract_entry(entry, i, j, file_path, category)
+                if item and item.has_text():
+                    items.append(item)
 
         return ExtractedContent(
             content_type="journal",
@@ -54,7 +54,6 @@ class JournalExtractor(BaseExtractor):
             source_file=file_path,
             metadata={
                 "category_count": len(categories),
-                "entry_count": len(entries),
             }
         )
 
@@ -63,8 +62,8 @@ class JournalExtractor(BaseExtractor):
         category_data: Dict[str, Any],
         index: int,
         file_path: Path
-    ) -> TranslatableItem:
-        """Extract a journal category.
+    ) -> List[TranslatableItem]:
+        """Extract translatable items from a journal category.
 
         Args:
             category_data: Category data dictionary
@@ -72,78 +71,73 @@ class JournalExtractor(BaseExtractor):
             file_path: Source file path
 
         Returns:
-            TranslatableItem for the category
+            List of TranslatableItems for the category name
         """
-        # Extract name
-        name_obj = category_data.get("Name", {})
-        name = self._extract_text_from_local_string(name_obj) or ""
+        items = []
 
-        # Extract description (if present)
-        description_obj = category_data.get("Description", {})
-        description = self._extract_text_from_local_string(description_obj) or ""
-
-        # Combine name and description
-        text = name
-        if description:
-            text = f"{name}\n\n{description}"
-
-        # Get priority for sorting
+        # Get tag and priority
+        tag = category_data.get("Tag", "")
         priority = category_data.get("Priority", 0)
 
-        # Get tag
-        tag = category_data.get("Tag", "")
+        # Extract category name
+        name_obj = category_data.get("Name", {})
+        name = self._extract_text_from_local_string(name_obj) or ""
+        if name:
+            items.append(TranslatableItem(
+                text=name,
+                context=f"Journal category name: {tag}" if tag else "Journal category name",
+                item_id=f"category_{index}_name",
+                location=str(file_path),
+                metadata={
+                    "type": "journal_category_name",
+                    "tag": tag,
+                    "priority": priority,
+                }
+            ))
 
-        return TranslatableItem(
-            text=text,
-            context=f"Journal category: {tag}" if tag else "Journal category",
-            item_id=f"category_{index}",
-            location=str(file_path),
-            metadata={
-                "type": "journal_category",
-                "tag": tag,
-                "priority": priority,
-                "name_only": not bool(description),
-            }
-        )
+        return items
 
     def _extract_entry(
         self,
         entry_data: Dict[str, Any],
-        index: int,
-        file_path: Path
-    ) -> TranslatableItem:
+        category_index: int,
+        entry_index: int,
+        file_path: Path,
+        category_data: Optional[Dict[str, Any]] = None,
+    ) -> Optional[TranslatableItem]:
         """Extract a journal entry.
 
         Args:
             entry_data: Entry data dictionary
-            index: Entry index
+            category_index: Parent category index
+            entry_index: Entry index within the category
             file_path: Source file path
+            category_data: Parent category data for context
 
         Returns:
-            TranslatableItem for the entry
+            TranslatableItem for the entry, or None
         """
         # Extract text
         text_obj = entry_data.get("Text", {})
         text = self._extract_text_from_local_string(text_obj) or ""
 
-        # Get category index
-        category_index = entry_data.get("Category", 0)
+        if not text:
+            return None
 
-        # Get priority
-        priority = entry_data.get("Priority", 0)
+        # Get entry ID
+        entry_id = entry_data.get("ID", 0)
 
-        # Get tag
-        tag = entry_data.get("Tag", "")
+        # Get category tag for context
+        cat_tag = category_data.get("Tag", "") if category_data else ""
 
         return TranslatableItem(
             text=text,
-            context=f"Journal entry in category {category_index}",
-            item_id=f"entry_{index}",
+            context=f"Journal entry in '{cat_tag}'" if cat_tag else f"Journal entry in category {category_index}",
+            item_id=f"entry_{category_index}_{entry_index}",
             location=str(file_path),
             metadata={
                 "type": "journal_entry",
                 "category": category_index,
-                "tag": tag,
-                "priority": priority,
+                "entry_id": entry_id,
             }
         )

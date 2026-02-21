@@ -199,7 +199,8 @@ class ModuleTranslator:
         # Inject translations
         injector = get_injector_for_content(extracted.content_type)
         if injector:
-            result = injector.inject(file_path, gff_data, translations, extracted.metadata)
+            inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
+            result = injector.inject(file_path, gff_data, translations, inject_metadata)
 
             if result.modified:
                 logger.info(f"Updated {file_path.name}: {result.items_updated} items")

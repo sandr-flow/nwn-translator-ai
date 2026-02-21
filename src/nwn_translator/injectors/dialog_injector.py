@@ -139,8 +139,8 @@ class JournalInjector(BaseInjector):
             logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
 
-        # Update categories
-        categories = gff_data.get("CategoriesList", [])
+        # Update categories (GFF field is "Categories", not "CategoriesList")
+        categories = gff_data.get("Categories", [])
         for category in categories:
             if isinstance(category, dict):
                 # Update category name
@@ -156,34 +156,21 @@ class JournalInjector(BaseInjector):
                                 items_updated += 1
                                 modified = True
 
-                # Update category description
-                desc_obj = category.get("Description", {})
-                if isinstance(desc_obj, dict):
-                    original_text = desc_obj.get("Value", "")
-                    if original_text and original_text in translations:
-                        translated_text = translations[original_text]
-                        if translated_text != original_text:
-                            rec_offset = category.get("_record_offsets", {}).get("Description", 0)
-                            if rec_offset > 0:
-                                patcher.patch_local_string(rec_offset, translated_text)
-                                items_updated += 1
-                                modified = True
-
-        # Update entries
-        entries = gff_data.get("EntriesList", [])
-        for entry in entries:
-            if isinstance(entry, dict):
-                text_obj = entry.get("Text", {})
-                if isinstance(text_obj, dict):
-                    original_text = text_obj.get("Value", "")
-                    if original_text and original_text in translations:
-                        translated_text = translations[original_text]
-                        if translated_text != original_text:
-                            rec_offset = entry.get("_record_offsets", {}).get("Text", 0)
-                            if rec_offset > 0:
-                                patcher.patch_local_string(rec_offset, translated_text)
-                                items_updated += 1
-                                modified = True
+                # Update entries nested inside each category
+                entries = category.get("EntryList", [])
+                for entry in entries:
+                    if isinstance(entry, dict):
+                        text_obj = entry.get("Text", {})
+                        if isinstance(text_obj, dict):
+                            original_text = text_obj.get("Value", "")
+                            if original_text and original_text in translations:
+                                translated_text = translations[original_text]
+                                if translated_text != original_text:
+                                    rec_offset = entry.get("_record_offsets", {}).get("Text", 0)
+                                    if rec_offset > 0:
+                                        patcher.patch_local_string(rec_offset, translated_text)
+                                        items_updated += 1
+                                        modified = True
 
         return InjectedContent(
             source_file=file_path,
@@ -192,7 +179,6 @@ class JournalInjector(BaseInjector):
             metadata={
                 "type": "journal",
                 "category_count": len(categories),
-                "entry_count": len(entries),
             }
         )
 
@@ -203,7 +189,7 @@ class GenericInjector(BaseInjector):
     This handles items, creatures, areas, placeables, doors, and stores.
     """
 
-    SUPPORTED_TYPES = ["item", "creature", "area", "placeable", "door", "store"]
+    SUPPORTED_TYPES = ["item", "creature", "area", "trigger", "placeable", "door", "store"]
 
     # Mapping of content types to GFF field names
     FIELD_MAP = {
@@ -221,8 +207,11 @@ class GenericInjector(BaseInjector):
             "name": "Name",
             "description": "Description",
         },
-        "placeable": {
+        "trigger": {
             "name": "LocalizedName",
+        },
+        "placeable": {
+            "name": "Name",
         },
         "door": {
             "name": "LocalizedName",

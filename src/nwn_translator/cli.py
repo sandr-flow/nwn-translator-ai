@@ -138,6 +138,11 @@ def cli(ctx):
     is_flag=True,
     help="Do not preserve game tokens during translation",
 )
+@click.option(
+    "--context/--no-context",
+    default=True,
+    help="Enable/disable contextual full-dialog translation (default: enabled)",
+)
 def translate(
     input_file: Path,
     api_key: str,
@@ -152,6 +157,7 @@ def translate(
     verbose: bool,
     quiet: bool,
     no_tokens: bool,
+    context: bool,
 ):
     """Translate a NWN module file.
 
@@ -185,6 +191,7 @@ def translate(
         "translation_log": log_file,
         "skip_cleanup": skip_cleanup,
         "preserve_tokens": not no_tokens,
+        "use_context": context,
         "verbose": verbose,
         "quiet": quiet,
     }

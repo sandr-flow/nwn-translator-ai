@@ -28,6 +28,9 @@ class TranslationConfig:
     input_file: Path = field(default_factory=Path)
     output_file: Optional[Path] = None
     translation_log: Optional[Path] = None
+    
+    # Advanced features
+    use_context: bool = True
 
     # Processing Options
     temp_dir: Path = field(default_factory=lambda: Path("./temp_nwn_translate"))

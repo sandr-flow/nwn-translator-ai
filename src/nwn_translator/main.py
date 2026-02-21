@@ -28,6 +28,8 @@ from .extractors import get_extractor_for_file
 from .injectors import get_injector_for_content
 from .ai_providers import create_provider
 from .translators.translation_manager import TranslationManager
+from .translators.context_translator import ContextualTranslationManager
+from .context.world_context import WorldScanner, WorldContext
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,9 @@ class ModuleTranslator:
             "items_translated": 0,
             "errors": [],
         }
+        
+        # World context cache
+        self.world_context: Optional[WorldContext] = None
 
     def translate(self) -> Path:
         """Translate the module.
@@ -85,15 +90,21 @@ class ModuleTranslator:
             logger.warning("No translatable files found!")
             return self._cleanup_and_return(extract_dir)
 
+        # Step 2.5: Build World Context (if enabled)
+        if self.config.use_context:
+            scanner = WorldScanner()
+            self.world_context = scanner.scan_directory(extract_dir)
+
         # Step 3: Process each file
         logger.info("Translating files...")
 
-        # Initialize single translation manager for the whole session
+        # Initialize single translation managers for the whole session
         manager = TranslationManager(self.config, self.provider)
+        context_manager = ContextualTranslationManager(self.config, self.provider, self.world_context) if self.config.use_context else None
 
         for file_path in tqdm(translatable_files, desc="Translating"):
             try:
-                self._translate_file(file_path, manager)
+                self._translate_file(file_path, manager, context_manager)
                 self.stats["files_processed"] += 1
             except Exception as e:
                 error_msg = f"Error processing {file_path.name}: {e}"
@@ -159,12 +170,18 @@ class ModuleTranslator:
 
         return translatable_files
 
-    def _translate_file(self, file_path: Path, manager: TranslationManager) -> None:
+    def _translate_file(
+        self, 
+        file_path: Path, 
+        manager: TranslationManager, 
+        context_manager: Optional[ContextualTranslationManager] = None
+    ) -> None:
         """Translate a single file.
 
         Args:
             file_path: Path to the file
-            manager: Translation manager instance
+            manager: Standard translation manager instance
+            context_manager: Contextual translation manager instance
         """
         # Read GFF data
         gff_data = read_gff(file_path)
@@ -185,7 +202,12 @@ class ModuleTranslator:
             return
 
         # Translate
-        translations = manager.translate_content(extracted)
+        if file_ext == ".dlg" and self.config.use_context and context_manager:
+            # Use contextual translation for full dialog trees
+            translations = context_manager.translate_dialog(file_path, gff_data)
+        else:
+            # Use standard line-by-line translation for everything else
+            translations = manager.translate_content(extracted)
 
         if not translations:
             logger.debug(f"No translations generated for: {file_path.name}")

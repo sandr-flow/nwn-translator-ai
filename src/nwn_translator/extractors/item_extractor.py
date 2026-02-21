@@ -1,0 +1,99 @@
+"""Item extractor for NWN item files.
+
+This module handles extraction of item names and descriptions from .uti GFF files.
+"""
+
+from pathlib import Path
+from typing import Any, Dict, List
+
+from .base import BaseExtractor, ExtractedContent, TranslatableItem
+
+
+class ItemExtractor(BaseExtractor):
+    """Extractor for item (.uti) files."""
+
+    SUPPORTED_TYPES = [".uti"]
+
+    def can_extract(self, file_type: str) -> bool:
+        """Check if this extractor can handle the given file type."""
+        return file_type.lower() in self.SUPPORTED_TYPES
+
+    def extract(
+        self,
+        file_path: Path,
+        gff_data: Dict[str, Any]
+    ) -> ExtractedContent:
+        """Extract item content from a .uti file.
+
+        Args:
+            file_path: Path to the .uti file
+            gff_data: Parsed GFF data
+
+        Returns:
+            ExtractedContent with item data
+        """
+        items = []
+
+        # Extract item name
+        name_obj = gff_data.get("LocalizedName", {})
+        name = self._extract_text_from_local_string(name_obj)
+
+        # Extract item description (flavor text)
+        desc_obj = gff_data.get("Description", {})
+        description = self._extract_text_from_local_string(desc_obj)
+
+        # Extract identified description (when item is identified)
+        identified_desc_obj = gff_data.get("DescIdentified", {})
+        identified_description = self._extract_text_from_local_string(identified_desc_obj)
+
+        # Get tag for reference
+        tag = gff_data.get("Tag", file_path.stem)
+
+        # Create item for name
+        if name:
+            items.append(TranslatableItem(
+                text=name,
+                context=f"Item name: {tag}",
+                item_id=f"{tag}_name",
+                location=str(file_path),
+                metadata={
+                    "type": "item_name",
+                    "tag": tag,
+                }
+            ))
+
+        # Create item for description
+        if description:
+            items.append(TranslatableItem(
+                text=description,
+                context=f"Item description: {tag}",
+                item_id=f"{tag}_description",
+                location=str(file_path),
+                metadata={
+                    "type": "item_description",
+                    "tag": tag,
+                }
+            ))
+
+        # Create item for identified description
+        if identified_description and identified_description != description:
+            items.append(TranslatableItem(
+                text=identified_description,
+                context=f"Item identified description: {tag}",
+                item_id=f"{tag}_identified_description",
+                location=str(file_path),
+                metadata={
+                    "type": "item_identified_description",
+                    "tag": tag,
+                }
+            ))
+
+        return ExtractedContent(
+            content_type="item",
+            items=items,
+            source_file=file_path,
+            metadata={
+                "tag": tag,
+                "item_count": len(items),
+            }
+        )

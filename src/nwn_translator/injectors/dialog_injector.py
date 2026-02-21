@@ -1,0 +1,326 @@
+"""Dialog injector for NWN dialog files.
+
+This module handles injection of translated dialog content back into .dlg GFF files.
+"""
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+import logging
+
+from .base import BaseInjector, InjectedContent
+from ..file_handlers.gff_patcher import GFFPatcher, GFFPatchError
+from ..extractors.base import DialogNode
+
+logger = logging.getLogger(__name__)
+
+
+class DialogInjector(BaseInjector):
+    """Injector for dialog (.dlg) files."""
+
+    def can_inject(self, content_type: str) -> bool:
+        """Check if this injector can handle the given content type."""
+        return content_type == "dialog"
+
+    def inject(
+        self,
+        file_path: Path,
+        gff_data: Dict[str, Any],
+        translations: Dict[str, str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> InjectedContent:
+        """Inject translated dialog content back into GFF data.
+
+        Args:
+            file_path: Path to the .dlg file
+            gff_data: Original GFF data
+            translations: Dictionary mapping original text to translated text
+            metadata: Optional metadata (may contain dialog tree)
+
+        Returns:
+            InjectedContent with injection results
+        """
+        items_updated = 0
+        modified = False
+
+        # Get entry and reply lists
+        entry_list = gff_data.get("EntryList", [])
+        reply_list = gff_data.get("ReplyList", [])
+        
+        try:
+            patcher = GFFPatcher(file_path)
+        except Exception as e:
+            logger.error(f"Failed to initialize GFFPatcher for {file_path}: {e}")
+            return InjectedContent(source_file=file_path, modified=False, items_updated=0)
+
+        record_offsets = gff_data.get("_record_offsets", {})
+
+        # Update entries
+        for entry in entry_list:
+            if isinstance(entry, dict):
+                text_obj = entry.get("Text", {})
+                if isinstance(text_obj, dict):
+                    original_text = text_obj.get("Value", "")
+                    if original_text and original_text in translations:
+                        translated_text = translations[original_text]
+                        if translated_text != original_text:
+                            # Use offset safely
+                            rec_offset = entry.get("_record_offsets", {}).get("Text", 0)
+                            if rec_offset > 0:
+                                try:
+                                    patcher.patch_local_string(rec_offset, translated_text)
+                                    items_updated += 1
+                                    modified = True
+                                except GFFPatchError as e:
+                                    logger.error(f"Failed to patch entry string in {file_path}: {e}")
+
+        # Update replies
+        for reply in reply_list:
+            if isinstance(reply, dict):
+                text_obj = reply.get("Text", {})
+                if isinstance(text_obj, dict):
+                    original_text = text_obj.get("Value", "")
+                    if original_text and original_text in translations:
+                        translated_text = translations[original_text]
+                        if translated_text != original_text:
+                            rec_offset = reply.get("_record_offsets", {}).get("Text", 0)
+                            if rec_offset > 0:
+                                try:
+                                    patcher.patch_local_string(rec_offset, translated_text)
+                                    items_updated += 1
+                                    modified = True
+                                    # Fallback: keep dict updated just in case main flow uses it
+                                    # (Not strictly necessary if we rely 100% on patcher, but safe)
+                                except GFFPatchError as e:
+                                    logger.error(f"Failed to patch reply string in {file_path}: {e}")
+
+        return InjectedContent(
+            source_file=file_path,
+            modified=modified,
+            items_updated=items_updated,
+            metadata={
+                "type": "dialog",
+                "entry_count": len(entry_list),
+                "reply_count": len(reply_list),
+            }
+        )
+
+
+class JournalInjector(BaseInjector):
+    """Injector for journal (.jrl) files."""
+
+    def can_inject(self, content_type: str) -> bool:
+        """Check if this injector can handle the given content type."""
+        return content_type == "journal"
+
+    def inject(
+        self,
+        file_path: Path,
+        gff_data: Dict[str, Any],
+        translations: Dict[str, str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> InjectedContent:
+        """Inject translated journal content back into GFF data.
+
+        Args:
+            file_path: Path to the .jrl file
+            gff_data: Original GFF data
+            translations: Dictionary mapping original text to translated text
+            metadata: Optional metadata
+
+        Returns:
+            InjectedContent with injection results
+        """
+        items_updated = 0
+        modified = False
+
+        try:
+            patcher = GFFPatcher(file_path)
+        except Exception as e:
+            logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
+            return InjectedContent(source_file=file_path, modified=False, items_updated=0)
+
+        # Update categories
+        categories = gff_data.get("CategoriesList", [])
+        for category in categories:
+            if isinstance(category, dict):
+                # Update category name
+                name_obj = category.get("Name", {})
+                if isinstance(name_obj, dict):
+                    original_text = name_obj.get("Value", "")
+                    if original_text and original_text in translations:
+                        translated_text = translations[original_text]
+                        if translated_text != original_text:
+                            rec_offset = category.get("_record_offsets", {}).get("Name", 0)
+                            if rec_offset > 0:
+                                patcher.patch_local_string(rec_offset, translated_text)
+                                items_updated += 1
+                                modified = True
+
+                # Update category description
+                desc_obj = category.get("Description", {})
+                if isinstance(desc_obj, dict):
+                    original_text = desc_obj.get("Value", "")
+                    if original_text and original_text in translations:
+                        translated_text = translations[original_text]
+                        if translated_text != original_text:
+                            rec_offset = category.get("_record_offsets", {}).get("Description", 0)
+                            if rec_offset > 0:
+                                patcher.patch_local_string(rec_offset, translated_text)
+                                items_updated += 1
+                                modified = True
+
+        # Update entries
+        entries = gff_data.get("EntriesList", [])
+        for entry in entries:
+            if isinstance(entry, dict):
+                text_obj = entry.get("Text", {})
+                if isinstance(text_obj, dict):
+                    original_text = text_obj.get("Value", "")
+                    if original_text and original_text in translations:
+                        translated_text = translations[original_text]
+                        if translated_text != original_text:
+                            rec_offset = entry.get("_record_offsets", {}).get("Text", 0)
+                            if rec_offset > 0:
+                                patcher.patch_local_string(rec_offset, translated_text)
+                                items_updated += 1
+                                modified = True
+
+        return InjectedContent(
+            source_file=file_path,
+            modified=modified,
+            items_updated=items_updated,
+            metadata={
+                "type": "journal",
+                "category_count": len(categories),
+                "entry_count": len(entries),
+            }
+        )
+
+
+class GenericInjector(BaseInjector):
+    """Generic injector for simple item files.
+
+    This handles items, creatures, areas, placeables, doors, and stores.
+    """
+
+    SUPPORTED_TYPES = ["item", "creature", "area", "placeable", "door", "store"]
+
+    # Mapping of content types to GFF field names
+    FIELD_MAP = {
+        "item": {
+            "name": "LocalizedName",
+            "description": "Description",
+            "identified": "DescIdentified",
+        },
+        "creature": {
+            "first_name": "FirstName",
+            "last_name": "LastName",
+            "description": "Description",
+        },
+        "area": {
+            "name": "Name",
+            "description": "Description",
+        },
+        "placeable": {
+            "name": "LocalizedName",
+        },
+        "door": {
+            "name": "LocalizedName",
+        },
+        "store": {
+            "name": "LocalizedName",
+        },
+    }
+
+    def can_inject(self, content_type: str) -> bool:
+        """Check if this injector can handle the given content type."""
+        return content_type in self.SUPPORTED_TYPES
+
+    def inject(
+        self,
+        file_path: Path,
+        gff_data: Dict[str, Any],
+        translations: Dict[str, str],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> InjectedContent:
+        """Inject translated content back into GFF data.
+
+        Args:
+            file_path: Path to the file
+            gff_data: Original GFF data
+            translations: Dictionary mapping original text to translated text
+            metadata: Optional metadata with content_type
+
+        Returns:
+            InjectedContent with injection results
+        """
+        content_type = metadata.get("type", "") if metadata else ""
+
+        if content_type not in self.FIELD_MAP:
+            return InjectedContent(
+                source_file=file_path,
+                modified=False,
+                items_updated=0,
+            )
+
+        items_updated = 0
+        modified = False
+        fields = self.FIELD_MAP[content_type]
+        
+        try:
+            patcher = GFFPatcher(file_path)
+        except Exception as e:
+            logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
+            return InjectedContent(source_file=file_path, modified=False, items_updated=0)
+
+        record_offsets = gff_data.get("_record_offsets", {})
+
+        # For creatures, we need to handle first and last name specially
+        if content_type == "creature":
+            first_name_obj = gff_data.get("FirstName", {})
+            last_name_obj = gff_data.get("LastName", {})
+
+            if isinstance(first_name_obj, dict):
+                original_first = first_name_obj.get("Value", "")
+                if original_first and original_first in translations:
+                    rec_offset = record_offsets.get("FirstName", 0)
+                    if rec_offset > 0:
+                        patcher.patch_local_string(rec_offset, translations[original_first])
+                        items_updated += 1
+                        modified = True
+
+            if isinstance(last_name_obj, dict):
+                original_last = last_name_obj.get("Value", "")
+                if original_last and original_last in translations:
+                    rec_offset = record_offsets.get("LastName", 0)
+                    if rec_offset > 0:
+                        patcher.patch_local_string(rec_offset, translations[original_last])
+                        items_updated += 1
+                        modified = True
+
+        # Handle other fields
+        for key, field_name in fields.items():
+            if key == "first_name" or key == "last_name":
+                continue  # Already handled above
+
+            if field_name in gff_data:
+                field_obj = gff_data[field_name]
+                if isinstance(field_obj, dict):
+                    original_text = field_obj.get("Value", "")
+                    if original_text and original_text in translations:
+                        translated_text = translations[original_text]
+                        if translated_text != original_text:
+                            rec_offset = record_offsets.get(field_name, 0)
+                            if rec_offset > 0:
+                                patcher.patch_local_string(rec_offset, translated_text)
+                                items_updated += 1
+                                modified = True
+
+        return InjectedContent(
+            source_file=file_path,
+            modified=modified,
+            items_updated=items_updated,
+            metadata={
+                "type": content_type,
+            }
+        )

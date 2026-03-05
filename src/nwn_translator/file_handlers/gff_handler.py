@@ -86,6 +86,11 @@ class GFFHandler:
         result = {}
 
         for key, value in data.items():
+            # Preserve internal metadata keys intact — they must not be recursed into
+            if key in ("_record_offsets", "_field_types"):
+                result[key] = value
+                continue
+
             if isinstance(value, dict) and "StrRef" in value:
                 # This is a CExoLocString
                 str_ref = value["StrRef"]

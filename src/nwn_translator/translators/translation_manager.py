@@ -165,6 +165,14 @@ class TranslationManager:
             "total_errors": len(self.stats["errors"]),
         }
 
+    def get_all_translations(self) -> Dict[str, str]:
+        """Get all cached translations from this session.
+
+        Returns:
+            Dictionary mapping sanitized original text to translated text.
+        """
+        return dict(self._translation_cache)
+
     def clear_statistics(self) -> None:
         """Clear translation statistics."""
         self.stats = {

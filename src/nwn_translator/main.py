@@ -27,6 +27,7 @@ from .file_handlers import (
 from .file_handlers.tlk_reader import parse_tlk, find_dialog_tlk, TLKFile
 from .extractors import get_extractor_for_file
 from .injectors import get_injector_for_content
+from .injectors.git_injector import patch_git_file
 from .ai_providers import create_provider
 from .translators.translation_manager import TranslationManager
 from .translators.context_translator import ContextualTranslationManager
@@ -109,14 +110,23 @@ class ModuleTranslator:
         manager = TranslationManager(self.config, self.provider)
         context_manager = ContextualTranslationManager(self.config, self.provider, self.world_context) if self.config.use_context else None
 
+        # Accumulate all translations (original_text -> translated_text)
+        all_translations: Dict[str, str] = {}
+
         for file_path in tqdm(translatable_files, desc="Translating"):
             try:
-                self._translate_file(file_path, manager, context_manager)
+                file_translations = self._translate_file(file_path, manager, context_manager)
+                if file_translations:
+                    all_translations.update(file_translations)
                 self.stats["files_processed"] += 1
             except Exception as e:
                 error_msg = f"Error processing {file_path.name}: {e}"
                 self.stats["errors"].append(error_msg)
                 logger.error(error_msg)
+
+        # Step 3.5: Patch .git area instance files
+        if all_translations:
+            self._patch_git_files(extract_dir, all_translations)
 
         # Step 4: Create new module
         logger.info("Creating translated module...")
@@ -201,13 +211,16 @@ class ModuleTranslator:
         file_path: Path, 
         manager: TranslationManager, 
         context_manager: Optional[ContextualTranslationManager] = None
-    ) -> None:
+    ) -> Optional[Dict[str, str]]:
         """Translate a single file.
 
         Args:
             file_path: Path to the file
             manager: Standard translation manager instance
             context_manager: Contextual translation manager instance
+
+        Returns:
+            Dictionary mapping original text to translated text, or None.
         """
         # Read GFF data (pass TLK to resolve StrRef-only names)
         gff_data = read_gff(file_path, tlk=self.tlk)
@@ -219,13 +232,13 @@ class ModuleTranslator:
         extractor = get_extractor_for_file(file_ext)
         if not extractor:
             logger.debug(f"No extractor for {file_ext}: {file_path.name}")
-            return
+            return None
 
         # Extract content
         extracted = extractor.extract(file_path, gff_data)
         if not extracted.items:
             logger.debug(f"No translatable content in: {file_path.name}")
-            return
+            return None
 
         # Translate
         if file_ext == ".dlg" and self.config.use_context and context_manager:
@@ -237,7 +250,7 @@ class ModuleTranslator:
 
         if not translations:
             logger.debug(f"No translations generated for: {file_path.name}")
-            return
+            return None
 
         # Update statistics
         stats = manager.get_statistics()
@@ -252,6 +265,36 @@ class ModuleTranslator:
 
             if result.modified:
                 logger.info(f"Updated {file_path.name}: {result.items_updated} items")
+
+        return translations
+
+    def _patch_git_files(
+        self,
+        extract_dir: Path,
+        translations: Dict[str, str],
+    ) -> None:
+        """Patch .git area instance files with accumulated translations.
+
+        Args:
+            extract_dir: Directory containing extracted module files.
+            translations: Session-wide original-text to translated-text mapping.
+        """
+        git_files = list(extract_dir.glob("*.git"))
+        if not git_files:
+            logger.debug("No .git files found in extraction directory")
+            return
+
+        logger.info(f"Patching {len(git_files)} area instance (.git) files...")
+        total_patched = 0
+        for git_path in git_files:
+            try:
+                patched = patch_git_file(git_path, translations, tlk=self.tlk)
+                total_patched += patched
+            except Exception as e:
+                logger.error(f"Failed to patch {git_path.name}: {e}")
+
+        if total_patched:
+            logger.info(f"Patched {total_patched} instance fields across {len(git_files)} .git files")
 
     def _cleanup_and_return(self, extract_dir: Path) -> Path:
         """Handle cleanup and return output path.

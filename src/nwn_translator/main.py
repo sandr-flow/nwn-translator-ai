@@ -24,6 +24,7 @@ from .file_handlers import (
     read_gff,
     write_gff,
 )
+from .file_handlers.tlk_reader import parse_tlk, find_dialog_tlk, TLKFile
 from .extractors import get_extractor_for_file
 from .injectors import get_injector_for_content
 from .ai_providers import create_provider
@@ -61,6 +62,9 @@ class ModuleTranslator:
             "errors": [],
         }
         
+        # TLK file for resolving StrRef names
+        self.tlk: Optional[TLKFile] = None
+
         # World context cache
         self.world_context: Optional[WorldContext] = None
 
@@ -90,7 +94,10 @@ class ModuleTranslator:
             logger.warning("No translatable files found!")
             return self._cleanup_and_return(extract_dir)
 
-        # Step 2.5: Build World Context (if enabled)
+        # Step 2.5: Load TLK file for resolving StrRef names
+        self._load_tlk(extract_dir)
+
+        # Step 2.6: Build World Context (if enabled)
         if self.config.use_context:
             scanner = WorldScanner()
             self.world_context = scanner.scan_directory(extract_dir)
@@ -170,6 +177,25 @@ class ModuleTranslator:
 
         return translatable_files
 
+    def _load_tlk(self, extract_dir: Path) -> None:
+        """Load TLK file for resolving StrRef-based names.
+
+        Args:
+            extract_dir: Module extraction directory
+        """
+        tlk_path = self.config.tlk_file
+        if not tlk_path:
+            tlk_path = find_dialog_tlk(extract_dir)
+
+        if tlk_path and tlk_path.exists():
+            try:
+                self.tlk = parse_tlk(tlk_path)
+                logger.info(f"Loaded TLK file: {tlk_path} ({len(self.tlk)} entries)")
+            except Exception as e:
+                logger.warning(f"Failed to load TLK file {tlk_path}: {e}")
+        else:
+            logger.debug("No TLK file found, StrRef-only names will not be resolved")
+
     def _translate_file(
         self, 
         file_path: Path, 
@@ -183,8 +209,8 @@ class ModuleTranslator:
             manager: Standard translation manager instance
             context_manager: Contextual translation manager instance
         """
-        # Read GFF data
-        gff_data = read_gff(file_path)
+        # Read GFF data (pass TLK to resolve StrRef-only names)
+        gff_data = read_gff(file_path, tlk=self.tlk)
 
         # Get file extension
         file_ext = file_path.suffix.lower()

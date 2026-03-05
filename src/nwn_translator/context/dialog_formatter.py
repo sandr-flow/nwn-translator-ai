@@ -4,7 +4,7 @@ Converts a hierarchical dialog tree into a flat, numbered script format
 suitable for LLM contextual translation.
 """
 
-from typing import List, Set, Dict, Any
+from typing import List, Set, Dict, Any, Optional
 from ..extractors.base import DialogNode
 
 class DialogFormatter:
@@ -72,4 +72,34 @@ class DialogFormatter:
                         
             lines.append("") # Empty line between blocks
 
+        return "\n".join(lines).strip()
+
+    def format_nodes(
+        self,
+        keys: List[str],
+        node_map: Dict[str, DialogNode],
+        text_map: Dict[str, str],
+    ) -> str:
+        """Format a specific subset of nodes for a retry request.
+
+        Uses the current node.text (which holds the sanitized text set by the
+        caller) so the script matches what was originally sent to the model.
+
+        Args:
+            keys: Node IDs (e.g. ["E5", "R12"]) to include.
+            node_map: Full mapping of node ID → DialogNode.
+            text_map: Mapping of node ID → original text (used for speaker lookup).
+
+        Returns:
+            Formatted script string containing only the requested nodes.
+        """
+        lines = []
+        for key in keys:
+            node = node_map.get(key)
+            if node is None:
+                continue
+            speaker = node.speaker if node.speaker else ("NPC" if node.is_entry else "Player")
+            lines.append(f"[{key}] [{speaker}]:")
+            lines.append(f"<<<{node.text}>>>")
+            lines.append("")
         return "\n".join(lines).strip()

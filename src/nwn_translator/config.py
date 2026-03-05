@@ -31,6 +31,7 @@ class TranslationConfig:
     
     # Advanced features
     use_context: bool = True
+    tlk_file: Optional[Path] = None  # Path to dialog.tlk for resolving StrRef names
 
     # Processing Options
     temp_dir: Path = field(default_factory=lambda: Path("./temp_nwn_translate"))
@@ -145,4 +146,5 @@ TRANSLATABLE_TYPES = {
     ".utm": "Store",
     ".itp": "Palette",
     ".fac": "Faction",
+    ".ifo": "Module Info",
 }

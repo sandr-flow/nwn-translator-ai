@@ -104,55 +104,101 @@ class ContextualTranslationManager:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
+                max_tokens=16384,
                 response_format={"type": "json_object"},
             )
 
             raw_response = response.choices[0].message.content.strip()
-            
-            # Parse JSON
-            try:
-                json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    json_str = raw_response
-                parsed_json = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON for {file_path.name}: {e}\nRaw: {raw_response[:200]}...")
+            parsed_json = self._parse_json_response(raw_response, file_path.name)
+            if parsed_json is None:
                 return {}
 
-            # Map back to original text expected by DialogInjector
-            translations = {}
-            for key, translated_sanitized in parsed_json.items():
-                if key in original_text_map:
-                    original_text = original_text_map[key]
-                    handler = handlers[key]
-                    
-                    # Restore tokens
-                    final_translated = restore_text(translated_sanitized, handler)
-                    
-                    # Store in map: original_text -> final_translated
-                    translations[original_text] = final_translated
-                    
-                    # Log translation to JSONL if enabled
-                    if self.config.translation_log:
-                        try:
-                            log_entry = {
-                                "original": original_text,
-                                "translated": final_translated,
-                                "context": f"Dialog node {key} in {file_path.name}",
-                                "model": self.provider.model
-                            }
-                            with open(self.config.translation_log, "a", encoding="utf-8") as f:
-                                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-                        except Exception as log_e:
-                            logger.debug("Failed to write to translation log: %s", log_e)
+            translations = self._apply_translations(
+                parsed_json, original_text_map, handlers, file_path
+            )
+
+            # Retry for any nodes the model missed
+            missing_keys = [k for k in original_text_map if k not in parsed_json]
+            if missing_keys:
+                logger.warning(
+                    "%s: %d/%d nodes were not translated, retrying missing nodes...",
+                    file_path.name, len(missing_keys), len(original_text_map),
+                )
+                retry_script = self.formatter.format_nodes(
+                    missing_keys, node_map, original_text_map
+                )
+                retry_response = self.provider.client.chat.completions.create(
+                    model=self.provider.model,
+                    messages=[
+                        {"role": "system", "content": self._build_system_prompt()},
+                        {"role": "user", "content": self._build_user_prompt(
+                            file_path.name, retry_script
+                        )},
+                    ],
+                    temperature=0.3,
+                    max_tokens=16384,
+                    response_format={"type": "json_object"},
+                )
+                retry_raw = retry_response.choices[0].message.content.strip()
+                retry_json = self._parse_json_response(retry_raw, file_path.name)
+                if retry_json:
+                    retry_translations = self._apply_translations(
+                        retry_json, original_text_map, handlers, file_path
+                    )
+                    translations.update(retry_translations)
+                    logger.info(
+                        "%s: retry recovered %d additional translations.",
+                        file_path.name, len(retry_translations),
+                    )
 
             return translations
 
         except Exception as e:
             logger.error(f"Contextual translation failed for {file_path.name}: {e}")
             return {}
+
+    def _parse_json_response(self, raw: str, filename: str) -> Optional[dict]:
+        """Parse a JSON object from a raw AI response string."""
+        try:
+            json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+            json_str = json_match.group(0) if json_match else raw
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            logger.error(
+                "Failed to parse JSON for %s: %s\nRaw: %s...",
+                filename, e, raw[:200],
+            )
+            return None
+
+    def _apply_translations(
+        self,
+        parsed_json: dict,
+        original_text_map: Dict[str, str],
+        handlers: Dict[str, Any],
+        file_path: Path,
+    ) -> Dict[str, str]:
+        """Restore tokens and build the original→translated mapping."""
+        translations = {}
+        for key, translated_sanitized in parsed_json.items():
+            if key not in original_text_map:
+                continue
+            original_text = original_text_map[key]
+            final_translated = restore_text(translated_sanitized, handlers[key])
+            translations[original_text] = final_translated
+
+            if self.config.translation_log:
+                try:
+                    log_entry = {
+                        "original": original_text,
+                        "translated": final_translated,
+                        "context": f"Dialog node {key} in {file_path.name}",
+                        "model": self.provider.model,
+                    }
+                    with open(self.config.translation_log, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                except Exception as log_e:
+                    logger.debug("Failed to write to translation log: %s", log_e)
+        return translations
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt containing world context and instructions."""

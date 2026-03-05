@@ -15,6 +15,7 @@ from .area_extractor import (
     DoorExtractor,
     StoreExtractor,
 )
+from .module_extractor import ModuleExtractor
 
 __all__ = [
     "BaseExtractor",
@@ -30,6 +31,7 @@ __all__ = [
     "PlaceableExtractor",
     "DoorExtractor",
     "StoreExtractor",
+    "ModuleExtractor",
 ]
 
 # Registry of all available extractors
@@ -43,6 +45,7 @@ EXTRACTOR_CLASSES = [
     PlaceableExtractor,
     DoorExtractor,
     StoreExtractor,
+    ModuleExtractor,
 ]
 
 

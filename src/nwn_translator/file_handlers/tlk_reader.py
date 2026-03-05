@@ -136,9 +136,11 @@ class TLKReader:
 
         logger.info(f"TLK: {tlk.entry_count} entries, language={self.LANGUAGES.get(tlk.language, tlk.language)}")
 
-        # Parse entry data
-        # Each entry has: [offset (4)] + [size (4)] + [sound_resref (16)] + [volume (4)]
-        entry_size = 28  # 4 + 4 + 16 + 4
+        # Parse entry data table (TLK V3.0 format)
+        # Each entry is 40 bytes:
+        #   Flags (4) | SoundResRef (16) | VolumeVariance (4) |
+        #   PitchVariance (4) | OffsetToString (4) | StringSize (4) | SoundLength (4)
+        entry_size = 40
         entries_offset = 20
 
         entries = []
@@ -149,30 +151,31 @@ class TLKReader:
                 logger.warning(f"Entry {i} exceeds file size")
                 break
 
-            string_offset = struct.unpack("<I", data[offset:offset+4])[0]
-            string_size = struct.unpack("<I", data[offset+4:offset+8])[0]
+            flags = struct.unpack("<I", data[offset:offset+4])[0]
 
-            # Sound resref (16 chars, null-terminated)
-            sound_data = data[offset+8:offset+24]
+            # SoundResRef (16 chars, null-terminated)
+            sound_data = data[offset+4:offset+20]
             sound_resref = sound_data.split(b'\x00')[0].decode('ascii', errors='ignore').strip()
 
-            # Volume
-            volume = struct.unpack("<I", data[offset+24:offset+28])[0]
+            volume = struct.unpack("<I", data[offset+20:offset+24])[0]
+            # pitch_variance = struct.unpack("<I", data[offset+24:offset+28])[0]
+            string_offset = struct.unpack("<I", data[offset+28:offset+32])[0]
+            string_size = struct.unpack("<I", data[offset+32:offset+36])[0]
+            # sound_length = struct.unpack("<f", data[offset+36:offset+40])[0]
 
-            # Extract string text
+            # Extract string text (only if TEXT_PRESENT flag is set, bit 0)
             text = ""
-            if string_size > 0 and string_offset > 0:
+            has_text = flags & 0x01
+            if has_text and string_size > 0:
                 abs_offset = string_data_offset + string_offset
                 if abs_offset + string_size <= len(data):
                     try:
-                        # NWN:EE uses UTF-8
-                        text_data = data[abs_offset:abs_offset+string_size-1]  # -1 for null terminator
+                        text_data = data[abs_offset:abs_offset+string_size]
                         text = text_data.decode('utf-8')
-                    except Exception as e:
-                        # Fallback to latin-1 for very old files
+                    except Exception:
                         try:
                             text = text_data.decode('latin-1')
-                        except:
+                        except Exception:
                             text = text_data.decode('utf-8', errors='ignore')
 
             entry = TLKEntry(text, sound_resref, volume)

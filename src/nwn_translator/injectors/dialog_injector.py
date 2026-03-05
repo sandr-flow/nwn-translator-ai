@@ -189,7 +189,7 @@ class GenericInjector(BaseInjector):
     This handles items, creatures, areas, placeables, doors, and stores.
     """
 
-    SUPPORTED_TYPES = ["item", "creature", "area", "trigger", "placeable", "door", "store"]
+    SUPPORTED_TYPES = ["item", "creature", "area", "trigger", "placeable", "door", "store", "module"]
 
     # Mapping of content types to GFF field names
     FIELD_MAP = {
@@ -218,6 +218,10 @@ class GenericInjector(BaseInjector):
         },
         "store": {
             "name": "LocalizedName",
+        },
+        "module": {
+            "name": "Mod_Name",
+            "description": "Mod_Description",
         },
     }
 

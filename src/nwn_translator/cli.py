@@ -143,6 +143,11 @@ def cli(ctx):
     default=True,
     help="Enable/disable contextual full-dialog translation (default: enabled)",
 )
+@click.option(
+    "--tlk",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to dialog.tlk for resolving StrRef-based names (auto-detected if not specified)",
+)
 def translate(
     input_file: Path,
     api_key: str,
@@ -158,6 +163,7 @@ def translate(
     quiet: bool,
     no_tokens: bool,
     context: bool,
+    tlk: Path,
 ):
     """Translate a NWN module file.
 
@@ -192,6 +198,7 @@ def translate(
         "skip_cleanup": skip_cleanup,
         "preserve_tokens": not no_tokens,
         "use_context": context,
+        "tlk_file": tlk,
         "verbose": verbose,
         "quiet": quiet,
     }

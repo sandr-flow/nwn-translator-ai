@@ -177,13 +177,23 @@ def translate(
         console.print("Set NWN_TRANSLATE_API_KEY environment variable or use --api-key")
         sys.exit(1)
 
-    # Generate output path if not specified
+    # Generate workspace and paths if output_file is not specified
     if not output_file:
-        output_file = create_output_path(input_file, target_lang)
-
-    # Generate log file path if not specified
-    if not log_file:
-        log_file = output_file.with_name(output_file.stem + "_log.jsonl")
+        lang_suffix = f"_{target_lang[:3].lower()}" if len(target_lang) > 3 else f"_{target_lang}"
+        workspace_dir = Path("workspace") / f"{input_file.stem}{lang_suffix}"
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        
+        output_file = workspace_dir / f"{input_file.stem}{lang_suffix}.mod"
+        
+        if not log_file:
+            log_file = workspace_dir / "translation_log.jsonl"
+            
+        if temp_dir is None:
+            temp_dir = workspace_dir / "temp"
+    else:
+        # Generate log file path if not specified, based on custom output path
+        if not log_file:
+            log_file = output_file.with_name(output_file.stem + "_log.jsonl")
 
     # Create configuration
     config_kwargs = {

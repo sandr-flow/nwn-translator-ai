@@ -17,6 +17,7 @@ test_modules/
 *.log
 translation_cache/
 .cache/
+workspace/
 
 # Environment / secrets
 .env

@@ -13,9 +13,8 @@ from .token_handler import (
     restore_text,
     extract_tokens,
 )
-from .context_builder import ContextBuilder
 
-# Lazy import for translation_manager which has external dependencies
+
 def __getattr__(name):
     if name == "TranslationManager":
         from .translation_manager import TranslationManager
@@ -25,6 +24,7 @@ def __getattr__(name):
         return translate_file
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 __all__ = [
     "TokenHandler",
     "TokenValidator",
@@ -33,7 +33,6 @@ __all__ = [
     "sanitize_text",
     "restore_text",
     "extract_tokens",
-    "ContextBuilder",
     "TranslationManager",
     "translate_file",
 ]

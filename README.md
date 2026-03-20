@@ -4,11 +4,11 @@ AI-powered tool for translating Neverwinter Nights modules from any language to 
 
 ## Features
 
-- **Provider-Agnostic Architecture**: Support for Grok (default), OpenAI, Gemini, and Mistral
+- **OpenRouter**: One API key gives access to many models (Claude, GPT, Gemini, DeepSeek, …)
 - **Smart Token Preservation**: Game tokens like `<FirstName>`, `<Class>`, etc. are preserved
 - **Context-Aware Translation**: Dialog trees are translated as complete units to maintain context
 - **Batch Processing**: Translates all dialog, journal, item, and area descriptions in a module
-- **Simple CLI**: Drop a .mod file, provide API key, get translated .mod file
+- **Simple CLI**: Put `NWN_TRANSLATE_API_KEY` in `.env`, then run translate with `--lang`
 
 ## Installation
 
@@ -18,9 +18,9 @@ pip install nwn-modules-translator
 
 ## Usage
 
-Basic translation:
+Basic translation (key from `.env` as `NWN_TRANSLATE_API_KEY`, or use `--api-key`):
 ```bash
-nwn-translate module.mod --api-key YOUR_API_KEY --lang spanish
+nwn-translate module.mod --lang spanish
 ```
 
 Specify output file:
@@ -28,9 +28,14 @@ Specify output file:
 nwn-translate module.mod --lang french -o module_fr.mod
 ```
 
-Use different AI provider:
+Pick an OpenRouter model:
 ```bash
-nwn-translate module.mod --lang russian --provider openai
+nwn-translate module.mod --lang russian --model anthropic/claude-3.5-sonnet
+```
+
+List default and popular models:
+```bash
+nwn-translate providers
 ```
 
 ## Supported Content Types

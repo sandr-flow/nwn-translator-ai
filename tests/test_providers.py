@@ -1,17 +1,16 @@
-"""Tests for AI provider functionality."""
+"""Tests for AI provider base types and create_provider (OpenRouter)."""
 
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import patch
 
 from src.nwn_translator.ai_providers.base import (
     BaseAIProvider,
-    ProviderFactory,
     TranslationItem,
     TranslationResult,
     ProviderError,
 )
-from src.nwn_translator.ai_providers.grok_provider import GrokProvider
-from src.nwn_translator.ai_providers.openai_provider import OpenAIProvider
+from src.nwn_translator.ai_providers import create_provider
+from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 
 
 class MockAIProvider(BaseAIProvider):
@@ -86,23 +85,15 @@ class TestBaseAIProvider:
         assert all(r.success for r in results)
 
 
-class TestProviderFactory:
-    """Tests for ProviderFactory."""
+class TestCreateProvider:
+    """Tests for create_provider factory."""
 
-    def test_register_provider(self):
-        """Test registering a provider."""
-        ProviderFactory.register("mock", MockAIProvider)
-        assert "mock" in ProviderFactory.list_providers()
-
-    def test_create_provider(self):
-        """Test creating a provider instance."""
-        provider = ProviderFactory.create("mock", "test-key")
-        assert isinstance(provider, MockAIProvider)
-
-    def test_create_unknown_provider_raises_error(self):
-        """Test that creating unknown provider raises error."""
-        with pytest.raises(ProviderError):
-            ProviderFactory.create("unknown", "test-key")
+    def test_create_returns_openrouter(self):
+        """create_provider must return OpenRouterProvider."""
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = create_provider("sk-or-test", model="openai/gpt-4o")
+        assert isinstance(p, OpenRouterProvider)
+        assert p.model == "openai/gpt-4o"
 
 
 class TestTranslationItem:
@@ -128,7 +119,7 @@ class TestTranslationResult:
     """Tests for TranslationResult."""
 
     def test_create_successful_result(self):
-        """Test creating successful result."""
+        """Test creating a successful result."""
         result = TranslationResult(
             translated="Hola", original="Hello", success=True
         )
@@ -138,23 +129,9 @@ class TestTranslationResult:
         assert result.error is None
 
     def test_create_failed_result(self):
-        """Test creating failed result."""
+        """Test creating a failed result."""
         result = TranslationResult(
             translated="", original="Hello", success=False, error="API error"
         )
         assert not result.success
         assert result.error == "API error"
-
-
-@pytest.mark.parametrize(
-    "provider_class,name",
-    [
-        (GrokProvider, "grok"),
-        (OpenAIProvider, "openai"),
-    ],
-)
-def test_provider_initialization(provider_class, name):
-    """Test that providers can be initialized."""
-    provider = provider_class(api_key="test-key")
-    assert provider.get_provider_name() == name
-    assert provider.api_key == "test-key"

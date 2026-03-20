@@ -8,7 +8,7 @@ import struct
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from nwn_translator.file_handlers.erf_reader import ERFReader
 
 

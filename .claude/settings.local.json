@@ -3,7 +3,9 @@
     "allow": [
       "WebSearch",
       "Bash(python:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)"
     ]
   }
 }

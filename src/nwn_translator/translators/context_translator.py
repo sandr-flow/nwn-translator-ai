@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from ..config import TranslationConfig
 from ..ai_providers import BaseAIProvider
+from ..translation_logging import translation_log_writer_for_config
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode
 from ..context.world_context import WorldContext
 from ..context.dialog_formatter import DialogFormatter
@@ -30,6 +31,10 @@ class ContextualTranslationManager:
         self.config = config
         self.provider = provider
         self.world_context = world_context
+        self._log_writer = translation_log_writer_for_config(
+            config.translation_log,
+            config.translation_log_writer,
+        )
         self.token_handler = TokenHandler(preserve_standard_tokens=config.preserve_tokens)
         self.formatter = DialogFormatter()
 
@@ -186,18 +191,16 @@ class ContextualTranslationManager:
             final_translated = restore_text(translated_sanitized, handlers[key])
             translations[original_text] = final_translated
 
-            if self.config.translation_log:
-                try:
-                    log_entry = {
-                        "original": original_text,
-                        "translated": final_translated,
-                        "context": f"Dialog node {key} in {file_path.name}",
-                        "model": self.provider.model,
-                    }
-                    with open(self.config.translation_log, "a", encoding="utf-8") as f:
-                        f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-                except Exception as log_e:
-                    logger.debug("Failed to write to translation log: %s", log_e)
+            log_entry = {
+                "original": original_text,
+                "translated": final_translated,
+                "context": f"Dialog node {key} in {file_path.name}",
+                "model": self.provider.model,
+            }
+            try:
+                self._log_writer.write(log_entry)
+            except Exception as log_e:
+                logger.debug("Failed to write to translation log: %s", log_e)
         return translations
 
     def _build_system_prompt(self) -> str:

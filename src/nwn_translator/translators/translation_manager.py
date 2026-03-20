@@ -4,7 +4,6 @@ This module manages the translation workflow, coordinating between extractors,
 AI providers, and injectors.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from tqdm import tqdm
 
 from ..config import TranslationConfig
+from ..translation_logging import translation_log_writer_for_config
 from ..extractors import get_extractor_for_file, ExtractedContent
 from ..injectors import get_injector_for_content
 from ..ai_providers import BaseAIProvider, TranslationItem, TranslationResult
@@ -32,6 +32,10 @@ class TranslationManager:
         """
         self.config = config
         self.provider = provider
+        self._log_writer = translation_log_writer_for_config(
+            config.translation_log,
+            config.translation_log_writer,
+        )
         self.token_handler = TokenHandler(preserve_standard_tokens=config.preserve_tokens)
 
         # Statistics
@@ -96,12 +100,29 @@ class TranslationManager:
         # Per-session cache check
         # Avoids duplicate API calls when the same string appears multiple times across files.
 
-        for item_data in tqdm(
-            translation_items,
-            desc=f"Translating {content.content_type}",
-            disable=self.config.quiet,
-            leave=False,
-        ):
+        use_tqdm = (
+            not self.config.quiet
+            and self.config.progress_callback is None
+        )
+        iterable = (
+            tqdm(
+                translation_items,
+                desc=f"Translating {content.content_type}",
+                disable=False,
+                leave=False,
+            )
+            if use_tqdm
+            else translation_items
+        )
+        n_items = len(translation_items)
+        for idx, item_data in enumerate(iterable):
+            if self.config.progress_callback is not None:
+                self.config.progress_callback(
+                    "translating_item",
+                    idx,
+                    n_items,
+                    content.content_type,
+                )
             item = item_data["item"]
             sanitized = item_data["sanitized"]
             handler = item_data["handler"]
@@ -128,20 +149,16 @@ class TranslationManager:
                     translations[item.text] = translated
                     self.stats["items_translated"] += 1
                     
-                    # Log translation to JSONL if enabled
-                    if self.config.translation_log:
-                        try:
-                            # Use dict representation
-                            log_entry = {
-                                "original": item.text,
-                                "translated": translated,
-                                "context": item.context,
-                                "model": result.metadata.get("model", self.config.model)
-                            }
-                            with open(self.config.translation_log, "a", encoding="utf-8") as f:
-                                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-                        except Exception as log_e:
-                            logger.debug("Failed to write to translation log: %s", log_e)
+                    log_entry = {
+                        "original": item.text,
+                        "translated": translated,
+                        "context": item.context,
+                        "model": result.metadata.get("model", self.config.model),
+                    }
+                    try:
+                        self._log_writer.write(log_entry)
+                    except Exception as log_e:
+                        logger.debug("Failed to write to translation log: %s", log_e)
                 else:
                     error_msg = f"Translation failed for {item.item_id}: {result.error}"
                     self.stats["errors"].append(error_msg)

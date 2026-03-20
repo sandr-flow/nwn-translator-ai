@@ -23,10 +23,10 @@ class TestOpenRouterProviderInit:
         assert p.get_provider_name() == "openrouter"
 
     def test_default_model(self):
-        """Default model must be openai/gpt-oss-120b."""
+        """Default model must match OpenRouterProvider.DEFAULT_MODEL."""
         with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
             p = OpenRouterProvider(api_key=FAKE_KEY)
-        assert p.model == "openai/gpt-oss-120b"
+        assert p.model == OpenRouterProvider.DEFAULT_MODEL
 
     def test_custom_model(self):
         """Custom model slug is stored correctly."""
@@ -132,11 +132,12 @@ class TestOpenRouterTranslate:
         assert all(r.translated == "OK" for r in results)
 
 
-class TestOpenRouterFactoryRegistration:
-    """Verify the provider is registered in ProviderFactory."""
+class TestCreateProvider:
+    """Verify create_provider returns OpenRouter."""
 
-    def test_registered_in_factory(self):
-        """'openrouter' must appear in ProviderFactory.list_providers()."""
-        from src.nwn_translator.ai_providers.base import ProviderFactory
-        import src.nwn_translator.ai_providers  # noqa: F401 – triggers registration
-        assert "openrouter" in ProviderFactory.list_providers()
+    def test_create_provider_returns_openrouter(self):
+        from src.nwn_translator.ai_providers import create_provider
+
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = create_provider(FAKE_KEY)
+        assert p.get_provider_name() == "openrouter"

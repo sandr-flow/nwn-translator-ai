@@ -8,9 +8,12 @@ import logging
 import struct
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from tqdm import tqdm
+
+# phase, current (0-based), total, optional message (e.g. resource name)
+ProgressCallback = Optional[Callable[[str, int, int, Optional[str]], None]]
 
 logger = logging.getLogger(__name__)
 
@@ -206,11 +209,12 @@ class ERFReader:
         2058: ".utw",   # Waypoint
     }
 
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, progress_callback: ProgressCallback = None):
         """Initialize ERF reader.
 
         Args:
             file_path: Path to ERF file (.mod, .erf, .hak)
+            progress_callback: If set, tqdm is not used; called per entry during extract.
 
         Raises:
             ERFReaderError: If file cannot be read
@@ -219,6 +223,7 @@ class ERFReader:
         self.header: Optional[ERFHeader] = None
         self.entries: List[ERFEntry] = []
         self.temp_dir: Optional[tempfile.TemporaryDirectory] = None
+        self.progress_callback = progress_callback
 
         if not self.file_path.exists():
             raise ERFReaderError(f"File not found: {file_path}")
@@ -364,6 +369,18 @@ class ERFReader:
 
         return result
 
+    def _write_entry_to_dir(self, fp, entry: ERFEntry, output_dir: Path) -> None:
+        """Read one entry from open file handle and write to output_dir."""
+        if entry.offset == 0xFFFFFFFF:  # Skip empty entries
+            return
+        res_type = self.detect_type_from_header(entry)
+        raw_filename = f"{entry.res_ref}{res_type}"
+        filename = self._sanitize_filename(raw_filename)
+        output_path = output_dir / filename
+        fp.seek(entry.offset)
+        resource_data = fp.read(entry.size)
+        output_path.write_bytes(resource_data)
+
     def extract_all(self, output_dir: Optional[Path] = None) -> Path:
         """Extract all resources to a temporary directory.
 
@@ -387,29 +404,19 @@ class ERFReader:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Extract each resource
+        total = len(self.entries)
         with open(self.file_path, "rb") as f:
-            for entry in tqdm(
-                self.entries,
-                desc="Extracting ERF",
-                disable=None,
-            ):
-                if entry.offset == 0xFFFFFFFF:  # Skip empty entries
-                    continue
-
-                # Determine filename with sanitization
-                # Use detection for reliability
-                res_type = self.detect_type_from_header(entry)
-                raw_filename = f"{entry.res_ref}{res_type}"
-                filename = self._sanitize_filename(raw_filename)
-                output_path = output_dir / filename
-
-                # Extract resource data
-                f.seek(entry.offset)
-                resource_data = f.read(entry.size)
-
-                # Write to file
-                output_path.write_bytes(resource_data)
+            if self.progress_callback is None:
+                for entry in tqdm(
+                    self.entries,
+                    desc="Extracting ERF",
+                    disable=None,
+                ):
+                    self._write_entry_to_dir(f, entry, output_dir)
+            else:
+                for i, entry in enumerate(self.entries):
+                    self.progress_callback("extracting", i, total, entry.res_ref)
+                    self._write_entry_to_dir(f, entry, output_dir)
 
         return output_dir
 

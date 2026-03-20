@@ -45,10 +45,11 @@ class OpenRouterProvider(BaseAIProvider):
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
     #: Default model — change via config or ``--model`` CLI flag.
-    DEFAULT_MODEL = "openai/gpt-oss-120b"
+    DEFAULT_MODEL = "minimax/minimax-m2.7"
 
     #: A curated shortlist for reference; not an exhaustive list.
     POPULAR_MODELS = [
+        "minimax/minimax-m2.7",
         "openai/gpt-oss-120b",
         "openai/gpt-4o",
         "anthropic/claude-3.5-sonnet",
@@ -70,11 +71,11 @@ class OpenRouterProvider(BaseAIProvider):
 
         Args:
             api_key: OpenRouter API key (sk-or-…).
-            model: Model slug (default: openai/gpt-oss-120b).
+            model: Model slug (default: minimax/minimax-m2.7).
             site_url: Your app's URL, forwarded as HTTP-Referer header.
                 OpenRouter uses this for attribution / rate-limit tiers.
             site_name: Your app's name, forwarded as X-Title header.
-            **kwargs: Ignored (kept for compatibility with ProviderFactory).
+            **kwargs: Ignored (reserved for forward compatibility).
         """
         self.site_url = site_url
         self.site_name = site_name

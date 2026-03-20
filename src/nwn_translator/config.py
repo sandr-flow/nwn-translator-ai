@@ -3,22 +3,22 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
-from dotenv import load_dotenv
+from .translation_logging import TranslationLogWriter
 
-# Load environment variables from .env file
-load_dotenv()
+
+# Callback: phase, current index (0-based), total count, optional message (e.g. filename).
+ProgressCallback = Callable[[str, int, int, Optional[str]], None]
 
 
 @dataclass
 class TranslationConfig:
     """Configuration for translation operations."""
 
-    # API Configuration
+    # API Configuration (OpenRouter only)
     api_key: str = field(default_factory=lambda: os.getenv("NWN_TRANSLATE_API_KEY", ""))
-    provider: str = "grok"
-    model: Optional[str] = None  # Uses provider default if None
+    model: Optional[str] = None  # Uses OpenRouter default if None
 
     # Language Configuration
     source_lang: str = "auto"  # Auto-detect if possible
@@ -28,7 +28,9 @@ class TranslationConfig:
     input_file: Path = field(default_factory=Path)
     output_file: Optional[Path] = None
     translation_log: Optional[Path] = None
-    
+    #: Optional injected writer (e.g. for web/DB). If set, used instead of ``translation_log`` file.
+    translation_log_writer: Optional[TranslationLogWriter] = None
+
     # Advanced features
     use_context: bool = True
     tlk_file: Optional[Path] = None  # Path to dialog.tlk for resolving StrRef names
@@ -56,6 +58,8 @@ class TranslationConfig:
     # Progress Reporting
     verbose: bool = False
     quiet: bool = False
+    #: If set, tqdm is not used; caller receives progress (for SSE/WebSocket, etc.).
+    progress_callback: Optional[ProgressCallback] = None
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -65,25 +69,10 @@ class TranslationConfig:
         if self.translation_log and isinstance(self.translation_log, str):
             self.translation_log = Path(self.translation_log)
 
-        # Set default model based on provider if not specified
         if self.model is None:
-            self.model = self._get_default_model()
+            from .ai_providers.openrouter_provider import OpenRouterProvider
 
-        # Validate provider
-        valid_providers = ["grok", "openai", "gemini", "mistral", "openrouter"]
-        if self.provider not in valid_providers:
-            raise ValueError(f"Invalid provider: {self.provider}. Must be one of {valid_providers}")
-
-    def _get_default_model(self) -> str:
-        """Get default model for the selected provider."""
-        default_models = {
-            "grok": "grok-2",
-            "openai": "gpt-4o-mini",
-            "gemini": "gemini-pro",
-            "mistral": "mistral-medium",
-            "openrouter": "openai/gpt-oss-120b",
-        }
-        return default_models.get(self.provider, "grok-2")
+            self.model = OpenRouterProvider.DEFAULT_MODEL
 
     def get_api_key(self) -> str:
         """Get API key, prompting if necessary."""
@@ -133,7 +122,7 @@ STANDARD_TOKENS = [
     "<CustomToken:",
 ]
 
-# Translatable file extensions in NWN modules
+# Translatable file extensions in NWN modules (only types with extractors)
 TRANSLATABLE_TYPES = {
     ".dlg": "Dialog",
     ".jrl": "Journal",
@@ -144,7 +133,5 @@ TRANSLATABLE_TYPES = {
     ".utp": "Placeable",
     ".utd": "Door",
     ".utm": "Store",
-    ".itp": "Palette",
-    ".fac": "Faction",
     ".ifo": "Module Info",
 }

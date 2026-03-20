@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 # Add project to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from nwn_translator.file_handlers.erf_reader import ERFReader
 
 

@@ -3,7 +3,7 @@
 __version__ = "0.1.0"
 __author__ = "Open Source Community"
 
-from .config import TranslationConfig, create_output_path
+from .config import ProgressCallback, TranslationConfig, create_output_path
 
 # Lazy imports for optional dependencies
 def __getattr__(name):
@@ -19,6 +19,7 @@ def __getattr__(name):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
+    "ProgressCallback",
     "TranslationConfig",
     "create_output_path",
     "translate_module",

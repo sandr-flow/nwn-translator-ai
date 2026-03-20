@@ -6,7 +6,6 @@ ensuring a consistent API across different AI services.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
@@ -68,8 +67,7 @@ class TranslationResult:
 class BaseAIProvider(ABC):
     """Abstract base class for AI translation providers.
 
-    All AI providers must implement this interface to ensure consistent behavior
-    across different AI services (Grok, OpenAI, Gemini, Mistral, etc.).
+    All AI providers must implement this interface for translation and batch APIs.
     """
 
     def __init__(
@@ -216,60 +214,3 @@ class BaseAIProvider(ABC):
     def __repr__(self) -> str:
         """String representation of the provider."""
         return f"{self.get_provider_name()}(model={self.model})"
-
-
-class ProviderFactory:
-    """Factory for creating AI provider instances."""
-
-    _providers: Dict[str, type[BaseAIProvider]] = {}
-
-    @classmethod
-    def register(cls, name: str, provider_class: type[BaseAIProvider]) -> None:
-        """Register a provider class.
-
-        Args:
-            name: Provider name (e.g., "grok", "openai")
-            provider_class: Provider class that implements BaseAIProvider
-        """
-        cls._providers[name.lower()] = provider_class
-
-    @classmethod
-    def create(
-        cls,
-        provider_name: str,
-        api_key: str,
-        model: Optional[str] = None,
-        **kwargs
-    ) -> BaseAIProvider:
-        """Create a provider instance.
-
-        Args:
-            provider_name: Name of the provider to create
-            api_key: API key for authentication
-            model: Model identifier (optional)
-            **kwargs: Additional provider-specific parameters
-
-        Returns:
-            Instance of the requested provider
-
-        Raises:
-            ProviderError: If provider is not found
-        """
-        provider_class = cls._providers.get(provider_name.lower())
-        if not provider_class:
-            available = ", ".join(cls._providers.keys())
-            raise ProviderError(
-                f"Unknown provider: {provider_name}. "
-                f"Available providers: {available}"
-            )
-
-        return provider_class(api_key=api_key, model=model, **kwargs)
-
-    @classmethod
-    def list_providers(cls) -> List[str]:
-        """List all registered providers.
-
-        Returns:
-            List of provider names
-        """
-        return list(cls._providers.keys())

@@ -19,10 +19,8 @@ from tqdm import tqdm
 from .config import TranslationConfig, TRANSLATABLE_TYPES
 from .file_handlers import (
     ERFReader,
-    ERFWriter,
     create_mod_from_directory,
     read_gff,
-    write_gff,
 )
 from .file_handlers.tlk_reader import parse_tlk, find_dialog_tlk, TLKFile
 from .extractors import get_extractor_for_file
@@ -51,7 +49,6 @@ class ModuleTranslator:
 
         # Create AI provider
         self.provider = create_provider(
-            config.provider,
             config.api_key,
             config.model,
         )
@@ -80,7 +77,7 @@ class ModuleTranslator:
         """
         logger.info(f"Starting translation of {self.config.input_file}")
         logger.info(f"Target language: {self.config.target_lang}")
-        logger.info(f"Provider: {self.config.provider} ({self.config.model})")
+        logger.info(f"OpenRouter model: {self.config.model}")
 
         # Step 1: Extract module
         logger.info("Extracting module...")
@@ -113,7 +110,17 @@ class ModuleTranslator:
         # Accumulate all translations (original_text -> translated_text)
         all_translations: Dict[str, str] = {}
 
-        for file_path in tqdm(translatable_files, desc="Translating"):
+        total_files = len(translatable_files)
+        file_iterator = (
+            tqdm(translatable_files, desc="Translating")
+            if self.config.progress_callback is None
+            else translatable_files
+        )
+        for idx, file_path in enumerate(file_iterator):
+            if self.config.progress_callback is not None:
+                self.config.progress_callback(
+                    "translating", idx, total_files, file_path.name
+                )
             try:
                 file_translations = self._translate_file(file_path, manager, context_manager)
                 if file_translations:
@@ -159,7 +166,10 @@ class ModuleTranslator:
         )
         extract_dir = Path(self.temp_dir.name)
 
-        reader = ERFReader(self.config.input_file)
+        reader = ERFReader(
+            self.config.input_file,
+            progress_callback=self.config.progress_callback,
+        )
         reader.read_entries()
 
         # Extract all files

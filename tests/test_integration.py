@@ -8,8 +8,8 @@ from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.translators.token_handler import TokenHandler
 from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
 from src.nwn_translator.injectors.dialog_injector import DialogInjector
-from src.nwn_translator.ai_providers.grok_provider import GrokProvider
-from unittest.mock import Mock, patch
+from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from unittest.mock import MagicMock, Mock, patch
 
 
 class TestTokenPreservationWorkflow:
@@ -37,11 +37,14 @@ class TestTokenPreservationWorkflow:
 class TestDialogExtractionAndInjection:
     """Tests for dialog extraction and injection workflow."""
 
-    def test_extract_and_inject_dialog(self):
-        """Test extracting and re-injecting dialog content."""
+    @patch("src.nwn_translator.injectors.dialog_injector.GFFPatcher")
+    def test_extract_and_inject_dialog(self, mock_patcher_cls):
+        """Test extracting and re-injecting dialog content (binary patch via GFFPatcher)."""
+        mock_patcher = MagicMock()
+        mock_patcher_cls.return_value = mock_patcher
         file_path = Path("test_dialog.dlg")
 
-        # Original GFF data
+        # Original GFF data (offsets required for GFFPatcher path)
         original_gff = {
             "StructType": "DLG",
             "EntryList": [
@@ -50,12 +53,14 @@ class TestDialogExtractionAndInjection:
                     "Text": {"StrRef": -1, "Value": "Greetings, traveler."},
                     "Speaker": "Innkeeper",
                     "EntriesList": [],
+                    "_record_offsets": {"Text": 100},
                 }
             ],
             "ReplyList": [
                 {
                     "Text": {"StrRef": -1, "Value": "Hello, innkeeper."},
                     "EntriesList": [],
+                    "_record_offsets": {"Text": 200},
                 }
             ],
         }
@@ -82,30 +87,26 @@ class TestDialogExtractionAndInjection:
 
         assert result.modified
         assert result.items_updated == 2
-
-        # Verify injection
-        entry_text = original_gff["EntryList"][0]["Text"]["Value"]
-        assert entry_text == "¡Saludos, viajero!"
+        assert mock_patcher.patch_local_string.call_count == 2
+        mock_patcher.patch_local_string.assert_any_call(100, "¡Saludos, viajero!")
+        mock_patcher.patch_local_string.assert_any_call(200, "Hola, posadero.")
 
 
 class TestEndToEndWorkflow:
     """Tests for complete end-to-end workflow."""
 
-    @patch("src.nwn_translator.ai_providers.grok_provider.OpenAI")
+    @patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI")
     def test_simple_dialog_translation_workflow(self, mock_openai):
-        """Test complete workflow with mocked AI provider."""
-        # Mock the OpenAI client
+        """Test complete workflow with mocked OpenRouter client."""
         mock_client = Mock()
         mock_response = Mock()
         mock_response.choices = [Mock()]
-        mock_response.choices[0].message.content = "¡Hola viajero!"
+        mock_response.choices[0].message.content = '{"translation": "¡Hola viajero!"}'
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.return_value = mock_client
 
-        # Create provider
-        provider = GrokProvider(api_key="test-key")
+        provider = OpenRouterProvider(api_key="test-key")
 
-        # Test translation
         result = provider.translate("Hello traveler", "english", "spanish")
 
         assert result.success
@@ -124,7 +125,7 @@ class TestEndToEndWorkflow:
                 target_lang="spanish",
             )
 
-            assert config.provider == "grok"
+            assert config.model == OpenRouterProvider.DEFAULT_MODEL
             assert config.target_lang == "spanish"
             assert config.preserve_tokens is True
 

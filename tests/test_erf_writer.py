@@ -172,19 +172,19 @@ class TestERFWriterRoundTrip:
         assert "sword_fire" in names
 
     def test_resource_type_id_dlg(self):
-        """Dialog resources must have correct type ID (27)."""
+        """Dialog resources use NWN:EE-style type IDs from ERFWriter map."""
         entries = _write_and_read({"x.dlg": b"content"})
-        assert entries[0].res_type == 27
+        assert entries[0].res_type == ERFWriter.RESOURCE_TYPE_IDS[".dlg"]
 
     def test_resource_type_id_uti(self):
-        """Item resources must have the correct type ID (11)."""
+        """Item resources use NWN:EE-style type IDs from ERFWriter map."""
         entries = _write_and_read({"x.uti": b"content"})
-        assert entries[0].res_type == 11
+        assert entries[0].res_type == ERFWriter.RESOURCE_TYPE_IDS[".uti"]
 
     def test_resource_type_id_jrl(self):
-        """Journal resources must have the correct type ID (43)."""
+        """Journal resources use NWN:EE-style type IDs from ERFWriter map."""
         entries = _write_and_read({"x.jrl": b"content"})
-        assert entries[0].res_type == 43
+        assert entries[0].res_type == ERFWriter.RESOURCE_TYPE_IDS[".jrl"]
 
     def test_resource_size_correct(self):
         """Resource size in Resource List must match actual data length."""

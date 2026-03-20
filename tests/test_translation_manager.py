@@ -27,8 +27,7 @@ def _make_config(**kwargs) -> TranslationConfig:
     """Return a minimal TranslationConfig with sensible defaults."""
     defaults = dict(
         api_key="test-key",
-        provider="grok",
-        model="grok-2",
+        model="minimax/minimax-m2.7",
         source_lang="english",
         target_lang="russian",
         input_file=Path("test.mod"),

@@ -4,18 +4,19 @@ This module provides the CLI for translating Neverwinter Nights modules.
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
-from rich.progress import Progress
 
-from .config import TranslationConfig, create_output_path, STANDARD_TOKENS
+from .ai_providers import OpenRouterProvider, create_provider
+from .config import TranslationConfig, STANDARD_TOKENS
 from .main import translate_module
-from .ai_providers import ProviderFactory, create_provider
 
 # Setup console and logging
 console = Console()
@@ -51,7 +52,9 @@ def cli(ctx):
     Translate .mod files from any language to any language using AI.
 
     Example:
-        nwn-translate module.mod --api-key YOUR_KEY --lang spanish
+        nwn-translate module.mod --lang spanish
+
+    Put ``NWN_TRANSLATE_API_KEY`` in a ``.env`` file (or the environment); ``--api-key`` is optional.
     """
     if ctx.invoked_subcommand is None:
         console.print(Panel.fit(
@@ -72,7 +75,7 @@ def cli(ctx):
     "--api-key",
     "-k",
     envvar="NWN_TRANSLATE_API_KEY",
-    help="API key for the AI provider",
+    help="OpenRouter API key (optional if NWN_TRANSLATE_API_KEY is set, e.g. in .env)",
 )
 @click.option(
     "--lang",
@@ -88,16 +91,9 @@ def cli(ctx):
     help="Source language (default: auto-detect)",
 )
 @click.option(
-    "--provider",
-    "-p",
-    default="openrouter",
-    type=click.Choice(["grok", "openai", "gemini", "mistral", "openrouter"], case_sensitive=False),
-    help="AI provider to use (default: openrouter)",
-)
-@click.option(
     "--model",
     "-m",
-    help="Model to use (provider default if not specified)",
+    help="OpenRouter model slug (default from config / OpenRouterProvider)",
 )
 @click.option(
     "--output",
@@ -153,7 +149,6 @@ def translate(
     api_key: str,
     target_lang: str,
     source_lang: str,
-    provider: str,
     model: str,
     output_file: Path,
     temp_dir: Path,
@@ -170,12 +165,6 @@ def translate(
     INPUT_FILE: Path to the .mod file to translate
     """
     setup_logging(verbose, quiet)
-
-    # Validate API key
-    if not api_key:
-        console.print("[bold red]Error:[/bold red] API key is required!")
-        console.print("Set NWN_TRANSLATE_API_KEY environment variable or use --api-key")
-        sys.exit(1)
 
     # Generate workspace and paths if output_file is not specified
     if not output_file:
@@ -195,10 +184,8 @@ def translate(
         if not log_file:
             log_file = output_file.with_name(output_file.stem + "_log.jsonl")
 
-    # Create configuration
+    # Create configuration (omit empty api_key so TranslationConfig reads .env / os.environ)
     config_kwargs = {
-        "api_key": api_key,
-        "provider": provider,
         "model": model,
         "source_lang": source_lang,
         "target_lang": target_lang,
@@ -215,7 +202,9 @@ def translate(
     
     if temp_dir is not None:
         config_kwargs["temp_dir"] = temp_dir
-        
+    if api_key:
+        config_kwargs["api_key"] = api_key
+
     config = TranslationConfig(**config_kwargs)
 
     # Display translation info
@@ -223,7 +212,7 @@ def translate(
         console.print(f"\n[bold]Translation Configuration:[/bold]")
         console.print(f"  Input: {input_file}")
         console.print(f"  Output: {output_file}")
-        console.print(f"  Provider: {provider}" + (f" ({model})" if model else ""))
+        console.print(f"  OpenRouter model: {model or OpenRouterProvider.DEFAULT_MODEL}")
         console.print(f"  Target: {target_lang}")
         console.print(f"  Log file: {log_file}")
         console.print(f"  Preserve tokens: {not no_tokens}\n")
@@ -246,16 +235,9 @@ def translate(
 
 @cli.command()
 @click.option(
-    "--provider",
-    "-p",
-    default="openrouter",
-    type=click.Choice(["grok", "openai", "gemini", "mistral", "openrouter"], case_sensitive=False),
-    help="AI provider",
-)
-@click.option(
     "--model",
     "-m",
-    help="Model identifier",
+    help="OpenRouter model slug",
 )
 @click.option(
     "--text",
@@ -273,31 +255,36 @@ def translate(
     "--api-key",
     "-k",
     envvar="NWN_TRANSLATE_API_KEY",
-    required=True,
-    help="API key",
+    help="OpenRouter API key (optional if NWN_TRANSLATE_API_KEY is set, e.g. in .env)",
 )
 def test(
-    provider: str,
     model: str,
     text: str,
     target_lang: str,
     api_key: str,
 ):
-    """Test the AI provider with a simple translation.
+    """Test OpenRouter with a simple translation.
 
-    Useful for verifying API key and provider configuration.
+    Useful for verifying API key and model configuration.
     """
     setup_logging()
 
     if not text:
         text = "Hello, welcome to my module!"
 
-    console.print(f"[bold]Testing {provider} provider[/bold]")
+    console.print("[bold]Testing OpenRouter[/bold]")
     console.print(f"Text: {text}")
     console.print(f"Target: {target_lang}\n")
 
     try:
-        provider_instance = create_provider(provider, api_key, model)
+        key = api_key or os.environ.get("NWN_TRANSLATE_API_KEY", "")
+        if not key.strip():
+            console.print(
+                "[bold red]Error:[/bold red] Set NWN_TRANSLATE_API_KEY in .env "
+                "or pass --api-key"
+            )
+            sys.exit(1)
+        provider_instance = create_provider(key, model)
         result = provider_instance.translate(text, "english", target_lang)
 
         if result.success:
@@ -324,50 +311,24 @@ def tokens():
     console.print("\n[dim]Custom tokens like <CustomToken:123> are also preserved.[/dim]")
 
 
-@cli.command()
-def providers():
-    """List available AI providers."""
+@cli.command("providers")
+def list_providers():
+    """Show OpenRouter default model and a short list of popular model slugs."""
     setup_logging()
 
-    console.print("[bold]Available AI Providers:[/bold]\n")
-
-    providers_info = {
-        "openrouter": {
-            "name": "OpenRouter",
-            "default_model": "openai/gpt-oss-120b",
-            "description": "Gateway to 100+ models (Claude, GPT, Gemini, DeepSeek…)",
-        },
-        "grok": {
-            "name": "Grok (xAI)",
-            "default_model": "grok-2",
-            "description": "Fast and affordable",
-        },
-        "openai": {
-            "name": "OpenAI",
-            "default_model": "gpt-4o-mini",
-            "description": "GPT-4 and GPT-4o models",
-        },
-        "gemini": {
-            "name": "Gemini (Google)",
-            "default_model": "gemini-pro",
-            "description": "Google's Gemini models",
-        },
-        "mistral": {
-            "name": "Mistral AI",
-            "default_model": "mistral-medium",
-            "description": "Mistral AI models",
-        },
-    }
-
-    for provider_id, info in providers_info.items():
-        console.print(f"  [cyan]{provider_id}[/cyan]")
-        console.print(f"    Name: {info['name']}")
-        console.print(f"    Default: {info['default_model']}")
-        console.print(f"    {info['description']}\n")
+    console.print("[bold]OpenRouter[/bold] (https://openrouter.ai)\n")
+    console.print(f"  Default model: [cyan]{OpenRouterProvider.DEFAULT_MODEL}[/cyan]\n")
+    console.print("[dim]Popular model slugs (pass with --model):[/dim]\n")
+    for slug in OpenRouterProvider.POPULAR_MODELS:
+        console.print(f"  • {slug}")
+    console.print(
+        "\n[dim]See https://openrouter.ai/models for the full catalog.[/dim]"
+    )
 
 
 def main():
     """Main entry point for the CLI."""
+    load_dotenv()
     cli()
 
 

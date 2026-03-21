@@ -141,7 +141,7 @@ class OpenRouterProvider(BaseAIProvider):
     @property
     def async_client(self) -> AsyncOpenAI:
         """Get or create an AsyncOpenAI client bound to the current event loop.
-        
+
         This prevents httpx connection pool errors when using a ThreadPoolExecutor
         where each thread runs its own asyncio event loop."""
         try:
@@ -149,7 +149,7 @@ class OpenRouterProvider(BaseAIProvider):
             loop_id = id(loop)
         except RuntimeError:
             loop_id = None
-            
+
         if getattr(self._thread_local, "last_loop_id", None) != loop_id:
             self._thread_local.last_loop_id = loop_id
             self._thread_local.async_client = AsyncOpenAI(
@@ -160,6 +160,17 @@ class OpenRouterProvider(BaseAIProvider):
                 max_retries=0,
             )
         return self._thread_local.async_client
+
+    async def close_async_client(self) -> None:
+        """Explicitly close the thread-local async client (call before loop shutdown)."""
+        client = getattr(self._thread_local, "async_client", None)
+        if client is not None:
+            try:
+                await client.close()
+            except Exception:
+                pass
+            self._thread_local.async_client = None
+            self._thread_local.last_loop_id = None
 
     def get_default_model(self) -> str:
         """Get the default OpenRouter model.
@@ -246,7 +257,7 @@ class OpenRouterProvider(BaseAIProvider):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.3,
+                temperature=0.7,
                 response_format={"type": "json_object"},
             )
 
@@ -297,7 +308,7 @@ class OpenRouterProvider(BaseAIProvider):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.3,
+                temperature=0.7,
                 response_format={"type": "json_object"},
             )
 
@@ -361,7 +372,7 @@ class OpenRouterProvider(BaseAIProvider):
         user_prompt: str,
         *,
         max_tokens: int = 16384,
-        temperature: float = 0.3,
+        temperature: float = 0.7,
     ) -> str:
         """Single chat completion with OpenAI/OpenRouter ``json_object`` mode."""
         return await self._chat_completion_json_async(
@@ -386,7 +397,7 @@ class OpenRouterProvider(BaseAIProvider):
         *,
         glossary_keys: List[str],
         max_tokens: int = 8192,
-        temperature: float = 0.2,
+        temperature: float = 0.4,
     ) -> str:
         """Glossary batch: prefer strict ``json_schema`` (structured outputs), else ``json_object``."""
         keys = sorted({str(k).strip() for k in glossary_keys if str(k).strip()})

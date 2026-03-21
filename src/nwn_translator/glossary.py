@@ -269,7 +269,7 @@ class GlossaryBuilder:
                     user_prompt,
                     glossary_keys=keys_for_schema,
                     max_tokens=8192,
-                    temperature=0.2,
+                    temperature=0.4,
                 )
             return await provider.complete_json_chat_async(
                 system_prompt,
@@ -279,7 +279,7 @@ class GlossaryBuilder:
             )
 
         from .async_utils import run_async
-        return run_async(_call())
+        return run_async(_call(), cleanup=provider.close_async_client)
 
     @staticmethod
     def _parse_glossary_json(raw: str, expected_keys: Set[str]) -> Dict[str, str]:

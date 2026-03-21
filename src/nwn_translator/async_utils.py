@@ -3,25 +3,52 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Coroutine, TypeVar
+import logging
+from typing import Callable, Coroutine, Optional, TypeVar
 
 T = TypeVar("T")
 
+logger = logging.getLogger(__name__)
 
-def run_async(coro: Coroutine[object, object, T]) -> T:
+
+def _cancel_all_tasks(loop: asyncio.AbstractEventLoop) -> None:
+    """Cancel every remaining task on *loop* and await their cancellation."""
+    to_cancel = asyncio.all_tasks(loop)
+    if not to_cancel:
+        return
+    for task in to_cancel:
+        task.cancel()
+    loop.run_until_complete(asyncio.gather(*to_cancel, return_exceptions=True))
+
+
+def run_async(
+    coro: Coroutine[object, object, T],
+    *,
+    cleanup: Optional[Callable[[], Coroutine]] = None,
+) -> T:
     """Run an async coroutine from synchronous code.
 
-    Tries ``asyncio.run()`` first; falls back to creating a new event loop
-    when a loop is already running (e.g. inside a thread spawned by an
-    async framework).
+    Args:
+        coro: The coroutine to execute.
+        cleanup: Optional async callable invoked **before** the loop is closed.
+            Use this to tear down async resources (e.g. ``AsyncOpenAI`` clients)
+            while the event loop is still alive, preventing
+            ``RuntimeError: Event loop is closed`` from httpx on Windows.
     """
+    loop = asyncio.new_event_loop()
     try:
-        return asyncio.run(coro)
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
         try:
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
+            if cleanup is not None:
+                try:
+                    loop.run_until_complete(cleanup())
+                except Exception:
+                    pass
+            _cancel_all_tasks(loop)
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            pass
+        loop.close()
+        asyncio.set_event_loop(None)

@@ -157,14 +157,14 @@ class ContextualTranslationManager:
                     sp,
                     up,
                     max_tokens=16384,
-                    temperature=0.3,
+                    temperature=0.7,
                 )
 
             async def run_primary() -> str:
                 return await call_api(system_prompt, user_prompt)
 
             from ..async_utils import run_async
-            raw_response = run_async(run_primary())
+            raw_response = run_async(run_primary(), cleanup=self.provider.close_async_client)
 
             parsed_json = self._parse_json_response(raw_response, file_path.name)
             if parsed_json is None:
@@ -200,7 +200,7 @@ class ContextualTranslationManager:
                         self._build_user_prompt(file_path.name, retry_script),
                     )
 
-                retry_raw = run_async(run_retry())
+                retry_raw = run_async(run_retry(), cleanup=self.provider.close_async_client)
 
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json:
@@ -321,15 +321,14 @@ class ContextualTranslationManager:
             f"syntax, or childlike speech (low-INT characters, barbarians, goblins), you MUST "
             f"reproduce an equally broken, primitive style in {target}. "
             f"DO NOT \"fix\" or \"correct\" their speech — that destroys the character.\n"
-            f"   In English, low-INT speech uses \"me\" instead of \"I\", drops articles/verbs. "
-            f"In Russian, the equivalent is \"моя\" instead of \"я\", infinitives instead of "
-            f"conjugated verbs, dropping prepositions, childlike structure.\n"
+            f"   Avoid the stereotypical 'моя не понимать' formula if possible. Instead, "
+            f"use crude vocabulary, infinitives, and missing prepositions to sound organically primitive.\n"
             f"   Examples:\n"
-            f'   - "Me no want you here no more" -> "Моя тебя тут не хотеть больше" (GOOD, broken) '
-            f'— NOT "Мне не нужен ты тут" (BAD, normalized)\n'
-            f'   - "Me <FullName>. Me big adventurer too." -> "Моя <FullName>. Моя тоже большой путешественник." (GOOD)\n'
+            f'   - "Me no want you here no more" -> "Уходи отсюда! Я больше не хотеть тебя видеть!" (GOOD, broken) '
+            f'— NOT "Мне больше не нужен ты тут" (BAD, normalized)\n'
+            f'   - "Me <FullName>. Me big adventurer too." -> "Я <FullName>. Я тоже сильно большой герой." (GOOD)\n'
             f'   - "Ha ha! Me no crawl. Me here to point and laugh!" -> '
-            f'"Ха-ха! Моя не ползать. Моя тут — пальцем тыкать и ржать!" (GOOD)\n'
+            f'"Ха-ха! Я не ползать. Я тут стоять, пальцем тыкать и смеяться!" (GOOD)\n'
             f"   Normal-INT dialog lines in the SAME script must stay grammatically correct.\n\n"
             f"OUTPUT FORMAT:\n"
             f"You MUST return a perfectly valid JSON object mapping the node ID to its translation.\n"

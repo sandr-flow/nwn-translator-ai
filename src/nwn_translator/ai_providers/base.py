@@ -237,19 +237,22 @@ class BaseAIProvider(ABC):
             f"primitive syntax, or childlike speech (low-INT characters, barbarians, goblins, etc.), "
             f"you MUST reproduce an equally broken, primitive style in the translation. "
             f"DO NOT \"fix\" or \"correct\" their speech — that would destroy the character.\n"
+            f"    Avoid relying exclusively on the stereotypical 'моя твоя не понимать' formula.\n"
+            f"    Instead, use short sentences, infinitives ('я бить'), crude vocabulary, "
+            f"    and missing prepositions or cases to make it sound organically primitive but literary.\n"
             f"    Examples (English low-INT -> {target_lang} low-INT equivalent):\n"
-            f'    - "Me no want you here no more" -> "Моя тебя тут не хотеть больше" '
+            f'    - "Me no want you here no more" -> "Уходи отсюда! Я больше не хотеть тебя видеть!" '
             f"(GOOD, broken) — NOT \"Мне не нужен ты тут\" (BAD, normalized)\n"
-            f'    - "Me <FullName>. Me big adventurer too." -> "Моя <FullName>. Моя тоже большой путешественник." '
-            f"(GOOD) — NOT \"Я <FullName>. Я тоже большой искатель приключений.\" (BAD)\n"
-            f'    - "You big fat liar. Me no follow you." -> "Ты толстый врун. Моя за тобой не ходить." '
-            f"(GOOD) — NOT \"Ты большой жирный лгун. Я не пойду за тобой.\" (BAD)\n"
+            f'    - "Me <FullName>. Me big adventurer too." -> "Я <FullName>. Я тоже сильно большой герой." '
+            f"(GOOD) — NOT \"Я <FullName>. Я тоже великий искатель приключений.\" (BAD)\n"
+            f'    - "You big fat liar. Me no follow you." -> "Ты толстый врун. Я с тобой не пойти." '
+            f"(GOOD) — NOT \"Ты лживый обманщик. Я за тобой не пойду.\" (BAD)\n"
             f'    - "Ha ha! Me no crawl. Me here to point and laugh!" -> '
-            f'"Ха-ха! Моя не ползать. Моя тут — пальцем тыкать и ржать!" '
-            f"(GOOD) — NOT \"Я не ползаю. Я тут, чтобы показывать пальцем и смеяться!\" (BAD)\n"
+            f'"Ха-ха! Я не ползать. Я тут стоять, пальцем тыкать и смеяться!" '
+            f"(GOOD) — NOT \"Я не ползаю. Я здесь, чтобы показывать на вас пальцем и смеяться!\" (BAD)\n\n"
             f"    Key pattern: in English, low-INT speech uses \"me\" instead of \"I\", drops articles/verbs, "
-            f"simplifies grammar. In Russian, the equivalent is using \"моя\" instead of \"я\", infinitives "
-            f"instead of conjugated verbs, dropping prepositions, and childlike sentence structure.\n"
+            f"simplifies grammar. In Russian, the equivalent is using infinitives "
+            f"instead of conjugated verbs, dropping prepositions, and childlike sentence structure. Rarely use pronouns or use them incorrectly.\n"
             f"\nYour output MUST be strictly valid JSON. Do not use markdown code blocks.\n"
             f"The JSON object must contain exactly ONE key:\n"
             f'- "translation": The final translated text ONLY, perfectly formatted and ready to use in the game.\n\n'

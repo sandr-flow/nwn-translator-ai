@@ -203,7 +203,7 @@ class TranslationManager:
             return await asyncio.gather(*[one(d) for d in uncached_items])
 
         from ..async_utils import run_async
-        results = run_async(run_all())
+        results = run_async(run_all(), cleanup=self.provider.close_async_client)
 
         for item_data, result in zip(uncached_items, results):
             item = item_data["item"]

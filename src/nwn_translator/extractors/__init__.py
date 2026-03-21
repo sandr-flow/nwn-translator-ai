@@ -3,7 +3,7 @@
 This package contains extractors for various NWN file types that need translation.
 """
 
-from .base import BaseExtractor, ExtractedContent, TranslatableItem, DialogNode
+from .base import BaseExtractor, ExtractedContent, TranslatableItem, DialogNode, extract_local_string
 from .dialog_extractor import DialogExtractor
 from .journal_extractor import JournalExtractor
 from .item_extractor import ItemExtractor
@@ -34,8 +34,9 @@ __all__ = [
     "ModuleExtractor",
 ]
 
-# Registry of all available extractors
-EXTRACTOR_CLASSES = [
+# Singleton registry: file extension -> extractor instance
+_EXTRACTOR_MAP = {}
+for _cls in [
     DialogExtractor,
     JournalExtractor,
     ItemExtractor,
@@ -46,7 +47,10 @@ EXTRACTOR_CLASSES = [
     DoorExtractor,
     StoreExtractor,
     ModuleExtractor,
-]
+]:
+    _inst = _cls()
+    for _ext in _inst.SUPPORTED_TYPES:
+        _EXTRACTOR_MAP[_ext] = _inst
 
 
 def get_extractor_for_file(file_extension: str):
@@ -58,8 +62,4 @@ def get_extractor_for_file(file_extension: str):
     Returns:
         Extractor instance or None if no extractor found
     """
-    for extractor_class in EXTRACTOR_CLASSES:
-        extractor = extractor_class()
-        if extractor.can_extract(file_extension):
-            return extractor
-    return None
+    return _EXTRACTOR_MAP.get(file_extension.lower())

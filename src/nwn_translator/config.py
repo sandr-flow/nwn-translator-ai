@@ -100,6 +100,18 @@ class TranslationConfig:
         return self.api_key
 
 
+def lang_suffix(target_lang: str) -> str:
+    """Build a short language suffix for output filenames.
+
+    Args:
+        target_lang: Target language name (e.g. ``"russian"``).
+
+    Returns:
+        Suffix string like ``"_rus"`` or ``"_de"``.
+    """
+    return f"_{target_lang[:3].lower()}" if len(target_lang) > 3 else f"_{target_lang}"
+
+
 def create_output_path(input_path: Path, target_lang: str) -> Path:
     """Generate output filename based on input and target language.
 
@@ -112,8 +124,7 @@ def create_output_path(input_path: Path, target_lang: str) -> Path:
     """
     stem = input_path.stem
     suffix = input_path.suffix
-    lang_suffix = f"_{target_lang[:3].lower()}" if len(target_lang) > 3 else f"_{target_lang}"
-    return input_path.parent / f"{stem}{lang_suffix}{suffix}"
+    return input_path.parent / f"{stem}{lang_suffix(target_lang)}{suffix}"
 
 
 # Standard NWN tokens that should be preserved (frozenset for O(1) membership)

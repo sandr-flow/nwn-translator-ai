@@ -79,6 +79,26 @@ class DialogNode:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+def extract_local_string(text_data: Dict[str, Any]) -> Optional[str]:
+    """Extract text from a LocalString (CExoLocString) structure.
+
+    Returns the embedded Value when non-empty, regardless of whether
+    a StrRef is also set. This matches NWN editor behaviour where text
+    is embedded even when a TLK reference exists.
+
+    Args:
+        text_data: GFF LocalString dictionary with StrRef and Value keys
+
+    Returns:
+        Extracted text string, or None if no text is available
+    """
+    if not isinstance(text_data, dict):
+        return None
+
+    value = text_data.get("Value", "")
+    return value if value else None
+
+
 class BaseExtractor(ABC):
     """Abstract base class for content extractors.
 
@@ -117,23 +137,8 @@ class BaseExtractor(ABC):
         self,
         text_data: Dict[str, Any]
     ) -> Optional[str]:
-        """Extract text from a LocalString (CExoLocString) structure.
-
-        Returns the embedded Value when non-empty, regardless of whether
-        a StrRef is also set. This matches NWN editor behaviour where text
-        is embedded even when a TLK reference exists.
-
-        Args:
-            text_data: GFF LocalString dictionary with StrRef and Value keys
-
-        Returns:
-            Extracted text string, or None if no text is available
-        """
-        if not isinstance(text_data, dict):
-            return None
-
-        value = text_data.get("Value", "")
-        return value if value else None
+        """Delegate to module-level :func:`extract_local_string`."""
+        return extract_local_string(text_data)
 
     def _safe_get(
         self,

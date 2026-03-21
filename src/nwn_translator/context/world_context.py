@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ..file_handlers import read_gff
 from ..file_handlers.tlk_reader import TLKFile
-from ..extractors.base import BaseExtractor
+from ..extractors.base import extract_local_string
 
 if TYPE_CHECKING:
     from ..glossary import Glossary
@@ -166,12 +166,6 @@ class WorldScanner:
 
     def __init__(self):
         """Initialize the scanner."""
-        # Create a concrete subclass to use parser methods
-        class DummyExtractor(BaseExtractor):
-            def can_extract(self, t): return False
-            def extract(self, p, d): return None
-            
-        self._extractor_helper = DummyExtractor()
 
     def scan_directory(
         self,
@@ -237,7 +231,7 @@ class WorldScanner:
             Extracted string, or empty string if not found.
         """
         obj = data.get(key, {})
-        return self._extractor_helper._extract_text_from_local_string(obj) or ""
+        return extract_local_string(obj) or ""
 
     def _process_utc(
         self,

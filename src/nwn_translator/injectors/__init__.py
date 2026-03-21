@@ -18,12 +18,20 @@ __all__ = [
     "GenericInjector",
 ]
 
-# Registry of all available injectors
-INJECTOR_CLASSES = [
-    DialogInjector,
-    JournalInjector,
-    GenericInjector,
-]
+# Singleton registry: content_type -> injector instance
+_INJECTOR_MAP = {}
+for _cls in [DialogInjector, JournalInjector, GenericInjector]:
+    _inst = _cls()
+    _types = getattr(_inst, "SUPPORTED_TYPES", [])
+    if not _types:
+        # DialogInjector/JournalInjector match a single content_type via can_inject
+        # Probe the known content types
+        for _ct in ["dialog", "journal"]:
+            if _inst.can_inject(_ct):
+                _INJECTOR_MAP[_ct] = _inst
+    else:
+        for _ct in _types:
+            _INJECTOR_MAP[_ct] = _inst
 
 
 def get_injector_for_content(content_type: str):
@@ -35,8 +43,4 @@ def get_injector_for_content(content_type: str):
     Returns:
         Injector instance or None if no injector found
     """
-    for injector_class in INJECTOR_CLASSES:
-        injector = injector_class()
-        if injector.can_inject(content_type):
-            return injector
-    return None
+    return _INJECTOR_MAP.get(content_type)

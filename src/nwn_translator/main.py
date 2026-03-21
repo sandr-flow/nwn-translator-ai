@@ -133,9 +133,9 @@ class ModuleTranslator:
         manager = TranslationManager(
             self.config, self.provider, glossary=self.glossary
         )
-        # Delta-tracking for cumulative manager stats
-        self._prev_items_translated = 0
-        self._prev_errors_len = 0
+        # Delta-tracking cursors for cumulative manager stats
+        self._prev_items = 0
+        self._prev_errors = 0
         context_manager = (
             ContextualTranslationManager(
                 self.config,
@@ -326,13 +326,8 @@ class ModuleTranslator:
             logger.debug(f"No translations generated for: {file_path.name}")
             return None
 
-        # Update statistics (delta since last call to avoid double-counting)
-        items_before = getattr(self, "_prev_items_translated", 0)
-        errors_before = getattr(self, "_prev_errors_len", 0)
-        self.stats["items_translated"] += manager.stats["items_translated"] - items_before
-        self.stats["errors"].extend(manager.stats["errors"][errors_before:])
-        self._prev_items_translated = manager.stats["items_translated"]
-        self._prev_errors_len = len(manager.stats["errors"])
+        # Merge delta from shared manager stats into orchestrator stats
+        self._sync_manager_stats(manager)
 
         # Inject translations
         injector = get_injector_for_content(extracted.content_type)
@@ -392,11 +387,8 @@ class ModuleTranslator:
             metadata={"type": "git_instance"},
         )
 
-        items_before = manager.stats["items_translated"]
-        errors_before = len(manager.stats["errors"])
         new_map = manager.translate_content(extracted)
-        self.stats["items_translated"] += manager.stats["items_translated"] - items_before
-        self.stats["errors"].extend(manager.stats["errors"][errors_before:])
+        self._sync_manager_stats(manager)
 
         return new_map
 
@@ -435,6 +427,20 @@ class ModuleTranslator:
 
         if total_patched:
             logger.info(f"Patched {total_patched} instance fields across {len(git_files)} .git files")
+
+    def _sync_manager_stats(self, manager: "TranslationManager") -> None:
+        """Merge delta from the shared TranslationManager stats into orchestrator stats.
+
+        Thread-safe: uses ``_stats_lock`` to guard both the read of manager
+        cursors and the write to ``self.stats``.
+        """
+        with self._stats_lock:
+            items_now = manager.stats["items_translated"]
+            errors_now = len(manager.stats["errors"])
+            self.stats["items_translated"] += items_now - self._prev_items
+            self.stats["errors"].extend(manager.stats["errors"][self._prev_errors:])
+            self._prev_items = items_now
+            self._prev_errors = errors_now
 
     def _resolve_output_path(self, extract_dir: Path) -> Path:
         """Determine the output .mod file path from config or input filename."""

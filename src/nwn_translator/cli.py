@@ -179,11 +179,12 @@ def translate(
 
     # Generate workspace and paths if output_file is not specified
     if not output_file:
-        lang_suffix = f"_{target_lang[:3].lower()}" if len(target_lang) > 3 else f"_{target_lang}"
-        workspace_dir = Path("workspace") / f"{input_file.stem}{lang_suffix}"
+        from .config import lang_suffix
+        suf = lang_suffix(target_lang)
+        workspace_dir = Path("workspace") / f"{input_file.stem}{suf}"
         workspace_dir.mkdir(parents=True, exist_ok=True)
-        
-        output_file = workspace_dir / f"{input_file.stem}{lang_suffix}.mod"
+
+        output_file = workspace_dir / f"{input_file.stem}{suf}.mod"
         
         if not log_file:
             log_file = workspace_dir / "translation_log.jsonl"

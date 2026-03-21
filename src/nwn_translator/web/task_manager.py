@@ -13,7 +13,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable, Dict, List, Optional
 
-from ..config import TranslationConfig
+from ..config import TranslationConfig, lang_suffix
 from ..main import ModuleTranslator
 
 logger = logging.getLogger(__name__)
@@ -22,18 +22,6 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 DEFAULT_TASK_TTL_SECONDS = 24 * 3600
-
-
-def _lang_suffix(target_lang: str) -> str:
-    """Build a short language suffix for output filenames.
-
-    Args:
-        target_lang: Target language name (e.g. ``"russian"``).
-
-    Returns:
-        Suffix string like ``"_rus"`` or ``"_de"``.
-    """
-    return f"_{target_lang[:3].lower()}" if len(target_lang) > 3 else f"_{target_lang}"
 
 
 @dataclass
@@ -221,7 +209,7 @@ class TaskManager:
         base = self.workspace_for_task(task.task_id)
         temp_dir = base / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        lang_suf = _lang_suffix(target_lang)
+        lang_suf = lang_suffix(target_lang)
         output_file = base / f"{input_path.stem}{lang_suf}{input_path.suffix}"
         log_file = base / "translation_log.jsonl"
 

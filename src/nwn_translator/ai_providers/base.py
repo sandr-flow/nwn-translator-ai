@@ -165,29 +165,6 @@ class BaseAIProvider(ABC):
             glossary_block,
         )
 
-    @abstractmethod
-    def translate_batch(
-        self,
-        items: List[TranslationItem],
-        source_lang: str,
-        target_lang: str,
-    ) -> List[TranslationResult]:
-        """Translate multiple items in batch.
-
-        Args:
-            items: List of TranslationItem objects to translate
-            source_lang: Source language name
-            target_lang: Target language name
-
-        Returns:
-            List of TranslationResult objects (one per input item)
-
-        Raises:
-            TranslationError: If batch translation fails
-            RateLimitError: If rate limit is exceeded
-        """
-        pass
-
     def _validate_api_key(self) -> None:
         """Validate that the API key is present and valid.
 

@@ -6,6 +6,7 @@ AI providers, and injectors.
 
 import asyncio
 import logging
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -62,12 +63,10 @@ class TranslationManager:
             "errors": [],
         }
 
-        # Persistent event loop for async API calls (reused across files)
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-
         # Global cache for this translation session
         # sanitized_text -> translated_text
         self._translation_cache: Dict[str, str] = {}
+        self._stats_lock = threading.Lock()
         if glossary:
             glossary.seed_cache(
                 self._translation_cache,
@@ -157,7 +156,8 @@ class TranslationManager:
             if sanitized in self._translation_cache:
                 translated = restore_text(self._translation_cache[sanitized], handler)
                 translations[item.text] = translated
-                self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
+                with self._stats_lock:
+                    self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
                 logger.debug("Cache hit for '%s…'", sanitized[:40])
                 continue
 
@@ -202,9 +202,8 @@ class TranslationManager:
 
             return await asyncio.gather(*[one(d) for d in uncached_items])
 
-        if self._loop is None or self._loop.is_closed():
-            self._loop = asyncio.new_event_loop()
-        results = self._loop.run_until_complete(run_all())
+        from ..async_utils import run_async
+        results = run_async(run_all())
 
         for item_data, result in zip(uncached_items, results):
             item = item_data["item"]
@@ -212,10 +211,11 @@ class TranslationManager:
             handler = item_data["handler"]
 
             if result.success:
-                self._translation_cache[sanitized] = result.translated
-                translated = restore_text(result.translated, handler)
-                translations[item.text] = translated
-                self.stats["items_translated"] += 1
+                with self._stats_lock:
+                    self._translation_cache[sanitized] = result.translated
+                    translated = restore_text(result.translated, handler)
+                    translations[item.text] = translated
+                    self.stats["items_translated"] += 1
 
                 log_entry = {
                     "original": item.text,
@@ -229,7 +229,8 @@ class TranslationManager:
                     logger.debug("Failed to write to translation log: %s", log_e)
             else:
                 error_msg = f"Translation failed for {item.item_id}: {result.error}"
-                self.stats["errors"].append(error_msg)
+                with self._stats_lock:
+                    self.stats["errors"].append(error_msg)
                 logger.warning(error_msg)
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -266,54 +267,3 @@ class TranslationManager:
             "errors": [],
         }
 
-
-def translate_file(
-    file_path: Path,
-    gff_data: Dict[str, Any],
-    config: TranslationConfig,
-    provider: BaseAIProvider,
-) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    """Translate a single file.
-
-    Args:
-        file_path: Path to the file
-        gff_data: Parsed GFF data
-        config: Translation configuration
-        provider: AI provider instance
-
-    Returns:
-        Tuple of (translated_gff_data, statistics)
-    """
-    # Get file extension
-    file_ext = file_path.suffix.lower()
-
-    # Get appropriate extractor
-    extractor = get_extractor_for_file(file_ext)
-    if not extractor:
-        logger.warning(f"No extractor found for {file_ext}")
-        return gff_data, {}
-
-    # Extract content
-    extracted = extractor.extract(file_path, gff_data)
-    if not extracted.items:
-        logger.info(f"No translatable content found in {file_path}")
-        return gff_data, {}
-
-    # Translate
-    manager = TranslationManager(config, provider)
-    translations = manager.translate_content(extracted)
-
-    if not translations:
-        logger.warning(f"No translations generated for {file_path}")
-        return gff_data, manager.get_statistics()
-
-    # Inject translations
-    injector = get_injector_for_content(extracted.content_type)
-    if injector:
-        inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
-        result = injector.inject(file_path, gff_data, translations, inject_metadata)
-
-        if result.modified:
-            logger.info(f"Updated {result.items_updated} items in {file_path}")
-
-    return gff_data, manager.get_statistics()

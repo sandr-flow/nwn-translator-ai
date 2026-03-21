@@ -29,15 +29,6 @@ class MockAIProvider(BaseAIProvider):
             success=True,
         )
 
-    def translate_batch(self, items, source_lang, target_lang):
-        results = []
-        for item in items:
-            result = self.translate(
-                item.original, source_lang, target_lang, item.context
-            )
-            results.append(result)
-        return results
-
 
 class TestBaseAIProvider:
     """Tests for BaseAIProvider."""
@@ -73,16 +64,6 @@ class TestBaseAIProvider:
         )
         assert result.success
 
-    def test_translate_batch(self):
-        """Test batch translation."""
-        provider = MockAIProvider(api_key="test-key")
-        items = [
-            TranslationItem(original="Hello"),
-            TranslationItem(original="Goodbye"),
-        ]
-        results = provider.translate_batch(items, "english", "spanish")
-        assert len(results) == 2
-        assert all(r.success for r in results)
 
 
 class TestCreateProvider:

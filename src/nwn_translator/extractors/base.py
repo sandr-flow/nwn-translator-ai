@@ -85,13 +85,8 @@ class BaseExtractor(ABC):
     All extractors must implement this interface to ensure consistent behavior.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize the extractor.
-
-        Args:
-            config: Optional configuration dictionary
-        """
-        self.config = config or {}
+    def __init__(self):
+        """Initialize the extractor."""
 
     @abstractmethod
     def can_extract(self, file_type: str) -> bool:

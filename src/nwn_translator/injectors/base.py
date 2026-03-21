@@ -35,13 +35,8 @@ class BaseInjector(ABC):
     All injectors must implement this interface to ensure consistent behavior.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize the injector.
-
-        Args:
-            config: Optional configuration dictionary
-        """
-        self.config = config or {}
+    def __init__(self):
+        """Initialize the injector."""
 
     @abstractmethod
     def can_inject(self, content_type: str) -> bool:
@@ -76,35 +71,3 @@ class BaseInjector(ABC):
         """
         pass
 
-    def _create_local_string(self, text: str) -> Dict[str, Any]:
-        """Create a LocalString structure with the given text.
-
-        Args:
-            text: String text to store
-
-        Returns:
-            Dictionary with StrRef and Value fields
-        """
-        return {
-            "StrRef": -1,  # -1 means using Value instead of string reference
-            "Value": text,
-        }
-
-    def _update_local_string(
-        self,
-        local_string: Dict[str, Any],
-        new_text: str
-    ) -> Dict[str, Any]:
-        """Update a LocalString with new text.
-
-        Args:
-            local_string: Original LocalString dictionary
-            new_text: New text to set
-
-        Returns:
-            Updated LocalString dictionary
-        """
-        if isinstance(local_string, dict):
-            local_string["StrRef"] = -1
-            local_string["Value"] = new_text
-        return local_string

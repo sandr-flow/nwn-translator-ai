@@ -239,15 +239,3 @@ def restore_text(text: str, handler: TokenHandler) -> str:
         Text with restored tokens
     """
     return handler.restore(text)
-
-
-def extract_tokens(text: str) -> List[str]:
-    """Extract all tokens from text.
-
-    Args:
-        text: Text to extract tokens from
-
-    Returns:
-        List of unique tokens found
-    """
-    return TokenValidator.extract_all_tokens(text)

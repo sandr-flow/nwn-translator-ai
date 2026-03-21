@@ -120,18 +120,6 @@ class TestOpenRouterTranslate:
         with pytest.raises(OpenRouterError):
             p.translate("text", "english", "russian")
 
-    def test_translate_batch(self):
-        """translate_batch() translates every item and returns a result per item."""
-        p = self._make_provider("OK")
-        items = [
-            TranslationItem(original="Hello", context="greeting"),
-            TranslationItem(original="Sword"),
-        ]
-        results = p.translate_batch(items, source_lang="english", target_lang="russian")
-        assert len(results) == 2
-        assert all(r.success for r in results)
-        assert all(r.translated == "OK" for r in results)
-
 
 class TestGlossaryJsonSchema:
     """Glossary response_format builder for structured outputs."""

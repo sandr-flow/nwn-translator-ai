@@ -45,7 +45,6 @@ class ContextualTranslationManager:
             config.translation_log,
             config.translation_log_writer,
         )
-        self.token_handler = TokenHandler(preserve_standard_tokens=config.preserve_tokens)
         self.formatter = DialogFormatter()
 
     def translate_dialog(

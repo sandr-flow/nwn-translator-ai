@@ -7,7 +7,6 @@ from src.nwn_translator.translators.token_handler import (
     TokenValidator,
     sanitize_text,
     restore_text,
-    extract_tokens,
 )
 
 
@@ -110,10 +109,10 @@ class TestConvenienceFunctions:
         restored = restore_text(sanitized, handler)
         assert restored == text
 
-    def test_extract_tokens_function(self):
-        """Test extract_tokens convenience function."""
+    def test_extract_tokens_via_validator(self):
+        """Test TokenValidator.extract_all_tokens convenience method."""
         text = "Hello <FirstName>, you are a <Class>!"
-        tokens = extract_tokens(text)
+        tokens = TokenValidator.extract_all_tokens(text)
         assert set(tokens) == {"FirstName", "Class"}
 
 

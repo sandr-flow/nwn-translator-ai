@@ -10,6 +10,8 @@ See: https://openrouter.ai/docs
 import json
 import logging
 import re
+import threading
+import asyncio
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -22,6 +24,7 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
+    before_sleep_log,
 )
 
 from .base import (
@@ -124,18 +127,39 @@ class OpenRouterProvider(BaseAIProvider):
             "X-Title": self.site_name,
         }
         _timeout = httpx.Timeout(connect=10, read=120, write=10, pool=10)
+        self._headers = dict(_headers)
+        self._timeout = _timeout
         self.client = OpenAI(
             api_key=api_key,
             base_url=self.OPENROUTER_BASE_URL,
-            default_headers=dict(_headers),
-            timeout=_timeout,
+            default_headers=self._headers,
+            timeout=self._timeout,
+            max_retries=0,
         )
-        self.async_client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=self.OPENROUTER_BASE_URL,
-            default_headers=dict(_headers),
-            timeout=_timeout,
-        )
+        self._thread_local = threading.local()
+
+    @property
+    def async_client(self) -> AsyncOpenAI:
+        """Get or create an AsyncOpenAI client bound to the current event loop.
+        
+        This prevents httpx connection pool errors when using a ThreadPoolExecutor
+        where each thread runs its own asyncio event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop_id = id(loop)
+        except RuntimeError:
+            loop_id = None
+            
+        if getattr(self._thread_local, "last_loop_id", None) != loop_id:
+            self._thread_local.last_loop_id = loop_id
+            self._thread_local.async_client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.OPENROUTER_BASE_URL,
+                default_headers=self._headers,
+                timeout=self._timeout,
+                max_retries=0,
+            )
+        return self._thread_local.async_client
 
     def get_default_model(self) -> str:
         """Get the default OpenRouter model.
@@ -180,8 +204,9 @@ class OpenRouterProvider(BaseAIProvider):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     def translate(
@@ -244,8 +269,9 @@ class OpenRouterProvider(BaseAIProvider):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     async def translate_async(
@@ -324,8 +350,9 @@ class OpenRouterProvider(BaseAIProvider):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     async def complete_json_chat_async(
@@ -347,8 +374,9 @@ class OpenRouterProvider(BaseAIProvider):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
     )
     async def complete_glossary_chat_async(

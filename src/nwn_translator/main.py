@@ -36,6 +36,9 @@ from .translators.context_translator import ContextualTranslationManager
 from .context.world_context import WorldScanner, WorldContext
 from .glossary import Glossary, GlossaryBuilder
 
+import threading
+import concurrent.futures
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,6 +67,7 @@ class ModuleTranslator:
             "items_translated": 0,
             "errors": [],
         }
+        self._stats_lock = threading.Lock()
         
         # TLK file for resolving StrRef names
         self.tlk: Optional[TLKFile] = None
@@ -148,25 +152,41 @@ class ModuleTranslator:
         all_translations: Dict[str, str] = {}
 
         total_files = len(translatable_files)
-        file_iterator = (
-            tqdm(translatable_files, desc="Translating")
-            if self.config.progress_callback is None
-            else translatable_files
-        )
-        for idx, file_path in enumerate(file_iterator):
-            if self.config.progress_callback is not None:
-                self.config.progress_callback(
-                    "translating", idx, total_files, file_path.name
-                )
-            try:
-                file_translations = self._translate_file(file_path, manager, context_manager)
-                if file_translations:
-                    all_translations.update(file_translations)
-                self.stats["files_processed"] += 1
-            except Exception as e:
-                error_msg = f"Error processing {file_path.name}: {e}"
-                self.stats["errors"].append(error_msg)
-                logger.error(error_msg)
+        
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        max_workers = max(1, getattr(self.config, 'max_concurrent_requests', 4))
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_file = {
+                executor.submit(self._translate_file, file_path, manager, context_manager): file_path
+                for file_path in translatable_files
+            }
+
+            completed_count = 0
+            if self.config.progress_callback is None:
+                future_iter = tqdm(as_completed(future_to_file), total=total_files, desc="Translating")
+            else:
+                future_iter = as_completed(future_to_file)
+
+            for future in future_iter:
+                file_path = future_to_file[future]
+                if self.config.progress_callback is not None:
+                    self.config.progress_callback(
+                        "translating", completed_count, total_files, file_path.name
+                    )
+                completed_count += 1
+                try:
+                    file_translations = future.result()
+                    if file_translations:
+                        with self._stats_lock:
+                            all_translations.update(file_translations)
+                    with self._stats_lock:
+                        self.stats["files_processed"] += 1
+                except Exception as e:
+                    error_msg = f"Error processing {file_path.name}: {e}"
+                    with self._stats_lock:
+                        self.stats["errors"].append(error_msg)
+                    logger.error(error_msg)
 
         # Step 3.5: Extract + translate strings that exist only in .git instances
         git_translations = self._translate_git_instances(

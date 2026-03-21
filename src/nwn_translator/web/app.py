@@ -49,10 +49,12 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Build FastAPI app with API routes and optional static SPA."""
+    from nwn_translator import __version__
+
     app = FastAPI(
         title="NWN Modules Translator",
         description="Веб-API перевода модулей Neverwinter Nights",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
     )
 

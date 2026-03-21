@@ -45,7 +45,7 @@ def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="0.1.0", prog_name="nwn-translate")
+@click.version_option(version=None, prog_name="nwn-translate", package_name="nwn-modules-translator")
 @click.pass_context
 def cli(ctx):
     """NWN Modules Translator - AI-powered translation for Neverwinter Nights modules.

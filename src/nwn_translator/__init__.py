@@ -1,6 +1,12 @@
 """NWN Modules Translator - AI-powered translation tool for Neverwinter Nights modules."""
 
-__version__ = "0.1.0"
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
+
+try:
+    __version__ = _pkg_version("nwn-modules-translator")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
+
 __author__ = "Open Source Community"
 
 from .config import ProgressCallback, TranslationConfig, create_output_path

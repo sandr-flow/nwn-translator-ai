@@ -56,10 +56,10 @@ dev = [
 nwn-translate = "nwn_translator.cli:main"
 nwn-translate-web = "nwn_translator.web.__main__:main"
 
-[project.urls]
-Homepage = "https://github.com/yourusername/nwn-modules-translator"
-Repository = "https://github.com/yourusername/nwn-modules-translator"
-Issues = "https://github.com/yourusername/nwn-modules-translator/issues"
+# [project.urls]
+# Homepage = "https://github.com/<owner>/nwn-modules-translator"
+# Repository = "https://github.com/<owner>/nwn-modules-translator"
+# Issues = "https://github.com/<owner>/nwn-modules-translator/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

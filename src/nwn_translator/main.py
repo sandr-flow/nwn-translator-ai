@@ -102,7 +102,7 @@ class ModuleTranslator:
 
         if not translatable_files:
             logger.warning("No translatable files found!")
-            return self._cleanup_and_return(extract_dir)
+            return self._resolve_output_path(extract_dir)
 
         # Session GFF cache (world scan + translation + .git)
         self._gff_cache = {}
@@ -141,7 +141,7 @@ class ModuleTranslator:
                 self.config,
                 self.provider,
                 self.world_context,
-                translation_cache=manager._translation_cache,
+                translation_cache=manager.translation_cache,
                 glossary=self.glossary,
             )
             if self.config.use_context and self.world_context
@@ -436,12 +436,8 @@ class ModuleTranslator:
         if total_patched:
             logger.info(f"Patched {total_patched} instance fields across {len(git_files)} .git files")
 
-    def _cleanup_and_return(self, extract_dir: Path) -> Path:
-        """Handle cleanup and return output path.
-
-        Args:
-            extract_dir: Extraction directory
-        """
+    def _resolve_output_path(self, extract_dir: Path) -> Path:
+        """Determine the output .mod file path from config or input filename."""
         output_path = self.config.output_file
         if output_path is None:
             from .config import create_output_path

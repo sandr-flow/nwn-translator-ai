@@ -39,7 +39,7 @@ class ContextualTranslationManager:
         self.provider = provider
         self.world_context = world_context
         self.glossary = glossary
-        #: Shared sanitized_text -> model_output (same as TranslationManager._translation_cache)
+        #: Shared sanitized_text -> model_output (same as TranslationManager.translation_cache)
         self.translation_cache = translation_cache
         self._log_writer = translation_log_writer_for_config(
             config.translation_log,

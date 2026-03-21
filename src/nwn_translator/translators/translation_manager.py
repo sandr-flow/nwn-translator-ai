@@ -65,11 +65,11 @@ class TranslationManager:
 
         # Global cache for this translation session
         # sanitized_text -> translated_text
-        self._translation_cache: Dict[str, str] = {}
+        self.translation_cache: Dict[str, str] = {}
         self._stats_lock = threading.Lock()
         if glossary:
             glossary.seed_cache(
-                self._translation_cache,
+                self.translation_cache,
                 preserve_tokens=config.preserve_tokens,
             )
 
@@ -153,8 +153,8 @@ class TranslationManager:
             handler = item_data["handler"]
 
             # Cache hit?
-            if sanitized in self._translation_cache:
-                translated = restore_text(self._translation_cache[sanitized], handler)
+            if sanitized in self.translation_cache:
+                translated = restore_text(self.translation_cache[sanitized], handler)
                 translations[item.text] = translated
                 with self._stats_lock:
                     self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
@@ -212,7 +212,7 @@ class TranslationManager:
 
             if result.success:
                 with self._stats_lock:
-                    self._translation_cache[sanitized] = result.translated
+                    self.translation_cache[sanitized] = result.translated
                     translated = restore_text(result.translated, handler)
                     translations[item.text] = translated
                     self.stats["items_translated"] += 1
@@ -250,7 +250,7 @@ class TranslationManager:
         Returns:
             Dictionary mapping sanitized original text to translated text.
         """
-        return dict(self._translation_cache)
+        return dict(self.translation_cache)
 
     def close(self) -> None:
         """Close the persistent event loop."""

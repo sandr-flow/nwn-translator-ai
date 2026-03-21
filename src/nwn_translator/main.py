@@ -12,7 +12,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from tqdm import tqdm
 
@@ -69,6 +69,8 @@ class ModuleTranslator:
 
         # World context cache
         self.world_context: Optional[WorldContext] = None
+        #: Per-run GFF parse cache: (resolved_path, tlk_id) -> dict
+        self._gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = {}
 
     def translate(self) -> Path:
         """Translate the module.
@@ -96,20 +98,34 @@ class ModuleTranslator:
             logger.warning("No translatable files found!")
             return self._cleanup_and_return(extract_dir)
 
+        # Session GFF cache (world scan + translation + .git)
+        self._gff_cache = {}
+
         # Step 2.5: Load TLK file for resolving StrRef names
         self._load_tlk(extract_dir)
 
         # Step 2.6: Build World Context (if enabled)
         if self.config.use_context:
             scanner = WorldScanner()
-            self.world_context = scanner.scan_directory(extract_dir)
+            self.world_context = scanner.scan_directory(
+                extract_dir, tlk=self.tlk, gff_cache=self._gff_cache
+            )
 
         # Step 3: Process each file
         logger.info("Translating files...")
 
         # Initialize single translation managers for the whole session
         manager = TranslationManager(self.config, self.provider)
-        context_manager = ContextualTranslationManager(self.config, self.provider, self.world_context) if self.config.use_context else None
+        context_manager = (
+            ContextualTranslationManager(
+                self.config,
+                self.provider,
+                self.world_context,
+                translation_cache=manager._translation_cache,
+            )
+            if self.config.use_context
+            else None
+        )
 
         # Accumulate all translations (original_text -> translated_text)
         all_translations: Dict[str, str] = {}
@@ -244,7 +260,7 @@ class ModuleTranslator:
             Dictionary mapping original text to translated text, or None.
         """
         # Read GFF data (pass TLK to resolve StrRef-only names)
-        gff_data = read_gff(file_path, tlk=self.tlk)
+        gff_data = read_gff(file_path, tlk=self.tlk, cache=self._gff_cache)
 
         # Get file extension
         file_ext = file_path.suffix.lower()
@@ -303,7 +319,7 @@ class ModuleTranslator:
         pending: Set[str] = set()
         for git_path in git_files:
             try:
-                gff_data = read_gff(git_path, tlk=self.tlk)
+                gff_data = read_gff(git_path, tlk=self.tlk, cache=self._gff_cache)
             except Exception as e:
                 logger.error("Failed to read %s for git string collection: %s", git_path.name, e)
                 continue
@@ -364,7 +380,15 @@ class ModuleTranslator:
         total_patched = 0
         for git_path in git_files:
             try:
-                patched = patch_git_file(git_path, translations, tlk=self.tlk)
+                gff_cached = read_gff(
+                    git_path, tlk=self.tlk, cache=self._gff_cache
+                )
+                patched = patch_git_file(
+                    git_path,
+                    translations,
+                    tlk=self.tlk,
+                    gff_data=gff_cached,
+                )
                 total_patched += patched
             except Exception as e:
                 logger.error(f"Failed to patch {git_path.name}: {e}")

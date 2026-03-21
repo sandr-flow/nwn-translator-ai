@@ -12,6 +12,19 @@ from .translation_logging import TranslationLogWriter
 ProgressCallback = Callable[[str, int, int, Optional[str]], None]
 
 
+def max_concurrent_from_environment() -> int:
+    """Max parallel OpenRouter HTTP requests (asyncio + semaphore, not OS threads).
+
+    Override with environment variable ``NWN_TRANSLATE_MAX_CONCURRENT`` (integer, min 1).
+    Sensible range: 10–12 if you hit HTTP 429; 15–20 when your OpenRouter tier allows it.
+    """
+    raw = os.getenv("NWN_TRANSLATE_MAX_CONCURRENT", "12").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 12
+
+
 @dataclass
 class TranslationConfig:
     """Configuration for translation operations."""
@@ -40,7 +53,10 @@ class TranslationConfig:
     skip_cleanup: bool = False  # Keep temp files for debugging
 
     # Translation Options
-    batch_size: int = 1  # Number of items to translate per request
+    batch_size: int = 1  # Number of items to translate per request (reserved for future batch prompts)
+    #: Max concurrent OpenRouter requests for line-by-line translation (async).
+    #: Default: :func:`max_concurrent_from_environment` (``NWN_TRANSLATE_MAX_CONCURRENT`` or 12).
+    max_concurrent_requests: int = field(default_factory=max_concurrent_from_environment)
     preserve_tokens: bool = True  # Preserve game tokens like <FirstName>
     translate_dialogs: bool = True
     translate_journals: bool = True
@@ -100,27 +116,28 @@ def create_output_path(input_path: Path, target_lang: str) -> Path:
     return input_path.parent / f"{stem}{lang_suffix}{suffix}"
 
 
-# Standard NWN tokens that should be preserved
-STANDARD_TOKENS = [
-    "<FirstName>",
-    "<LastName>",
-    "<Class>",
-    "<Race>",
-    "<Gender>",
-    "<HisHer>",
-    "<HeShe>",
-    "<HimHer>",
-    "<BoyGirl>",
-    "<BrotherSister>",
-    "<SirMadam>",
-    "<LadLass>",
-    "<MasterMistress>",
-    "<LordLady>",
-    "<Possessive>",
-    "<Subject>",
-    "<Target>",
-    "<CustomToken:",
-]
+# Standard NWN tokens that should be preserved (frozenset for O(1) membership)
+STANDARD_TOKENS = frozenset(
+    {
+        "<FirstName>",
+        "<LastName>",
+        "<Class>",
+        "<Race>",
+        "<Gender>",
+        "<HisHer>",
+        "<HeShe>",
+        "<HimHer>",
+        "<BoyGirl>",
+        "<BrotherSister>",
+        "<SirMadam>",
+        "<LadLass>",
+        "<MasterMistress>",
+        "<LordLady>",
+        "<Possessive>",
+        "<Subject>",
+        "<Target>",
+    }
+)
 
 # Translatable file extensions in NWN modules (only types with extractors)
 TRANSLATABLE_TYPES = {

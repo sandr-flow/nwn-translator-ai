@@ -93,9 +93,9 @@ class TestPatchGitInventory:
         count = patch_git_file(path, translations, tlk=None)
 
         assert count == 2
-        assert patcher.patch_local_string.call_count == 2
-        patcher.patch_local_string.assert_any_call(100, "Сундук")
-        patcher.patch_local_string.assert_any_call(200, "Футляр")
+        patcher.patch_multiple.assert_called_once()
+        plist = patcher.patch_multiple.call_args[0][0]
+        assert set(plist) == {(100, "Сундук"), (200, "Футляр")}
 
     def test_instance_lists_include_description_fields(self):
         assert "Description" in INSTANCE_LISTS["Placeable List"]

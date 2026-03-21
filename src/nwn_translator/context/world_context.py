@@ -9,9 +9,10 @@ translation coherence.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Any, Dict, Optional, Tuple
 
 from ..file_handlers import read_gff
+from ..file_handlers.tlk_reader import TLKFile
 from ..extractors.base import BaseExtractor
 
 logger = logging.getLogger(__name__)
@@ -104,11 +105,18 @@ class WorldScanner:
             
         self._extractor_helper = DummyExtractor()
 
-    def scan_directory(self, extract_dir: Path) -> WorldContext:
+    def scan_directory(
+        self,
+        extract_dir: Path,
+        tlk: Optional[TLKFile] = None,
+        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]] = None,
+    ) -> WorldContext:
         """Scan the directory and build world context.
 
         Args:
             extract_dir: Path to directory containing extracted module files.
+            tlk: Optional TLK for StrRef resolution (should match translation reads).
+            gff_cache: Optional shared parse cache (same object as ModuleTranslator).
 
         Returns:
             Populated WorldContext.
@@ -131,15 +139,15 @@ class WorldScanner:
 
             try:
                 if ext == ".utc":
-                    if self._process_utc(file_path, context):
+                    if self._process_utc(file_path, context, tlk, gff_cache):
                         count_npcs += 1
                 elif ext == ".are":
-                    if self._process_are(file_path, context):
+                    if self._process_are(file_path, context, tlk, gff_cache):
                         count_areas += 1
                 elif ext == ".jrl":
-                    count_quests += self._process_jrl(file_path, context)
+                    count_quests += self._process_jrl(file_path, context, tlk, gff_cache)
                 elif ext == ".uti":
-                    if self._process_uti(file_path, context):
+                    if self._process_uti(file_path, context, tlk, gff_cache):
                         count_items += 1
             except Exception as e:
                 logger.debug("Failed to scan context from %s: %s", file_path.name, e)
@@ -155,9 +163,15 @@ class WorldScanner:
         obj = data.get(key, {})
         return self._extractor_helper._extract_text_from_local_string(obj) or ""
 
-    def _process_utc(self, file_path: Path, context: WorldContext) -> bool:
+    def _process_utc(
+        self,
+        file_path: Path,
+        context: WorldContext,
+        tlk: Optional[TLKFile],
+        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+    ) -> bool:
         """Extract data from a .utc (Creature) file."""
-        data = read_gff(file_path)
+        data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         tag = data.get("Tag", "")
         if not tag:
             return False
@@ -197,9 +211,15 @@ class WorldScanner:
             return True
         return False
 
-    def _process_are(self, file_path: Path, context: WorldContext) -> bool:
+    def _process_are(
+        self,
+        file_path: Path,
+        context: WorldContext,
+        tlk: Optional[TLKFile],
+        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+    ) -> bool:
         """Extract data from an .are (Area) file."""
-        data = read_gff(file_path)
+        data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "Name")
         
@@ -208,9 +228,15 @@ class WorldScanner:
             return True
         return False
 
-    def _process_jrl(self, file_path: Path, context: WorldContext) -> int:
+    def _process_jrl(
+        self,
+        file_path: Path,
+        context: WorldContext,
+        tlk: Optional[TLKFile],
+        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+    ) -> int:
         """Extract quest names from a .jrl (Journal) file."""
-        data = read_gff(file_path)
+        data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         categories = data.get("Categories", [])
         
         added = 0
@@ -225,9 +251,15 @@ class WorldScanner:
                 
         return added
 
-    def _process_uti(self, file_path: Path, context: WorldContext) -> bool:
+    def _process_uti(
+        self,
+        file_path: Path,
+        context: WorldContext,
+        tlk: Optional[TLKFile],
+        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+    ) -> bool:
         """Extract data from a .uti (Item) file."""
-        data = read_gff(file_path)
+        data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "LocalizedName")
         

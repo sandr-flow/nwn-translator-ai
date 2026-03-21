@@ -8,6 +8,7 @@ the DataOffset pointers always stay within the valid FieldDataByteSize range.
 
 import struct
 from pathlib import Path
+from typing import List, Tuple
 
 
 class GFFPatchError(Exception):
@@ -67,6 +68,91 @@ class GFFPatcher:
             "listindices_size":     dword(self._HDR_LISTINDICES_SIZE),
         }
 
+    @staticmethod
+    def _build_cexo_locstring_payload(new_text: str) -> bytearray:
+        """Binary CExoLocString payload for *new_text* (CP1251)."""
+        encoded = new_text.encode("cp1251", errors="replace")
+        substring_count = 1 if encoded else 0
+        total_size = 4 + 4 + (4 + 4 + len(encoded)) * substring_count
+
+        payload = bytearray()
+        payload += struct.pack("<I", total_size)
+        payload += struct.pack("<i", -1)
+        payload += struct.pack("<I", substring_count)
+
+        if encoded:
+            payload += struct.pack("<I", 0)
+            payload += struct.pack("<I", len(encoded))
+            payload += encoded
+
+        return payload
+
+    def _apply_payload_at_fielddata_end(
+        self,
+        data: bytearray,
+        record_offset: int,
+        payload: bytearray,
+    ) -> bytearray:
+        """Insert *payload* at end of FieldData; set DataOffset on 12-byte field at *record_offset*."""
+        payload_len = len(payload)
+        hdr = self._read_header(data)
+
+        fielddata_offset = hdr["fielddata_offset"]
+        fielddata_size = hdr["fielddata_size"]
+        fieldindices_offset = hdr["fieldindices_offset"]
+        fieldindices_size = hdr["fieldindices_size"]
+        listindices_offset = hdr["listindices_offset"]
+        listindices_size = hdr["listindices_size"]
+
+        insert_pos = fielddata_offset + fielddata_size
+        new_data = bytearray(data[:insert_pos] + payload + data[insert_pos:])
+
+        def write_dword(buf: bytearray, off: int, val: int) -> None:
+            struct.pack_into("<I", buf, off, val)
+
+        write_dword(new_data, self._HDR_FIELDDATA_SIZE, fielddata_size + payload_len)
+
+        if fieldindices_size > 0:
+            write_dword(
+                new_data,
+                self._HDR_FIELDINDICES_OFFSET,
+                fieldindices_offset + payload_len,
+            )
+        if listindices_size > 0:
+            write_dword(
+                new_data,
+                self._HDR_LISTINDICES_OFFSET,
+                listindices_offset + payload_len,
+            )
+
+        new_data_offset = fielddata_size
+        struct.pack_into("<I", new_data, record_offset + 8, new_data_offset)
+
+        return new_data
+
+    def patch_multiple(self, patches: List[Tuple[int, str]]) -> None:
+        """Apply several CExoLocString patches in one read/write pass.
+
+        Patches are applied in order; each inserts at the then-current end of FieldData.
+
+        Args:
+            patches: ``(record_offset, new_text)`` for each 12-byte field record.
+        """
+        if not patches:
+            return
+
+        with open(self.file_path, "rb") as f:
+            data = bytearray(f.read())
+
+        for record_offset, new_text in patches:
+            if record_offset <= 0:
+                raise GFFPatchError("Invalid record offset provided")
+            payload = self._build_cexo_locstring_payload(new_text)
+            data = self._apply_payload_at_fielddata_end(data, record_offset, payload)
+
+        with open(self.file_path, "wb") as f:
+            f.write(data)
+
     def patch_local_string(self, record_offset: int, new_text: str) -> None:
         """Patch a CExoLocString field to point to a new translated string.
 
@@ -77,76 +163,4 @@ class GFFPatcher:
             record_offset: Absolute byte offset of the 12-byte GFF field record.
             new_text: The translated text to inject (will be encoded as CP1251).
         """
-        if record_offset <= 0:
-            raise GFFPatchError("Invalid record offset provided")
-
-        # Encode text — CP1251 so the ZOG CP1251-font can render directly
-        encoded = new_text.encode("cp1251", errors="replace")
-
-        # Build the CExoLocString payload
-        # Layout: TotalSize(4) StrRef(4) SubStringCount(4) [LangID(4) Length(4) Bytes…]
-        # TotalSize = total bytes EXCLUDING the 4-byte TotalSize field itself
-        substring_count = 1 if encoded else 0
-        # TotalSize = StrRef(4) + SubCount(4) + [LangID(4) + Length(4) + text] * N
-        total_size = 4 + 4 + (4 + 4 + len(encoded)) * substring_count
-
-        payload = bytearray()
-        payload += struct.pack("<I", total_size)           # TotalSize (excl. itself)
-        payload += struct.pack("<i", -1)                   # StrRef = -1 (use local)
-        payload += struct.pack("<I", substring_count)      # SubStringCount
-
-        if encoded:
-            payload += struct.pack("<I", 0)                # LanguageID = 0
-            payload += struct.pack("<I", len(encoded))     # Length
-            payload += encoded                             # String bytes
-
-        payload_len = len(payload)
-
-        # Read the whole file into a mutable bytearray
-        with open(self.file_path, "rb") as f:
-            data = bytearray(f.read())
-
-        hdr = self._read_header(data)
-
-        fielddata_offset    = hdr["fielddata_offset"]
-        fielddata_size      = hdr["fielddata_size"]
-        fieldindices_offset = hdr["fieldindices_offset"]
-        fieldindices_size   = hdr["fieldindices_size"]
-        listindices_offset  = hdr["listindices_offset"]
-        listindices_size    = hdr["listindices_size"]
-
-        # The insert position: right at the end of the current FieldData block
-        insert_pos = fielddata_offset + fielddata_size
-
-        # Sanity: insert_pos should be the start of FieldIndices (or thereabouts)
-        # It's fine if FieldIndices/ListIndices follow immediately; we insert before them.
-
-        # Build new file bytes
-        new_data = data[:insert_pos] + payload + data[insert_pos:]
-
-        # ── Update header fields ─────────────────────────────────────────────
-        def write_dword(buf: bytearray, off: int, val: int) -> None:
-            struct.pack_into("<I", buf, off, val)
-
-        # FieldDataByteSize grows by payload_len
-        write_dword(new_data, self._HDR_FIELDDATA_SIZE,
-                    fielddata_size + payload_len)
-
-        # FieldIndices and ListIndices are shifted by payload_len
-        if fieldindices_size > 0:
-            write_dword(new_data, self._HDR_FIELDINDICES_OFFSET,
-                        fieldindices_offset + payload_len)
-        if listindices_size > 0:
-            write_dword(new_data, self._HDR_LISTINDICES_OFFSET,
-                        listindices_offset + payload_len)
-
-        # The DataOffset stored in the field record = offset relative to FieldData start
-        # New payload lives at: fielddata_offset + fielddata_size (i.e. old end of FieldData)
-        new_data_offset = fielddata_size  # relative to fielddata_offset
-
-        # Overwrite DataOffset in the field record (bytes 8-11 of the 12-byte record)
-        struct.pack_into("<I", new_data, record_offset + 8, new_data_offset)
-
-        # Write back
-        with open(self.file_path, "wb") as f:
-            f.write(new_data)
+        self.patch_multiple([(record_offset, new_text)])

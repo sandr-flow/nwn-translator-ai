@@ -5,7 +5,7 @@ for reading and writing GFF (Generic File Format) files used by Neverwinter Nigh
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from .gff_parser import GFFFile, GFFParser, parse_gff, gff_to_dict, GFFParseError
 from .gff_writer import GFFWriter, GFFWriteError, write_gff as _write_gff
@@ -250,17 +250,31 @@ class GFFHandler:
 
 
 # Convenience functions for common operations
-def read_gff(file_path: Path, tlk: Optional[TLKFile] = None) -> Dict[str, Any]:
+def read_gff(
+    file_path: Path,
+    tlk: Optional[TLKFile] = None,
+    cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """Read a GFF file and return its data.
 
     Args:
         file_path: Path to the GFF file
         tlk: Optional TLK file for resolving StrRefs
+        cache: Optional session cache keyed by ``(resolved_path, id(tlk) or 0)``
 
     Returns:
         Dictionary containing GFF data
     """
-    return GFFHandler.read(file_path, tlk)
+    path = Path(file_path).resolve()
+    tlk_key = id(tlk) if tlk is not None else 0
+    cache_key = (path, tlk_key)
+    if cache is not None:
+        if cache_key in cache:
+            return cache[cache_key]
+        data = GFFHandler.read(path, tlk)
+        cache[cache_key] = data
+        return data
+    return GFFHandler.read(path, tlk)
 
 
 def write_gff(file_path: Path, data: Dict[str, Any]) -> None:

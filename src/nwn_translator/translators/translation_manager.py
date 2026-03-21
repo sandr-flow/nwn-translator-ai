@@ -4,6 +4,7 @@ This module manages the translation workflow, coordinating between extractors,
 AI providers, and injectors.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -115,6 +116,8 @@ class TranslationManager:
             else translation_items
         )
         n_items = len(translation_items)
+        uncached_items: List[dict] = []
+
         for idx, item_data in enumerate(iterable):
             if self.config.progress_callback is not None:
                 self.config.progress_callback(
@@ -135,41 +138,83 @@ class TranslationManager:
                 logger.debug("Cache hit for '%s…'", sanitized[:40])
                 continue
 
-            try:
-                result = self.provider.translate(
-                    text=sanitized,
-                    source_lang=self.config.source_lang,
-                    target_lang=self.config.target_lang,
-                    context=item.context,
-                )
+            uncached_items.append(item_data)
 
-                if result.success:
-                    self._translation_cache[sanitized] = result.translated
-                    translated = restore_text(result.translated, handler)
-                    translations[item.text] = translated
-                    self.stats["items_translated"] += 1
-                    
-                    log_entry = {
-                        "original": item.text,
-                        "translated": translated,
-                        "context": item.context,
-                        "model": result.metadata.get("model", self.config.model),
-                    }
-                    try:
-                        self._log_writer.write(log_entry)
-                    except Exception as log_e:
-                        logger.debug("Failed to write to translation log: %s", log_e)
-                else:
-                    error_msg = f"Translation failed for {item.item_id}: {result.error}"
-                    self.stats["errors"].append(error_msg)
-                    logger.warning(error_msg)
-
-            except Exception as e:
-                error_msg = f"Translation error for {item.item_id}: {e}"
-                self.stats["errors"].append(error_msg)
-                logger.warning(error_msg)
+        if uncached_items:
+            self._translate_uncached_concurrent(uncached_items, translations)
 
         return translations
+
+    def _translate_uncached_concurrent(
+        self,
+        uncached_items: List[dict],
+        translations: Dict[str, str],
+    ) -> None:
+        """Translate items without cache hits (concurrent async API calls)."""
+
+        async def run_all() -> List[TranslationResult]:
+            limit = max(1, int(self.config.max_concurrent_requests))
+            sem = asyncio.Semaphore(limit)
+
+            async def one(item_data: dict) -> TranslationResult:
+                item = item_data["item"]
+                sanitized = item_data["sanitized"]
+                async with sem:
+                    try:
+                        return await self.provider.translate_async(
+                            text=sanitized,
+                            source_lang=self.config.source_lang,
+                            target_lang=self.config.target_lang,
+                            context=item.context,
+                        )
+                    except Exception as e:
+                        return TranslationResult(
+                            translated="",
+                            original=sanitized,
+                            success=False,
+                            error=str(e),
+                            metadata={},
+                        )
+
+            return await asyncio.gather(*[one(d) for d in uncached_items])
+
+        try:
+            results = asyncio.run(run_all())
+        except RuntimeError:
+            # No running loop in this thread but asyncio.run failed (edge cases)
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                results = loop.run_until_complete(run_all())
+            finally:
+                loop.close()
+                asyncio.set_event_loop(None)
+
+        for item_data, result in zip(uncached_items, results):
+            item = item_data["item"]
+            sanitized = item_data["sanitized"]
+            handler = item_data["handler"]
+
+            if result.success:
+                self._translation_cache[sanitized] = result.translated
+                translated = restore_text(result.translated, handler)
+                translations[item.text] = translated
+                self.stats["items_translated"] += 1
+
+                log_entry = {
+                    "original": item.text,
+                    "translated": translated,
+                    "context": item.context,
+                    "model": result.metadata.get("model", self.config.model),
+                }
+                try:
+                    self._log_writer.write(log_entry)
+                except Exception as log_e:
+                    logger.debug("Failed to write to translation log: %s", log_e)
+            else:
+                error_msg = f"Translation failed for {item.item_id}: {result.error}"
+                self.stats["errors"].append(error_msg)
+                logger.warning(error_msg)
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get translation statistics.

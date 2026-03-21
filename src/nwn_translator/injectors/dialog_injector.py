@@ -4,7 +4,7 @@ This module handles injection of translated dialog content back into .dlg GFF fi
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import logging
 
 from .base import BaseInjector, InjectedContent
@@ -52,7 +52,7 @@ class DialogInjector(BaseInjector):
             logger.error(f"Failed to initialize GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
 
-        record_offsets = gff_data.get("_record_offsets", {})
+        patches: List[Tuple[int, str]] = []
 
         # Update entries
         for entry in entry_list:
@@ -63,15 +63,11 @@ class DialogInjector(BaseInjector):
                     if original_text and original_text in translations:
                         translated_text = translations[original_text]
                         if translated_text != original_text:
-                            # Use offset safely
                             rec_offset = entry.get("_record_offsets", {}).get("Text", 0)
                             if rec_offset > 0:
-                                try:
-                                    patcher.patch_local_string(rec_offset, translated_text)
-                                    items_updated += 1
-                                    modified = True
-                                except GFFPatchError as e:
-                                    logger.error(f"Failed to patch entry string in {file_path}: {e}")
+                                patches.append((rec_offset, translated_text))
+                                items_updated += 1
+                                modified = True
 
         # Update replies
         for reply in reply_list:
@@ -84,14 +80,16 @@ class DialogInjector(BaseInjector):
                         if translated_text != original_text:
                             rec_offset = reply.get("_record_offsets", {}).get("Text", 0)
                             if rec_offset > 0:
-                                try:
-                                    patcher.patch_local_string(rec_offset, translated_text)
-                                    items_updated += 1
-                                    modified = True
-                                    # Fallback: keep dict updated just in case main flow uses it
-                                    # (Not strictly necessary if we rely 100% on patcher, but safe)
-                                except GFFPatchError as e:
-                                    logger.error(f"Failed to patch reply string in {file_path}: {e}")
+                                patches.append((rec_offset, translated_text))
+                                items_updated += 1
+                                modified = True
+
+        if patches:
+            try:
+                patcher.patch_multiple(patches)
+            except GFFPatchError as e:
+                logger.error(f"Failed to patch dialog strings in {file_path}: {e}")
+                return InjectedContent(source_file=file_path, modified=False, items_updated=0)
 
         return InjectedContent(
             source_file=file_path,
@@ -139,6 +137,8 @@ class JournalInjector(BaseInjector):
             logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
 
+        patches: List[Tuple[int, str]] = []
+
         # Update categories (GFF field is "Categories", not "CategoriesList")
         categories = gff_data.get("Categories", [])
         for category in categories:
@@ -152,7 +152,7 @@ class JournalInjector(BaseInjector):
                         if translated_text != original_text:
                             rec_offset = category.get("_record_offsets", {}).get("Name", 0)
                             if rec_offset > 0:
-                                patcher.patch_local_string(rec_offset, translated_text)
+                                patches.append((rec_offset, translated_text))
                                 items_updated += 1
                                 modified = True
 
@@ -168,9 +168,16 @@ class JournalInjector(BaseInjector):
                                 if translated_text != original_text:
                                     rec_offset = entry.get("_record_offsets", {}).get("Text", 0)
                                     if rec_offset > 0:
-                                        patcher.patch_local_string(rec_offset, translated_text)
+                                        patches.append((rec_offset, translated_text))
                                         items_updated += 1
                                         modified = True
+
+        if patches:
+            try:
+                patcher.patch_multiple(patches)
+            except GFFPatchError as e:
+                logger.error(f"Failed to patch journal in {file_path}: {e}")
+                return InjectedContent(source_file=file_path, modified=False, items_updated=0)
 
         return InjectedContent(
             source_file=file_path,
@@ -272,6 +279,7 @@ class GenericInjector(BaseInjector):
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
 
         record_offsets = gff_data.get("_record_offsets", {})
+        patches: List[Tuple[int, str]] = []
 
         # For creatures, we need to handle first and last name specially
         if content_type == "creature":
@@ -283,7 +291,7 @@ class GenericInjector(BaseInjector):
                 if original_first and original_first in translations:
                     rec_offset = record_offsets.get("FirstName", 0)
                     if rec_offset > 0:
-                        patcher.patch_local_string(rec_offset, translations[original_first])
+                        patches.append((rec_offset, translations[original_first]))
                         items_updated += 1
                         modified = True
 
@@ -292,7 +300,7 @@ class GenericInjector(BaseInjector):
                 if original_last and original_last in translations:
                     rec_offset = record_offsets.get("LastName", 0)
                     if rec_offset > 0:
-                        patcher.patch_local_string(rec_offset, translations[original_last])
+                        patches.append((rec_offset, translations[original_last]))
                         items_updated += 1
                         modified = True
 
@@ -310,9 +318,16 @@ class GenericInjector(BaseInjector):
                         if translated_text != original_text:
                             rec_offset = record_offsets.get(field_name, 0)
                             if rec_offset > 0:
-                                patcher.patch_local_string(rec_offset, translated_text)
+                                patches.append((rec_offset, translated_text))
                                 items_updated += 1
                                 modified = True
+
+        if patches:
+            try:
+                patcher.patch_multiple(patches)
+            except GFFPatchError as e:
+                logger.error(f"Failed to patch generic content in {file_path}: {e}")
+                return InjectedContent(source_file=file_path, modified=False, items_updated=0)
 
         return InjectedContent(
             source_file=file_path,

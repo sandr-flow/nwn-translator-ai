@@ -87,9 +87,12 @@ class TestDialogExtractionAndInjection:
 
         assert result.modified
         assert result.items_updated == 2
-        assert mock_patcher.patch_local_string.call_count == 2
-        mock_patcher.patch_local_string.assert_any_call(100, "¡Saludos, viajero!")
-        mock_patcher.patch_local_string.assert_any_call(200, "Hola, posadero.")
+        mock_patcher.patch_multiple.assert_called_once()
+        patches = mock_patcher.patch_multiple.call_args[0][0]
+        assert set(patches) == {
+            (100, "¡Saludos, viajero!"),
+            (200, "Hola, posadero."),
+        }
 
 
 class TestEndToEndWorkflow:

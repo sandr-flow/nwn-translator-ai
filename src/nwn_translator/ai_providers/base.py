@@ -4,6 +4,7 @@ This module defines the abstract interface that all AI providers must implement,
 ensuring a consistent API across different AI services.
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -129,6 +130,31 @@ class BaseAIProvider(ABC):
             RateLimitError: If rate limit is exceeded
         """
         pass
+
+    async def translate_async(
+        self,
+        text: str,
+        source_lang: str,
+        target_lang: str,
+        context: Optional[str] = None,
+    ) -> TranslationResult:
+        """Translate text asynchronously.
+
+        Default implementation runs :meth:`translate` in a worker thread.
+        Providers may override with native async HTTP for better concurrency.
+
+        Args:
+            text: Text to translate
+            source_lang: Source language name
+            target_lang: Target language name
+            context: Optional context hint
+
+        Returns:
+            TranslationResult with translated text
+        """
+        return await asyncio.to_thread(
+            self.translate, text, source_lang, target_lang, context
+        )
 
     @abstractmethod
     def translate_batch(

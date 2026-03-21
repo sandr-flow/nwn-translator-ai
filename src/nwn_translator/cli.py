@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 import click
 from dotenv import load_dotenv
@@ -140,6 +141,15 @@ def cli(ctx):
     help="Enable/disable contextual full-dialog translation (default: enabled)",
 )
 @click.option(
+    "--max-concurrent",
+    type=int,
+    default=None,
+    help=(
+        "Override NWN_TRANSLATE_MAX_CONCURRENT: parallel OpenRouter requests (async). "
+        "If omitted, uses .env / environment (default 12 when unset)."
+    ),
+)
+@click.option(
     "--tlk",
     type=click.Path(exists=True, path_type=Path),
     help="Path to dialog.tlk for resolving StrRef-based names (auto-detected if not specified)",
@@ -158,6 +168,7 @@ def translate(
     quiet: bool,
     no_tokens: bool,
     context: bool,
+    max_concurrent: Optional[int],
     tlk: Path,
 ):
     """Translate a NWN module file.
@@ -204,6 +215,8 @@ def translate(
         config_kwargs["temp_dir"] = temp_dir
     if api_key:
         config_kwargs["api_key"] = api_key
+    if max_concurrent is not None:
+        config_kwargs["max_concurrent_requests"] = max(1, max_concurrent)
 
     config = TranslationConfig(**config_kwargs)
 
@@ -215,7 +228,11 @@ def translate(
         console.print(f"  OpenRouter model: {model or OpenRouterProvider.DEFAULT_MODEL}")
         console.print(f"  Target: {target_lang}")
         console.print(f"  Log file: {log_file}")
-        console.print(f"  Preserve tokens: {not no_tokens}\n")
+        console.print(f"  Preserve tokens: {not no_tokens}")
+        console.print(
+            f"  Max concurrent API requests: {config.max_concurrent_requests} "
+            f"(NWN_TRANSLATE_MAX_CONCURRENT / --max-concurrent)\n"
+        )
 
     try:
         # Perform translation

@@ -11,7 +11,7 @@ import json
 import re
 from typing import List, Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -80,13 +80,19 @@ class OpenRouterProvider(BaseAIProvider):
         self.site_url = site_url
         self.site_name = site_name
         super().__init__(api_key, model, **kwargs)
+        _headers = {
+            "HTTP-Referer": self.site_url,
+            "X-Title": self.site_name,
+        }
         self.client = OpenAI(
             api_key=api_key,
             base_url=self.OPENROUTER_BASE_URL,
-            default_headers={
-                "HTTP-Referer": self.site_url,
-                "X-Title": self.site_name,
-            },
+            default_headers=dict(_headers),
+        )
+        self.async_client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=self.OPENROUTER_BASE_URL,
+            default_headers=dict(_headers),
         )
 
     def get_default_model(self) -> str:
@@ -104,6 +110,31 @@ class OpenRouterProvider(BaseAIProvider):
             Provider identifier string.
         """
         return "openrouter"
+
+    @staticmethod
+    def _parse_model_json_response(raw_response: str) -> str:
+        """Extract translated string from model JSON (``translation`` key)."""
+        try:
+            json_match = re.search(r"\{.*\}", raw_response, re.DOTALL)
+            json_str = json_match.group(0) if json_match else raw_response
+            parsed = json.loads(json_str)
+            translated_text = parsed.get("translation", "")
+            if not isinstance(translated_text, str) or not translated_text:
+                return str(raw_response)
+            return translated_text
+        except json.JSONDecodeError:
+            return raw_response
+
+    def _map_openrouter_exception(self, e: Exception) -> None:
+        """Raise RateLimitError or OpenRouterError from a caught API exception."""
+        error_msg = str(e)
+        if "rate_limit" in error_msg.lower() or "429" in error_msg:
+            raise RateLimitError(
+                f"OpenRouter rate limit exceeded: {error_msg}"
+            ) from e
+        raise OpenRouterError(
+            f"OpenRouter translation failed: {error_msg}"
+        ) from e
 
     @retry(
         stop=stop_after_attempt(3),
@@ -150,25 +181,8 @@ class OpenRouterProvider(BaseAIProvider):
                 response_format={"type": "json_object"},
             )
 
-            raw_response = response.choices[0].message.content.strip()
-
-            # Attempt to parse JSON
-            try:
-                json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    json_str = raw_response
-                    
-                parsed = json.loads(json_str)
-                translated_text = parsed.get("translation", "")
-                
-                # Fallback if the model somehow returned string instead of dict
-                if not isinstance(translated_text, str) or not translated_text:
-                    translated_text = str(raw_response)
-            except json.JSONDecodeError:
-                # Fallback to raw text if JSON parsing fails
-                translated_text = raw_response
+            raw_response = (response.choices[0].message.content or "").strip()
+            translated_text = self._parse_model_json_response(raw_response)
 
             return TranslationResult(
                 translated=translated_text,
@@ -177,15 +191,94 @@ class OpenRouterProvider(BaseAIProvider):
                 metadata={"model": self.model},
             )
 
+        except RateLimitError:
+            raise
+        except OpenRouterError:
+            raise
         except Exception as e:
-            error_msg = str(e)
-            if "rate_limit" in error_msg.lower() or "429" in error_msg:
-                raise RateLimitError(
-                    f"OpenRouter rate limit exceeded: {error_msg}"
-                ) from e
-            raise OpenRouterError(
-                f"OpenRouter translation failed: {error_msg}"
-            ) from e
+            self._map_openrouter_exception(e)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((RateLimitError,)),
+        reraise=True,
+    )
+    async def translate_async(
+        self,
+        text: str,
+        source_lang: str,
+        target_lang: str,
+        context: Optional[str] = None,
+    ) -> TranslationResult:
+        """Async translate via OpenRouter (concurrent-friendly)."""
+        if not text or not text.strip():
+            return TranslationResult(translated="", original=text, success=True)
+
+        try:
+            system_prompt = self._create_system_prompt(target_lang)
+            user_prompt = self._create_user_prompt(text, source_lang, context)
+
+            response = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+
+            raw_response = (response.choices[0].message.content or "").strip()
+            translated_text = self._parse_model_json_response(raw_response)
+
+            return TranslationResult(
+                translated=translated_text,
+                original=text,
+                success=True,
+                metadata={"model": self.model},
+            )
+
+        except RateLimitError:
+            raise
+        except OpenRouterError:
+            raise
+        except Exception as e:
+            self._map_openrouter_exception(e)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((RateLimitError,)),
+        reraise=True,
+    )
+    async def complete_json_chat_async(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        max_tokens: int = 16384,
+        temperature: float = 0.3,
+    ) -> str:
+        """Single chat completion expecting JSON (used by contextual dialog translation)."""
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+            )
+            return (response.choices[0].message.content or "").strip()
+        except RateLimitError:
+            raise
+        except OpenRouterError:
+            raise
+        except Exception as e:
+            self._map_openrouter_exception(e)
 
     def translate_batch(
         self,

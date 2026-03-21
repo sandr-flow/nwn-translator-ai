@@ -2,7 +2,7 @@
 
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -45,6 +45,11 @@ def _make_provider(translations: dict) -> Mock:
         return TranslationResult(translated=translated, original=text, success=True)
 
     provider.translate.side_effect = translate
+
+    async def translate_async(text, source_lang, target_lang, context=None):
+        return translate(text, source_lang, target_lang, context)
+
+    provider.translate_async = AsyncMock(side_effect=translate_async)
     return provider
 
 
@@ -77,8 +82,8 @@ class TestTranslateContent:
         assert result["Hello!"] == "Привет!"
         assert result["Who are you?"] == "Кто ты?"
         assert result["Just passing."] == "Просто мимо."
-        # Provider must have been called once per item
-        assert provider.translate.call_count == 3
+        # Provider must have been called once per item (async path)
+        assert provider.translate_async.call_count == 3
 
     def test_dialog_empty_items_returns_empty(self):
         """Empty dialog must return empty translation map."""
@@ -92,6 +97,7 @@ class TestTranslateContent:
         result = manager.translate_content(content)
         assert result == {}
         provider.translate.assert_not_called()
+        provider.translate_async.assert_not_called()
 
     def test_non_dialog_items_translated(self):
         """Non-dialog content types also get all items translated."""
@@ -144,9 +150,11 @@ class TestTranslationCache:
             source_file=Path("test.uti"),
         )
         provider = Mock()
-        provider.translate.return_value = TranslationResult(
+        fail = TranslationResult(
             translated="", original="Boom", success=False, error="API error"
         )
+        provider.translate.return_value = fail
+        provider.translate_async = AsyncMock(return_value=fail)
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 

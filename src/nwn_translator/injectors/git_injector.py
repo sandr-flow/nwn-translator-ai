@@ -7,7 +7,7 @@ whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..file_handlers.gff_handler import read_gff
 from ..file_handlers.gff_patcher import GFFPatcher, GFFPatchError
@@ -92,15 +92,15 @@ def collect_git_strings_missing_from_translations(
     return found
 
 
-def _patch_locale_fields_on_struct(
-    patcher: GFFPatcher,
+def _collect_locale_patches_on_struct(
     struct: Dict[str, Any],
     list_key: str,
     field_names: List[str],
     translations: Dict[str, str],
     git_basename: str,
+    patches: List[Tuple[int, str]],
 ) -> int:
-    """Patch CExoLocString fields on one GFF struct (instance or inventory row)."""
+    """Append CExoLocString patches for one GFF struct (instance or inventory row)."""
     items_patched = 0
     record_offsets = struct.get("_record_offsets", {})
 
@@ -127,46 +127,37 @@ def _patch_locale_fields_on_struct(
             )
             continue
 
-        try:
-            patcher.patch_local_string(rec_offset, translated_text)
-            items_patched += 1
-            logger.debug(
-                "Patched %s.%s in %s: '%s' -> '%s'",
-                list_key,
-                field_name,
-                git_basename,
-                original_text[:30],
-                translated_text[:30],
-            )
-        except GFFPatchError as e:
-            logger.error(
-                "Failed to patch %s.%s in %s: %s",
-                list_key,
-                field_name,
-                git_basename,
-                e,
-            )
+        patches.append((rec_offset, translated_text))
+        items_patched += 1
+        logger.debug(
+            "Queued patch %s.%s in %s: '%s' -> '%s'",
+            list_key,
+            field_name,
+            git_basename,
+            original_text[:30],
+            translated_text[:30],
+        )
 
     return items_patched
 
 
-def _patch_inventory_items(
-    patcher: GFFPatcher,
+def _collect_inventory_item_patches(
     instance: Dict[str, Any],
     parent_list_key: str,
     translations: Dict[str, str],
     git_basename: str,
+    patches: List[Tuple[int, str]],
 ) -> int:
-    """Patch ``ItemList`` rows under a creature or placeable instance."""
+    """Collect patches for ``ItemList`` rows under a creature or placeable instance."""
     total = 0
     for inv_item in _iter_item_list_entries(instance):
-        total += _patch_locale_fields_on_struct(
-            patcher,
+        total += _collect_locale_patches_on_struct(
             inv_item,
             f"{parent_list_key}.ItemList",
             ITEM_INVENTORY_FIELDS,
             translations,
             git_basename,
+            patches,
         )
     return total
 
@@ -175,6 +166,7 @@ def patch_git_file(
     git_path: Path,
     translations: Dict[str, str],
     tlk=None,
+    gff_data: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Patch translatable strings inside a .git area instance file.
 
@@ -186,6 +178,7 @@ def patch_git_file(
         git_path: Path to the extracted .git file on disk.
         translations: Mapping of original text -> translated text.
         tlk: Optional TLK file for resolving StrRef-only names.
+        gff_data: If provided, skip reading *git_path* (must match on-disk state).
 
     Returns:
         Number of individual fields that were patched.
@@ -193,7 +186,8 @@ def patch_git_file(
     if not translations:
         return 0
 
-    gff_data = read_gff(git_path, tlk=tlk)
+    if gff_data is None:
+        gff_data = read_gff(git_path, tlk=tlk)
 
     try:
         patcher = GFFPatcher(git_path)
@@ -202,6 +196,7 @@ def patch_git_file(
         return 0
 
     items_patched = 0
+    patches: List[Tuple[int, str]] = []
 
     for list_key, field_names in INSTANCE_LISTS.items():
         instances = gff_data.get(list_key, [])
@@ -212,23 +207,30 @@ def patch_git_file(
             if not isinstance(instance, dict):
                 continue
 
-            items_patched += _patch_locale_fields_on_struct(
-                patcher,
+            items_patched += _collect_locale_patches_on_struct(
                 instance,
                 list_key,
                 field_names,
                 translations,
                 git_path.name,
+                patches,
             )
 
             if list_key in INSTANCE_LISTS_WITH_INVENTORY:
-                items_patched += _patch_inventory_items(
-                    patcher,
+                items_patched += _collect_inventory_item_patches(
                     instance,
                     list_key,
                     translations,
                     git_path.name,
+                    patches,
                 )
+
+    if patches:
+        try:
+            patcher.patch_multiple(patches)
+        except GFFPatchError as e:
+            logger.error("Failed to batch-patch %s: %s", git_path.name, e)
+            return 0
 
     if items_patched:
         logger.info("Patched %d instance fields in %s", items_patched, git_path.name)

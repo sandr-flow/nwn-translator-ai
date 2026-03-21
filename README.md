@@ -53,7 +53,13 @@ npm install
 npm run dev
 ```
 
-Откройте в браузере адрес Vite (обычно http://127.0.0.1:5173) — запросы к `/api` проксируются на FastAPI.
+Откройте в браузере адрес Vite (обычно **http://localhost:5173**) — запросы к `/api` проксируются на FastAPI.
+
+**Одной командой (API + фронт):** из корня репозитория, с активированным venv:
+```bash
+python scripts/run_web_ui.py
+```
+Windows: можно дважды щёлкнуть `run-web-ui.bat` (после `pip install -e ".[web]"` и `cd frontend && npm install`).
 
 Docker-сборка для продакшена: см. [docker/docker-compose.yml](docker/docker-compose.yml).
 

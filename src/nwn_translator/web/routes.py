@@ -10,6 +10,8 @@ from queue import Empty
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+
+from ..config import max_concurrent_from_environment
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..ai_providers import OpenRouterProvider, create_provider
@@ -52,6 +54,7 @@ async def start_translate(
     model: Optional[str] = Form(None),
     preserve_tokens: bool = Form(True),
     use_context: bool = Form(True),
+    max_concurrent_requests: Optional[int] = Form(None),
 ) -> TranslateResponse:
     """Accept a .mod/.erf/.hak upload and start translation in the background."""
     tm = get_task_manager()
@@ -97,6 +100,12 @@ async def start_translate(
     input_path.write_bytes(body)
     tm.register_active(ip, task.task_id)
 
+    mc = (
+        max(1, int(max_concurrent_requests))
+        if max_concurrent_requests is not None
+        else max_concurrent_from_environment()
+    )
+
     async def run_job() -> None:
         await asyncio.to_thread(
             tm.run_translation_in_thread,
@@ -107,6 +116,7 @@ async def start_translate(
             model=model.strip() if model else None,
             preserve_tokens=preserve_tokens,
             use_context=use_context,
+            max_concurrent_requests=mc,
             input_path=input_path,
         )
 

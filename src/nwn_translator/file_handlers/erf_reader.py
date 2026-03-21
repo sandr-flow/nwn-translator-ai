@@ -224,6 +224,8 @@ class ERFReader:
         self.entries: List[ERFEntry] = []
         self.temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self.progress_callback = progress_callback
+        #: Filled in :meth:`read_entries` — ``res_id`` -> extension from GFF signature
+        self._header_type_by_res_id: Dict[int, str] = {}
 
         if not self.file_path.exists():
             raise ERFReaderError(f"File not found: {file_path}")
@@ -299,7 +301,39 @@ class ERFReader:
             else:
                 logger.warning(f"Invalid resource ID {res_id} for {res_ref}")
 
+        self._fill_header_type_cache()
         return self.entries
+
+    _GFF_SIG_MAP = {
+        b"DLG ": ".dlg",
+        b"UTC ": ".utc",
+        b"UTI ": ".uti",
+        b"ARE ": ".are",
+        b"GIT ": ".git",
+        b"IFO ": ".ifo",
+        b"NCS ": ".ncs",
+    }
+
+    def _fill_header_type_cache(self) -> None:
+        """Read each entry's 4-byte GFF signature once (single file open)."""
+        self._header_type_by_res_id.clear()
+        if not self.entries:
+            return
+        with open(self.file_path, "rb") as f:
+            for entry in self.entries:
+                if entry.offset == 0xFFFFFFFF:
+                    self._header_type_by_res_id[entry.res_id] = self.get_resource_type(
+                        entry.res_type
+                    )
+                    continue
+                f.seek(entry.offset)
+                sig = f.read(4)
+                if sig in self._GFF_SIG_MAP:
+                    self._header_type_by_res_id[entry.res_id] = self._GFF_SIG_MAP[sig]
+                else:
+                    self._header_type_by_res_id[entry.res_id] = self.get_resource_type(
+                        entry.res_type
+                    )
 
     def get_resource_type(self, res_id: int) -> str:
         """Get file extension for a resource type ID.
@@ -321,27 +355,24 @@ class ERFReader:
         Returns:
             Computed extension
         """
-        # Read header bytes
+        cached = self._header_type_by_res_id.get(entry.res_id)
+        if cached is not None:
+            return cached
+
+        # Lazy path if entries were not loaded via read_entries
+        if entry.offset == 0xFFFFFFFF:
+            ext = self.get_resource_type(entry.res_type)
+            self._header_type_by_res_id[entry.res_id] = ext
+            return ext
         with open(self.file_path, "rb") as f:
             f.seek(entry.offset)
             sig = f.read(4)
-        
-        sig_map = {
-            b"DLG ": ".dlg",
-            b"UTC ": ".utc",
-            b"UTI ": ".uti",
-            b"ARE ": ".are",
-            b"GIT ": ".git",
-            b"IFO ": ".ifo",
-            b"NCS ": ".ncs",
-            # b"NSS " signature often doesn't exist for plain text, check content?
-        }
-        
-        if sig in sig_map:
-            return sig_map[sig]
-            
-        # Fallback to ID
-        return self.get_resource_type(entry.res_type)
+        if sig in self._GFF_SIG_MAP:
+            ext = self._GFF_SIG_MAP[sig]
+        else:
+            ext = self.get_resource_type(entry.res_type)
+        self._header_type_by_res_id[entry.res_id] = ext
+        return ext
 
     def _sanitize_filename(self, filename: str) -> str:
         """Sanitize filename for Windows filesystem.

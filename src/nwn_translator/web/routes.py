@@ -36,6 +36,17 @@ async def health() -> dict:
 
 
 def _client_ip(request: Request) -> str:
+    """Extract the client IP address from the request.
+
+    Checks ``X-Forwarded-For`` first (reverse proxy), then falls back to
+    the direct client address.
+
+    Args:
+        request: Incoming FastAPI/Starlette request.
+
+    Returns:
+        Client IP string, or ``"unknown"`` if not determinable.
+    """
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()
@@ -125,6 +136,17 @@ async def start_translate(
 
 
 def _task_or_404(task_id: str) -> TranslationTask:
+    """Look up a translation task by ID or raise HTTP 404.
+
+    Args:
+        task_id: UUID string of the task.
+
+    Returns:
+        The matching ``TranslationTask``.
+
+    Raises:
+        HTTPException: 404 if the task is not found.
+    """
     tm = get_task_manager()
     task = tm.get(task_id)
     if not task:
@@ -134,6 +156,7 @@ def _task_or_404(task_id: str) -> TranslationTask:
 
 @router.get("/tasks/{task_id}/status", response_model=TaskStatusResponse)
 async def task_status(task_id: str) -> TaskStatusResponse:
+    """Return a JSON snapshot of the current task state."""
     task = _task_or_404(task_id)
     result_name = task.result_path.name if task.result_path else None
     return TaskStatusResponse(
@@ -196,6 +219,7 @@ async def task_progress(task_id: str) -> StreamingResponse:
 
 @router.get("/tasks/{task_id}/download")
 async def download_result(task_id: str) -> FileResponse:
+    """Download the translated module file for a completed task."""
     task = _task_or_404(task_id)
     if task.status != "completed" or not task.result_path or not task.result_path.is_file():
         raise HTTPException(status_code=400, detail="Файл результата ещё не готов")
@@ -208,6 +232,7 @@ async def download_result(task_id: str) -> FileResponse:
 
 @router.get("/tasks/{task_id}/log")
 async def download_log(task_id: str) -> FileResponse:
+    """Download the JSONL translation log for a task."""
     task = _task_or_404(task_id)
     if not task.log_path or not task.log_path.is_file():
         raise HTTPException(status_code=404, detail="Лог недоступен")
@@ -240,6 +265,7 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
 
 @router.get("/models", response_model=ModelsResponse)
 async def list_models() -> ModelsResponse:
+    """Return the default model and a curated list of popular OpenRouter slugs."""
     return ModelsResponse(
         default_model=OpenRouterProvider.DEFAULT_MODEL,
         models=list(OpenRouterProvider.POPULAR_MODELS),

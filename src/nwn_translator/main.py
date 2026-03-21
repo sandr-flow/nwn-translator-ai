@@ -34,6 +34,7 @@ from .ai_providers import create_provider
 from .translators.translation_manager import TranslationManager
 from .translators.context_translator import ContextualTranslationManager
 from .context.world_context import WorldScanner, WorldContext
+from .glossary import Glossary, GlossaryBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class ModuleTranslator:
 
         # World context cache
         self.world_context: Optional[WorldContext] = None
+        self.glossary: Optional[Glossary] = None
         #: Per-run GFF parse cache: (resolved_path, tlk_id) -> dict
         self._gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = {}
 
@@ -105,25 +107,33 @@ class ModuleTranslator:
         self._load_tlk(extract_dir)
 
         # Step 2.6: Build World Context (if enabled)
+        self.glossary = None
         if self.config.use_context:
             scanner = WorldScanner()
             self.world_context = scanner.scan_directory(
                 extract_dir, tlk=self.tlk, gff_cache=self._gff_cache
             )
+            if self.world_context:
+                self.glossary = GlossaryBuilder().build(
+                    self.world_context, self.provider, self.config
+                )
 
         # Step 3: Process each file
         logger.info("Translating files...")
 
         # Initialize single translation managers for the whole session
-        manager = TranslationManager(self.config, self.provider)
+        manager = TranslationManager(
+            self.config, self.provider, glossary=self.glossary
+        )
         context_manager = (
             ContextualTranslationManager(
                 self.config,
                 self.provider,
                 self.world_context,
                 translation_cache=manager._translation_cache,
+                glossary=self.glossary,
             )
-            if self.config.use_context
+            if self.config.use_context and self.world_context
             else None
         )
 

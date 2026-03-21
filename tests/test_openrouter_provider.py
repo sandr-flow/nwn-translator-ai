@@ -6,6 +6,7 @@ import pytest
 from src.nwn_translator.ai_providers.openrouter_provider import (
     OpenRouterProvider,
     OpenRouterError,
+    _glossary_json_schema_response_format,
 )
 from src.nwn_translator.ai_providers.base import TranslationItem, RateLimitError
 
@@ -130,6 +131,22 @@ class TestOpenRouterTranslate:
         assert len(results) == 2
         assert all(r.success for r in results)
         assert all(r.translated == "OK" for r in results)
+
+
+class TestGlossaryJsonSchema:
+    """Glossary response_format builder for structured outputs."""
+
+    def test_glossary_schema_has_all_keys_required(self):
+        rf = _glossary_json_schema_response_format(["Alpha", "Beta"])
+        assert rf["type"] == "json_schema"
+        inner = rf["json_schema"]
+        assert inner["name"] == "nwn_glossary"
+        assert inner["strict"] is True
+        schema = inner["schema"]
+        assert schema["type"] == "object"
+        assert set(schema["required"]) == {"Alpha", "Beta"}
+        assert schema["additionalProperties"] is False
+        assert set(schema["properties"].keys()) == {"Alpha", "Beta"}
 
 
 class TestCreateProvider:

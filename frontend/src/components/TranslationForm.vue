@@ -79,15 +79,30 @@ async function onTest() {
     </div>
 
     <div>
-      <label class="block text-sm text-nwn-muted mb-1">Модель</label>
-      <select
+      <label class="block text-sm text-nwn-muted mb-1">Модель OpenRouter</label>
+      <input
         v-model="t.model"
-        class="w-full rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-2 text-sm focus:border-nwn-accent focus:outline-none"
-      >
-        <option v-for="m in t.defaultModels" :key="m" :value="m">{{ m }}</option>
-      </select>
-      <p v-if="t.defaultModelSlug" class="text-xs text-nwn-muted mt-1">
-        По умолчанию: {{ t.defaultModelSlug }}
+        type="text"
+        list="nwn-openrouter-models"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="slug модели, напр. deepseek/deepseek-v3.2"
+        class="w-full rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-2 text-sm font-mono focus:border-nwn-accent focus:outline-none"
+      />
+      <datalist id="nwn-openrouter-models">
+        <option v-for="m in t.defaultModels" :key="m" :value="m" />
+      </datalist>
+      <p class="text-xs text-nwn-muted mt-1">
+        Можно ввести любой slug с
+        <a
+          href="https://openrouter.ai/models"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="text-nwn-accent hover:underline"
+          >openrouter.ai/models</a
+        >
+        или выбрать из подсказок при вводе.
+        <span v-if="t.defaultModelSlug"> По умолчанию: {{ t.defaultModelSlug }}</span>
       </p>
     </div>
 

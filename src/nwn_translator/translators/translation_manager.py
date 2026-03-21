@@ -7,12 +7,15 @@ AI providers, and injectors.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from tqdm import tqdm
 
 from ..config import TranslationConfig
 from ..translation_logging import translation_log_writer_for_config
+
+if TYPE_CHECKING:
+    from ..glossary import Glossary
 from ..extractors import get_extractor_for_file, ExtractedContent
 from ..injectors import get_injector_for_content
 from ..ai_providers import BaseAIProvider, TranslationItem, TranslationResult
@@ -24,15 +27,27 @@ logger = logging.getLogger(__name__)
 class TranslationManager:
     """Manager for the translation process."""
 
-    def __init__(self, config: TranslationConfig, provider: BaseAIProvider):
+    def __init__(
+        self,
+        config: TranslationConfig,
+        provider: BaseAIProvider,
+        glossary: Optional["Glossary"] = None,
+    ):
         """Initialize translation manager.
 
         Args:
             config: Translation configuration
             provider: AI provider instance
+            glossary: Optional pre-built proper-name glossary for prompts and cache seeding
         """
         self.config = config
         self.provider = provider
+        self.glossary = glossary
+        self._glossary_prompt_block = (
+            glossary.to_prompt_block()
+            if glossary and getattr(glossary, "entries", None)
+            else ""
+        )
         self._log_writer = translation_log_writer_for_config(
             config.translation_log,
             config.translation_log_writer,
@@ -50,6 +65,11 @@ class TranslationManager:
         # Global cache for this translation session
         # sanitized_text -> translated_text
         self._translation_cache: Dict[str, str] = {}
+        if glossary:
+            glossary.seed_cache(
+                self._translation_cache,
+                preserve_tokens=config.preserve_tokens,
+            )
 
     def translate_content(
         self,
@@ -166,6 +186,7 @@ class TranslationManager:
                             source_lang=self.config.source_lang,
                             target_lang=self.config.target_lang,
                             context=item.context,
+                            glossary_block=self._glossary_prompt_block or None,
                         )
                     except Exception as e:
                         return TranslationResult(

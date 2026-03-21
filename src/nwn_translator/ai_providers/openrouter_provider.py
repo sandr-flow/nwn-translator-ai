@@ -8,10 +8,13 @@ See: https://openrouter.ai/docs
 """
 
 import json
+import logging
 import re
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from openai import AsyncOpenAI, OpenAI
+logger = logging.getLogger(__name__)
+
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, OpenAI
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -27,10 +30,43 @@ from .base import (
     RateLimitError,
 )
 
+#: Exception types that should trigger automatic retry with exponential backoff.
+_RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError)
+
 
 class OpenRouterError(ProviderError):
     """OpenRouter-specific error."""
     pass
+
+
+# OpenRouter structured outputs: keep schema size reasonable for providers.
+_GLOSSARY_JSON_SCHEMA_MAX_KEYS = 96
+
+
+def _glossary_json_schema_response_format(glossary_keys: List[str]) -> Dict[str, Any]:
+    """Build OpenRouter ``response_format`` with strict JSON Schema for glossary keys."""
+    properties: Dict[str, Any] = {}
+    for key in glossary_keys:
+        properties[key] = {
+            "type": "string",
+            "description": (
+                "Canonical translation of this English proper name into the target language "
+                "(nominative / dictionary form)."
+            ),
+        }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "nwn_glossary",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": properties,
+                "required": list(properties.keys()),
+                "additionalProperties": False,
+            },
+        },
+    }
 
 
 class OpenRouterProvider(BaseAIProvider):
@@ -45,10 +81,11 @@ class OpenRouterProvider(BaseAIProvider):
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
     #: Default model — change via config or ``--model`` CLI flag.
-    DEFAULT_MODEL = "minimax/minimax-m2.7"
+    DEFAULT_MODEL = "deepseek/deepseek-v3.2"
 
     #: A curated shortlist for reference; not an exhaustive list.
     POPULAR_MODELS = [
+        "deepseek/deepseek-v3.2",
         "minimax/minimax-m2.7",
         "openai/gpt-oss-120b",
         "openai/gpt-4o",
@@ -71,7 +108,7 @@ class OpenRouterProvider(BaseAIProvider):
 
         Args:
             api_key: OpenRouter API key (sk-or-…).
-            model: Model slug (default: minimax/minimax-m2.7).
+            model: Model slug (default: deepseek/deepseek-v3.2).
             site_url: Your app's URL, forwarded as HTTP-Referer header.
                 OpenRouter uses this for attribution / rate-limit tiers.
             site_name: Your app's name, forwarded as X-Title header.
@@ -139,7 +176,7 @@ class OpenRouterProvider(BaseAIProvider):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((RateLimitError,)),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         reraise=True,
     )
     def translate(
@@ -148,6 +185,7 @@ class OpenRouterProvider(BaseAIProvider):
         source_lang: str,
         target_lang: str,
         context: Optional[str] = None,
+        glossary_block: Optional[str] = None,
     ) -> TranslationResult:
         """Translate text via OpenRouter.
 
@@ -168,7 +206,8 @@ class OpenRouterProvider(BaseAIProvider):
             return TranslationResult(translated="", original=text, success=True)
 
         try:
-            system_prompt = self._create_system_prompt(target_lang)
+            gb = glossary_block or ""
+            system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
             response = self.client.chat.completions.create(
@@ -191,7 +230,7 @@ class OpenRouterProvider(BaseAIProvider):
                 metadata={"model": self.model},
             )
 
-        except RateLimitError:
+        except (RateLimitError, APIConnectionError, APITimeoutError):
             raise
         except OpenRouterError:
             raise
@@ -201,7 +240,7 @@ class OpenRouterProvider(BaseAIProvider):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((RateLimitError,)),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         reraise=True,
     )
     async def translate_async(
@@ -210,13 +249,15 @@ class OpenRouterProvider(BaseAIProvider):
         source_lang: str,
         target_lang: str,
         context: Optional[str] = None,
+        glossary_block: Optional[str] = None,
     ) -> TranslationResult:
         """Async translate via OpenRouter (concurrent-friendly)."""
         if not text or not text.strip():
             return TranslationResult(translated="", original=text, success=True)
 
         try:
-            system_prompt = self._create_system_prompt(target_lang)
+            gb = glossary_block or ""
+            system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
             response = await self.async_client.chat.completions.create(
@@ -239,7 +280,37 @@ class OpenRouterProvider(BaseAIProvider):
                 metadata={"model": self.model},
             )
 
-        except RateLimitError:
+        except (RateLimitError, APIConnectionError, APITimeoutError):
+            raise
+        except OpenRouterError:
+            raise
+        except Exception as e:
+            self._map_openrouter_exception(e)
+
+    async def _chat_completion_json_async(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        response_format: dict,
+    ) -> str:
+        """One chat completion with forced JSON-style ``response_format`` (no retries)."""
+        try:
+            response = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=response_format,
+                stream=False,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except (RateLimitError, APIConnectionError, APITimeoutError):
             raise
         except OpenRouterError:
             raise
@@ -249,7 +320,7 @@ class OpenRouterProvider(BaseAIProvider):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((RateLimitError,)),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         reraise=True,
     )
     async def complete_json_chat_async(
@@ -260,25 +331,63 @@ class OpenRouterProvider(BaseAIProvider):
         max_tokens: int = 16384,
         temperature: float = 0.3,
     ) -> str:
-        """Single chat completion expecting JSON (used by contextual dialog translation)."""
-        try:
-            response = await self.async_client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"},
-            )
-            return (response.choices[0].message.content or "").strip()
-        except RateLimitError:
-            raise
-        except OpenRouterError:
-            raise
-        except Exception as e:
-            self._map_openrouter_exception(e)
+        """Single chat completion with OpenAI/OpenRouter ``json_object`` mode."""
+        return await self._chat_completion_json_async(
+            system_prompt,
+            user_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            response_format={"type": "json_object"},
+        )
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        reraise=True,
+    )
+    async def complete_glossary_chat_async(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        glossary_keys: List[str],
+        max_tokens: int = 8192,
+        temperature: float = 0.2,
+    ) -> str:
+        """Glossary batch: prefer strict ``json_schema`` (structured outputs), else ``json_object``."""
+        keys = sorted({str(k).strip() for k in glossary_keys if str(k).strip()})
+        use_schema = 0 < len(keys) <= _GLOSSARY_JSON_SCHEMA_MAX_KEYS
+
+        if use_schema:
+            try:
+                rf = _glossary_json_schema_response_format(keys)
+                raw = await self._chat_completion_json_async(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    response_format=rf,
+                )
+                if raw:
+                    return raw
+                logger.warning(
+                    "Glossary structured output returned empty content; falling back to json_object."
+                )
+            except RateLimitError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    "Glossary json_schema request failed (%s); falling back to json_object.",
+                    e,
+                )
+
+        return await self.complete_json_chat_async(
+            system_prompt,
+            user_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
 
     def translate_batch(
         self,
@@ -304,6 +413,7 @@ class OpenRouterProvider(BaseAIProvider):
                     source_lang=source_lang,
                     target_lang=target_lang,
                     context=item.context,
+                    glossary_block=None,
                 )
                 result.metadata.update(item.metadata or {})
                 results.append(result)

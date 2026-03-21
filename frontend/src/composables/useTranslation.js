@@ -152,8 +152,9 @@ export function useTranslation() {
     fd.append("api_key", t.apiKey.trim());
     fd.append("target_lang", t.targetLang);
     fd.append("source_lang", t.sourceLang || "auto");
-    if (t.model) {
-      fd.append("model", t.model);
+    const modelSlug = typeof t.model === "string" ? t.model.trim() : "";
+    if (modelSlug) {
+      fd.append("model", modelSlug);
     }
     fd.append("preserve_tokens", t.preserveTokens ? "true" : "false");
     fd.append("use_context", t.useContext ? "true" : "false");
@@ -167,9 +168,10 @@ export function useTranslation() {
     if (!t.apiKey?.trim()) {
       throw new Error("Укажите API-ключ");
     }
+    const modelSlug = typeof t.model === "string" ? t.model.trim() : "";
     return postTestConnection({
       api_key: t.apiKey.trim(),
-      model: t.model || undefined,
+      model: modelSlug || undefined,
       target_lang: t.targetLang,
     });
   }

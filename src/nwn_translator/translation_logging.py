@@ -23,6 +23,11 @@ class FileTranslationLogWriter:
         self.path = Path(path)
 
     def write(self, entry: Dict[str, Any]) -> None:
+        """Serialize *entry* as JSON and append one line to the log file.
+
+        Args:
+            entry: JSON-serializable dict (e.g. original/translated pair).
+        """
         try:
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -34,6 +39,11 @@ class NullTranslationLogWriter:
     """No-op writer for when logging is disabled."""
 
     def write(self, entry: Dict[str, Any]) -> None:
+        """Discard the entry (no-op).
+
+        Args:
+            entry: Ignored.
+        """
         return None
 
 

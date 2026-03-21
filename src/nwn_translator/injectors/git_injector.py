@@ -32,6 +32,14 @@ ITEM_INVENTORY_FIELDS = ["LocalizedName", "Description", "DescIdentified"]
 
 
 def _iter_item_list_entries(instance: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return dict entries from the ``ItemList`` field of an instance struct.
+
+    Args:
+        instance: Parsed GFF struct for a creature or placeable instance.
+
+    Returns:
+        List of dict entries representing inventory items.
+    """
     raw = instance.get("ItemList", [])
     if not isinstance(raw, list):
         return []
@@ -44,7 +52,14 @@ def _add_string_values_from_fields(
     bucket: Set[str],
     existing: Dict[str, str],
 ) -> None:
-    """Collect embedded locstring Values not already present in *existing*."""
+    """Collect embedded CExoLocString Values not already present in *existing*.
+
+    Args:
+        obj: Parsed GFF struct containing CExoLocString fields.
+        field_names: Names of CExoLocString fields to inspect.
+        bucket: Mutable set to which discovered texts are added.
+        existing: Already-translated texts to skip.
+    """
     for field_name in field_names:
         field_obj = obj.get(field_name)
         if not isinstance(field_obj, dict):
@@ -100,7 +115,20 @@ def _collect_locale_patches_on_struct(
     git_basename: str,
     patches: List[Tuple[int, str]],
 ) -> int:
-    """Append CExoLocString patches for one GFF struct (instance or inventory row)."""
+    """Append CExoLocString patches for one GFF struct (instance or inventory row).
+
+    Args:
+        struct: Parsed GFF struct with ``_record_offsets`` metadata.
+        list_key: Instance list name (for logging, e.g. ``"Creature List"``).
+        field_names: CExoLocString field names to check for translations.
+        translations: Mapping of original text to translated text.
+        git_basename: Filename of the .git file (for log messages).
+        patches: Mutable list to which ``(record_offset, translated_text)`` tuples
+            are appended.
+
+    Returns:
+        Number of patches appended.
+    """
     items_patched = 0
     record_offsets = struct.get("_record_offsets", {})
 
@@ -148,7 +176,18 @@ def _collect_inventory_item_patches(
     git_basename: str,
     patches: List[Tuple[int, str]],
 ) -> int:
-    """Collect patches for ``ItemList`` rows under a creature or placeable instance."""
+    """Collect patches for ``ItemList`` rows under a creature or placeable instance.
+
+    Args:
+        instance: Parsed GFF struct for a creature or placeable.
+        parent_list_key: Parent list name (e.g. ``"Creature List"``).
+        translations: Mapping of original text to translated text.
+        git_basename: Filename of the .git file (for log messages).
+        patches: Mutable list to which patch tuples are appended.
+
+    Returns:
+        Number of patches appended for inventory items.
+    """
     total = 0
     for inv_item in _iter_item_list_entries(instance):
         total += _collect_locale_patches_on_struct(

@@ -64,7 +64,7 @@ def test_test_connection_mocked(client: TestClient, monkeypatch: pytest.MonkeyPa
     class FakeProvider:
         model = "fake/model"
 
-        def translate(self, text, source_lang, target_lang, context=None):
+        def translate(self, text, source_lang, target_lang, context=None, glossary_block=None):
             return TranslationResult(
                 translated="тест",
                 original=text,

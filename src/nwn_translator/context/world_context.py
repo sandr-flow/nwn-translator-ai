@@ -9,11 +9,14 @@ translation coherence.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ..file_handlers import read_gff
 from ..file_handlers.tlk_reader import TLKFile
 from ..extractors.base import BaseExtractor
+
+if TYPE_CHECKING:
+    from ..glossary import Glossary
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +41,70 @@ class WorldContext:
     quests: Dict[str, str] = field(default_factory=dict)
     items: Dict[str, str] = field(default_factory=dict)
 
-    def to_prompt_block(self) -> str:
+    def get_all_names(self) -> List[Tuple[str, str]]:
+        """Collect (name, category) pairs for glossary pre-translation.
+
+        Categories: ``character``, ``location``, ``quest``, ``item``.
+        """
+        out: List[Tuple[str, str]] = []
+
+        for _tag, npc in sorted(self.npcs.items()):
+            parts = [p for p in (npc.first_name, npc.last_name) if p and str(p).strip()]
+            full = " ".join(parts).strip()
+            if full:
+                out.append((full, "character"))
+            elif npc.first_name and str(npc.first_name).strip():
+                out.append((str(npc.first_name).strip(), "character"))
+
+        for _tag, name in sorted(self.areas.items()):
+            if name and str(name).strip():
+                out.append((str(name).strip(), "location"))
+
+        for _tag, name in sorted(self.quests.items()):
+            if name and str(name).strip():
+                out.append((str(name).strip(), "quest"))
+
+        for _tag, name in sorted(self.items.items()):
+            if name and str(name).strip():
+                out.append((str(name).strip(), "item"))
+
+        return out
+
+    def to_prompt_block(
+        self,
+        glossary: Optional["Glossary"] = None,
+        target_lang: Optional[str] = None,
+    ) -> str:
         """Format the world context as a concise text block for the system prompt.
-        
+
+        Args:
+            glossary: If set, append canonical translations next to matching English names.
+            target_lang: Short label for those hints (e.g. ``russian`` → ``RUS``).
+
         Returns:
             Formatted string containing necessary context.
         """
         lines = []
         lines.append("WORLD CONTEXT:")
-        
+        lang_lbl = self._label_for_target_lang(target_lang)
+
+        def _gloss_suffix(en_name: str) -> str:
+            if not glossary or not glossary.entries:
+                return ""
+            tr = glossary.entries.get(en_name.strip())
+            if not tr:
+                return ""
+            return f" [{lang_lbl}: {tr}]"
+
         if self.npcs:
             lines.append("- KEY CHARACTERS IN THE GAME:")
             # Sort to ensure stable prompt
             for tag, npc in sorted(self.npcs.items()):
                 name_parts = [npc.first_name, npc.last_name]
                 full_name = " ".join(p for p in name_parts if p).strip() or tag
+                gloss = ""
+                if full_name != tag:
+                    gloss = _gloss_suffix(full_name)
                 
                 desc_parts = []
                 if npc.race:
@@ -62,7 +114,7 @@ class WorldContext:
                     
                 traits_str = f" ({', '.join(desc_parts)})" if desc_parts else ""
                 
-                npc_line = f"  * [{tag}] {full_name}{traits_str}"
+                npc_line = f"  * [{tag}] {full_name}{traits_str}{gloss}"
                 
                 # Truncate description if it's too long to save context window tokens
                 desc = (npc.description or "").strip()
@@ -78,19 +130,35 @@ class WorldContext:
         if self.areas:
             lines.append("- LOCATIONS:")
             for tag, name in sorted(self.areas.items()):
-                lines.append(f"  * {name} (Tag: {tag})")
+                lines.append(
+                    f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
+                )
 
         if self.quests:
             lines.append("- QUESTS:")
             for tag, name in sorted(self.quests.items()):
-                lines.append(f"  * {name} (Tag: {tag})")
+                lines.append(
+                    f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
+                )
 
         if self.items:
             lines.append("- KEY ITEMS:")
             for tag, name in sorted(self.items.items()):
-                lines.append(f"  * {name} (Tag: {tag})")
+                lines.append(
+                    f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
+                )
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _label_for_target_lang(target_lang: Optional[str]) -> str:
+        """Short label for inline glossary hints (e.g. RUS, ENG)."""
+        if not target_lang or not str(target_lang).strip():
+            return "TL"
+        t = str(target_lang).strip()
+        if len(t) <= 4:
+            return t.upper()
+        return t[:3].upper()
 
 
 class WorldScanner:
@@ -159,7 +227,15 @@ class WorldScanner:
         return context
 
     def _get_local_string(self, data: Dict[str, Any], key: str) -> str:
-        """Helper to extract text from a CExoLocString field."""
+        """Extract text from a CExoLocString field in parsed GFF data.
+
+        Args:
+            data: Parsed GFF struct dict.
+            key: Field name (e.g. ``"FirstName"``, ``"LocalizedName"``).
+
+        Returns:
+            Extracted string, or empty string if not found.
+        """
         obj = data.get(key, {})
         return self._extractor_helper._extract_text_from_local_string(obj) or ""
 
@@ -170,7 +246,17 @@ class WorldScanner:
         tlk: Optional[TLKFile],
         gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
     ) -> bool:
-        """Extract data from a .utc (Creature) file."""
+        """Extract NPC data from a .utc (Creature) file into *context*.
+
+        Args:
+            file_path: Path to the .utc file.
+            context: World context to populate.
+            tlk: Optional TLK for StrRef resolution.
+            gff_cache: Optional shared GFF parse cache.
+
+        Returns:
+            ``True`` if the NPC was added to the context.
+        """
         data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         tag = data.get("Tag", "")
         if not tag:
@@ -218,7 +304,17 @@ class WorldScanner:
         tlk: Optional[TLKFile],
         gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
     ) -> bool:
-        """Extract data from an .are (Area) file."""
+        """Extract area name from an .are (Area) file into *context*.
+
+        Args:
+            file_path: Path to the .are file.
+            context: World context to populate.
+            tlk: Optional TLK for StrRef resolution.
+            gff_cache: Optional shared GFF parse cache.
+
+        Returns:
+            ``True`` if the area was added to the context.
+        """
         data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "Name")
@@ -235,7 +331,17 @@ class WorldScanner:
         tlk: Optional[TLKFile],
         gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
     ) -> int:
-        """Extract quest names from a .jrl (Journal) file."""
+        """Extract quest names from a .jrl (Journal) file into *context*.
+
+        Args:
+            file_path: Path to the .jrl file.
+            context: World context to populate.
+            tlk: Optional TLK for StrRef resolution.
+            gff_cache: Optional shared GFF parse cache.
+
+        Returns:
+            Number of quests added to the context.
+        """
         data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         categories = data.get("Categories", [])
         
@@ -258,7 +364,17 @@ class WorldScanner:
         tlk: Optional[TLKFile],
         gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
     ) -> bool:
-        """Extract data from a .uti (Item) file."""
+        """Extract item name from a .uti (Item) file into *context*.
+
+        Args:
+            file_path: Path to the .uti file.
+            context: World context to populate.
+            tlk: Optional TLK for StrRef resolution.
+            gff_cache: Optional shared GFF parse cache.
+
+        Returns:
+            ``True`` if the item was added to the context.
+        """
         data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "LocalizedName")

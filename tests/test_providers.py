@@ -22,7 +22,7 @@ class MockAIProvider(BaseAIProvider):
     def get_provider_name(self) -> str:
         return "mock"
 
-    def translate(self, text, source_lang, target_lang, context=None):
+    def translate(self, text, source_lang, target_lang, context=None, glossary_block=None):
         return TranslationResult(
             translated=f"[{target_lang}] {text}",
             original=text,

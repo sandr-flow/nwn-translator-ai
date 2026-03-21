@@ -27,7 +27,7 @@ def _make_config(**kwargs) -> TranslationConfig:
     """Return a minimal TranslationConfig with sensible defaults."""
     defaults = dict(
         api_key="test-key",
-        model="minimax/minimax-m2.7",
+        model="deepseek/deepseek-v3.2",
         source_lang="english",
         target_lang="russian",
         input_file=Path("test.mod"),
@@ -40,14 +40,16 @@ def _make_provider(translations: dict) -> Mock:
     """Return a mock provider that translates via the given dict."""
     provider = Mock()
 
-    def translate(text, source_lang, target_lang, context=None):
+    def translate(text, source_lang, target_lang, context=None, glossary_block=None):
         translated = translations.get(text, text)
         return TranslationResult(translated=translated, original=text, success=True)
 
     provider.translate.side_effect = translate
 
-    async def translate_async(text, source_lang, target_lang, context=None):
-        return translate(text, source_lang, target_lang, context)
+    async def translate_async(
+        text, source_lang, target_lang, context=None, glossary_block=None
+    ):
+        return translate(text, source_lang, target_lang, context, glossary_block)
 
     provider.translate_async = AsyncMock(side_effect=translate_async)
     return provider

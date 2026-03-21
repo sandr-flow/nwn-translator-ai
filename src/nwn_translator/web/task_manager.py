@@ -25,6 +25,14 @@ DEFAULT_TASK_TTL_SECONDS = 24 * 3600
 
 
 def _lang_suffix(target_lang: str) -> str:
+    """Build a short language suffix for output filenames.
+
+    Args:
+        target_lang: Target language name (e.g. ``"russian"``).
+
+    Returns:
+        Suffix string like ``"_rus"`` or ``"_de"``.
+    """
     return f"_{target_lang[:3].lower()}" if len(target_lang) > 3 else f"_{target_lang}"
 
 
@@ -49,9 +57,11 @@ class TranslationTask:
     _done: threading.Event = field(default_factory=threading.Event)
 
     def mark_done(self) -> None:
+        """Signal that the worker thread has finished processing."""
         self._done.set()
 
     def is_finished(self) -> bool:
+        """Return ``True`` if the task has reached a terminal status."""
         return self.status in ("completed", "failed")
 
 
@@ -73,15 +83,39 @@ class TaskManager:
         self._active_by_ip: Dict[str, str] = {}
 
     def workspace_for_task(self, task_id: str) -> Path:
+        """Return (and create) the workspace directory for a given task.
+
+        Args:
+            task_id: UUID of the translation task.
+
+        Returns:
+            Path to the task's workspace directory.
+        """
         path = self.workspace_root / task_id
         path.mkdir(parents=True, exist_ok=True)
         return path
 
     def get(self, task_id: str) -> Optional[TranslationTask]:
+        """Look up a task by ID (thread-safe).
+
+        Args:
+            task_id: UUID of the translation task.
+
+        Returns:
+            The task, or ``None`` if not found.
+        """
         with self._lock:
             return self._tasks.get(task_id)
 
     def active_task_id_for_ip(self, ip: str) -> Optional[str]:
+        """Return the active (non-finished) task ID for *ip*, or ``None``.
+
+        Args:
+            ip: Client IP address.
+
+        Returns:
+            Task ID string if an active task exists, else ``None``.
+        """
         with self._lock:
             tid = self._active_by_ip.get(ip)
             if not tid:
@@ -92,6 +126,15 @@ class TaskManager:
             return None
 
     def create_task(self, client_ip: str, input_filename: str) -> TranslationTask:
+        """Create and register a new translation task.
+
+        Args:
+            client_ip: Originating client IP address.
+            input_filename: Original uploaded filename.
+
+        Returns:
+            Newly created ``TranslationTask``.
+        """
         task_id = str(uuid.uuid4())
         task = TranslationTask(task_id=task_id, client_ip=client_ip, input_filename=input_filename)
         with self._lock:
@@ -99,18 +142,44 @@ class TaskManager:
         return task
 
     def register_active(self, client_ip: str, task_id: str) -> None:
+        """Mark *task_id* as the active job for *client_ip*.
+
+        Args:
+            client_ip: Client IP address.
+            task_id: UUID of the task to register.
+        """
         with self._lock:
             self._active_by_ip[client_ip] = task_id
 
     def release_active(self, client_ip: str, task_id: str) -> None:
+        """Remove the active-job mapping for *client_ip* if it matches *task_id*.
+
+        Args:
+            client_ip: Client IP address.
+            task_id: UUID of the task to release.
+        """
         with self._lock:
             if self._active_by_ip.get(client_ip) == task_id:
                 del self._active_by_ip[client_ip]
 
     def _push_event(self, task: TranslationTask, payload: Dict[str, Any]) -> None:
+        """Enqueue an SSE event payload for the task's event stream.
+
+        Args:
+            task: Target translation task.
+            payload: JSON-serializable event dict.
+        """
         task.event_queue.put(payload)
 
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
+        """Create a progress callback that updates *task* state and pushes SSE events.
+
+        Args:
+            task: Translation task to bind the callback to.
+
+        Returns:
+            Callback compatible with :data:`~nwn_translator.config.ProgressCallback`.
+        """
         def callback(
             phase: str,
             current: int,
@@ -240,6 +309,7 @@ _manager: Optional[TaskManager] = None
 
 
 def get_task_manager() -> TaskManager:
+    """Return the global ``TaskManager`` singleton, creating it on first call."""
     global _manager
     if _manager is None:
         root_env = os.environ.get("NWN_WEB_TASK_ROOT", "").strip()
@@ -249,6 +319,11 @@ def get_task_manager() -> TaskManager:
 
 
 def set_task_manager(m: Optional[TaskManager]) -> None:
+    """Replace the global ``TaskManager`` (useful for tests).
+
+    Args:
+        m: New manager instance, or ``None`` to reset.
+    """
     global _manager
     _manager = m
 

@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_cors_origins() -> List[str]:
+    """Parse ``NWN_WEB_CORS_ORIGINS`` env var into a list of allowed origins.
+
+    Returns:
+        List of origin strings.  Defaults to ``["*"]`` if unset.
+    """
     raw = os.environ.get("NWN_WEB_CORS_ORIGINS", "*").strip()
     if raw == "*":
         return ["*"]
@@ -28,6 +33,11 @@ def _parse_cors_origins() -> List[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """FastAPI lifespan context manager.
+
+    Starts a background task that periodically purges expired translation
+    tasks and cancels it on shutdown.
+    """
     purge_task = asyncio.create_task(purge_loop_task_manager(3600))
     yield
     purge_task.cancel()

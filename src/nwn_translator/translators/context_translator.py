@@ -8,7 +8,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..config import TranslationConfig
 from ..ai_providers import BaseAIProvider
@@ -18,6 +18,9 @@ from ..extractors.dialog_extractor import DialogExtractor, DialogNode
 from ..context.world_context import WorldContext
 from ..context.dialog_formatter import DialogFormatter
 from .token_handler import TokenHandler, sanitize_text, restore_text
+
+if TYPE_CHECKING:
+    from ..glossary import Glossary
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +33,12 @@ class ContextualTranslationManager:
         provider: BaseAIProvider,
         world_context: WorldContext,
         translation_cache: Optional[Dict[str, str]] = None,
+        glossary: Optional["Glossary"] = None,
     ):
         self.config = config
         self.provider = provider
         self.world_context = world_context
+        self.glossary = glossary
         #: Shared sanitized_text -> model_output (same as TranslationManager._translation_cache)
         self.translation_cache = translation_cache
         self._log_writer = translation_log_writer_for_config(
@@ -290,19 +295,55 @@ class ContextualTranslationManager:
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt containing world context and instructions."""
-        world_block = self.world_context.to_prompt_block()
-        
+        world_block = self.world_context.to_prompt_block(
+            glossary=self.glossary,
+            target_lang=self.config.target_lang,
+        )
+        glossary_block = ""
+        if self.glossary and self.glossary.entries:
+            glossary_block = self.glossary.to_prompt_block() + "\n\n"
+
+        target = self.config.target_lang
         return (
             f"You are an elite translator for the game Neverwinter Nights.\n"
-            f"Your task is to translate entire dialogue scripts to {self.config.target_lang} "
+            f"Your task is to translate entire dialogue scripts to {target} "
             f"according to Nora Gal's Golden School of Translation.\n\n"
             f"{world_block}\n\n"
+            f"{glossary_block}"
             f"RULES:\n"
-            f"1. You will receive a dialogue script. Each line to translate is marked with an ID like [E0] or [R1], inside <<< >>>.\n"
-            f"2. Translate ONLY the text inside <<< >>>. Do NOT translate the routing hints (like '-> Player Reply').\n"
-            f"3. Use the WORLD CONTEXT to understand who is speaking to whom, ensuring gender and rank appropriate phrasing.\n"
-            f"4. Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
-            f"5. Maintain natural phrasing, emotion, and tone.\n\n"
+            f"1. You will receive a dialogue script. Each line to translate is marked with an ID "
+            f"like [E0] or [R1], inside <<< >>>.\n"
+            f"2. Translate ONLY the text inside <<< >>>. Do NOT translate the routing hints "
+            f"(like '-> Player Reply').\n"
+            f"3. Use the WORLD CONTEXT to understand who is speaking to whom, ensuring gender "
+            f"and rank appropriate phrasing.\n"
+            f"4. For every name listed in the GLOSSARY (if present), use that translation "
+            f"consistently; only adjust grammar (case, number) for the sentence.\n"
+            f"5. Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
+            f"6. Maintain natural phrasing, emotion, and tone.\n"
+            f"7. PROPER NAMES — translating vs. transliterating:\n"
+            f"   a) Descriptive/meaningful names: TRANSLATE the meaning. "
+            f"NEVER produce phonetic transliterations of English words.\n"
+            f'      - "Inn of the Lance" -> "Таверна Копья" (GOOD) — NOT "Инн оф зэ Ланс" (BAD)\n'
+            f'      - "Deadman\'s Marsh" -> "Болото Мертвецов" (GOOD) — NOT "Дэдмэнз Марш" (BAD)\n'
+            f'      - "Dark Ranger" -> "Тёмный Рейнджер" (GOOD) — NOT "Дарк Рейнджер" (BAD)\n'
+            f"   b) Personal names (first/last names): transliterate.\n"
+            f'      - "Perin Izrick" -> "Перин Изрик", "Talias" -> "Талиас"\n'
+            f"8. PRESERVE SPEECH STYLE AND REGISTER. This RPG has characters of different "
+            f"intelligence and background. If the original text uses broken grammar, primitive "
+            f"syntax, or childlike speech (low-INT characters, barbarians, goblins), you MUST "
+            f"reproduce an equally broken, primitive style in {target}. "
+            f"DO NOT \"fix\" or \"correct\" their speech — that destroys the character.\n"
+            f"   In English, low-INT speech uses \"me\" instead of \"I\", drops articles/verbs. "
+            f"In Russian, the equivalent is \"моя\" instead of \"я\", infinitives instead of "
+            f"conjugated verbs, dropping prepositions, childlike structure.\n"
+            f"   Examples:\n"
+            f'   - "Me no want you here no more" -> "Моя тебя тут не хотеть больше" (GOOD, broken) '
+            f'— NOT "Мне не нужен ты тут" (BAD, normalized)\n'
+            f'   - "Me <FullName>. Me big adventurer too." -> "Моя <FullName>. Моя тоже большой путешественник." (GOOD)\n'
+            f'   - "Ha ha! Me no crawl. Me here to point and laugh!" -> '
+            f'"Ха-ха! Моя не ползать. Моя тут — пальцем тыкать и ржать!" (GOOD)\n'
+            f"   Normal-INT dialog lines in the SAME script must stay grammatically correct.\n\n"
             f"OUTPUT FORMAT:\n"
             f"You MUST return a perfectly valid JSON object mapping the node ID to its translation.\n"
             f"Example:\n"

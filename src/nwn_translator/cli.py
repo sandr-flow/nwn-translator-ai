@@ -336,7 +336,7 @@ def tokens():
     default="127.0.0.1",
     envvar="NWN_WEB_HOST",
     show_default=True,
-    help="Адрес привязки сервера",
+    help="Server bind address",
 )
 @click.option(
     "--port",
@@ -345,30 +345,30 @@ def tokens():
     envvar="NWN_WEB_PORT",
     show_default=True,
     type=int,
-    help="Порт",
+    help="Server port",
 )
 @click.option(
     "--reload",
     is_flag=True,
-    help="Перезагрузка при изменении кода (разработка)",
+    help="Auto-reload on code changes (development)",
 )
 def web_server(host: str, port: int, reload: bool):
-    """Запустить веб-интерфейс (FastAPI + API для SPA).
+    """Start the web interface (FastAPI + SPA API).
 
-    Требуются зависимости: pip install -e ".[web]"
+    Requires extra dependencies: pip install -e ".[web]"
     """
     try:
         import uvicorn
     except ImportError:
         console.print(
-            "[bold red]Ошибка:[/bold red] не установлены зависимости веб-слоя.\n"
-            "Выполните: [cyan]pip install -e \".[web]\"[/cyan]"
+            "[bold red]Error:[/bold red] web dependencies are not installed.\n"
+            "Run: [cyan]pip install -e \".[web]\"[/cyan]"
         )
         sys.exit(1)
 
     console.print(
-        f"[bold]Веб-сервер[/bold] [cyan]http://{host}:{port}[/cyan]\n"
-        "[dim]API: /api/…  Для фронтенда: cd frontend && npm run dev[/dim]"
+        f"[bold]Web server[/bold] [cyan]http://{host}:{port}[/cyan]\n"
+        "[dim]API: /api/…  Frontend: cd frontend && npm run dev[/dim]"
     )
     uvicorn.run(
         "nwn_translator.web.app:create_app",

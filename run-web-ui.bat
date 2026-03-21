@@ -1,5 +1,6 @@
 @echo off
-REM Запуск API (8000) + Vite (5173). Браузер: http://localhost:5173
+REM Launch API (8000) + Vite dev server (5173). Browser: http://localhost:5173
 cd /d "%~dp0"
-python scripts\run_web_ui.py
-if errorlevel 1 pause
+start "NWN API" nwn-translate web --reload
+cd frontend
+npm run dev

@@ -43,7 +43,7 @@ class CreatureExtractor(BaseExtractor):
         if first_name:
             items.append(TranslatableItem(
                 text=first_name,
-                context=f"Creature first name: {tag}",
+                context="NPC first name. Translate ONLY this name, do not add surname.",
                 item_id=f"{tag}_first_name",
                 location=str(file_path),
                 metadata={
@@ -58,7 +58,7 @@ class CreatureExtractor(BaseExtractor):
         if last_name:
             items.append(TranslatableItem(
                 text=last_name,
-                context=f"Creature last name: {tag}",
+                context="NPC last name or title. Translate ONLY this, do not prepend first name.",
                 item_id=f"{tag}_last_name",
                 location=str(file_path),
                 metadata={
@@ -71,9 +71,11 @@ class CreatureExtractor(BaseExtractor):
         desc_obj = gff_data.get("Description", {})
         description = self._extract_text_from_local_string(desc_obj)
         if description:
+            full_name = " ".join(filter(None, [first_name, last_name]))
+            desc_ctx = f"NPC description (name: {full_name})" if full_name else "NPC description"
             items.append(TranslatableItem(
                 text=description,
-                context=f"Creature description: {tag}",
+                context=desc_ctx,
                 item_id=f"{tag}_description",
                 location=str(file_path),
                 metadata={

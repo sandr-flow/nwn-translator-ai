@@ -11,7 +11,9 @@ export const TranslationStateKey = Symbol("TranslationState");
 
 const PHASE_LABELS = {
   extracting: "Распаковка модуля",
+  scanning: "Анализ мира и глоссарий",
   translating: "Перевод ресурсов",
+  translating_item: "Перевод ресурсов",
   building: "Сборка .mod",
   pending: "Ожидание",
 };
@@ -135,7 +137,22 @@ export function useTranslation() {
       ) {
         const delay = Math.min(1000 * 2 ** sseRetryCount, 16000);
         sseRetryCount++;
-        sseRetryTimer = setTimeout(() => openSse(id), delay);
+        sseRetryTimer = setTimeout(async () => {
+          // Check if task still exists before reconnecting SSE
+          try {
+            const res = await fetch(`/api/tasks/${id}/status`);
+            if (res.status === 404) {
+              // Task gone (backend restarted) — stop retrying
+              t.status = "failed";
+              t.error = "Задача не найдена — сервер был перезапущен";
+              t.step = "done";
+              return;
+            }
+          } catch {
+            // Backend not reachable — retry later
+          }
+          openSse(id);
+        }, delay);
       }
     };
   }

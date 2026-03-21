@@ -166,6 +166,30 @@ class BaseAIProvider(ABC):
             glossary_block,
         )
 
+    async def translate_batch_async(
+        self,
+        items: List["TranslationItem"],
+        source_lang: str,
+        target_lang: str,
+        glossary_block: Optional[str] = None,
+    ) -> List["TranslationResult"]:
+        """Translate a batch of short strings in a single API call.
+
+        Default implementation falls back to individual translate_async calls.
+        Providers may override with a true batch endpoint.
+        """
+        results = []
+        for item in items:
+            result = await self.translate_async(
+                text=item.original,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                context=item.context,
+                glossary_block=glossary_block,
+            )
+            results.append(result)
+        return results
+
     def _validate_api_key(self) -> None:
         """Validate that the API key is present and valid.
 
@@ -194,9 +218,9 @@ class BaseAIProvider(ABC):
         if glossary_block and glossary_block.strip():
             glossary_header = f"{glossary_block.strip()}\n\n"
             glossary_rule = (
-                "9. Use the GLOSSARY above for every proper name it lists: keep the same "
+                "10. Use the GLOSSARY above for every proper name it lists: keep the same "
                 "translation choice everywhere; only change word form (case, number, etc.) "
-                "to fit the sentence. If a proper name is not listed, follow rules 7-8.\n"
+                "to fit the sentence. If a proper name is not listed, follow rules 7-9.\n"
             )
 
         return (
@@ -225,14 +249,17 @@ class BaseAIProvider(ABC):
             f'      - "Perin Izrick" -> "Перин Изрик"\n'
             f'      - "Talias Allenthel" -> "Талиас Аллентел"\n'
             f'      - "Drixie" -> "Дрикси"\n'
-            f"8. When in doubt whether a name is descriptive or personal, check: does the name "
+            f"8. When translating a creature's first name or last name field, output ONLY "
+            f"the translation of the given text. Do NOT add the other part of the name "
+            f"from context — the game engine concatenates FirstName + LastName automatically.\n"
+            f"9. When in doubt whether a name is descriptive or personal, check: does the name "
             f"consist of ordinary English words with clear meaning? Then translate the meaning. "
             f"Is it a made-up fantasy name? Then transliterate.\n"
             f"{glossary_rule}"
-            f"10. PLAYER CHARACTER: The protagonist is {self.player_gender}. When the text addresses "
+            f"11. PLAYER CHARACTER: The protagonist is {self.player_gender}. When the text addresses "
             f"or describes the player character, ALL grammatical forms (verbs, adjectives, "
             f"participles, pronouns) MUST agree with {'masculine' if self.player_gender == 'male' else 'feminine'} gender.\n"
-            f"11. PRESERVE SPEECH STYLE AND REGISTER. This is a role-playing game with characters "
+            f"12. PRESERVE SPEECH STYLE AND REGISTER. This is a role-playing game with characters "
             f"of different intelligence and background. If the original text has broken grammar, "
             f"primitive syntax, or childlike speech (low-INT characters, barbarians, goblins, etc.), "
             f"you MUST reproduce an equally broken, primitive style in the translation. "

@@ -175,7 +175,7 @@ class TaskManager:
             message: Optional[str] = None,
         ) -> None:
             task.phase = phase
-            task.status = phase if phase in ("extracting", "translating", "building") else task.status
+            task.status = phase if phase in ("extracting", "scanning", "translating", "building") else task.status
             task.progress = (current / total) if total else 0.0
             task.current_file = message
             self._push_event(

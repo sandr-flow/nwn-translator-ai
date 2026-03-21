@@ -16,6 +16,37 @@ class GFFPatchError(Exception):
     pass
 
 
+# Fallback replacements for common Unicode chars that are NOT in CP1251.
+_CP1251_FALLBACKS = {
+    "\u2018": "'",   # left single quotation mark
+    "\u2019": "'",   # right single quotation mark
+    "\u201c": '"',   # left double quotation mark
+    "\u201d": '"',   # right double quotation mark
+    "\u00a0": " ",   # non-breaking space
+    "\u200b": "",    # zero-width space
+    "\u200c": "",    # zero-width non-joiner
+    "\u200d": "",    # zero-width joiner
+    "\ufeff": "",    # BOM / zero-width no-break space
+}
+
+
+def _sanitize_for_cp1251(text: str) -> str:
+    """Replace Unicode characters that cannot be encoded to CP1251.
+
+    Characters that ARE valid in CP1251 (em dash, en dash, ellipsis, «, »,
+    etc.) are kept as-is.  Only truly unencodable chars are replaced using
+    a fallback table, or dropped if no fallback exists.
+    """
+    out: list[str] = []
+    for ch in text:
+        try:
+            ch.encode("cp1251")
+            out.append(ch)
+        except UnicodeEncodeError:
+            out.append(_CP1251_FALLBACKS.get(ch, ""))
+    return "".join(out)
+
+
 class GFFPatcher:
     """Modifies a GFF binary file in-place by inserting data into the FieldData block.
 
@@ -71,7 +102,7 @@ class GFFPatcher:
     @staticmethod
     def _build_cexo_locstring_payload(new_text: str) -> bytearray:
         """Binary CExoLocString payload for *new_text* (CP1251)."""
-        encoded = new_text.encode("cp1251", errors="replace")
+        encoded = _sanitize_for_cp1251(new_text).encode("cp1251", errors="replace")
         substring_count = 1 if encoded else 0
         total_size = 4 + 4 + (4 + 4 + len(encoded)) * substring_count
 

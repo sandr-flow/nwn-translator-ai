@@ -69,7 +69,7 @@ class DialogExtractor(BaseExtractor):
             speaker = entry.get("Speaker", "")
             items.append(TranslatableItem(
                 text=text,
-                context=f"NPC line (speaker: '{speaker}')" if speaker else "NPC line",
+                context=f"Dialog line in {stem}.dlg (speaker: {speaker})" if speaker else f"NPC dialog line in {stem}.dlg",
                 item_id=f"{stem}:entry:{i}",
                 location=str(file_path),
                 metadata={
@@ -89,7 +89,7 @@ class DialogExtractor(BaseExtractor):
                 continue
             items.append(TranslatableItem(
                 text=text,
-                context="Player reply",
+                context=f"Player reply in {stem}.dlg",
                 item_id=f"{stem}:reply:{i}",
                 location=str(file_path),
                 metadata={

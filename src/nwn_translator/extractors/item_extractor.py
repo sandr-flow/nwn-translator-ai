@@ -53,7 +53,7 @@ class ItemExtractor(BaseExtractor):
         if name:
             items.append(TranslatableItem(
                 text=name,
-                context=f"Item name: {tag}",
+                context=f"Game item name (tag: {tag}). Translate the name naturally.",
                 item_id=f"{tag}_name",
                 location=str(file_path),
                 metadata={

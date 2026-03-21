@@ -50,7 +50,7 @@ class AreaExtractor(BaseExtractor):
         if name:
             items.append(TranslatableItem(
                 text=name,
-                context=f"Area name: {tag}",
+                context="Location/area name in game world",
                 item_id=f"{tag}_name",
                 location=str(file_path),
                 metadata={

@@ -95,6 +95,8 @@ class ModuleTranslator:
         # Step 1: Extract module
         logger.info("Extracting module...")
         extract_dir = self._extract_module()
+        if self.config.progress_callback:
+            self.config.progress_callback("extracting", 1, 1, "done")
 
         # Step 2: Find translatable files
         logger.info("Finding translatable files...")
@@ -114,18 +116,26 @@ class ModuleTranslator:
         # Step 2.6: Build World Context (if enabled)
         self.glossary = None
         if self.config.use_context:
+            if self.config.progress_callback:
+                self.config.progress_callback("scanning", 0, 1, "Building world context...")
             scanner = WorldScanner()
             self.world_context = scanner.scan_directory(
-                extract_dir, tlk=self.tlk, gff_cache=self._gff_cache
+                extract_dir, tlk=self.tlk, gff_cache=self._gff_cache,
+                progress_callback=self.config.progress_callback,
             )
             if self.world_context:
+                if self.config.progress_callback:
+                    self.config.progress_callback("scanning", 0, 1, "Building glossary...")
                 try:
                     self.glossary = GlossaryBuilder().build(
-                        self.world_context, self.provider, self.config
+                        self.world_context, self.provider, self.config,
+                        progress_callback=self.config.progress_callback,
                     )
                 except RuntimeError as e:
                     logger.warning("Glossary build failed, continuing without it: %s", e)
                     self.glossary = Glossary()
+            if self.config.progress_callback:
+                self.config.progress_callback("scanning", 1, 1, "done")
 
         # Step 3: Process each file
         logger.info("Translating files...")
@@ -190,6 +200,8 @@ class ModuleTranslator:
                     logger.error(error_msg)
 
         # Step 3.5: Extract + translate strings that exist only in .git instances
+        if self.config.progress_callback:
+            self.config.progress_callback("building", 0, 3, "Translating area instances...")
         git_translations = self._translate_git_instances(
             extract_dir, all_translations, manager
         )
@@ -197,10 +209,14 @@ class ModuleTranslator:
             all_translations.update(git_translations)
 
         # Step 3.6: Patch .git area instance files
+        if self.config.progress_callback:
+            self.config.progress_callback("building", 1, 3, "Patching area files...")
         if all_translations:
             self._patch_git_files(extract_dir, all_translations)
 
         # Step 4: Create new module
+        if self.config.progress_callback:
+            self.config.progress_callback("building", 2, 3, "Repacking module...")
         logger.info("Creating translated module...")
 
         output_path = self.config.output_file

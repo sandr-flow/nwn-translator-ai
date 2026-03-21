@@ -209,17 +209,26 @@ async def task_progress(task_id: str) -> StreamingResponse:
                 yield f"data: {json.dumps({'type': 'failed', 'error': task.error}, ensure_ascii=False)}\n\n"
             return
 
+        idle_ticks = 0
         while True:
             try:
                 msg = task.event_queue.get_nowait()
             except Empty:
                 if task.is_finished() and task.event_queue.empty():
                     yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                    # Small delay so the proxy flushes the final event before we close
+                    await asyncio.sleep(0.2)
                     break
+                idle_ticks += 1
+                # Send SSE comment as heartbeat every ~15s to keep proxies alive
+                if idle_ticks % 30 == 0:
+                    yield ": heartbeat\n\n"
                 await asyncio.sleep(0.5)
                 continue
+            idle_ticks = 0
             yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
             if msg.get("type") in ("completed", "failed"):
+                await asyncio.sleep(0.2)
                 break
 
     return StreamingResponse(

@@ -126,7 +126,7 @@ class OpenRouterProvider(BaseAIProvider):
             "HTTP-Referer": self.site_url,
             "X-Title": self.site_name,
         }
-        _timeout = httpx.Timeout(connect=10, read=120, write=10, pool=10)
+        _timeout = httpx.Timeout(connect=10, read=180, write=10, pool=10)
         self._headers = dict(_headers)
         self._timeout = _timeout
         self.client = OpenAI(
@@ -192,14 +192,25 @@ class OpenRouterProvider(BaseAIProvider):
     def _parse_model_json_response(raw_response: str) -> str:
         """Extract translated string from model JSON (``translation`` key)."""
         try:
-            json_match = re.search(r"\{.*\}", raw_response, re.DOTALL)
-            json_str = json_match.group(0) if json_match else raw_response
-            parsed = json.loads(json_str)
+            # Strip markdown code fences that some models wrap around JSON
+            cleaned = re.sub(r"^```(?:json)?\s*", "", raw_response.strip())
+            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+
+            # Use raw_decode for precise extraction of the first valid JSON object
+            decoder = json.JSONDecoder()
+            # Find the first '{' and decode from there
+            idx = cleaned.find("{")
+            if idx == -1:
+                logger.warning("No JSON object found in model response, using raw text")
+                return raw_response
+            parsed, _ = decoder.raw_decode(cleaned, idx)
             translated_text = parsed.get("translation", "")
             if not isinstance(translated_text, str) or not translated_text:
+                logger.warning("JSON parsed but 'translation' key missing or empty")
                 return str(raw_response)
             return translated_text
         except json.JSONDecodeError:
+            logger.warning("Failed to parse JSON from model response, using raw text")
             return raw_response
 
     def _map_openrouter_exception(self, e: Exception) -> None:
@@ -257,7 +268,7 @@ class OpenRouterProvider(BaseAIProvider):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.7,
+                temperature=0.6,
                 response_format={"type": "json_object"},
             )
 
@@ -308,7 +319,7 @@ class OpenRouterProvider(BaseAIProvider):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.7,
+                temperature=0.6,
                 response_format={"type": "json_object"},
             )
 
@@ -372,7 +383,7 @@ class OpenRouterProvider(BaseAIProvider):
         user_prompt: str,
         *,
         max_tokens: int = 16384,
-        temperature: float = 0.7,
+        temperature: float = 0.6,
     ) -> str:
         """Single chat completion with OpenAI/OpenRouter ``json_object`` mode."""
         return await self._chat_completion_json_async(
@@ -397,7 +408,7 @@ class OpenRouterProvider(BaseAIProvider):
         *,
         glossary_keys: List[str],
         max_tokens: int = 8192,
-        temperature: float = 0.4,
+        temperature: float = 0.3,
     ) -> str:
         """Glossary batch: prefer strict ``json_schema`` (structured outputs), else ``json_object``."""
         keys = sorted({str(k).strip() for k in glossary_keys if str(k).strip()})
@@ -426,12 +437,123 @@ class OpenRouterProvider(BaseAIProvider):
                     e,
                 )
 
-        return await self.complete_json_chat_async(
+        # Fallback: use the *unwrapped* internal helper to avoid nested retry.
+        # ``complete_json_chat_async`` is itself ``@retry``-decorated, which
+        # would create 3×3 = 9 attempts when called from this ``@retry`` method.
+        return await self._chat_completion_json_async(
             system_prompt,
             user_prompt,
             max_tokens=max_tokens,
             temperature=temperature,
+            response_format={"type": "json_object"},
         )
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def translate_batch_async(
+        self,
+        items: List[TranslationItem],
+        source_lang: str,
+        target_lang: str,
+        glossary_block: Optional[str] = None,
+    ) -> List[TranslationResult]:
+        """Translate a batch of short strings in a single API call.
+
+        Sends up to ~30 short items as a JSON mapping and parses the
+        response back into individual TranslationResult objects.
+
+        Args:
+            items: List of TranslationItem objects (should be short strings).
+            source_lang: Source language name.
+            target_lang: Target language name.
+            glossary_block: Optional glossary prompt block.
+
+        Returns:
+            List of TranslationResult, one per input item.
+        """
+        if not items:
+            return []
+
+        gb = glossary_block or ""
+        system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
+        # Override the JSON output instruction for batch mode
+        system_prompt += (
+            "\nBATCH MODE: You will receive a JSON object mapping numeric IDs "
+            "(\"0\", \"1\", \"2\", ...) to short strings. "
+            "Return a JSON object with the EXACT SAME numeric keys, where each "
+            "value is the translated string. Do NOT rename, add, or remove keys. "
+            "Do NOT wrap in markdown. Output ONLY the JSON object.\n"
+        )
+
+        # Build the batch payload: {"0": "text", "1": "text", ...}
+        batch_input = {}
+        for i, item in enumerate(items):
+            batch_input[str(i)] = item.original
+
+        user_prompt = (
+            f"Translate each value from {source_lang}.\n\n"
+            + json.dumps(batch_input, ensure_ascii=False)
+        )
+
+        try:
+            raw = await self._chat_completion_json_async(
+                system_prompt,
+                user_prompt,
+                max_tokens=16384,
+                temperature=0.6,
+                response_format={"type": "json_object"},
+            )
+
+            # Strip markdown fences if present
+            cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+
+            # Use raw_decode to handle trailing junk
+            decoder = json.JSONDecoder()
+            idx = cleaned.find("{")
+            if idx == -1:
+                raise json.JSONDecodeError("No JSON object found", cleaned, 0)
+            parsed, _ = decoder.raw_decode(cleaned, idx)
+
+            results = []
+            for i, item in enumerate(items):
+                key = str(i)
+                translated = parsed.get(key, "")
+                if isinstance(translated, str) and translated:
+                    results.append(TranslationResult(
+                        translated=translated,
+                        original=item.original,
+                        success=True,
+                        metadata={"model": self.model, "batch": True},
+                    ))
+                else:
+                    results.append(TranslationResult(
+                        translated="",
+                        original=item.original,
+                        success=False,
+                        error="Missing or empty translation in batch response",
+                        metadata={"model": self.model, "batch": True},
+                    ))
+            return results
+
+        except json.JSONDecodeError as e:
+            logger.warning("Batch JSON parse failed: %s", e)
+            return [
+                TranslationResult(
+                    translated="", original=item.original,
+                    success=False, error=f"Batch JSON parse error: {e}",
+                )
+                for item in items
+            ]
+        except (RateLimitError, APIConnectionError, APITimeoutError):
+            raise
+        except Exception as e:
+            self._map_openrouter_exception(e)
 
     def translate_batch(
         self,

@@ -172,6 +172,7 @@ class WorldScanner:
         extract_dir: Path,
         tlk: Optional[TLKFile] = None,
         gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]] = None,
+        progress_callback=None,
     ) -> WorldContext:
         """Scan the directory and build world context.
 
@@ -191,11 +192,19 @@ class WorldScanner:
         count_quests = 0
         count_items = 0
 
-        # Scan all relevant files. Order doesn't matter too much,
-        # but we'll do an rglob for speed.
-        for file_path in extract_dir.rglob("*"):
-            if not file_path.is_file():
-                continue
+        # Collect scannable files first for progress reporting
+        scannable_exts = {".utc", ".are", ".jrl", ".uti"}
+        scan_files = [
+            f for f in extract_dir.rglob("*")
+            if f.is_file() and f.suffix.lower() in scannable_exts
+        ]
+
+        for idx, file_path in enumerate(scan_files):
+            if progress_callback and idx % 20 == 0:
+                progress_callback(
+                    "scanning", idx, len(scan_files),
+                    f"Scanning {file_path.name}",
+                )
 
             ext = file_path.suffix.lower()
 

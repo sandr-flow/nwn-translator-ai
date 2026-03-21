@@ -35,8 +35,8 @@ class SanitizedText:
 class TokenHandler:
     """Handler for managing token replacement and restoration."""
 
-    # Pattern to match NWN tokens: <word> or <word:number>
-    TOKEN_PATTERN = re.compile(r"<(\w+(?::\d+)?)>")
+    # Pattern to match NWN tokens: <word>, <word:number>, or <word/word> (gender tags)
+    TOKEN_PATTERN = re.compile(r"<(\w+(?:/\w+)?(?::\d+)?)>")
 
     # Pattern for our placeholders: <<TOKEN_0>>, <<TOKEN_1>>, etc.
     PLACEHOLDER_PATTERN = re.compile(r"<<TOKEN_(\d+)>>")
@@ -127,6 +127,10 @@ class TokenHandler:
         """
         if not self.preserve_standard_tokens:
             return False
+
+        # Gender substitution tokens (e.g. <Brother/Sister>, <sir/madam>)
+        if "/" in token_name:
+            return True
 
         # Check if it's a standard token
         full_token = f"<{token_name}>"

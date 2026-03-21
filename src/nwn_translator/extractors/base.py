@@ -208,7 +208,7 @@ class BaseExtractor(ABC):
             return None
         return TranslatableItem(
             text=text,
-            context=f"{context_prefix}: {tag}",
+            context=f"{context_prefix} name in game (tag: {tag}). Translate naturally.",
             item_id=f"{tag}_name",
             location=str(file_path),
             metadata={"type": item_type, "tag": tag},

@@ -157,7 +157,7 @@ class ContextualTranslationManager:
                     sp,
                     up,
                     max_tokens=16384,
-                    temperature=0.7,
+                    temperature=0.6,
                 )
 
             async def run_primary() -> str:

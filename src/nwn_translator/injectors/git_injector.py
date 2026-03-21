@@ -6,6 +6,7 @@ whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -13,6 +14,20 @@ from ..file_handlers.gff_handler import read_gff
 from ..file_handlers.gff_patcher import GFFPatcher, GFFPatchError
 
 logger = logging.getLogger(__name__)
+
+# Pattern for internal engine tags that must NOT be translated.
+# Waypoints (WP…), destinations (DST_…), posts (POST_…), night/spawn markers, etc.
+# Also matches CamelCase identifiers with no spaces (e.g. "NW_YOURTAGHERE").
+_INTERNAL_TAG_RE = re.compile(
+    r"^(?:"
+    r"WP_?\w*"        # WP, WP_, WPBasement, WP_Spawn …
+    r"|DST_\w*"       # DST_Tunnel …
+    r"|POST_\w*"      # POST_Guard …
+    r"|NW_\w*"        # NW_ engine prefixes
+    r"|YOURTAGHERE"   # placeholder tags from Bioware templates
+    r")$",
+    re.IGNORECASE,
+)
 
 # Mapping: GFF list key -> list of CExoLocString field names to translate
 INSTANCE_LISTS = {
@@ -46,6 +61,24 @@ def _iter_item_list_entries(instance: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [e for e in raw if isinstance(e, dict)]
 
 
+def is_internal_tag(text: str) -> bool:
+    """Return True if *text* looks like an internal engine tag that should not be translated.
+
+    Covers waypoint markers (WP…), destination tags (DST_…), post tags (POST_…),
+    NW_ engine prefixes, and spaceless CamelCase-only identifiers that contain no
+    natural-language words.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if _INTERNAL_TAG_RE.match(stripped):
+        return True
+    # Spaceless identifiers with underscores (e.g. "Spawn_Point_01") — skip
+    if "_" in stripped and " " not in stripped:
+        return True
+    return False
+
+
 def _add_string_values_from_fields(
     obj: Dict[str, Any],
     field_names: List[str],
@@ -53,6 +86,8 @@ def _add_string_values_from_fields(
     existing: Dict[str, str],
 ) -> None:
     """Collect embedded CExoLocString Values not already present in *existing*.
+
+    Internal engine tags (waypoints, script markers) are skipped automatically.
 
     Args:
         obj: Parsed GFF struct containing CExoLocString fields.
@@ -69,6 +104,7 @@ def _add_string_values_from_fields(
             original_text
             and isinstance(original_text, str)
             and original_text not in existing
+            and not is_internal_tag(original_text)
         ):
             bucket.add(original_text)
 

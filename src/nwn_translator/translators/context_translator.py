@@ -301,11 +301,14 @@ class ContextualTranslationManager:
             f"(like '-> Player Reply').\n"
             f"3. Use the WORLD CONTEXT to understand who is speaking to whom, ensuring gender "
             f"and rank appropriate phrasing.\n"
-            f"4. For every name listed in the GLOSSARY (if present), use that translation "
+            f"4. PLAYER CHARACTER: The protagonist is {self.config.player_gender}. When the text addresses "
+            f"or describes the player character, ALL grammatical forms (verbs, adjectives, "
+            f"participles, pronouns) MUST agree with {'masculine' if self.config.player_gender == 'male' else 'feminine'} gender.\n"
+            f"5. For every name listed in the GLOSSARY (if present), use that translation "
             f"consistently; only adjust grammar (case, number) for the sentence.\n"
-            f"5. Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
-            f"6. Maintain natural phrasing, emotion, and tone.\n"
-            f"7. PROPER NAMES — translating vs. transliterating:\n"
+            f"6. Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
+            f"7. Maintain natural phrasing, emotion, and tone.\n"
+            f"8. PROPER NAMES — translating vs. transliterating:\n"
             f"   a) Descriptive/meaningful names: TRANSLATE the meaning. "
             f"NEVER produce phonetic transliterations of English words.\n"
             f'      - "Inn of the Lance" -> "Таверна Копья" (GOOD) — NOT "Инн оф зэ Ланс" (BAD)\n'
@@ -313,7 +316,7 @@ class ContextualTranslationManager:
             f'      - "Dark Ranger" -> "Тёмный Рейнджер" (GOOD) — NOT "Дарк Рейнджер" (BAD)\n'
             f"   b) Personal names (first/last names): transliterate.\n"
             f'      - "Perin Izrick" -> "Перин Изрик", "Talias" -> "Талиас"\n'
-            f"8. PRESERVE SPEECH STYLE AND REGISTER. This RPG has characters of different "
+            f"9. PRESERVE SPEECH STYLE AND REGISTER. This RPG has characters of different "
             f"intelligence and background. If the original text uses broken grammar, primitive "
             f"syntax, or childlike speech (low-INT characters, barbarians, goblins), you MUST "
             f"reproduce an equally broken, primitive style in {target}. "

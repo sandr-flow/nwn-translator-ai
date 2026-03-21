@@ -76,6 +76,7 @@ async def start_translate(
     preserve_tokens: bool = Form(True),
     use_context: bool = Form(True),
     max_concurrent_requests: Optional[int] = Form(None),
+    player_gender: str = Form("male"),
 ) -> TranslateResponse:
     """Accept a .mod/.erf/.hak upload and start translation in the background."""
     tm = get_task_manager()
@@ -138,6 +139,7 @@ async def start_translate(
             preserve_tokens=preserve_tokens,
             use_context=use_context,
             max_concurrent_requests=mc,
+            player_gender=player_gender.strip() or "male",
             input_path=input_path,
         )
 

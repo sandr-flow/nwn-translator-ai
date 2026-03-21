@@ -154,6 +154,15 @@ def cli(ctx):
     type=click.Path(exists=True, path_type=Path),
     help="Path to dialog.tlk for resolving StrRef-based names (auto-detected if not specified)",
 )
+@click.option(
+    "--gender",
+    "-g",
+    "player_gender",
+    type=click.Choice(["male", "female"]),
+    default="male",
+    show_default=True,
+    help="Player character gender (affects grammatical forms in translation)",
+)
 def translate(
     input_file: Path,
     api_key: str,
@@ -170,6 +179,7 @@ def translate(
     context: bool,
     max_concurrent: Optional[int],
     tlk: Path,
+    player_gender: str,
 ):
     """Translate a NWN module file.
 
@@ -208,6 +218,7 @@ def translate(
         "preserve_tokens": not no_tokens,
         "use_context": context,
         "tlk_file": tlk,
+        "player_gender": player_gender,
         "verbose": verbose,
         "quiet": quiet,
     }

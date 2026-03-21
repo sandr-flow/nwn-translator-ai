@@ -203,6 +203,7 @@ class TaskManager:
         preserve_tokens: bool,
         use_context: bool,
         max_concurrent_requests: int,
+        player_gender: str,
         input_path: Path,
     ) -> None:
         """Run ModuleTranslator in a worker thread (call via asyncio.to_thread)."""
@@ -232,6 +233,7 @@ class TaskManager:
                 preserve_tokens=preserve_tokens,
                 use_context=use_context,
                 max_concurrent_requests=max(1, int(max_concurrent_requests)),
+                player_gender=player_gender,
                 tlk_file=None,
                 verbose=False,
                 quiet=True,

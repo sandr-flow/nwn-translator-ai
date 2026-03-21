@@ -26,6 +26,7 @@ export function useTranslation() {
     model: "",
     preserveTokens: true,
     useContext: true,
+    playerGender: "male",
     taskId: "",
     status: "",
     progress: 0,
@@ -177,6 +178,7 @@ export function useTranslation() {
     }
     fd.append("preserve_tokens", t.preserveTokens ? "true" : "false");
     fd.append("use_context", t.useContext ? "true" : "false");
+    fd.append("player_gender", t.playerGender);
 
     const { task_id } = await postTranslate(fd);
     t.taskId = task_id;

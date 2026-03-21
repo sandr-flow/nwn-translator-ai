@@ -84,6 +84,7 @@ class BaseAIProvider(ABC):
             model: Model identifier (uses provider default if None)
             **kwargs: Additional provider-specific parameters
         """
+        self.player_gender = kwargs.pop("player_gender", "male")
         self.api_key = api_key
         self.model = model or self.get_default_model()
         self._validate_api_key()
@@ -209,7 +210,7 @@ class BaseAIProvider(ABC):
             f"4. Preserve all formatting, line breaks, and special characters.\n"
             f"5. Do NOT translate or alter placeholders like <<TOKEN_0>>, <<TOKEN_1>>, etc.\n"
             f"6. The translated text MUST be grammatically correct, strictly preserving gender and case agreements "
-            f"(согласование по родам и падежам). Exception: see rule 10 for intentionally broken speech.\n"
+            f"(согласование по родам и падежам). Exception: see rule 11 for intentionally broken speech.\n"
             f"7. PROPER NAMES — translating vs. transliterating:\n"
             f"   a) Descriptive/meaningful names: TRANSLATE the meaning. "
             f'NEVER produce phonetic transliterations of English words.\n'
@@ -228,7 +229,10 @@ class BaseAIProvider(ABC):
             f"consist of ordinary English words with clear meaning? Then translate the meaning. "
             f"Is it a made-up fantasy name? Then transliterate.\n"
             f"{glossary_rule}"
-            f"10. PRESERVE SPEECH STYLE AND REGISTER. This is a role-playing game with characters "
+            f"10. PLAYER CHARACTER: The protagonist is {self.player_gender}. When the text addresses "
+            f"or describes the player character, ALL grammatical forms (verbs, adjectives, "
+            f"participles, pronouns) MUST agree with {'masculine' if self.player_gender == 'male' else 'feminine'} gender.\n"
+            f"11. PRESERVE SPEECH STYLE AND REGISTER. This is a role-playing game with characters "
             f"of different intelligence and background. If the original text has broken grammar, "
             f"primitive syntax, or childlike speech (low-INT characters, barbarians, goblins, etc.), "
             f"you MUST reproduce an equally broken, primitive style in the translation. "

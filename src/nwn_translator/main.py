@@ -59,6 +59,7 @@ class ModuleTranslator:
         self.provider = create_provider(
             config.api_key,
             config.model,
+            player_gender=config.player_gender,
         )
 
         # Statistics

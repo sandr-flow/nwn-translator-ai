@@ -106,7 +106,7 @@ async function onTest() {
       </p>
     </div>
 
-    <div class="flex flex-wrap gap-4 text-sm">
+    <div class="flex flex-wrap gap-4 items-end text-sm">
       <label class="flex items-center gap-2 cursor-pointer">
         <input v-model="t.preserveTokens" type="checkbox" class="rounded border-nwn-muted/50" />
         Сохранять игровые токены (&lt;FirstName&gt; и т.д.)
@@ -115,6 +115,16 @@ async function onTest() {
         <input v-model="t.useContext" type="checkbox" class="rounded border-nwn-muted/50" />
         Контекстный перевод диалогов
       </label>
+      <div>
+        <label class="block text-sm text-nwn-muted mb-1">Пол ГГ</label>
+        <select
+          v-model="t.playerGender"
+          class="rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-1.5 text-sm focus:border-nwn-accent focus:outline-none"
+        >
+          <option value="male">Мужской</option>
+          <option value="female">Женский</option>
+        </select>
+      </div>
     </div>
 
     <div class="flex flex-wrap items-center gap-3">

@@ -6,7 +6,6 @@ and injected into prompts plus the session translation cache for consistency.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -279,16 +278,8 @@ class GlossaryBuilder:
                 temperature=0.2,
             )
 
-        try:
-            return asyncio.run(_call())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                return loop.run_until_complete(_call())
-            finally:
-                loop.close()
-                asyncio.set_event_loop(None)
+        from .async_utils import run_async
+        return run_async(_call())
 
     @staticmethod
     def _parse_glossary_json(raw: str, expected_keys: Set[str]) -> Dict[str, str]:

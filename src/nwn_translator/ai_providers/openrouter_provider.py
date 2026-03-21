@@ -12,6 +12,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+import httpx
+
 logger = logging.getLogger(__name__)
 
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, OpenAI
@@ -121,15 +123,18 @@ class OpenRouterProvider(BaseAIProvider):
             "HTTP-Referer": self.site_url,
             "X-Title": self.site_name,
         }
+        _timeout = httpx.Timeout(connect=10, read=120, write=10, pool=10)
         self.client = OpenAI(
             api_key=api_key,
             base_url=self.OPENROUTER_BASE_URL,
             default_headers=dict(_headers),
+            timeout=_timeout,
         )
         self.async_client = AsyncOpenAI(
             api_key=api_key,
             base_url=self.OPENROUTER_BASE_URL,
             default_headers=dict(_headers),
+            timeout=_timeout,
         )
 
     def get_default_model(self) -> str:

@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 from pathlib import Path
 from queue import Empty
 from typing import Optional
+
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
@@ -38,8 +42,9 @@ async def health() -> dict:
 def _client_ip(request: Request) -> str:
     """Extract the client IP address from the request.
 
-    Checks ``X-Forwarded-For`` first (reverse proxy), then falls back to
-    the direct client address.
+    Trusts ``X-Forwarded-For`` only when ``NWN_WEB_TRUSTED_PROXIES`` is set
+    (comma-separated list of IPs/CIDRs).  Otherwise uses the direct client
+    address to prevent spoofing.
 
     Args:
         request: Incoming FastAPI/Starlette request.
@@ -47,9 +52,14 @@ def _client_ip(request: Request) -> str:
     Returns:
         Client IP string, or ``"unknown"`` if not determinable.
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    trusted_proxies = os.environ.get("NWN_WEB_TRUSTED_PROXIES", "").strip()
+    if trusted_proxies:
+        trusted = {p.strip() for p in trusted_proxies.split(",") if p.strip()}
+        direct_ip = request.client.host if request.client else None
+        if direct_ip and direct_ip in trusted:
+            forwarded = request.headers.get("x-forwarded-for")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
     if request.client:
         return request.client.host
     return "unknown"
@@ -145,8 +155,11 @@ def _task_or_404(task_id: str) -> TranslationTask:
         The matching ``TranslationTask``.
 
     Raises:
+        HTTPException: 400 if task_id is not a valid UUID.
         HTTPException: 404 if the task is not found.
     """
+    if not _UUID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Неверный формат task_id")
     tm = get_task_manager()
     task = tm.get(task_id)
     if not task:
@@ -196,11 +209,12 @@ async def task_progress(task_id: str) -> StreamingResponse:
 
         while True:
             try:
-                msg = await asyncio.to_thread(task.event_queue.get, True, 1.0)
+                msg = task.event_queue.get_nowait()
             except Empty:
                 if task.is_finished() and task.event_queue.empty():
                     yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
                     break
+                await asyncio.sleep(0.5)
                 continue
             yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
             if msg.get("type") in ("completed", "failed"):
@@ -249,7 +263,9 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
     text = "Hello, welcome to my module!"
     try:
         provider = create_provider(body.api_key.strip(), body.model)
-        result = provider.translate(text, "english", body.target_lang)
+        result = await asyncio.to_thread(
+            provider.translate, text, "english", body.target_lang
+        )
         model = getattr(provider, "model", None) or OpenRouterProvider.DEFAULT_MODEL
         if result.success:
             return TestConnectionResponse(

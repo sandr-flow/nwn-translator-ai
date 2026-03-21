@@ -6,6 +6,7 @@ in a binary GFF file. It inserts new string payloads INSIDE the FieldData block
 the DataOffset pointers always stay within the valid FieldDataByteSize range.
 """
 
+import os
 import struct
 from pathlib import Path
 from typing import List, Tuple
@@ -36,13 +37,17 @@ class GFFPatcher:
     _HDR_LISTINDICES_OFFSET = 48
     _HDR_LISTINDICES_SIZE = 52
 
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, encoding: str | None = None):
         """Initialize the patcher.
 
         Args:
             file_path: Path to the GFF binary file to modify.
+            encoding: Text encoding for CExoLocString payloads.
+                      Defaults to ``NWN_TRANSLATE_ENCODING`` env var or ``utf-8``.
+                      Use ``cp1251`` for classic (non-EE) NWN with Cyrillic.
         """
         self.file_path = file_path
+        self.encoding = encoding or os.environ.get("NWN_TRANSLATE_ENCODING", "utf-8")
         if not self.file_path.exists():
             raise GFFPatchError(f"File not found: {self.file_path}")
 
@@ -68,10 +73,9 @@ class GFFPatcher:
             "listindices_size":     dword(self._HDR_LISTINDICES_SIZE),
         }
 
-    @staticmethod
-    def _build_cexo_locstring_payload(new_text: str) -> bytearray:
-        """Binary CExoLocString payload for *new_text* (CP1251)."""
-        encoded = new_text.encode("cp1251", errors="replace")
+    def _build_cexo_locstring_payload(self, new_text: str) -> bytearray:
+        """Binary CExoLocString payload for *new_text*."""
+        encoded = new_text.encode(self.encoding, errors="replace")
         substring_count = 1 if encoded else 0
         total_size = 4 + 4 + (4 + 4 + len(encoded)) * substring_count
 

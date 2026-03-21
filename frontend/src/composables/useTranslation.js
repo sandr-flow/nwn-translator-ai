@@ -39,6 +39,9 @@ export function useTranslation() {
   });
 
   let eventSource = null;
+  let sseRetryCount = 0;
+  let sseRetryTimer = null;
+  const SSE_MAX_RETRIES = 5;
 
   const phaseLabel = computed(() => PHASE_LABELS[t.phase] ?? t.phase ?? "");
 
@@ -56,10 +59,15 @@ export function useTranslation() {
   }
 
   function closeSse() {
+    if (sseRetryTimer) {
+      clearTimeout(sseRetryTimer);
+      sseRetryTimer = null;
+    }
     if (eventSource) {
       eventSource.close();
       eventSource = null;
     }
+    sseRetryCount = 0;
   }
 
   function applySnapshot(data) {
@@ -76,6 +84,7 @@ export function useTranslation() {
 
     eventSource.onmessage = (ev) => {
       try {
+        sseRetryCount = 0;
         const msg = JSON.parse(ev.data);
         if (msg.type === "snapshot") {
           applySnapshot(msg);
@@ -116,7 +125,17 @@ export function useTranslation() {
     };
 
     eventSource.onerror = () => {
-      closeSse();
+      if (eventSource) eventSource.close();
+      eventSource = null;
+      if (
+        t.status !== "completed" &&
+        t.status !== "failed" &&
+        sseRetryCount < SSE_MAX_RETRIES
+      ) {
+        const delay = Math.min(1000 * 2 ** sseRetryCount, 16000);
+        sseRetryCount++;
+        sseRetryTimer = setTimeout(() => openSse(id), delay);
+      }
     };
   }
 

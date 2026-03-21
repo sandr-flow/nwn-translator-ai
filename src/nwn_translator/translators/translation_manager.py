@@ -62,6 +62,9 @@ class TranslationManager:
             "errors": [],
         }
 
+        # Persistent event loop for async API calls (reused across files)
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
         # Global cache for this translation session
         # sanitized_text -> translated_text
         self._translation_cache: Dict[str, str] = {}
@@ -199,17 +202,9 @@ class TranslationManager:
 
             return await asyncio.gather(*[one(d) for d in uncached_items])
 
-        try:
-            results = asyncio.run(run_all())
-        except RuntimeError:
-            # No running loop in this thread but asyncio.run failed (edge cases)
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                results = loop.run_until_complete(run_all())
-            finally:
-                loop.close()
-                asyncio.set_event_loop(None)
+        if self._loop is None or self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+        results = self._loop.run_until_complete(run_all())
 
         for item_data, result in zip(uncached_items, results):
             item = item_data["item"]
@@ -255,6 +250,12 @@ class TranslationManager:
             Dictionary mapping sanitized original text to translated text.
         """
         return dict(self._translation_cache)
+
+    def close(self) -> None:
+        """Close the persistent event loop."""
+        if self._loop is not None and not self._loop.is_closed():
+            self._loop.close()
+        self._loop = None
 
     def clear_statistics(self) -> None:
         """Clear translation statistics."""

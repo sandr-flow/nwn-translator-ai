@@ -163,16 +163,8 @@ class ContextualTranslationManager:
             async def run_primary() -> str:
                 return await call_api(system_prompt, user_prompt)
 
-            try:
-                raw_response = asyncio.run(run_primary())
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                try:
-                    asyncio.set_event_loop(loop)
-                    raw_response = loop.run_until_complete(run_primary())
-                finally:
-                    loop.close()
-                    asyncio.set_event_loop(None)
+            from ..async_utils import run_async
+            raw_response = run_async(run_primary())
 
             parsed_json = self._parse_json_response(raw_response, file_path.name)
             if parsed_json is None:
@@ -207,16 +199,7 @@ class ContextualTranslationManager:
                         self._build_user_prompt(file_path.name, retry_script),
                     )
 
-                try:
-                    retry_raw = asyncio.run(run_retry())
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    try:
-                        asyncio.set_event_loop(loop)
-                        retry_raw = loop.run_until_complete(run_retry())
-                    finally:
-                        loop.close()
-                        asyncio.set_event_loop(None)
+                retry_raw = run_async(run_retry())
 
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json:

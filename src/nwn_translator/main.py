@@ -114,9 +114,13 @@ class ModuleTranslator:
                 extract_dir, tlk=self.tlk, gff_cache=self._gff_cache
             )
             if self.world_context:
-                self.glossary = GlossaryBuilder().build(
-                    self.world_context, self.provider, self.config
-                )
+                try:
+                    self.glossary = GlossaryBuilder().build(
+                        self.world_context, self.provider, self.config
+                    )
+                except RuntimeError as e:
+                    logger.warning("Glossary build failed, continuing without it: %s", e)
+                    self.glossary = Glossary()
 
         # Step 3: Process each file
         logger.info("Translating files...")
@@ -125,6 +129,9 @@ class ModuleTranslator:
         manager = TranslationManager(
             self.config, self.provider, glossary=self.glossary
         )
+        # Delta-tracking for cumulative manager stats
+        self._prev_items_translated = 0
+        self._prev_errors_len = 0
         context_manager = (
             ContextualTranslationManager(
                 self.config,
@@ -299,10 +306,13 @@ class ModuleTranslator:
             logger.debug(f"No translations generated for: {file_path.name}")
             return None
 
-        # Update statistics
-        stats = manager.get_statistics()
-        self.stats["items_translated"] += stats.get("items_translated", 0)
-        self.stats["errors"].extend(stats.get("errors", []))
+        # Update statistics (delta since last call to avoid double-counting)
+        items_before = getattr(self, "_prev_items_translated", 0)
+        errors_before = getattr(self, "_prev_errors_len", 0)
+        self.stats["items_translated"] += manager.stats["items_translated"] - items_before
+        self.stats["errors"].extend(manager.stats["errors"][errors_before:])
+        self._prev_items_translated = manager.stats["items_translated"]
+        self._prev_errors_len = len(manager.stats["errors"])
 
         # Inject translations
         injector = get_injector_for_content(extracted.content_type)

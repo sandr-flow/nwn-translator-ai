@@ -5,7 +5,8 @@
       "Bash(python:*)",
       "Bash(powershell:*)",
       "Bash(head:*)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "Bash(grep:*)"
     ]
   }
 }

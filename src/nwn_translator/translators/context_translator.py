@@ -106,8 +106,6 @@ class ContextualTranslationManager:
             )
             handlers[key] = handler
             sanitized_by_key[key] = sanitized
-            # Temporarily replace node text with sanitized text for the script formatting
-            node.text = sanitized
 
         translations: Dict[str, str] = {}
         keys_for_api: List[str] = []
@@ -131,10 +129,13 @@ class ContextualTranslationManager:
             return translations
 
         if set(keys_for_api) == set(all_keys):
-            script = self.formatter.format_dialog_tree(tree)
+            script = self.formatter.format_dialog_tree(
+                tree, text_overrides=sanitized_by_key
+            )
         else:
             script = self.formatter.format_nodes(
-                keys_for_api, node_map, original_text_map
+                keys_for_api, node_map, original_text_map,
+                text_overrides=sanitized_by_key,
             )
 
         if not script:
@@ -190,7 +191,8 @@ class ContextualTranslationManager:
                     len(keys_for_api),
                 )
                 retry_script = self.formatter.format_nodes(
-                    missing_keys, node_map, original_text_map
+                    missing_keys, node_map, original_text_map,
+                    text_overrides=sanitized_by_key,
                 )
 
                 async def run_retry() -> str:

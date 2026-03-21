@@ -154,13 +154,6 @@ def cli(ctx):
     type=click.Path(exists=True, path_type=Path),
     help="Path to dialog.tlk for resolving StrRef-based names (auto-detected if not specified)",
 )
-@click.option(
-    "--encoding",
-    envvar="NWN_TRANSLATE_ENCODING",
-    default="utf-8",
-    show_default=True,
-    help="Text encoding for patched strings (utf-8 for NWN:EE, cp1251 for classic NWN + Cyrillic)",
-)
 def translate(
     input_file: Path,
     api_key: str,
@@ -177,16 +170,12 @@ def translate(
     context: bool,
     max_concurrent: Optional[int],
     tlk: Path,
-    encoding: str,
 ):
     """Translate a NWN module file.
 
     INPUT_FILE: Path to the .mod file to translate
     """
     setup_logging(verbose, quiet)
-
-    # Set encoding env var so GFFPatcher picks it up everywhere
-    os.environ["NWN_TRANSLATE_ENCODING"] = encoding
 
     # Generate workspace and paths if output_file is not specified
     if not output_file:

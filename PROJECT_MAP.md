@@ -8,8 +8,25 @@
 
 | Файл | Назначение | Этап |
 |------|------------|------|
-| `src/nwn_translator/cli.py` | CLI-интерфейс (Click). Команды: `translate`, `test`, `tokens`, `providers`. Точка входа `nwn-translate` из pyproject.toml | Вход в приложение |
+| `src/nwn_translator/cli.py` | CLI-интерфейс (Click). Команды: `translate`, `test`, `tokens`, `providers`, `web`. Точка входа `nwn-translate` из pyproject.toml | Вход в приложение |
 | `src/nwn_translator/main.py` | Главный оркестратор `ModuleTranslator`. Координирует: извлечение → перевод → инъекция → сборка .mod | Основной пайплайн |
+
+---
+
+## Веб-интерфейс (опционально, зависимости `[web]`)
+
+| Файл / каталог | Назначение |
+|----------------|------------|
+| `src/nwn_translator/web/app.py` | Фабрика FastAPI: CORS, lifespan (фоновая очистка задач), опциональная раздача статики (`NWN_WEB_STATIC_DIR`) |
+| `src/nwn_translator/web/routes.py` | REST + SSE: `/api/translate`, `/api/tasks/...`, `/api/test-connection`, `/api/models`, `/api/health` |
+| `src/nwn_translator/web/task_manager.py` | Задачи в памяти, один активный перевод на IP, `progress_callback` → очередь для SSE, `NWN_WEB_TASK_ROOT` |
+| `src/nwn_translator/web/schemas.py` | Pydantic-схемы ответов |
+| `src/nwn_translator/web/__main__.py` | Запуск uvicorn (`python -m nwn_translator.web`, скрипт `nwn-translate-web`) |
+| `frontend/` | Vue 3 + Vite + Tailwind: загрузка .mod, форма, SSE-прогресс, скачивание результата |
+| `docker/Dockerfile` | Образ API (Python + uvicorn) |
+| `docker/Dockerfile.nginx` | Сборка SPA + nginx |
+| `docker/docker-compose.yml` | Сервисы `app` + `nginx`, volume для файлов задач |
+| `docker/nginx.conf` | Статика + прокси `/api/` на FastAPI (SSE без буферизации) |
 
 ---
 

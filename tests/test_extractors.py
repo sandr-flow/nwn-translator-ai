@@ -13,6 +13,12 @@ from src.nwn_translator.extractors.base import (
 from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
 from src.nwn_translator.extractors.journal_extractor import JournalExtractor
 from src.nwn_translator.extractors.item_extractor import ItemExtractor
+from src.nwn_translator.extractors.area_extractor import (
+    PlaceableExtractor,
+    DoorExtractor,
+    StoreExtractor,
+    TriggerExtractor,
+)
 
 
 class TestDialogExtractor:
@@ -185,6 +191,84 @@ class TestItemExtractor:
 
         assert len(result.items) >= 1
         # Should have name even if description uses StrRef
+
+
+class TestPlaceableExtractorDescriptions:
+    """Placeable .utp: Name, Description, DescIdentified."""
+
+    def test_extract_placeable_with_description(self):
+        extractor = PlaceableExtractor()
+        file_path = Path("chest.utp")
+        gff_data = {
+            "StructType": "UTP",
+            "Tag": "chest01",
+            "Name": {"StrRef": -1, "Value": "Old Chest"},
+            "Description": {"StrRef": -1, "Value": "A weathered wooden chest."},
+            "DescIdentified": {"StrRef": -1, "Value": "Contains quest items."},
+        }
+        result = extractor.extract(file_path, gff_data)
+        texts = {item.text for item in result.items}
+        assert "Old Chest" in texts
+        assert "A weathered wooden chest." in texts
+        assert "Contains quest items." in texts
+
+    def test_extract_placeable_desc_identified_same_as_description_not_duplicated(self):
+        extractor = PlaceableExtractor()
+        file_path = Path("box.utp")
+        same = "Same text"
+        gff_data = {
+            "Tag": "box",
+            "Name": {"StrRef": -1, "Value": "Box"},
+            "Description": {"StrRef": -1, "Value": same},
+            "DescIdentified": {"StrRef": -1, "Value": same},
+        }
+        result = extractor.extract(file_path, gff_data)
+        assert sum(1 for item in result.items if item.text == same) == 1
+
+
+class TestDoorExtractorDescriptions:
+    def test_extract_door_name_and_description(self):
+        extractor = DoorExtractor()
+        file_path = Path("door.utd")
+        gff_data = {
+            "Tag": "gate",
+            "LocalizedName": {"StrRef": -1, "Value": "Iron Gate"},
+            "Description": {"StrRef": -1, "Value": "Locked from the other side."},
+        }
+        result = extractor.extract(file_path, gff_data)
+        texts = {item.text for item in result.items}
+        assert "Iron Gate" in texts
+        assert "Locked from the other side." in texts
+
+
+class TestTriggerExtractorDescriptions:
+    def test_extract_trigger_name_and_description(self):
+        extractor = TriggerExtractor()
+        file_path = Path("trap.utt")
+        gff_data = {
+            "Tag": "trap1",
+            "LocalizedName": {"StrRef": -1, "Value": "Spike Trap"},
+            "Description": {"StrRef": -1, "Value": "Dangerous when armed."},
+        }
+        result = extractor.extract(file_path, gff_data)
+        texts = {item.text for item in result.items}
+        assert "Spike Trap" in texts
+        assert "Dangerous when armed." in texts
+
+
+class TestStoreExtractorDescriptions:
+    def test_extract_store_name_and_description(self):
+        extractor = StoreExtractor()
+        file_path = Path("shop.utm")
+        gff_data = {
+            "Tag": "merchant",
+            "LocalizedName": {"StrRef": -1, "Value": "General Store"},
+            "Description": {"StrRef": -1, "Value": "Weapons and potions."},
+        }
+        result = extractor.extract(file_path, gff_data)
+        texts = {item.text for item in result.items}
+        assert "General Store" in texts
+        assert "Weapons and potions." in texts
 
 
 class TestTranslatableItem:

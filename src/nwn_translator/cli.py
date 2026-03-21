@@ -311,6 +311,56 @@ def tokens():
     console.print("\n[dim]Custom tokens like <CustomToken:123> are also preserved.[/dim]")
 
 
+@cli.command("web")
+@click.option(
+    "--host",
+    "host",
+    default="127.0.0.1",
+    envvar="NWN_WEB_HOST",
+    show_default=True,
+    help="Адрес привязки сервера",
+)
+@click.option(
+    "--port",
+    "port",
+    default=8000,
+    envvar="NWN_WEB_PORT",
+    show_default=True,
+    type=int,
+    help="Порт",
+)
+@click.option(
+    "--reload",
+    is_flag=True,
+    help="Перезагрузка при изменении кода (разработка)",
+)
+def web_server(host: str, port: int, reload: bool):
+    """Запустить веб-интерфейс (FastAPI + API для SPA).
+
+    Требуются зависимости: pip install -e ".[web]"
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        console.print(
+            "[bold red]Ошибка:[/bold red] не установлены зависимости веб-слоя.\n"
+            "Выполните: [cyan]pip install -e \".[web]\"[/cyan]"
+        )
+        sys.exit(1)
+
+    console.print(
+        f"[bold]Веб-сервер[/bold] [cyan]http://{host}:{port}[/cyan]\n"
+        "[dim]API: /api/…  Для фронтенда: cd frontend && npm run dev[/dim]"
+    )
+    uvicorn.run(
+        "nwn_translator.web.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
 @cli.command("providers")
 def list_providers():
     """Show OpenRouter default model and a short list of popular model slugs."""

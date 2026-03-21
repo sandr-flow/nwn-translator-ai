@@ -209,15 +209,20 @@ class GenericInjector(BaseInjector):
         },
         "trigger": {
             "name": "LocalizedName",
+            "description": "Description",
         },
         "placeable": {
             "name": "Name",
+            "description": "Description",
+            "identified": "DescIdentified",
         },
         "door": {
             "name": "LocalizedName",
+            "description": "Description",
         },
         "store": {
             "name": "LocalizedName",
+            "description": "Description",
         },
         "module": {
             "name": "Mod_Name",

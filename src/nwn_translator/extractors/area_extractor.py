@@ -111,8 +111,23 @@ class TriggerExtractor(BaseExtractor):
             ExtractedContent with trigger data
         """
         tag = gff_data.get("Tag", file_path.stem)
-        item = self._make_name_item(gff_data, file_path, "LocalizedName", "Trigger", "trigger_name")
-        items = [item] if item else []
+        items: List[TranslatableItem] = []
+        name_item = self._make_name_item(
+            gff_data, file_path, "LocalizedName", "Trigger", "trigger_name"
+        )
+        if name_item:
+            items.append(name_item)
+        desc = self._extract_text_from_local_string(gff_data.get("Description", {}))
+        if desc:
+            items.append(
+                TranslatableItem(
+                    text=desc,
+                    context=f"Trigger description: {tag}",
+                    item_id=f"{tag}_description",
+                    location=str(file_path),
+                    metadata={"type": "trigger_description", "tag": tag},
+                )
+            )
         return ExtractedContent(
             content_type="trigger",
             items=items,
@@ -150,8 +165,36 @@ class PlaceableExtractor(BaseExtractor):
         """
         tag = gff_data.get("Tag", file_path.stem)
         # .utp uses 'Name' (CExoLocString), not 'LocalizedName'
-        item = self._make_name_item(gff_data, file_path, "Name", "Placeable", "placeable_name")
-        items = [item] if item else []
+        items: List[TranslatableItem] = []
+        name_item = self._make_name_item(
+            gff_data, file_path, "Name", "Placeable", "placeable_name"
+        )
+        if name_item:
+            items.append(name_item)
+        desc = self._extract_text_from_local_string(gff_data.get("Description", {}))
+        if desc:
+            items.append(
+                TranslatableItem(
+                    text=desc,
+                    context=f"Placeable description: {tag}",
+                    item_id=f"{tag}_description",
+                    location=str(file_path),
+                    metadata={"type": "placeable_description", "tag": tag},
+                )
+            )
+        idesc = self._extract_text_from_local_string(
+            gff_data.get("DescIdentified", {})
+        )
+        if idesc and idesc != desc:
+            items.append(
+                TranslatableItem(
+                    text=idesc,
+                    context=f"Placeable identified description: {tag}",
+                    item_id=f"{tag}_desc_identified",
+                    location=str(file_path),
+                    metadata={"type": "placeable_desc_identified", "tag": tag},
+                )
+            )
         return ExtractedContent(
             content_type="placeable",
             items=items,
@@ -184,8 +227,23 @@ class DoorExtractor(BaseExtractor):
             ExtractedContent with door data
         """
         tag = gff_data.get("Tag", file_path.stem)
-        item = self._make_name_item(gff_data, file_path, "LocalizedName", "Door", "door_name")
-        items = [item] if item else []
+        items: List[TranslatableItem] = []
+        name_item = self._make_name_item(
+            gff_data, file_path, "LocalizedName", "Door", "door_name"
+        )
+        if name_item:
+            items.append(name_item)
+        desc = self._extract_text_from_local_string(gff_data.get("Description", {}))
+        if desc:
+            items.append(
+                TranslatableItem(
+                    text=desc,
+                    context=f"Door description: {tag}",
+                    item_id=f"{tag}_description",
+                    location=str(file_path),
+                    metadata={"type": "door_description", "tag": tag},
+                )
+            )
         return ExtractedContent(
             content_type="door",
             items=items,
@@ -218,8 +276,23 @@ class StoreExtractor(BaseExtractor):
             ExtractedContent with store data
         """
         tag = gff_data.get("Tag", file_path.stem)
-        item = self._make_name_item(gff_data, file_path, "LocalizedName", "Store", "store_name")
-        items = [item] if item else []
+        items: List[TranslatableItem] = []
+        name_item = self._make_name_item(
+            gff_data, file_path, "LocalizedName", "Store", "store_name"
+        )
+        if name_item:
+            items.append(name_item)
+        desc = self._extract_text_from_local_string(gff_data.get("Description", {}))
+        if desc:
+            items.append(
+                TranslatableItem(
+                    text=desc,
+                    context=f"Store description: {tag}",
+                    item_id=f"{tag}_description",
+                    location=str(file_path),
+                    metadata={"type": "store_description", "tag": tag},
+                )
+            )
         return ExtractedContent(
             content_type="store",
             items=items,

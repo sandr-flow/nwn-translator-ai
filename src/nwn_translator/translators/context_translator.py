@@ -76,7 +76,7 @@ class ContextualTranslationManager:
         
         for key, node in node_map.items():
             original_text = node.text
-            if not original_text.strip():
+            if original_text is None or not str(original_text).strip():
                 continue
                 
             original_text_map[key] = original_text
@@ -113,7 +113,8 @@ class ContextualTranslationManager:
                 response_format={"type": "json_object"},
             )
 
-            raw_response = response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            raw_response = (content or "").strip()
             parsed_json = self._parse_json_response(raw_response, file_path.name)
             if parsed_json is None:
                 return {}
@@ -144,7 +145,8 @@ class ContextualTranslationManager:
                     max_tokens=16384,
                     response_format={"type": "json_object"},
                 )
-                retry_raw = retry_response.choices[0].message.content.strip()
+                retry_content = retry_response.choices[0].message.content
+                retry_raw = (retry_content or "").strip()
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json:
                     retry_translations = self._apply_translations(
@@ -188,6 +190,10 @@ class ContextualTranslationManager:
             if key not in original_text_map:
                 continue
             original_text = original_text_map[key]
+            if translated_sanitized is None:
+                translated_sanitized = ""
+            elif not isinstance(translated_sanitized, str):
+                translated_sanitized = str(translated_sanitized)
             final_translated = restore_text(translated_sanitized, handlers[key])
             translations[original_text] = final_translated
 

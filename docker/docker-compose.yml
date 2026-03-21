@@ -1,0 +1,25 @@
+# Запуск из корня репозитория: docker compose -f docker/docker-compose.yml up --build
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    expose:
+      - "8000"
+    environment:
+      NWN_WEB_TASK_ROOT: /data/tasks
+      NWN_WEB_CORS_ORIGINS: "*"
+    volumes:
+      - nwn_tasks:/data/tasks
+
+  nginx:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.nginx
+    ports:
+      - "8080:80"
+    depends_on:
+      - app
+
+volumes:
+  nwn_tasks:

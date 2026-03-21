@@ -12,7 +12,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional, Set
 
 from tqdm import tqdm
 
@@ -25,7 +25,11 @@ from .file_handlers import (
 from .file_handlers.tlk_reader import parse_tlk, find_dialog_tlk, TLKFile
 from .extractors import get_extractor_for_file
 from .injectors import get_injector_for_content
-from .injectors.git_injector import patch_git_file
+from .extractors.base import ExtractedContent, TranslatableItem
+from .injectors.git_injector import (
+    collect_git_strings_missing_from_translations,
+    patch_git_file,
+)
 from .ai_providers import create_provider
 from .translators.translation_manager import TranslationManager
 from .translators.context_translator import ContextualTranslationManager
@@ -131,7 +135,14 @@ class ModuleTranslator:
                 self.stats["errors"].append(error_msg)
                 logger.error(error_msg)
 
-        # Step 3.5: Patch .git area instance files
+        # Step 3.5: Extract + translate strings that exist only in .git instances
+        git_translations = self._translate_git_instances(
+            extract_dir, all_translations, manager
+        )
+        if git_translations:
+            all_translations.update(git_translations)
+
+        # Step 3.6: Patch .git area instance files
         if all_translations:
             self._patch_git_files(extract_dir, all_translations)
 
@@ -277,6 +288,61 @@ class ModuleTranslator:
                 logger.info(f"Updated {file_path.name}: {result.items_updated} items")
 
         return translations
+
+    def _translate_git_instances(
+        self,
+        extract_dir: Path,
+        all_translations: Dict[str, str],
+        manager: TranslationManager,
+    ) -> Dict[str, str]:
+        """Collect locstrings from .git files missing from *all_translations*, translate them."""
+        git_files = list(extract_dir.glob("*.git"))
+        if not git_files:
+            return {}
+
+        pending: Set[str] = set()
+        for git_path in git_files:
+            try:
+                gff_data = read_gff(git_path, tlk=self.tlk)
+            except Exception as e:
+                logger.error("Failed to read %s for git string collection: %s", git_path.name, e)
+                continue
+            pending |= collect_git_strings_missing_from_translations(
+                gff_data, all_translations
+            )
+
+        if not pending:
+            return {}
+
+        logger.info(
+            "Translating %d unique strings from .git instance files...",
+            len(pending),
+        )
+
+        items = [
+            TranslatableItem(
+                text=text,
+                context="Area instance (.git)",
+                item_id=f"git_instance:{text[:48]}",
+                location=".git",
+                metadata={"type": "git_instance_string"},
+            )
+            for text in sorted(pending)
+        ]
+        extracted = ExtractedContent(
+            content_type="git_instance",
+            items=items,
+            source_file=extract_dir,
+            metadata={"type": "git_instance"},
+        )
+
+        items_before = manager.stats["items_translated"]
+        errors_before = len(manager.stats["errors"])
+        new_map = manager.translate_content(extracted)
+        self.stats["items_translated"] += manager.stats["items_translated"] - items_before
+        self.stats["errors"].extend(manager.stats["errors"][errors_before:])
+
+        return new_map
 
     def _patch_git_files(
         self,

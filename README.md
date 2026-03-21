@@ -16,6 +16,47 @@ AI-powered tool for translating Neverwinter Nights modules from any language to 
 pip install nwn-modules-translator
 ```
 
+### Разработка из репозитория (venv)
+
+Рекомендуется отдельное виртуальное окружение:
+
+**Windows (PowerShell):**
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+```
+
+**Linux / macOS:**
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Веб-API и зависимости фронта к ядру:
+```bash
+pip install -e ".[web]"
+```
+
+Запуск бэкенда (API для SPA):
+```bash
+nwn-translate web --host 127.0.0.1 --port 8000
+# или
+nwn-translate-web
+```
+
+Фронтенд (отдельный терминал, Node.js):
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Откройте в браузере адрес Vite (обычно http://127.0.0.1:5173) — запросы к `/api` проксируются на FastAPI.
+
+Docker-сборка для продакшена: см. [docker/docker-compose.yml](docker/docker-compose.yml).
+
 ## Usage
 
 Basic translation (key from `.env` as `NWN_TRANSLATE_API_KEY`, or use `--api-key`):

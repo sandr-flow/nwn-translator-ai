@@ -1,0 +1,258 @@
+"""In-memory translation tasks, background execution, and SSE event queue."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import threading
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from queue import Empty, Queue
+from typing import Any, Callable, Dict, List, Optional
+
+from ..config import TranslationConfig
+from ..main import ModuleTranslator
+
+logger = logging.getLogger(__name__)
+
+# Max upload size (bytes) — must match Starlette limit in routes
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+DEFAULT_TASK_TTL_SECONDS = 24 * 3600
+
+
+def _lang_suffix(target_lang: str) -> str:
+    return f"_{target_lang[:3].lower()}" if len(target_lang) > 3 else f"_{target_lang}"
+
+
+@dataclass
+class TranslationTask:
+    """One translation job."""
+
+    task_id: str
+    client_ip: str
+    created_at: float = field(default_factory=time.time)
+    status: str = "pending"
+    progress: float = 0.0
+    phase: Optional[str] = None
+    current_file: Optional[str] = None
+    result_path: Optional[Path] = None
+    log_path: Optional[Path] = None
+    error: Optional[str] = None
+    stats: Optional[Dict[str, Any]] = None
+    input_filename: str = ""
+    #: Thread-safe queue for SSE (worker thread -> async reader)
+    event_queue: "Queue[Dict[str, Any]]" = field(default_factory=Queue)
+    _done: threading.Event = field(default_factory=threading.Event)
+
+    def mark_done(self) -> None:
+        self._done.set()
+
+    def is_finished(self) -> bool:
+        return self.status in ("completed", "failed")
+
+
+class TaskManager:
+    """Stores tasks, enforces one active job per IP, TTL cleanup."""
+
+    def __init__(
+        self,
+        workspace_root: Optional[Path] = None,
+        task_ttl_seconds: float = DEFAULT_TASK_TTL_SECONDS,
+    ) -> None:
+        self.workspace_root = (
+            Path(workspace_root) if workspace_root is not None else Path("workspace") / "web"
+        )
+        self.task_ttl_seconds = task_ttl_seconds
+        self._tasks: Dict[str, TranslationTask] = {}
+        self._lock = threading.Lock()
+        #: IP -> task_id while job is running (not completed/failed)
+        self._active_by_ip: Dict[str, str] = {}
+
+    def workspace_for_task(self, task_id: str) -> Path:
+        path = self.workspace_root / task_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get(self, task_id: str) -> Optional[TranslationTask]:
+        with self._lock:
+            return self._tasks.get(task_id)
+
+    def active_task_id_for_ip(self, ip: str) -> Optional[str]:
+        with self._lock:
+            tid = self._active_by_ip.get(ip)
+            if not tid:
+                return None
+            t = self._tasks.get(tid)
+            if t and not t.is_finished():
+                return tid
+            return None
+
+    def create_task(self, client_ip: str, input_filename: str) -> TranslationTask:
+        task_id = str(uuid.uuid4())
+        task = TranslationTask(task_id=task_id, client_ip=client_ip, input_filename=input_filename)
+        with self._lock:
+            self._tasks[task_id] = task
+        return task
+
+    def register_active(self, client_ip: str, task_id: str) -> None:
+        with self._lock:
+            self._active_by_ip[client_ip] = task_id
+
+    def release_active(self, client_ip: str, task_id: str) -> None:
+        with self._lock:
+            if self._active_by_ip.get(client_ip) == task_id:
+                del self._active_by_ip[client_ip]
+
+    def _push_event(self, task: TranslationTask, payload: Dict[str, Any]) -> None:
+        task.event_queue.put(payload)
+
+    def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
+        def callback(
+            phase: str,
+            current: int,
+            total: int,
+            message: Optional[str] = None,
+        ) -> None:
+            task.phase = phase
+            task.status = phase if phase in ("extracting", "translating", "building") else task.status
+            task.progress = (current / total) if total else 0.0
+            task.current_file = message
+            self._push_event(
+                task,
+                {
+                    "type": "progress",
+                    "phase": phase,
+                    "current": current,
+                    "total": total,
+                    "file": message,
+                    "progress": task.progress,
+                },
+            )
+
+        return callback
+
+    def run_translation_in_thread(
+        self,
+        task: TranslationTask,
+        *,
+        api_key: str,
+        target_lang: str,
+        source_lang: str,
+        model: Optional[str],
+        preserve_tokens: bool,
+        use_context: bool,
+        input_path: Path,
+    ) -> None:
+        """Run ModuleTranslator in a worker thread (call via asyncio.to_thread)."""
+        base = self.workspace_for_task(task.task_id)
+        temp_dir = base / "temp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        lang_suf = _lang_suffix(target_lang)
+        output_file = base / f"{input_path.stem}{lang_suf}{input_path.suffix}"
+        log_file = base / "translation_log.jsonl"
+
+        progress_cb = self._make_progress_callback(task)
+
+        try:
+            task.status = "extracting"
+            self._push_event(task, {"type": "status", "status": "extracting"})
+
+            config = TranslationConfig(
+                api_key=api_key,
+                model=model,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                input_file=input_path,
+                output_file=output_file,
+                translation_log=log_file,
+                temp_dir=temp_dir,
+                skip_cleanup=False,
+                preserve_tokens=preserve_tokens,
+                use_context=use_context,
+                tlk_file=None,
+                verbose=False,
+                quiet=True,
+                progress_callback=progress_cb,
+            )
+
+            if not config.input_file.exists():
+                raise ValueError(f"Input file not found: {config.input_file}")
+
+            suffix = config.input_file.suffix.lower()
+            if suffix not in (".mod", ".erf", ".hak"):
+                raise ValueError("Input must be a .mod, .erf, or .hak file")
+
+            config.api_key = config.get_api_key()
+
+            translator = ModuleTranslator(config)
+            result_path = translator.translate()
+            task.result_path = Path(result_path)
+            task.log_path = log_file if log_file.exists() else None
+            task.stats = translator.get_statistics()
+            task.status = "completed"
+            task.progress = 1.0
+            self._push_event(
+                task,
+                {
+                    "type": "completed",
+                    "result_filename": task.result_path.name,
+                    "stats": task.stats,
+                },
+            )
+        except Exception as e:
+            logger.exception("Translation failed for task %s", task.task_id)
+            task.status = "failed"
+            task.error = str(e)
+            self._push_event(task, {"type": "failed", "error": str(e)})
+        finally:
+            task.mark_done()
+            self.release_active(task.client_ip, task.task_id)
+
+    def purge_expired(self) -> None:
+        """Remove old tasks and delete workspace dirs (best effort)."""
+        now = time.time()
+        with self._lock:
+            to_delete: List[str] = []
+            for tid, t in self._tasks.items():
+                if now - t.created_at > self.task_ttl_seconds and t.is_finished():
+                    to_delete.append(tid)
+            for tid in to_delete:
+                t = self._tasks.pop(tid, None)
+                if t:
+                    d = self.workspace_root / tid
+                    if d.is_dir():
+                        try:
+                            import shutil
+
+                            shutil.rmtree(d, ignore_errors=True)
+                        except OSError:
+                            pass
+
+
+# Global manager instance (tests can replace)
+_manager: Optional[TaskManager] = None
+
+
+def get_task_manager() -> TaskManager:
+    global _manager
+    if _manager is None:
+        root_env = os.environ.get("NWN_WEB_TASK_ROOT", "").strip()
+        root = Path(root_env) if root_env else None
+        _manager = TaskManager(workspace_root=root)
+    return _manager
+
+
+def set_task_manager(m: Optional[TaskManager]) -> None:
+    global _manager
+    _manager = m
+
+
+async def purge_loop_task_manager(interval_seconds: float = 3600) -> None:
+    """Background loop to purge expired tasks."""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        get_task_manager().purge_expired()

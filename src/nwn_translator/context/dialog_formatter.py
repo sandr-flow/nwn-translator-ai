@@ -52,7 +52,7 @@ class DialogFormatter:
             
             # Format current node with EXACT text for translation
             lines.append(f"[{node_key}] [{speaker}]:")
-            lines.append(f"<<<{node.text}>>>")
+            lines.append(f"<<<{node.text or ''}>>>")
             
             # Identify where the replies lead (or if it's an end node)
             if not node.replies:
@@ -62,7 +62,7 @@ class DialogFormatter:
                     reply_key = f"{'E' if reply.is_entry else 'R'}{reply.node_id}"
                     
                     # For flow context, we only need a short preview
-                    reply_text = reply.text.replace("\n", " ").strip()
+                    reply_text = (reply.text or "").replace("\n", " ").strip()
                     preview = reply_text[:60] + "..." if len(reply_text) > 60 else reply_text
                     
                     if node.is_entry:
@@ -100,6 +100,6 @@ class DialogFormatter:
                 continue
             speaker = node.speaker if node.speaker else ("NPC" if node.is_entry else "Player")
             lines.append(f"[{key}] [{speaker}]:")
-            lines.append(f"<<<{node.text}>>>")
+            lines.append(f"<<<{node.text or ''}>>>")
             lines.append("")
         return "\n".join(lines).strip()

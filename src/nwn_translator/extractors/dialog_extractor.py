@@ -171,7 +171,7 @@ class DialogExtractor(BaseExtractor):
         visited.add(entry_id)
         entry_data = entries.get(entry_id, {})
 
-        text = self._extract_text_from_local_string(entry_data.get("Text", {})) or ""
+        text = self._extract_text_from_local_string(entry_data.get("Text") or {}) or ""
         speaker = entry_data.get("Speaker", "")
 
         node = DialogNode(
@@ -213,7 +213,7 @@ class DialogExtractor(BaseExtractor):
         """
         reply_data = replies.get(reply_id, {})
 
-        text = self._extract_text_from_local_string(reply_data.get("Text", {})) or ""
+        text = self._extract_text_from_local_string(reply_data.get("Text") or {}) or ""
 
         node = DialogNode(
             node_id=reply_id,

@@ -29,6 +29,39 @@ onMounted(async () => {
 
 const selectedFile = computed(() => editableFiles.value[selectedFileIdx.value] ?? null);
 
+// Group files by NWN type for sidebar navigation
+const EXT_LABELS = {
+  ".dlg": "Диалоги",
+  ".jrl": "Журналы",
+  ".utc": "Существа",
+  ".uti": "Предметы",
+  ".are": "Области",
+  ".utt": "Триггеры",
+  ".utp": "Размещаемые",
+  ".utd": "Двери",
+  ".utm": "Магазины",
+  ".ifo": "Модуль",
+};
+
+const fileGroups = computed(() => {
+  const groups = {};
+  editableFiles.value.forEach((file, idx) => {
+    const dot = file.filename.lastIndexOf(".");
+    const ext = dot !== -1 ? file.filename.substring(dot).toLowerCase() : "";
+    const label = EXT_LABELS[ext] || ext || "Другое";
+    if (!groups[label]) groups[label] = [];
+    groups[label].push({ file, idx });
+  });
+  // Sort groups by label, but keep "Другое" last
+  return Object.entries(groups).sort((a, b) => {
+    if (a[0] === "Другое") return 1;
+    if (b[0] === "Другое") return -1;
+    return a[0].localeCompare(b[0]);
+  });
+});
+
+const collapsedGroups = ref({});
+
 const filteredItems = computed(() => {
   if (!selectedFile.value) return [];
   const q = searchQuery.value.toLowerCase().trim();
@@ -127,26 +160,39 @@ function goBack() {
 
     <template v-else>
       <div class="flex gap-4" style="min-height: 500px; max-height: 75vh">
-        <!-- File list sidebar -->
+        <!-- File list sidebar grouped by type -->
         <div class="w-56 shrink-0 overflow-y-auto border-r border-nwn-muted/20 pr-3" style="max-height: 75vh">
           <p class="text-xs text-nwn-muted mb-2">
             Файлы ({{ editableFiles.length }})
           </p>
-          <button
-            v-for="(file, idx) in editableFiles"
-            :key="file.filename"
-            type="button"
-            class="block w-full text-left px-2 py-1.5 rounded text-sm font-mono truncate mb-0.5"
-            :class="
-              idx === selectedFileIdx
-                ? 'bg-nwn-accent/20 text-nwn-accent'
-                : 'text-gray-300 hover:bg-nwn-dark/50'
-            "
-            @click="selectedFileIdx = idx"
-          >
-            {{ file.filename }}
-            <span class="text-xs text-nwn-muted">({{ file.items.length }})</span>
-          </button>
+          <div v-for="[label, entries] in fileGroups" :key="label" class="mb-1.5">
+            <button
+              type="button"
+              class="flex items-center gap-1 w-full text-left px-1 py-1 text-xs font-semibold text-nwn-muted uppercase tracking-wide hover:text-gray-300"
+              @click="collapsedGroups[label] = !collapsedGroups[label]"
+            >
+              <span class="transition-transform" :class="collapsedGroups[label] ? '-rotate-90' : ''">&#9662;</span>
+              {{ label }}
+              <span class="font-normal normal-case">({{ entries.length }})</span>
+            </button>
+            <div v-show="!collapsedGroups[label]">
+              <button
+                v-for="{ file, idx } in entries"
+                :key="file.filename"
+                type="button"
+                class="block w-full text-left pl-4 pr-2 py-1 rounded text-sm font-mono truncate mb-0.5"
+                :class="
+                  idx === selectedFileIdx
+                    ? 'bg-nwn-accent/20 text-nwn-accent'
+                    : 'text-gray-300 hover:bg-nwn-dark/50'
+                "
+                @click="selectedFileIdx = idx"
+              >
+                {{ file.filename }}
+                <span class="text-xs text-nwn-muted">({{ file.items.length }})</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- Main editor area -->

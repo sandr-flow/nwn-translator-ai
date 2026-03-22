@@ -73,23 +73,7 @@ class TranslationManager:
                 preserve_tokens=config.preserve_tokens,
             )
 
-    def translate_content(
-        self,
-        extracted_content: ExtractedContent
-    ) -> Dict[str, str]:
-        """Translate all items in extracted content.
-
-        Args:
-            extracted_content: ExtractedContent with items to translate
-
-        Returns:
-            Dictionary mapping original text to translated text
-        """
-        return self._translate_items(extracted_content)
-
-
-
-    def _translate_items(self, content: ExtractedContent) -> Dict[str, str]:
+    def translate_content(self, content: ExtractedContent) -> Dict[str, str]:
         """Translate multiple items individually, skipping duplicates.
 
         Items with the same text are translated only once; subsequent
@@ -199,6 +183,48 @@ class TranslationManager:
         item_type = (item.metadata or {}).get("type", "")
         return item_type in TranslationManager._BATCHABLE_TYPES
 
+    async def _translate_one_async(
+        self,
+        sem: asyncio.Semaphore,
+        item_data: dict,
+    ) -> TranslationResult:
+        """Translate a single item with semaphore and timeout."""
+        item = item_data["item"]
+        sanitized = item_data["sanitized"]
+        async with sem:
+            try:
+                return await asyncio.wait_for(
+                    self.provider.translate_async(
+                        text=sanitized,
+                        source_lang=self.config.source_lang,
+                        target_lang=self.config.target_lang,
+                        context=item.context,
+                        glossary_block=self._glossary_prompt_block or None,
+                    ),
+                    timeout=self._ITEM_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Translate timeout (%.0fs) for '%s…'",
+                    self._ITEM_TIMEOUT,
+                    sanitized[:40],
+                )
+                return TranslationResult(
+                    translated="",
+                    original=sanitized,
+                    success=False,
+                    error=f"Timeout after {self._ITEM_TIMEOUT}s",
+                    metadata={},
+                )
+            except Exception as e:
+                return TranslationResult(
+                    translated="",
+                    original=sanitized,
+                    success=False,
+                    error=str(e),
+                    metadata={},
+                )
+
     def _translate_uncached_concurrent(
         self,
         uncached_items: List[dict],
@@ -216,45 +242,7 @@ class TranslationManager:
             limit = max(1, int(self.config.max_concurrent_requests))
             sem = asyncio.Semaphore(limit)
 
-            # --- Individual translation for long items ---
-            async def one(item_data: dict) -> TranslationResult:
-                item = item_data["item"]
-                sanitized = item_data["sanitized"]
-                async with sem:
-                    try:
-                        return await asyncio.wait_for(
-                            self.provider.translate_async(
-                                text=sanitized,
-                                source_lang=self.config.source_lang,
-                                target_lang=self.config.target_lang,
-                                context=item.context,
-                                glossary_block=self._glossary_prompt_block or None,
-                            ),
-                            timeout=self._ITEM_TIMEOUT,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "Translate timeout (%.0fs) for '%s…'",
-                            self._ITEM_TIMEOUT,
-                            sanitized[:40],
-                        )
-                        return TranslationResult(
-                            translated="",
-                            original=sanitized,
-                            success=False,
-                            error=f"Timeout after {self._ITEM_TIMEOUT}s",
-                            metadata={},
-                        )
-                    except Exception as e:
-                        return TranslationResult(
-                            translated="",
-                            original=sanitized,
-                            success=False,
-                            error=str(e),
-                            metadata={},
-                        )
-
-            long_coros = [one(d) for d in long_items]
+            long_coros = [self._translate_one_async(sem, d) for d in long_items]
 
             # --- Batch translation for short items ---
             batch_size = self._BATCH_SIZE
@@ -413,41 +401,9 @@ class TranslationManager:
             limit = max(1, int(self.config.max_concurrent_requests))
             sem = asyncio.Semaphore(limit)
 
-            async def one(item_data: dict) -> TranslationResult:
-                item = item_data["item"]
-                sanitized = item_data["sanitized"]
-                async with sem:
-                    try:
-                        return await asyncio.wait_for(
-                            self.provider.translate_async(
-                                text=sanitized,
-                                source_lang=self.config.source_lang,
-                                target_lang=self.config.target_lang,
-                                context=item.context,
-                                glossary_block=self._glossary_prompt_block or None,
-                            ),
-                            timeout=self._ITEM_TIMEOUT,
-                        )
-                    except asyncio.TimeoutError:
-                        return TranslationResult(
-                            translated="",
-                            original=sanitized,
-                            success=False,
-                            error=f"Fallback timeout after {self._ITEM_TIMEOUT}s",
-                            metadata={},
-                        )
-                    except Exception as e:
-                        return TranslationResult(
-                            translated="",
-                            original=sanitized,
-                            success=False,
-                            error=str(e),
-                            metadata={},
-                        )
-
             try:
                 return await asyncio.wait_for(
-                    asyncio.gather(*[one(d) for d in items]),
+                    asyncio.gather(*[self._translate_one_async(sem, d) for d in items]),
                     timeout=self._GATHER_TIMEOUT / 2,
                 )
             except asyncio.TimeoutError:
@@ -519,20 +475,4 @@ class TranslationManager:
             "total_errors": len(self.stats["errors"]),
         }
 
-    def get_all_translations(self) -> Dict[str, str]:
-        """Get all cached translations from this session.
-
-        Returns:
-            Dictionary mapping sanitized original text to translated text.
-        """
-        return dict(self.translation_cache)
-
-    def clear_statistics(self) -> None:
-        """Clear translation statistics."""
-        self.stats = {
-            "files_processed": 0,
-            "items_translated": 0,
-            "cache_hits": 0,
-            "errors": [],
-        }
 

@@ -11,6 +11,13 @@ from .translation_logging import TranslationLogWriter
 # Callback: phase, current index (0-based), total count, optional message (e.g. filename).
 ProgressCallback = Callable[[str, int, int, Optional[str]], None]
 
+# Model generation parameters
+TRANSLATION_TEMPERATURE: float = 0.6
+TRANSLATION_MAX_TOKENS: int = 16384
+GLOSSARY_TEMPERATURE: float = 0.3
+GLOSSARY_FALLBACK_TEMPERATURE: float = 0.2
+GLOSSARY_MAX_TOKENS: int = 8192
+
 
 def max_concurrent_from_environment() -> int:
     """Max parallel OpenRouter HTTP requests (asyncio + semaphore, not OS threads).
@@ -54,23 +61,10 @@ class TranslationConfig:
     skip_cleanup: bool = False  # Keep temp files for debugging
 
     # Translation Options
-    batch_size: int = 1  # Number of items to translate per request (reserved for future batch prompts)
     #: Max concurrent OpenRouter requests for line-by-line translation (async).
     #: Default: :func:`max_concurrent_from_environment` (``NWN_TRANSLATE_MAX_CONCURRENT`` or 12).
     max_concurrent_requests: int = field(default_factory=max_concurrent_from_environment)
     preserve_tokens: bool = True  # Preserve game tokens like <FirstName>
-    translate_dialogs: bool = True
-    translate_journals: bool = True
-    translate_items: bool = True
-    translate_creatures: bool = True
-    translate_areas: bool = True
-    translate_placeables: bool = True
-    translate_doors: bool = True
-    translate_stores: bool = True
-
-    # Retry Configuration
-    max_retries: int = 3
-    retry_delay: float = 1.0  # Seconds
 
     # Progress Reporting
     verbose: bool = False

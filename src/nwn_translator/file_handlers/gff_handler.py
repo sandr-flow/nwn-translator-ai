@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .gff_parser import GFFFile, GFFParser, parse_gff, gff_to_dict, GFFParseError
-from .gff_writer import GFFWriter, GFFWriteError, write_gff as _write_gff
+from .gff_writer import GFFWriteError, write_gff as _write_gff
 from .tlk_reader import TLKFile, TLKEntry
 
 
@@ -138,115 +138,6 @@ class GFFHandler:
         except Exception as e:
             raise GFFHandlerError(f"Failed to write GFF file {file_path}: {e}") from e
 
-    @staticmethod
-    def get_field(data: Dict[str, Any], field_path: str, default: Any = None) -> Any:
-        """Get a field value from GFF data using dot notation.
-
-        Args:
-            data: GFF data dictionary
-            field_path: Path to field using dot notation (e.g., "Dialog.EntryList")
-            default: Default value if field not found
-
-        Returns:
-            Field value or default
-        """
-        keys = field_path.split(".")
-        value = data
-
-        for key in keys:
-            if isinstance(value, dict):
-                value = value.get(key)
-                if value is None:
-                    return default
-            elif isinstance(value, list) and key.isdigit():
-                index = int(key)
-                if 0 <= index < len(value):
-                    value = value[index]
-                else:
-                    return default
-            else:
-                return default
-
-        return value
-
-    @staticmethod
-    def set_field(data: Dict[str, Any], field_path: str, value: Any) -> None:
-        """Set a field value in GFF data using dot notation.
-
-        Args:
-            data: GFF data dictionary
-            field_path: Path to field using dot notation (e.g., "Dialog.EntryList")
-            value: Value to set
-        """
-        keys = field_path.split(".")
-        current = data
-
-        for key in keys[:-1]:
-            if key not in current:
-                current[key] = {}
-            current = current[key]
-
-        current[keys[-1]] = value
-
-    @staticmethod
-    def get_local_string(data: Dict[str, Any]) -> Optional[str]:
-        """Extract text from a LocalString structure.
-
-        LocalString in GFF format contains:
-        - StrRef: Integer reference to string table (or -1 if not used)
-        - Value: Actual string text (if StrRef is -1)
-
-        Args:
-            data: Dictionary containing StrRef and Value fields
-
-        Returns:
-            The string value, or None if not available
-        """
-        if not isinstance(data, dict):
-            return None
-
-        # Check if StrRef is -1 (meaning Value contains the actual text)
-        str_ref = data.get("StrRef", -1)
-        value = data.get("Value", "")
-
-        if str_ref == -1:
-            return value
-        else:
-            # Return value if present (may be resolved from TLK)
-            return value if value else None
-
-    @staticmethod
-    def create_local_string(text: str, str_ref: int = -1) -> Dict[str, Any]:
-        """Create a LocalString structure with the given text.
-
-        Args:
-            text: String text to store
-            str_ref: StrRef ID (default: -1 for embedded text)
-
-        Returns:
-            Dictionary with StrRef and Value fields
-        """
-        return {
-            "StrRef": str_ref,
-            "Value": text,
-        }
-
-    @staticmethod
-    def validate_gff_structure(data: Dict[str, Any], expected_type: str) -> bool:
-        """Validate that GFF data has the expected structure type.
-
-        Args:
-            data: GFF data dictionary
-            expected_type: Expected GFF file type (e.g., "UTI", "DLG")
-
-        Returns:
-            True if structure type matches, False otherwise
-        """
-        if not isinstance(data, dict):
-            return False
-
-        actual_type = data.get("StructType")
-        return actual_type == expected_type
 
 
 # Convenience functions for common operations

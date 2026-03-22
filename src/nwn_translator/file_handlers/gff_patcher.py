@@ -16,6 +16,9 @@ class GFFPatchError(Exception):
     pass
 
 
+# TODO: Dashes/hyphens in numeric ranges (e.g. "5–15") may become '?' after
+# CP1251 encoding if the dash character is not representable in CP1251.
+
 # Fallback replacements for common Unicode chars that are NOT in CP1251.
 _CP1251_FALLBACKS = {
     "\u2018": "'",   # left single quotation mark

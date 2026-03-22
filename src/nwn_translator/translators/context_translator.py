@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ..config import TranslationConfig
+from ..config import TranslationConfig, TRANSLATION_TEMPERATURE, TRANSLATION_MAX_TOKENS
 from ..ai_providers import BaseAIProvider
 from ..ai_providers.openrouter_provider import OpenRouterProvider
 from ..translation_logging import translation_log_writer_for_config
@@ -156,8 +156,8 @@ class ContextualTranslationManager:
                 return await self.provider.complete_json_chat_async(
                     sp,
                     up,
-                    max_tokens=16384,
-                    temperature=0.6,
+                    max_tokens=TRANSLATION_MAX_TOKENS,
+                    temperature=TRANSLATION_TEMPERATURE,
                 )
 
             async def run_primary() -> str:
@@ -279,66 +279,21 @@ class ContextualTranslationManager:
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt containing world context and instructions."""
+        from ..prompts import build_dialog_system_prompt
+
         world_block = self.world_context.to_prompt_block(
             glossary=self.glossary,
             target_lang=self.config.target_lang,
         )
         glossary_block = ""
         if self.glossary and self.glossary.entries:
-            glossary_block = self.glossary.to_prompt_block() + "\n\n"
+            glossary_block = self.glossary.to_prompt_block()
 
-        target = self.config.target_lang
-        return (
-            f"You are an elite translator for the game Neverwinter Nights.\n"
-            f"Your task is to translate entire dialogue scripts to {target} "
-            f"according to Nora Gal's Golden School of Translation.\n\n"
-            f"{world_block}\n\n"
-            f"{glossary_block}"
-            f"RULES:\n"
-            f"1. You will receive a dialogue script. Each line to translate is marked with an ID "
-            f"like [E0] or [R1], inside <<< >>>.\n"
-            f"2. Translate ONLY the text inside <<< >>>. Do NOT translate the routing hints "
-            f"(like '-> Player Reply').\n"
-            f"3. Use the WORLD CONTEXT to understand who is speaking to whom, ensuring gender "
-            f"and rank appropriate phrasing.\n"
-            f"4. PLAYER CHARACTER: The protagonist is {self.config.player_gender}. When the text addresses "
-            f"or describes the player character, ALL grammatical forms (verbs, adjectives, "
-            f"participles, pronouns) MUST agree with {'masculine' if self.config.player_gender == 'male' else 'feminine'} gender.\n"
-            f"5. For every name listed in the GLOSSARY (if present), use that translation "
-            f"consistently; only adjust grammar (case, number) for the sentence.\n"
-            f"6. Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
-            f"7. Maintain natural phrasing, emotion, and tone.\n"
-            f"8. PROPER NAMES — translating vs. transliterating:\n"
-            f"   a) Descriptive/meaningful names: TRANSLATE the meaning. "
-            f"NEVER produce phonetic transliterations of English words.\n"
-            f'      - "Inn of the Lance" -> "Таверна Копья" (GOOD) — NOT "Инн оф зэ Ланс" (BAD)\n'
-            f'      - "Deadman\'s Marsh" -> "Болото Мертвецов" (GOOD) — NOT "Дэдмэнз Марш" (BAD)\n'
-            f'      - "Dark Ranger" -> "Тёмный Рейнджер" (GOOD) — NOT "Дарк Рейнджер" (BAD)\n'
-            f"   b) Personal names (first/last names): transliterate.\n"
-            f'      - "Perin Izrick" -> "Перин Изрик", "Talias" -> "Талиас"\n'
-            f"9. PRESERVE SPEECH STYLE AND REGISTER. This RPG has characters of different "
-            f"intelligence and background. If the original text uses broken grammar, primitive "
-            f"syntax, or childlike speech (low-INT characters, barbarians, goblins), you MUST "
-            f"reproduce an equally broken, primitive style in {target}. "
-            f"DO NOT \"fix\" or \"correct\" their speech — that destroys the character.\n"
-            f"   Avoid the stereotypical 'моя не понимать' formula if possible. Instead, "
-            f"use crude vocabulary, infinitives, and missing prepositions to sound organically primitive.\n"
-            f"   Examples:\n"
-            f'   - "Me no want you here no more" -> "Уходи отсюда! Я больше не хотеть тебя видеть!" (GOOD, broken) '
-            f'— NOT "Мне больше не нужен ты тут" (BAD, normalized)\n'
-            f'   - "Me <FullName>. Me big adventurer too." -> "Я <FullName>. Я тоже сильно большой герой." (GOOD)\n'
-            f'   - "Ha ha! Me no crawl. Me here to point and laugh!" -> '
-            f'"Ха-ха! Я не ползать. Я тут стоять, пальцем тыкать и смеяться!" (GOOD)\n'
-            f"   Normal-INT dialog lines in the SAME script must stay grammatically correct.\n\n"
-            f"OUTPUT FORMAT:\n"
-            f"You MUST return a perfectly valid JSON object mapping the node ID to its translation.\n"
-            f"Example:\n"
-            f"{{\n"
-            f'  "E0": "Приветствую, путник.",\n'
-            f'  "R1": "Здравствуй.",\n'
-            f'  "E2": "Что тебе нужно?"\n'
-            f"}}\n\n"
-            f"Do NOT include any markdown code blocks outside the JSON."
+        return build_dialog_system_prompt(
+            self.config.target_lang,
+            self.config.player_gender,
+            world_block,
+            glossary_block,
         )
 
     def _build_user_prompt(self, filename: str, script: str) -> str:

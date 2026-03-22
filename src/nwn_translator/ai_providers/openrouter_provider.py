@@ -34,6 +34,12 @@ from .base import (
     ProviderError,
     RateLimitError,
 )
+from ..config import (
+    TRANSLATION_TEMPERATURE,
+    TRANSLATION_MAX_TOKENS,
+    GLOSSARY_TEMPERATURE,
+    GLOSSARY_MAX_TOKENS,
+)
 
 #: Exception types that should trigger automatic retry with exponential backoff.
 _RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError)
@@ -268,7 +274,7 @@ class OpenRouterProvider(BaseAIProvider):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.6,
+                temperature=TRANSLATION_TEMPERATURE,
                 response_format={"type": "json_object"},
             )
 
@@ -319,7 +325,7 @@ class OpenRouterProvider(BaseAIProvider):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.6,
+                temperature=TRANSLATION_TEMPERATURE,
                 response_format={"type": "json_object"},
             )
 
@@ -382,8 +388,8 @@ class OpenRouterProvider(BaseAIProvider):
         system_prompt: str,
         user_prompt: str,
         *,
-        max_tokens: int = 16384,
-        temperature: float = 0.6,
+        max_tokens: int = TRANSLATION_MAX_TOKENS,
+        temperature: float = TRANSLATION_TEMPERATURE,
     ) -> str:
         """Single chat completion with OpenAI/OpenRouter ``json_object`` mode."""
         return await self._chat_completion_json_async(
@@ -407,8 +413,8 @@ class OpenRouterProvider(BaseAIProvider):
         user_prompt: str,
         *,
         glossary_keys: List[str],
-        max_tokens: int = 8192,
-        temperature: float = 0.3,
+        max_tokens: int = GLOSSARY_MAX_TOKENS,
+        temperature: float = GLOSSARY_TEMPERATURE,
     ) -> str:
         """Glossary batch: prefer strict ``json_schema`` (structured outputs), else ``json_object``."""
         keys = sorted({str(k).strip() for k in glossary_keys if str(k).strip()})
@@ -504,8 +510,8 @@ class OpenRouterProvider(BaseAIProvider):
             raw = await self._chat_completion_json_async(
                 system_prompt,
                 user_prompt,
-                max_tokens=16384,
-                temperature=0.6,
+                max_tokens=TRANSLATION_MAX_TOKENS,
+                temperature=TRANSLATION_TEMPERATURE,
                 response_format={"type": "json_object"},
             )
 
@@ -555,42 +561,3 @@ class OpenRouterProvider(BaseAIProvider):
         except Exception as e:
             self._map_openrouter_exception(e)
 
-    def translate_batch(
-        self,
-        items: List[TranslationItem],
-        source_lang: str,
-        target_lang: str,
-    ) -> List[TranslationResult]:
-        """Translate multiple items sequentially.
-
-        Args:
-            items: List of TranslationItem objects to translate.
-            source_lang: Source language name.
-            target_lang: Target language name.
-
-        Returns:
-            List of TranslationResult objects (one per input item).
-        """
-        results = []
-        for item in items:
-            try:
-                result = self.translate(
-                    text=item.original,
-                    source_lang=source_lang,
-                    target_lang=target_lang,
-                    context=item.context,
-                    glossary_block=None,
-                )
-                result.metadata.update(item.metadata or {})
-                results.append(result)
-            except Exception as e:
-                results.append(
-                    TranslationResult(
-                        translated="",
-                        original=item.original,
-                        success=False,
-                        error=str(e),
-                        metadata=item.metadata or {},
-                    )
-                )
-        return results

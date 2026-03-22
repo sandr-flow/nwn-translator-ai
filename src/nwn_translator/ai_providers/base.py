@@ -20,10 +20,6 @@ class RateLimitError(ProviderError):
     pass
 
 
-class TranslationError(ProviderError):
-    """Exception raised when translation fails."""
-    pass
-
 
 @dataclass
 class TranslationItem:
@@ -129,7 +125,7 @@ class BaseAIProvider(ABC):
             TranslationResult with translated text
 
         Raises:
-            TranslationError: If translation fails
+            ProviderError: If translation fails
             RateLimitError: If rate limit is exceeded
         """
         pass
@@ -213,78 +209,8 @@ class BaseAIProvider(ABC):
         Returns:
             System prompt string
         """
-        glossary_header = ""
-        glossary_rule = ""
-        if glossary_block and glossary_block.strip():
-            glossary_header = f"{glossary_block.strip()}\n\n"
-            glossary_rule = (
-                "10. Use the GLOSSARY above for every proper name it lists: keep the same "
-                "translation choice everywhere; only change word form (case, number, etc.) "
-                "to fit the sentence. If a proper name is not listed, follow rules 7-9.\n"
-            )
-
-        return (
-            f"You are an elite translator for the game Neverwinter Nights. "
-            f"Your task is to translate the text to {target_lang} according to Nora Gal's Golden School of Translation.\n\n"
-            f"{glossary_header}"
-            f"RULES:\n"
-            f"1. Never translate word-for-word. Focus on meaning, emotion, and tone.\n"
-            f"2. Use natural syntax and vocabulary. Avoid bureaucratic language (Chancellery/Канцелярит).\n"
-            f"3. Identify idioms and adapt them to natural equivalents in the target language.\n"
-            f"4. Preserve all formatting, line breaks, and special characters.\n"
-            f"5. Do NOT translate or alter placeholders like <<TOKEN_0>>, <<TOKEN_1>>, etc.\n"
-            f"6. The translated text MUST be grammatically correct, strictly preserving gender and case agreements "
-            f"(согласование по родам и падежам). Exception: see rule 11 for intentionally broken speech.\n"
-            f"7. PROPER NAMES — translating vs. transliterating:\n"
-            f"   a) Descriptive/meaningful names: TRANSLATE the meaning. "
-            f'NEVER produce phonetic transliterations of English words.\n'
-            f"      Examples:\n"
-            f'      - "Inn of the Lance" -> "Таверна Копья" (GOOD) — NOT "Инн оф зэ Ланс" (BAD)\n'
-            f'      - "Deadman\'s Marsh" -> "Болото Мертвецов" (GOOD) — NOT "Дэдмэнз Марш" (BAD)\n'
-            f'      - "Dark Ranger" -> "Тёмный Рейнджер" (GOOD) — NOT "Дарк Рейнджер" (BAD)\n'
-            f'      - "Horde Raven" -> "Стайный Ворон" (GOOD) — NOT "ХордРейвен" (BAD)\n'
-            f'      - "Fearling" -> "Страхолик" (GOOD) — NOT "Фирлинг" (BAD)\n'
-            f"   b) Personal names (first/last names of characters): TRANSLITERATE.\n"
-            f"      Examples:\n"
-            f'      - "Perin Izrick" -> "Перин Изрик"\n'
-            f'      - "Talias Allenthel" -> "Талиас Аллентел"\n'
-            f'      - "Drixie" -> "Дрикси"\n'
-            f"8. When translating a creature's first name or last name field, output ONLY "
-            f"the translation of the given text. Do NOT add the other part of the name "
-            f"from context — the game engine concatenates FirstName + LastName automatically.\n"
-            f"9. When in doubt whether a name is descriptive or personal, check: does the name "
-            f"consist of ordinary English words with clear meaning? Then translate the meaning. "
-            f"Is it a made-up fantasy name? Then transliterate.\n"
-            f"{glossary_rule}"
-            f"11. PLAYER CHARACTER: The protagonist is {self.player_gender}. When the text addresses "
-            f"or describes the player character, ALL grammatical forms (verbs, adjectives, "
-            f"participles, pronouns) MUST agree with {'masculine' if self.player_gender == 'male' else 'feminine'} gender.\n"
-            f"12. PRESERVE SPEECH STYLE AND REGISTER. This is a role-playing game with characters "
-            f"of different intelligence and background. If the original text has broken grammar, "
-            f"primitive syntax, or childlike speech (low-INT characters, barbarians, goblins, etc.), "
-            f"you MUST reproduce an equally broken, primitive style in the translation. "
-            f"DO NOT \"fix\" or \"correct\" their speech — that would destroy the character.\n"
-            f"    Avoid relying exclusively on the stereotypical 'моя твоя не понимать' formula.\n"
-            f"    Instead, use short sentences, infinitives ('я бить'), crude vocabulary, "
-            f"    and missing prepositions or cases to make it sound organically primitive but literary.\n"
-            f"    Examples (English low-INT -> {target_lang} low-INT equivalent):\n"
-            f'    - "Me no want you here no more" -> "Уходи отсюда! Я больше не хотеть тебя видеть!" '
-            f"(GOOD, broken) — NOT \"Мне не нужен ты тут\" (BAD, normalized)\n"
-            f'    - "Me <FullName>. Me big adventurer too." -> "Я <FullName>. Я тоже сильно большой герой." '
-            f"(GOOD) — NOT \"Я <FullName>. Я тоже великий искатель приключений.\" (BAD)\n"
-            f'    - "You big fat liar. Me no follow you." -> "Ты толстый врун. Я с тобой не пойти." '
-            f"(GOOD) — NOT \"Ты лживый обманщик. Я за тобой не пойду.\" (BAD)\n"
-            f'    - "Ha ha! Me no crawl. Me here to point and laugh!" -> '
-            f'"Ха-ха! Я не ползать. Я тут стоять, пальцем тыкать и смеяться!" '
-            f"(GOOD) — NOT \"Я не ползаю. Я здесь, чтобы показывать на вас пальцем и смеяться!\" (BAD)\n\n"
-            f"    Key pattern: in English, low-INT speech uses \"me\" instead of \"I\", drops articles/verbs, "
-            f"simplifies grammar. In Russian, the equivalent is using infinitives "
-            f"instead of conjugated verbs, dropping prepositions, and childlike sentence structure. Rarely use pronouns or use them incorrectly.\n"
-            f"\nYour output MUST be strictly valid JSON. Do not use markdown code blocks.\n"
-            f"The JSON object must contain exactly ONE key:\n"
-            f'- "translation": The final translated text ONLY, perfectly formatted and ready to use in the game.\n\n'
-            f"Do not include any other keys, your thought process, explanations, or any markdown formatting outside the JSON object.\n"
-        )
+        from ..prompts import build_translation_system_prompt
+        return build_translation_system_prompt(target_lang, self.player_gender, glossary_block)
 
     def _create_user_prompt(
         self,

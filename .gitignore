@@ -33,6 +33,10 @@ frontend/dist/
 *.swp
 *.swo
 
+# Diagnostic artifacts
+diff_output.txt
+project-tree.txt
+
 # OS
 .DS_Store
 Thumbs.db

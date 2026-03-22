@@ -14,6 +14,11 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Set
 
+from .config import (
+    GLOSSARY_TEMPERATURE,
+    GLOSSARY_FALLBACK_TEMPERATURE,
+    GLOSSARY_MAX_TOKENS,
+)
 from .translators.token_handler import sanitize_text
 
 if TYPE_CHECKING:
@@ -268,33 +273,8 @@ class GlossaryBuilder:
     @staticmethod
     def _build_system_prompt(target_lang: str) -> str:
         """Build the system prompt for glossary translation."""
-        return (
-            f"You are preparing a translation glossary for the game Neverwinter Nights.\n"
-            f"Target language: {target_lang}.\n\n"
-            "Translate each proper name below into the target language.\n\n"
-            "KEY RULES — translating vs transliterating:\n"
-            "- Personal names (character first/last names, unique fantasy names): "
-            "TRANSLITERATE into target-language script.\n"
-            '  Examples: "Perin Izrick" -> "Перин Изрик", "Drixie" -> "Дрикси"\n'
-            "- Descriptive/meaningful names (locations, items, quests, titles composed of "
-            "real English words with clear meaning): TRANSLATE the meaning. "
-            "NEVER produce phonetic transliteration of English words.\n"
-            '  Examples: "Inn of the Lance" -> "Таверна Копья" (NOT "Инн оф зэ Ланс"), '
-            '"Deadman\'s Marsh" -> "Болото Мертвецов" (NOT "Дэдмэнз Марш"), '
-            '"Dark Ranger" -> "Тёмный Рейнджер" (NOT "Дарк Рейнджер"), '
-            '"Horde Raven" -> "Стайный Ворон" (NOT "ХордРейвен"), '
-            '"Fearling" -> "Страхолик" (NOT "Фирлинг")\n'
-            "- When in doubt: if the name consists of ordinary English words, translate the meaning. "
-            "If it is a made-up fantasy word, transliterate.\n\n"
-            "Return each value in nominative (dictionary) form only; "
-            "the game will inflect in context later.\n\n"
-            "OUTPUT: A single JSON object whose keys are the EXACT English name "
-            "(WITHOUT the category hint in parentheses) and values are the translations.\n"
-            'Example: the list entry "- Perin Izrick (character)" '
-            'must produce key "Perin Izrick", NOT "Perin Izrick (character)".\n'
-            "Do not omit keys. Do not add keys not in the list.\n"
-            "Do not use markdown code fences."
-        )
+        from .prompts import build_glossary_system_prompt
+        return build_glossary_system_prompt(target_lang)
 
     @staticmethod
     def _run_llm(
@@ -319,15 +299,15 @@ class GlossaryBuilder:
                     system_prompt,
                     user_prompt,
                     glossary_keys=keys_for_schema,
-                    max_tokens=8192,
-                    temperature=0.3,
+                    max_tokens=GLOSSARY_MAX_TOKENS,
+                    temperature=GLOSSARY_TEMPERATURE,
                 )
             else:
                 coro = provider.complete_json_chat_async(
                     system_prompt,
                     user_prompt,
-                    max_tokens=8192,
-                    temperature=0.2,
+                    max_tokens=GLOSSARY_MAX_TOKENS,
+                    temperature=GLOSSARY_FALLBACK_TEMPERATURE,
                 )
             return await asyncio.wait_for(coro, timeout=_LLM_CALL_TIMEOUT)
 

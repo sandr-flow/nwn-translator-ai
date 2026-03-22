@@ -126,9 +126,9 @@ function goBack() {
     <div v-else-if="error" class="text-sm text-red-400 py-4">{{ error }}</div>
 
     <template v-else>
-      <div class="flex gap-4" style="min-height: 500px">
+      <div class="flex gap-4" style="min-height: 500px; max-height: 75vh">
         <!-- File list sidebar -->
-        <div class="w-56 shrink-0 overflow-y-auto border-r border-nwn-muted/20 pr-3">
+        <div class="w-56 shrink-0 overflow-y-auto border-r border-nwn-muted/20 pr-3" style="max-height: 75vh">
           <p class="text-xs text-nwn-muted mb-2">
             Файлы ({{ editableFiles.length }})
           </p>
@@ -150,7 +150,7 @@ function goBack() {
         </div>
 
         <!-- Main editor area -->
-        <div class="flex-1 min-w-0 overflow-y-auto translation-editor-area">
+        <div class="flex-1 min-w-0 overflow-y-auto translation-editor-area" style="max-height: 75vh">
           <div v-if="selectedFile" class="space-y-3">
             <div class="flex items-center gap-3 mb-3">
               <h3 class="text-sm font-semibold text-gray-200">

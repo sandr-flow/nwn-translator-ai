@@ -241,7 +241,7 @@ function goBack() {
         </div>
 
         <!-- Main editor area -->
-        <div class="flex-1 min-w-0 overflow-y-auto translation-editor-area" style="max-height: 75vh">
+        <div class="flex-1 min-w-0 overflow-y-auto translation-editor-area pr-2" style="max-height: 75vh">
           <div v-if="selectedFile" class="space-y-3">
             <div class="flex items-center gap-3 mb-3 flex-wrap">
               <h3 class="text-sm font-semibold text-gray-200">

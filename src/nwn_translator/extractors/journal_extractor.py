@@ -132,7 +132,10 @@ class JournalExtractor(BaseExtractor):
 
         return TranslatableItem(
             text=text,
-            context=f"Journal entry in '{cat_tag}'" if cat_tag else f"Journal entry in category {category_index}",
+            context=(
+                f"Journal entry (quest title: '{cat_tag}'). "
+                f"The quest title is context only — do not substitute it into the entry text."
+            ) if cat_tag else f"Journal entry in category {category_index}",
             item_id=f"entry_{category_index}_{entry_index}",
             location=str(file_path),
             metadata={

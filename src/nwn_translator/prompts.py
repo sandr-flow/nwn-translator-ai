@@ -91,9 +91,16 @@ def build_translation_system_prompt(
     if glossary_block and glossary_block.strip():
         glossary_header = f"{glossary_block.strip()}\n\n"
         glossary_rule = (
-            "10. Use the GLOSSARY above for every proper name it lists: keep the same "
-            "translation choice everywhere; only change word form (case, number, etc.) "
-            "to fit the sentence. If a proper name is not listed, follow rules 7-9.\n"
+            "10. GLOSSARY USAGE — the glossary is a consistency reference, NOT a substitution table:\n"
+            "   a) Apply a glossary entry ONLY when the EXACT full proper name from the glossary "
+            "appears in the source text as a capitalized name. Do NOT match partial or coincidental "
+            "overlaps (e.g. 'dead Goblin Hunter' in narrative ≠ quest name 'Dead Hunter' in glossary).\n"
+            "   b) ALWAYS decline/conjugate the glossary translation to fit the grammatical context "
+            "(case, number, gender). Never paste the nominative form into oblique positions.\n"
+            "   c) Translate ONLY what is present in the source text. If the source says 'Danda', "
+            "output only 'Данда' — do NOT append a surname or title from the glossary entry "
+            "'Danda Mudgrabber'.\n"
+            "   d) If a proper name is not listed in the glossary, follow rules 7-9.\n"
         )
 
     return (
@@ -153,8 +160,13 @@ def build_dialog_system_prompt(
         f"3. Use the WORLD CONTEXT to understand who is speaking to whom, ensuring gender "
         f"and rank appropriate phrasing.\n"
         f"4. {player_gender_rule(gender)}"
-        f"5. For every name listed in the GLOSSARY (if present), use that translation "
-        f"consistently; only adjust grammar (case, number) for the sentence.\n"
+        f"5. GLOSSARY USAGE (if present) — the glossary is a consistency reference, NOT a "
+        f"substitution table:\n"
+        f"   - Apply ONLY when the EXACT full proper name appears in the source as a capitalized "
+        f"name. Do NOT match partial or coincidental overlaps.\n"
+        f"   - ALWAYS decline/conjugate to fit grammatical context (case, number, gender).\n"
+        f"   - Translate ONLY what is in the source. If source says 'Danda', output only 'Данда' "
+        f"— do NOT add surname/title from a longer glossary entry.\n"
         f"6. Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
         f"7. Maintain natural phrasing, emotion, and tone.\n"
         f"8. {proper_names_rules()}"

@@ -92,7 +92,19 @@ function onTranslationInput(event, item) {
 
 function navigateToFile(filename) {
   const idx = editableFiles.value.findIndex((f) => f.filename === filename);
-  if (idx !== -1) selectedFileIdx.value = idx;
+  if (idx === -1) return;
+  // Expand the target file's group if collapsed
+  const dot = filename.lastIndexOf(".");
+  const ext = dot !== -1 ? filename.substring(dot).toLowerCase() : "";
+  const label = EXT_LABELS[ext] || ext || "Другое";
+  if (collapsedGroups.value[label]) collapsedGroups.value[label] = false;
+  selectedFileIdx.value = idx;
+  // Scroll sidebar to the selected file button
+  nextTick(() => {
+    const sidebar = document.querySelector(".editor-sidebar");
+    const active = sidebar?.querySelector(".sidebar-file-btn-active");
+    if (active) active.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
 }
 
 const filteredItems = computed(() => {
@@ -194,7 +206,7 @@ function goBack() {
     <template v-else>
       <div class="flex gap-4" style="min-height: 500px; max-height: 75vh">
         <!-- File list sidebar grouped by type -->
-        <div class="w-56 shrink-0 overflow-y-auto border-r border-nwn-muted/20 pr-3" style="max-height: 75vh">
+        <div class="w-56 shrink-0 overflow-y-auto border-r border-nwn-muted/20 pr-3 editor-sidebar" style="max-height: 75vh">
           <p class="text-xs text-nwn-muted mb-2">
             Файлы ({{ editableFiles.length }})
           </p>
@@ -214,11 +226,11 @@ function goBack() {
                 :key="file.filename"
                 type="button"
                 class="block w-full text-left pl-4 pr-2 py-1 rounded text-sm font-mono truncate mb-0.5"
-                :class="
+                :class="[
                   idx === selectedFileIdx
-                    ? 'bg-nwn-accent/20 text-nwn-accent'
-                    : 'text-gray-300 hover:bg-nwn-dark/50'
-                "
+                    ? 'bg-nwn-accent/20 text-nwn-accent sidebar-file-btn-active'
+                    : 'text-gray-300 hover:bg-nwn-dark/50',
+                ]"
                 @click="selectedFileIdx = idx"
               >
                 {{ file.filename }}
@@ -265,7 +277,7 @@ function goBack() {
                   <p class="text-xs text-nwn-muted mb-1">Перевод</p>
                   <textarea
                     :value="item.translated"
-                    class="w-full px-2 py-1.5 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 resize-y overflow-hidden"
+                    class="w-full px-2 py-1.5 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 resize-none overflow-hidden"
                     rows="1"
                     @input="onTranslationInput($event, item)"
                     ref="textareas"
@@ -315,3 +327,29 @@ function goBack() {
     </template>
   </div>
 </template>
+
+<style scoped>
+/* Dark scrollbars matching the panel theme */
+.editor-sidebar,
+.translation-editor-area {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255 255 255 / 0.15) transparent;
+}
+.editor-sidebar::-webkit-scrollbar,
+.translation-editor-area::-webkit-scrollbar {
+  width: 6px;
+}
+.editor-sidebar::-webkit-scrollbar-track,
+.translation-editor-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.editor-sidebar::-webkit-scrollbar-thumb,
+.translation-editor-area::-webkit-scrollbar-thumb {
+  background: rgba(255 255 255 / 0.15);
+  border-radius: 3px;
+}
+.editor-sidebar::-webkit-scrollbar-thumb:hover,
+.translation-editor-area::-webkit-scrollbar-thumb:hover {
+  background: rgba(255 255 255 / 0.25);
+}
+</style>

@@ -59,6 +59,10 @@ class TranslationItem(BaseModel):
 
     original: str
     translated: str
+    shared_with: List[str] = Field(
+        default_factory=list,
+        description="Other filenames containing the same original text",
+    )
 
 
 class TranslationFileGroup(BaseModel):

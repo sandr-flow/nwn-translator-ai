@@ -22,6 +22,9 @@ from ..injectors import get_injector_for_content
 from ..ai_providers import BaseAIProvider, TranslationItem, TranslationResult
 from .token_handler import TokenHandler, sanitize_text, restore_text
 
+# Minimum length (characters) for a cached key to qualify as a prefix match.
+_MIN_PREFIX_LEN = 20
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +75,26 @@ class TranslationManager:
                 self.translation_cache,
                 preserve_tokens=config.preserve_tokens,
             )
+
+    def _find_cached_prefix(self, sanitized: str) -> Optional[tuple]:
+        """Find the longest cached text that is a prefix of *sanitized*.
+
+        This enables incremental translation for journal entries where each
+        successive entry appends new text to the previous one.
+
+        Returns:
+            ``(cached_key, cached_translation)`` or *None*.
+        """
+        best_key: Optional[str] = None
+        best_len = 0
+        for key in self.translation_cache:
+            klen = len(key)
+            if klen > best_len and klen >= _MIN_PREFIX_LEN and sanitized.startswith(key):
+                best_key = key
+                best_len = klen
+        if best_key is not None:
+            return best_key, self.translation_cache[best_key]
+        return None
 
     def translate_content(self, content: ExtractedContent) -> Dict[str, str]:
         """Translate multiple items individually, skipping duplicates.
@@ -147,10 +170,40 @@ class TranslationManager:
                 logger.debug("Cache hit for '%s…'", sanitized[:40])
                 continue
 
+            # Prefix-cache hit (journal entries that extend earlier text)
+            prefix_match = self._find_cached_prefix(sanitized)
+            if prefix_match is not None:
+                prefix_key, prefix_translation = prefix_match
+                # Only the new tail needs translating — queue it
+                item_data["_prefix_key"] = prefix_key
+                item_data["_prefix_translation"] = prefix_translation
+                logger.debug(
+                    "Prefix cache match (%d chars) for '%s…'",
+                    len(prefix_key), sanitized[:40],
+                )
+
             uncached_items.append(item_data)
 
         if uncached_items:
-            self._translate_uncached_concurrent(uncached_items, translations, source_filename=source_filename)
+            # Deduplicate: only send one API call per unique sanitized text.
+            # _process_translation_result writes to translations[item.text]
+            # and to self.translation_cache[sanitized], so duplicates with
+            # the same original text are covered automatically.
+            seen: set = set()
+            unique_items: List[dict] = []
+            for item_data in uncached_items:
+                key = item_data.get("_original_sanitized") or item_data["sanitized"]
+                if key not in seen:
+                    seen.add(key)
+                    unique_items.append(item_data)
+
+            if len(unique_items) < len(uncached_items):
+                logger.info(
+                    "Deduplicated %d items down to %d unique texts",
+                    len(uncached_items), len(unique_items),
+                )
+
+            self._translate_uncached_concurrent(unique_items, translations, source_filename=source_filename)
 
         return translations
 
@@ -237,7 +290,18 @@ class TranslationManager:
 
         Short, single-line items are grouped into batches for fewer API calls.
         Longer items are translated individually with full context.
+
+        Items with a ``_prefix_key`` are prefix-cache hits: only the new tail
+        is sent to the API and the result is reassembled in
+        :meth:`_process_translation_result`.
         """
+        # For prefix-matched items, swap sanitized text to the tail only
+        for d in uncached_items:
+            prefix_key = d.get("_prefix_key")
+            if prefix_key is not None:
+                d["_original_sanitized"] = d["sanitized"]
+                d["sanitized"] = d["sanitized"][len(prefix_key):]
+
         short_items = [d for d in uncached_items if self._is_short_item(d)]
         long_items = [d for d in uncached_items if not self._is_short_item(d)]
 
@@ -447,18 +511,31 @@ class TranslationManager:
         handler = item_data["handler"]
 
         if result.success:
+            # Reassemble prefix translation if this was a prefix-cache hit
+            translated_sanitized = result.translated
+            prefix_translation = item_data.get("_prefix_translation")
+            original_sanitized = item_data.get("_original_sanitized")
+            if prefix_translation is not None and original_sanitized is not None:
+                translated_sanitized = prefix_translation + translated_sanitized
+                # Cache under the full sanitized key
+                sanitized = original_sanitized
+
             with self._stats_lock:
-                self.translation_cache[sanitized] = result.translated
-                translated = restore_text(result.translated, handler)
+                self.translation_cache[sanitized] = translated_sanitized
+                translated = restore_text(translated_sanitized, handler)
                 translations[item.text] = translated
                 self.stats["items_translated"] += 1
 
+            # Prefer per-item location for file attribution (handles merged batches)
+            item_filename = (
+                Path(item.location).name if item.location else source_filename
+            )
             log_entry = {
                 "original": item.text,
                 "translated": translated,
                 "context": item.context,
                 "model": result.metadata.get("model", self.config.model),
-                "file": source_filename,
+                "file": item_filename,
             }
             try:
                 self._log_writer.write(log_entry)

@@ -137,9 +137,6 @@ class ModuleTranslator:
             if self.config.progress_callback:
                 self.config.progress_callback("scanning", 1, 1, "done")
 
-        # Step 3: Process each file
-        logger.info("Translating files...")
-
         # Initialize single translation managers for the whole session
         manager = TranslationManager(
             self.config, self.provider, glossary=self.glossary
@@ -159,42 +156,128 @@ class ModuleTranslator:
             else None
         )
 
-        # Accumulate all translations (original_text -> translated_text)
-        all_translations: Dict[str, str] = {}
-
+        # ── Phase A: parallel extract ──────────────────────────────────
+        logger.info("Phase A: extracting translatable content...")
         total_files = len(translatable_files)
-        
+
+        # file_path -> (gff_data, ExtractedContent, file_ext)
+        extracted_map: Dict[Path, Tuple[Dict[str, Any], ExtractedContent, str]] = {}
+        # .dlg files that need contextual translation (handled separately)
+        dialog_files: List[Path] = []
+
         from concurrent.futures import ThreadPoolExecutor, as_completed
         max_workers = max(1, getattr(self.config, 'max_concurrent_requests', 4))
-        
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_file = {
-                executor.submit(self._translate_file, file_path, manager, context_manager): file_path
+                executor.submit(self._extract_file, file_path): file_path
                 for file_path in translatable_files
             }
-
             completed_count = 0
-            if self.config.progress_callback is None:
-                future_iter = tqdm(as_completed(future_to_file), total=total_files, desc="Translating")
-            else:
-                future_iter = as_completed(future_to_file)
-
-            for future in future_iter:
+            for future in as_completed(future_to_file):
                 file_path = future_to_file[future]
                 if self.config.progress_callback is not None:
                     self.config.progress_callback(
-                        "translating", completed_count, total_files, file_path.name
+                        "extracting_content", completed_count, total_files, file_path.name
                     )
                 completed_count += 1
                 try:
-                    file_translations = future.result()
-                    if file_translations:
-                        with self._stats_lock:
-                            all_translations.update(file_translations)
+                    result = future.result()
+                    if result is not None:
+                        gff_data, extracted, file_ext = result
+                        extracted_map[file_path] = (gff_data, extracted, file_ext)
+                        if file_ext == ".dlg" and self.config.use_context and context_manager:
+                            dialog_files.append(file_path)
+                except Exception as e:
+                    error_msg = f"Error extracting {file_path.name}: {e}"
+                    with self._stats_lock:
+                        self.stats["errors"].append(error_msg)
+                    logger.error(error_msg)
+
+        # Collect all unique non-dialog items into a single ExtractedContent
+        non_dialog_items: List[TranslatableItem] = []
+        for file_path, (gff_data, extracted, file_ext) in extracted_map.items():
+            if file_path not in dialog_files:
+                non_dialog_items.extend(extracted.items)
+
+        logger.info(
+            "Phase A complete: %d files extracted, %d non-dialog items, %d dialog files",
+            len(extracted_map), len(non_dialog_items), len(dialog_files),
+        )
+
+        # ── Phase B: deduplicated translate ────────────────────────────
+        logger.info("Phase B: translating content...")
+        all_translations: Dict[str, str] = {}
+
+        # B-1: Translate all non-dialog items in one deduplicated batch
+        if non_dialog_items:
+            if self.config.progress_callback:
+                self.config.progress_callback(
+                    "translating", 0, total_files, "non-dialog items"
+                )
+            combined = ExtractedContent(
+                content_type="combined",
+                items=non_dialog_items,
+                source_file=extract_dir,
+                metadata={"type": "combined"},
+            )
+            non_dialog_translations = manager.translate_content(combined)
+            if non_dialog_translations:
+                all_translations.update(non_dialog_translations)
+            self._sync_manager_stats(manager)
+
+        # B-2: Translate dialog files (contextual, sequential to benefit from cache)
+        for idx, file_path in enumerate(dialog_files):
+            if self.config.progress_callback:
+                self.config.progress_callback(
+                    "translating", idx, len(dialog_files), file_path.name
+                )
+            gff_data, extracted, file_ext = extracted_map[file_path]
+            try:
+                translations = context_manager.translate_dialog(file_path, gff_data)
+                if translations:
+                    all_translations.update(translations)
+            except Exception as e:
+                error_msg = f"Error translating dialog {file_path.name}: {e}"
+                with self._stats_lock:
+                    self.stats["errors"].append(error_msg)
+                logger.error(error_msg)
+
+        logger.info("Phase B complete: %d translations collected", len(all_translations))
+
+        # Write per-file log entries so the web editor groups by source file.
+        # The TranslationManager already logged unique items; here we add
+        # entries for every (file, item) pair so duplicates across files
+        # appear under each file in the editor.
+        self._log_per_file_translations(extracted_map, dialog_files, all_translations, manager)
+
+        # ── Phase C: parallel inject ───────────────────────────────────
+        logger.info("Phase C: injecting translations...")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_file = {
+                executor.submit(
+                    self._inject_file, file_path,
+                    extracted_map[file_path][0],  # gff_data
+                    extracted_map[file_path][1],  # extracted
+                    all_translations,
+                ): file_path
+                for file_path in extracted_map
+            }
+            completed_count = 0
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                if self.config.progress_callback is not None:
+                    self.config.progress_callback(
+                        "injecting", completed_count, len(extracted_map), file_path.name
+                    )
+                completed_count += 1
+                try:
+                    future.result()
                     with self._stats_lock:
                         self.stats["files_processed"] += 1
                 except Exception as e:
-                    error_msg = f"Error processing {file_path.name}: {e}"
+                    error_msg = f"Error injecting {file_path.name}: {e}"
                     with self._stats_lock:
                         self.stats["errors"].append(error_msg)
                     logger.error(error_msg)
@@ -303,65 +386,85 @@ class ModuleTranslator:
         else:
             logger.debug("No TLK file found, StrRef-only names will not be resolved")
 
-    def _translate_file(
-        self, 
-        file_path: Path, 
-        manager: TranslationManager, 
-        context_manager: Optional[ContextualTranslationManager] = None
-    ) -> Optional[Dict[str, str]]:
-        """Translate a single file.
-
-        Args:
-            file_path: Path to the file
-            manager: Standard translation manager instance
-            context_manager: Contextual translation manager instance
+    def _extract_file(
+        self,
+        file_path: Path,
+    ) -> Optional[Tuple[Dict[str, Any], ExtractedContent, str]]:
+        """Extract translatable content from a single file (Phase A).
 
         Returns:
-            Dictionary mapping original text to translated text, or None.
+            (gff_data, ExtractedContent, file_ext) or None if nothing to extract.
         """
-        # Read GFF data (pass TLK to resolve StrRef-only names)
         gff_data = read_gff(file_path, tlk=self.tlk, cache=self._gff_cache)
-
-        # Get file extension
         file_ext = file_path.suffix.lower()
 
-        # Get appropriate extractor
         extractor = get_extractor_for_file(file_ext)
         if not extractor:
             logger.debug(f"No extractor for {file_ext}: {file_path.name}")
             return None
 
-        # Extract content
         extracted = extractor.extract(file_path, gff_data)
         if not extracted.items:
             logger.debug(f"No translatable content in: {file_path.name}")
             return None
 
-        # Translate
-        if file_ext == ".dlg" and self.config.use_context and context_manager:
-            # Use contextual translation for full dialog trees
-            translations = context_manager.translate_dialog(file_path, gff_data)
-        else:
-            # Use standard line-by-line translation for everything else
-            translations = manager.translate_content(extracted)
+        return gff_data, extracted, file_ext
 
-        if not translations:
-            logger.debug(f"No translations generated for: {file_path.name}")
-            return None
-
-        # Merge delta from shared manager stats into orchestrator stats
-        self._sync_manager_stats(manager)
-
-        # Inject translations
+    def _inject_file(
+        self,
+        file_path: Path,
+        gff_data: Dict[str, Any],
+        extracted: ExtractedContent,
+        all_translations: Dict[str, str],
+    ) -> None:
+        """Inject translations into a single file (Phase C)."""
         injector = get_injector_for_content(extracted.content_type)
         if injector:
             inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
-            result = injector.inject(file_path, gff_data, translations, inject_metadata)
-
+            result = injector.inject(file_path, gff_data, all_translations, inject_metadata)
             if result.modified:
                 logger.info(f"Updated {file_path.name}: {result.items_updated} items")
 
-        return translations
+    def _log_per_file_translations(
+        self,
+        extracted_map: Dict[Path, Tuple[Dict[str, Any], "ExtractedContent", str]],
+        dialog_files: List[Path],
+        all_translations: Dict[str, str],
+        manager: "TranslationManager",
+    ) -> None:
+        """Write per-file JSONL entries for non-dialog items.
+
+        Dialog files are already logged inside ContextualTranslationManager.
+        For non-dialog files the TranslationManager logs only unique items
+        (one entry per deduplicated text).  This method adds entries for
+        every (file, item) pair so the web editor can group by source file.
+        """
+        log_writer = manager._log_writer
+        already_logged: Set[Tuple[str, str]] = set()
+
+        for file_path, (_gff, extracted, file_ext) in extracted_map.items():
+            if file_path in dialog_files:
+                continue
+            for item in extracted.items:
+                if not item.has_text():
+                    continue
+                translated = all_translations.get(item.text)
+                if translated is None:
+                    continue
+                key = (file_path.name, item.text)
+                if key in already_logged:
+                    continue
+                already_logged.add(key)
+                try:
+                    log_writer.write({
+                        "original": item.text,
+                        "translated": translated,
+                        "context": item.context,
+                        "model": self.config.model,
+                        "file": file_path.name,
+                    })
+                except Exception:
+                    pass
 
     def _translate_git_instances(
         self,

@@ -282,6 +282,9 @@ async def get_translations(task_id: str) -> TranslationsResponse:
 
     groups: dict[str, list[TranslationItem]] = {}
     seen: dict[str, set[str]] = {}
+    # Track which files contain each original text (for shared_with)
+    text_to_files: dict[str, list[str]] = {}
+
     with open(task.log_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -302,6 +305,17 @@ async def get_translations(task_id: str) -> TranslationsResponse:
             if original not in seen[filename]:
                 seen[filename].add(original)
                 groups[filename].append(TranslationItem(original=original, translated=translated))
+                # Record file for this text
+                if original not in text_to_files:
+                    text_to_files[original] = []
+                text_to_files[original].append(filename)
+
+    # Populate shared_with: for each item, list other files with the same text
+    for filename, items in groups.items():
+        for item in items:
+            all_files = text_to_files.get(item.original, [])
+            if len(all_files) > 1:
+                item.shared_with = [f for f in all_files if f != filename]
 
     files = [
         TranslationFileGroup(filename=fn, items=items)

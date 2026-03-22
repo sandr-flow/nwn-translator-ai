@@ -167,21 +167,34 @@ function goBack() {
             <div
               v-for="(item, idx) in filteredItems"
               :key="idx"
-              class="grid grid-cols-2 gap-3 p-3 rounded-lg bg-nwn-dark/40 border border-nwn-muted/10"
+              class="rounded-lg bg-nwn-dark/40 border border-nwn-muted/10"
             >
-              <div>
-                <p class="text-xs text-nwn-muted mb-1">Оригинал</p>
-                <p class="text-sm text-gray-300 whitespace-pre-wrap break-words">{{ item.original }}</p>
+              <div class="grid grid-cols-2 gap-3 p-3">
+                <div>
+                  <p class="text-xs text-nwn-muted mb-1">Оригинал</p>
+                  <p class="text-sm text-gray-300 whitespace-pre-wrap break-words">{{ item.original }}</p>
+                </div>
+                <div>
+                  <p class="text-xs text-nwn-muted mb-1">Перевод</p>
+                  <textarea
+                    v-model="item.translated"
+                    class="w-full px-2 py-1.5 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 resize-y overflow-hidden"
+                    rows="1"
+                    @input="autoResize($event)"
+                    ref="textareas"
+                  />
+                </div>
               </div>
-              <div>
-                <p class="text-xs text-nwn-muted mb-1">Перевод</p>
-                <textarea
-                  v-model="item.translated"
-                  class="w-full px-2 py-1.5 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 resize-y overflow-hidden"
-                  rows="1"
-                  @input="autoResize($event)"
-                  ref="textareas"
-                />
+              <div
+                v-if="item.shared_with && item.shared_with.length"
+                class="px-3 pb-2 flex flex-wrap items-center gap-1.5"
+              >
+                <span class="text-xs text-nwn-muted">Идентичный текст в:</span>
+                <span
+                  v-for="fname in item.shared_with"
+                  :key="fname"
+                  class="text-xs font-mono px-1.5 py-0.5 rounded bg-nwn-accent/10 text-nwn-accent/70"
+                >{{ fname }}</span>
               </div>
             </div>
 

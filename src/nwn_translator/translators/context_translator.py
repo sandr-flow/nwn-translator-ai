@@ -270,6 +270,7 @@ class ContextualTranslationManager:
                 "translated": final_translated,
                 "context": f"Dialog node {key} in {file_path.name}",
                 "model": self.provider.model,
+                "file": file_path.name,
             }
             try:
                 self._log_writer.write(log_entry)

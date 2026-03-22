@@ -52,3 +52,35 @@ class ErrorResponse(BaseModel):
     """Generic error payload."""
 
     detail: str
+
+
+class TranslationItem(BaseModel):
+    """A single original/translated pair."""
+
+    original: str
+    translated: str
+
+
+class TranslationFileGroup(BaseModel):
+    """Translations grouped by source file."""
+
+    filename: str
+    items: List[TranslationItem]
+
+
+class TranslationsResponse(BaseModel):
+    """Structured translation data for the editor."""
+
+    files: List[TranslationFileGroup]
+
+
+class RebuildRequest(BaseModel):
+    """Request to rebuild .mod with edited translations."""
+
+    translations: Dict[str, str]
+
+
+class RebuildResponse(BaseModel):
+    """Response after rebuild completes."""
+
+    result_filename: str

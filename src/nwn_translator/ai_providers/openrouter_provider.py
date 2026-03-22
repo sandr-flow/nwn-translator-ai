@@ -63,7 +63,7 @@ class OpenRouterProvider(BaseAIProvider):
     OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
     #: Default model — change via config or ``--model`` CLI flag.
-    DEFAULT_MODEL = "deepseek/deepseek-v3.2"
+    DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
 
     #: A curated shortlist for reference; not an exhaustive list.
     POPULAR_MODELS = [

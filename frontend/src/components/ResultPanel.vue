@@ -2,7 +2,7 @@
 import { inject, computed } from "vue";
 import { TranslationStateKey } from "../composables/useTranslation.js";
 
-const { t, reset, resultDownloadUrl, logDownloadUrl } = inject(TranslationStateKey);
+const { t, reset, resultDownloadUrl, logDownloadUrl, enterEditor } = inject(TranslationStateKey);
 
 const ok = computed(() => t.status === "completed");
 const err = computed(() => t.error || (t.status === "failed" ? "Неизвестная ошибка" : ""));
@@ -39,6 +39,13 @@ const errCount = computed(() => t.stats?.total_errors ?? t.stats?.errors?.length
         >
           Скачать лог (JSONL)
         </a>
+        <button
+          type="button"
+          class="inline-flex items-center px-4 py-2 rounded-lg border border-nwn-accent/60 hover:border-nwn-accent text-sm text-nwn-accent"
+          @click="enterEditor"
+        >
+          Редактировать перевод
+        </button>
         <button
           type="button"
           class="text-sm text-nwn-muted hover:text-gray-300"

@@ -91,6 +91,8 @@ class TranslationManager:
         if not items:
             return translations
 
+        source_filename = Path(content.source_file).name if content.source_file else None
+
         # Prepare translation items (sanitize tokens)
         translation_items = []
         for item in items:
@@ -148,7 +150,7 @@ class TranslationManager:
             uncached_items.append(item_data)
 
         if uncached_items:
-            self._translate_uncached_concurrent(uncached_items, translations)
+            self._translate_uncached_concurrent(uncached_items, translations, source_filename=source_filename)
 
         return translations
 
@@ -229,6 +231,7 @@ class TranslationManager:
         self,
         uncached_items: List[dict],
         translations: Dict[str, str],
+        source_filename: Optional[str] = None,
     ) -> None:
         """Translate items without cache hits (concurrent async API calls).
 
@@ -373,13 +376,13 @@ class TranslationManager:
 
         # Process long results
         for item_data, result in zip(long_items, long_results):
-            self._process_translation_result(item_data, result, translations)
+            self._process_translation_result(item_data, result, translations, source_filename=source_filename)
 
         # Process batch results; collect failures for individual retry
         retry_items: List[dict] = []
         for item_data, result in zip(short_items, batch_results):
             if result.success:
-                self._process_translation_result(item_data, result, translations)
+                self._process_translation_result(item_data, result, translations, source_filename=source_filename)
             else:
                 retry_items.append(item_data)
 
@@ -388,12 +391,13 @@ class TranslationManager:
             logger.info(
                 "Retrying %d failed batch items individually", len(retry_items),
             )
-            self._translate_individual_fallback(retry_items, translations)
+            self._translate_individual_fallback(retry_items, translations, source_filename=source_filename)
 
     def _translate_individual_fallback(
         self,
         items: List[dict],
         translations: Dict[str, str],
+        source_filename: Optional[str] = None,
     ) -> None:
         """Translate items individually as fallback for failed batch items."""
 
@@ -428,13 +432,14 @@ class TranslationManager:
         )
 
         for item_data, result in zip(items, results):
-            self._process_translation_result(item_data, result, translations)
+            self._process_translation_result(item_data, result, translations, source_filename=source_filename)
 
     def _process_translation_result(
         self,
         item_data: dict,
         result: TranslationResult,
         translations: Dict[str, str],
+        source_filename: Optional[str] = None,
     ) -> None:
         """Process a single translation result (shared by individual and batch paths)."""
         item = item_data["item"]
@@ -453,6 +458,7 @@ class TranslationManager:
                 "translated": translated,
                 "context": item.context,
                 "model": result.metadata.get("model", self.config.model),
+                "file": source_filename,
             }
             try:
                 self._log_writer.write(log_entry)

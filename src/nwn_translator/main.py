@@ -241,11 +241,17 @@ class ModuleTranslator:
         Returns:
             Path to extraction directory
         """
-        self.temp_dir = tempfile.TemporaryDirectory(
-            prefix="nwn_translate_",
-            dir=self.config.temp_dir if self.config.temp_dir.exists() else None,
-        )
-        extract_dir = Path(self.temp_dir.name)
+        if self.config.skip_cleanup:
+            # Use a persistent directory that won't auto-delete on GC
+            parent = self.config.temp_dir if self.config.temp_dir.exists() else Path(tempfile.gettempdir())
+            extract_dir = Path(tempfile.mkdtemp(prefix="nwn_translate_", dir=parent))
+            self.temp_dir = None
+        else:
+            self.temp_dir = tempfile.TemporaryDirectory(
+                prefix="nwn_translate_",
+                dir=self.config.temp_dir if self.config.temp_dir.exists() else None,
+            )
+            extract_dir = Path(self.temp_dir.name)
 
         reader = ERFReader(
             self.config.input_file,
@@ -504,6 +510,78 @@ class ModuleTranslator:
             **self.stats,
             "total_errors": len(self.stats["errors"]),
         }
+
+
+def rebuild_module(
+    extract_dir: Path,
+    translations: Dict[str, str],
+    output_path: Path,
+    original_mod_path: Path,
+) -> Path:
+    """Re-inject translations and reassemble a .mod without LLM calls.
+
+    Args:
+        extract_dir: Directory with previously extracted GFF files.
+        translations: Mapping of original text to (possibly edited) translated text.
+        output_path: Where to write the rebuilt .mod file.
+        original_mod_path: Path to the original .mod (needed for ERF header info).
+
+    Returns:
+        Path to the rebuilt .mod file.
+    """
+    from .file_handlers.tlk_reader import parse_tlk, find_dialog_tlk
+
+    # Load TLK if available
+    tlk = None
+    tlk_path = find_dialog_tlk(extract_dir)
+    if tlk_path and tlk_path.exists():
+        try:
+            tlk = parse_tlk(tlk_path)
+        except Exception:
+            pass
+
+    gff_cache: Dict[str, Any] = {}
+
+    # Inject translations into each translatable file
+    for file_path in extract_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+        ext = file_path.suffix.lower()
+        if ext not in TRANSLATABLE_TYPES:
+            continue
+
+        try:
+            gff_data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+        except Exception as e:
+            logger.warning("Failed to read %s during rebuild: %s", file_path.name, e)
+            continue
+
+        extractor = get_extractor_for_file(ext)
+        if not extractor:
+            continue
+
+        extracted = extractor.extract(file_path, gff_data)
+        if not extracted.items:
+            continue
+
+        injector = get_injector_for_content(extracted.content_type)
+        if injector:
+            inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
+            injector.inject(file_path, gff_data, translations, inject_metadata)
+
+    # Patch .git area instance files
+    from .injectors.git_injector import patch_git_file
+    for git_path in extract_dir.glob("*.git"):
+        try:
+            gff_data = read_gff(git_path, tlk=tlk, cache=gff_cache)
+            patch_git_file(git_path, translations, tlk=tlk, gff_data=gff_data)
+        except Exception as e:
+            logger.warning("Failed to patch %s during rebuild: %s", git_path.name, e)
+
+    # Reassemble .mod
+    create_mod_from_directory(extract_dir, output_path, original_mod_path)
+    logger.info("Rebuild complete: %s", output_path)
+    return output_path
 
 
 def translate_module(config: TranslationConfig) -> Path:

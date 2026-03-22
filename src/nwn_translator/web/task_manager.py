@@ -37,6 +37,8 @@ class TranslationTask:
     current_file: Optional[str] = None
     result_path: Optional[Path] = None
     log_path: Optional[Path] = None
+    extract_dir: Optional[Path] = None
+    input_path: Optional[Path] = None
     error: Optional[str] = None
     stats: Optional[Dict[str, Any]] = None
     input_filename: str = ""
@@ -215,6 +217,7 @@ class TaskManager:
         log_file = base / "translation_log.jsonl"
 
         progress_cb = self._make_progress_callback(task)
+        task.input_path = input_path
 
         try:
             task.status = "extracting"
@@ -229,7 +232,7 @@ class TaskManager:
                 output_file=output_file,
                 translation_log=log_file,
                 temp_dir=temp_dir,
-                skip_cleanup=False,
+                skip_cleanup=True,
                 preserve_tokens=preserve_tokens,
                 use_context=use_context,
                 max_concurrent_requests=max(1, int(max_concurrent_requests)),
@@ -252,6 +255,7 @@ class TaskManager:
             translator = ModuleTranslator(config)
             result_path = translator.translate()
             task.result_path = Path(result_path)
+            task.extract_dir = translator.extract_dir
             task.log_path = log_file if log_file.exists() else None
             task.stats = translator.get_statistics()
             task.status = "completed"

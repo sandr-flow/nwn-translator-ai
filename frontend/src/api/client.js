@@ -68,3 +68,15 @@ export function downloadUrl(taskId, kind) {
   const base = apiUrl(`/api/tasks/${taskId}/${kind}`);
   return base;
 }
+
+export async function fetchTranslations(taskId) {
+  return fetchJson(`/api/tasks/${taskId}/translations`);
+}
+
+export async function postRebuild(taskId, translations) {
+  return fetchJson(`/api/tasks/${taskId}/rebuild`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ translations }),
+  });
+}

@@ -3,6 +3,8 @@ import {
   postTranslate,
   postTestConnection,
   fetchModels,
+  fetchTranslations,
+  postRebuild,
   downloadUrl,
 } from "../api/client.js";
 
@@ -39,6 +41,10 @@ export function useTranslation() {
     stats: null,
     defaultModels: [],
     defaultModelSlug: "",
+    currentIndex: 0,
+    totalFiles: 0,
+    translationFiles: [],
+    rebuilding: false,
   });
 
   let eventSource = null;
@@ -59,6 +65,8 @@ export function useTranslation() {
     t.error = "";
     t.resultFilename = "";
     t.stats = null;
+    t.currentIndex = 0;
+    t.totalFiles = 0;
   }
 
   function closeSse() {
@@ -78,6 +86,8 @@ export function useTranslation() {
     if (typeof data.progress === "number") t.progress = data.progress;
     if (data.phase) t.phase = data.phase;
     if (data.file != null) t.currentFile = data.file;
+    if (typeof data.current === "number") t.currentIndex = data.current;
+    if (typeof data.total === "number") t.totalFiles = data.total;
   }
 
   function openSse(id) {
@@ -97,6 +107,8 @@ export function useTranslation() {
           if (msg.phase) t.phase = msg.phase;
           if (typeof msg.progress === "number") t.progress = msg.progress;
           if (msg.file != null) t.currentFile = msg.file;
+          if (typeof msg.current === "number") t.currentIndex = msg.current;
+          if (typeof msg.total === "number") t.totalFiles = msg.total;
           return;
         }
         if (msg.type === "status") {
@@ -224,6 +236,28 @@ export function useTranslation() {
     return downloadUrl(t.taskId, "log");
   }
 
+  async function loadTranslations() {
+    if (!t.taskId) return;
+    const data = await fetchTranslations(t.taskId);
+    t.translationFiles = data.files ?? [];
+  }
+
+  function enterEditor() {
+    t.step = "editing";
+  }
+
+  async function rebuildWithEdits(editedTranslations) {
+    if (!t.taskId) return;
+    t.rebuilding = true;
+    try {
+      const data = await postRebuild(t.taskId, editedTranslations);
+      t.resultFilename = data.result_filename ?? t.resultFilename;
+      t.step = "done";
+    } finally {
+      t.rebuilding = false;
+    }
+  }
+
   return {
     t,
     phaseLabel,
@@ -234,5 +268,8 @@ export function useTranslation() {
     resultDownloadUrl,
     logDownloadUrl,
     closeSse,
+    loadTranslations,
+    enterEditor,
+    rebuildWithEdits,
   };
 }

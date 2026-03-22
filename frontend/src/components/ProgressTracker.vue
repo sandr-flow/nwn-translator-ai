@@ -5,6 +5,7 @@ import { TranslationStateKey } from "../composables/useTranslation.js";
 const { t, phaseLabel } = inject(TranslationStateKey);
 
 const pct = computed(() => Math.round(Math.min(1, Math.max(0, t.progress)) * 100));
+const showFileCount = computed(() => t.totalFiles > 0 && (t.phase === "translating" || t.phase === "translating_item"));
 </script>
 
 <template>
@@ -22,6 +23,9 @@ const pct = computed(() => Math.round(Math.min(1, Math.max(0, t.progress)) * 100
       <p>
         <span class="text-nwn-muted">Этап:</span>
         {{ phaseLabel || t.status || "—" }}
+        <span v-if="showFileCount" class="ml-2 text-nwn-muted">
+          ({{ t.currentIndex }} / {{ t.totalFiles }} файлов)
+        </span>
       </p>
       <p v-if="t.currentFile">
         <span class="text-nwn-muted">Файл:</span>

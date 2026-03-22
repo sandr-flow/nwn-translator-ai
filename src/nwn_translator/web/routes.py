@@ -21,10 +21,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 from ..ai_providers import OpenRouterProvider, create_provider
 from .schemas import (
     ModelsResponse,
+    RebuildRequest,
+    RebuildResponse,
     TaskStatusResponse,
     TestConnectionRequest,
     TestConnectionResponse,
     TranslateResponse,
+    TranslationFileGroup,
+    TranslationItem,
+    TranslationsResponse,
 )
 from .task_manager import MAX_UPLOAD_BYTES, TranslationTask, get_task_manager
 
@@ -266,6 +271,96 @@ async def download_log(task_id: str) -> FileResponse:
         filename="translation_log.jsonl",
         media_type="application/jsonl",
     )
+
+
+@router.get("/tasks/{task_id}/translations", response_model=TranslationsResponse)
+async def get_translations(task_id: str) -> TranslationsResponse:
+    """Return structured translation data grouped by source file for the editor."""
+    task = _task_or_404(task_id)
+    if not task.log_path or not task.log_path.is_file():
+        raise HTTPException(status_code=404, detail="Лог переводов недоступен")
+
+    groups: dict[str, list[TranslationItem]] = {}
+    seen: dict[str, set[str]] = {}
+    with open(task.log_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            original = entry.get("original", "")
+            translated = entry.get("translated", "")
+            filename = entry.get("file") or "unknown"
+            if not original:
+                continue
+            if filename not in groups:
+                groups[filename] = []
+                seen[filename] = set()
+            if original not in seen[filename]:
+                seen[filename].add(original)
+                groups[filename].append(TranslationItem(original=original, translated=translated))
+
+    files = [
+        TranslationFileGroup(filename=fn, items=items)
+        for fn, items in groups.items()
+    ]
+    return TranslationsResponse(files=files)
+
+
+@router.post("/tasks/{task_id}/rebuild", response_model=RebuildResponse)
+async def rebuild_task(task_id: str, body: RebuildRequest) -> RebuildResponse:
+    """Rebuild the .mod file with edited translations (no LLM calls)."""
+    task = _task_or_404(task_id)
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="Задача ещё не завершена")
+    if not task.extract_dir or not Path(task.extract_dir).is_dir():
+        raise HTTPException(
+            status_code=400,
+            detail="Извлечённые файлы модуля недоступны (возможно, были очищены)",
+        )
+    if not task.log_path or not task.log_path.is_file():
+        raise HTTPException(status_code=400, detail="Лог переводов недоступен")
+
+    # Build full translation map from log, then apply user overrides
+    all_translations: dict[str, str] = {}
+    with open(task.log_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            original = entry.get("original", "")
+            translated = entry.get("translated", "")
+            if original:
+                all_translations[original] = translated
+
+    # Apply user edits on top
+    all_translations.update(body.translations)
+
+    extract_dir = Path(task.extract_dir)
+    output_path = task.result_path
+    original_mod_path = task.input_path or output_path
+
+    try:
+        from ..main import rebuild_module
+        await asyncio.to_thread(
+            rebuild_module,
+            extract_dir,
+            all_translations,
+            output_path,
+            original_mod_path=original_mod_path,
+        )
+    except Exception as e:
+        logger.exception("Rebuild failed for task %s", task.task_id)
+        raise HTTPException(status_code=500, detail=f"Ошибка сборки: {e}")
+
+    return RebuildResponse(result_filename=output_path.name)
 
 
 @router.post("/test-connection", response_model=TestConnectionResponse)

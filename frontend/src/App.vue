@@ -8,6 +8,7 @@ import FileUpload from "./components/FileUpload.vue";
 import TranslationForm from "./components/TranslationForm.vue";
 import ProgressTracker from "./components/ProgressTracker.vue";
 import ResultPanel from "./components/ResultPanel.vue";
+import TranslationEditor from "./components/TranslationEditor.vue";
 
 const translation = useTranslation();
 provide(TranslationStateKey, translation);
@@ -36,7 +37,7 @@ async function onSubmit() {
 
 <template>
   <div class="min-h-screen py-10 px-4">
-    <div class="max-w-2xl mx-auto">
+    <div :class="t.step === 'editing' ? 'max-w-6xl mx-auto' : 'max-w-2xl mx-auto'">
       <header class="text-center mb-10">
         <h1 class="text-3xl font-bold tracking-tight text-white mb-2">
           NWN Modules Translator
@@ -62,6 +63,8 @@ async function onSubmit() {
       </div>
 
       <ProgressTracker v-else-if="t.step === 'running'" />
+
+      <TranslationEditor v-else-if="t.step === 'editing'" />
 
       <ResultPanel v-else-if="t.step === 'done'" />
     </div>

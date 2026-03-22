@@ -61,6 +61,39 @@ const fileGroups = computed(() => {
 });
 
 const collapsedGroups = ref({});
+const syncShared = ref(true);
+
+// Build a lookup: original text -> list of {fileIdx, itemIdx} across all files
+const sharedItemIndex = computed(() => {
+  const index = {};
+  editableFiles.value.forEach((file, fi) => {
+    file.items.forEach((item, ii) => {
+      if (item.shared_with && item.shared_with.length) {
+        if (!index[item.original]) index[item.original] = [];
+        index[item.original].push({ fi, ii });
+      }
+    });
+  });
+  return index;
+});
+
+function onTranslationInput(event, item) {
+  autoResize(event);
+  item.translated = event.target.value;
+  if (syncShared.value && item.shared_with && item.shared_with.length) {
+    const peers = sharedItemIndex.value[item.original];
+    if (peers) {
+      for (const { fi, ii } of peers) {
+        editableFiles.value[fi].items[ii].translated = item.translated;
+      }
+    }
+  }
+}
+
+function navigateToFile(filename) {
+  const idx = editableFiles.value.findIndex((f) => f.filename === filename);
+  if (idx !== -1) selectedFileIdx.value = idx;
+}
 
 const filteredItems = computed(() => {
   if (!selectedFile.value) return [];
@@ -198,7 +231,7 @@ function goBack() {
         <!-- Main editor area -->
         <div class="flex-1 min-w-0 overflow-y-auto translation-editor-area" style="max-height: 75vh">
           <div v-if="selectedFile" class="space-y-3">
-            <div class="flex items-center gap-3 mb-3">
+            <div class="flex items-center gap-3 mb-3 flex-wrap">
               <h3 class="text-sm font-semibold text-gray-200">
                 {{ selectedFile.filename }}
               </h3>
@@ -208,6 +241,14 @@ function goBack() {
                 placeholder="Поиск..."
                 class="px-2 py-1 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 placeholder-nwn-muted/50 w-48"
               />
+              <label class="flex items-center gap-1.5 text-xs text-nwn-muted cursor-pointer select-none ml-auto">
+                <input
+                  type="checkbox"
+                  v-model="syncShared"
+                  class="accent-nwn-accent"
+                />
+                Править во всех файлах сразу
+              </label>
             </div>
 
             <div
@@ -223,10 +264,10 @@ function goBack() {
                 <div>
                   <p class="text-xs text-nwn-muted mb-1">Перевод</p>
                   <textarea
-                    v-model="item.translated"
+                    :value="item.translated"
                     class="w-full px-2 py-1.5 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 resize-y overflow-hidden"
                     rows="1"
-                    @input="autoResize($event)"
+                    @input="onTranslationInput($event, item)"
                     ref="textareas"
                   />
                 </div>
@@ -236,11 +277,13 @@ function goBack() {
                 class="px-3 pb-2 flex flex-wrap items-center gap-1.5"
               >
                 <span class="text-xs text-nwn-muted">Идентичный текст в:</span>
-                <span
+                <button
                   v-for="fname in item.shared_with"
                   :key="fname"
-                  class="text-xs font-mono px-1.5 py-0.5 rounded bg-nwn-accent/10 text-nwn-accent/70"
-                >{{ fname }}</span>
+                  type="button"
+                  class="text-xs font-mono px-1.5 py-0.5 rounded bg-nwn-accent/10 text-nwn-accent/70 hover:bg-nwn-accent/25 hover:text-nwn-accent cursor-pointer"
+                  @click="navigateToFile(fname)"
+                >{{ fname }}</button>
               </div>
             </div>
 

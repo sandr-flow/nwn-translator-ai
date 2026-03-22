@@ -1,8 +1,10 @@
 <script setup>
 import { inject, ref } from "vue";
 import { TranslationStateKey } from "../composables/useTranslation.js";
+import { useI18n } from "../composables/useI18n.js";
 
 const { t } = inject(TranslationStateKey);
+const { t: i } = useI18n();
 const dragOver = ref(false);
 const inputRef = ref(null);
 
@@ -10,7 +12,7 @@ function setFile(file) {
   if (!file) return;
   const name = file.name.toLowerCase();
   if (!name.endsWith(".mod") && !name.endsWith(".erf") && !name.endsWith(".hak")) {
-    alert("Нужен файл .mod, .erf или .hak");
+    alert(i("file.invalid"));
     return;
   }
   t.selectedFile = file;
@@ -35,7 +37,7 @@ function clear() {
 
 <template>
   <div
-    class="rounded-xl border-2 border-dashed transition-colors px-6 py-10 text-center"
+    class="rounded-xl border-2 border-dashed transition-colors px-6 py-4 text-center"
     :class="
       dragOver
         ? 'border-nwn-accent bg-nwn-accent/10'
@@ -52,23 +54,23 @@ function clear() {
       class="hidden"
       @change="onInput"
     />
-    <p class="text-nwn-muted text-sm mb-3">Перетащите файл сюда или</p>
+    <p class="text-nwn-muted text-sm mb-3">{{ i("file.dropHint") }}</p>
     <button
       type="button"
       class="px-4 py-2 rounded-lg bg-nwn-accent/20 text-nwn-accent font-semibold hover:bg-nwn-accent/30"
       @click="inputRef?.click()"
     >
-      Выбрать файл
+      {{ i("file.choose") }}
     </button>
     <div v-if="t.selectedFile" class="mt-4 text-sm">
       <span class="text-emerald-400">{{ t.selectedFile.name }}</span>
       <span class="text-nwn-muted ml-2">
-        ({{ (t.selectedFile.size / (1024 * 1024)).toFixed(2) }} МБ)
+        ({{ (t.selectedFile.size / (1024 * 1024)).toFixed(2) }} {{ i("file.unit") }})
       </span>
       <button type="button" class="ml-3 text-red-400 hover:underline text-xs" @click="clear">
-        Убрать
+        {{ i("file.remove") }}
       </button>
     </div>
-    <p class="text-nwn-muted text-xs mt-3">Максимум 50 МБ</p>
+    <p class="text-nwn-muted text-xs mt-3">{{ i("file.maxSize") }}</p>
   </div>
 </template>

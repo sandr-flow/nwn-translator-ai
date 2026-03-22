@@ -1,11 +1,13 @@
 <script setup>
 import { inject, computed } from "vue";
 import { TranslationStateKey } from "../composables/useTranslation.js";
+import { useI18n } from "../composables/useI18n.js";
 
 const { t, reset, resultDownloadUrl, logDownloadUrl, enterEditor } = inject(TranslationStateKey);
+const { t: i } = useI18n();
 
 const ok = computed(() => t.status === "completed");
-const err = computed(() => t.error || (t.status === "failed" ? "Неизвестная ошибка" : ""));
+const err = computed(() => t.error || (t.status === "failed" ? i("result.unknownError") : ""));
 
 const filesProcessed = computed(() => t.stats?.files_processed ?? "—");
 const itemsTranslated = computed(() => t.stats?.items_translated ?? "—");
@@ -15,14 +17,14 @@ const errCount = computed(() => t.stats?.total_errors ?? t.stats?.errors?.length
 <template>
   <div class="rounded-xl bg-nwn-panel/80 border border-nwn-muted/20 p-6">
     <template v-if="ok">
-      <h2 class="text-lg font-semibold text-emerald-400 mb-4">Готово</h2>
+      <h2 class="text-lg font-semibold text-emerald-400 mb-4">{{ i("result.done") }}</h2>
       <p class="text-sm text-nwn-muted mb-4">
-        Файл: <span class="text-gray-200">{{ t.resultFilename }}</span>
+        {{ i("result.file") }} <span class="text-gray-200">{{ t.resultFilename }}</span>
       </p>
       <div class="text-sm text-nwn-muted mb-4 space-y-1">
-        <p>Обработано файлов: {{ filesProcessed }}</p>
-        <p>Строк переведено: {{ itemsTranslated }}</p>
-        <p v-if="errCount">Предупреждений/ошибок в логе: {{ errCount }}</p>
+        <p>{{ i("result.filesProcessed") }} {{ filesProcessed }}</p>
+        <p>{{ i("result.itemsTranslated") }} {{ itemsTranslated }}</p>
+        <p v-if="errCount">{{ i("result.errors") }} {{ errCount }}</p>
       </div>
       <div class="flex flex-wrap gap-3">
         <a
@@ -30,40 +32,40 @@ const errCount = computed(() => t.stats?.total_errors ?? t.stats?.errors?.length
           download
           class="inline-flex items-center px-4 py-2 rounded-lg bg-nwn-accent text-nwn-dark font-semibold hover:opacity-90"
         >
-          Скачать .mod
+          {{ i("result.downloadMod") }}
         </a>
         <a
           :href="logDownloadUrl()"
           download
           class="inline-flex items-center px-4 py-2 rounded-lg border border-nwn-muted/40 hover:border-nwn-accent text-sm"
         >
-          Скачать лог (JSONL)
+          {{ i("result.downloadLog") }}
         </a>
         <button
           type="button"
           class="inline-flex items-center px-4 py-2 rounded-lg border border-nwn-accent/60 hover:border-nwn-accent text-sm text-nwn-accent"
           @click="enterEditor"
         >
-          Редактировать перевод
+          {{ i("result.editTranslation") }}
         </button>
         <button
           type="button"
           class="text-sm text-nwn-muted hover:text-gray-300"
           @click="reset"
         >
-          Новый перевод
+          {{ i("result.newTranslation") }}
         </button>
       </div>
     </template>
     <template v-else>
-      <h2 class="text-lg font-semibold text-red-400 mb-4">Ошибка</h2>
+      <h2 class="text-lg font-semibold text-red-400 mb-4">{{ i("result.error") }}</h2>
       <p class="text-sm text-nwn-muted mb-4 whitespace-pre-wrap">{{ err }}</p>
       <button
         type="button"
         class="px-4 py-2 rounded-lg border border-nwn-muted/40 hover:border-nwn-accent"
         @click="reset"
       >
-        Попробовать снова
+        {{ i("result.tryAgain") }}
       </button>
     </template>
   </div>

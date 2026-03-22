@@ -4,12 +4,14 @@ import {
   useTranslation,
   TranslationStateKey,
 } from "./composables/useTranslation.js";
+import { useI18n } from "./composables/useI18n.js";
 import FileUpload from "./components/FileUpload.vue";
 import TranslationForm from "./components/TranslationForm.vue";
 import ProgressTracker from "./components/ProgressTracker.vue";
 import ResultPanel from "./components/ResultPanel.vue";
 import TranslationEditor from "./components/TranslationEditor.vue";
 
+const { t: i, locale, setLocale } = useI18n();
 const translation = useTranslation();
 provide(TranslationStateKey, translation);
 
@@ -38,17 +40,31 @@ async function onSubmit() {
 <template>
   <div class="min-h-screen py-10 px-4">
     <div :class="t.step === 'editing' ? 'max-w-6xl mx-auto' : 'max-w-2xl mx-auto'">
-      <header class="text-center mb-10">
+      <header class="text-center mb-10 relative">
+        <div class="absolute right-0 top-0 flex gap-1 text-sm">
+          <button
+            type="button"
+            class="px-1.5 py-0.5 rounded transition-colors"
+            :class="locale === 'ru' ? 'text-nwn-accent font-semibold' : 'text-nwn-muted hover:text-gray-300'"
+            @click="setLocale('ru')"
+          >RU</button>
+          <span class="text-nwn-muted/40">|</span>
+          <button
+            type="button"
+            class="px-1.5 py-0.5 rounded transition-colors"
+            :class="locale === 'en' ? 'text-nwn-accent font-semibold' : 'text-nwn-muted hover:text-gray-300'"
+            @click="setLocale('en')"
+          >EN</button>
+        </div>
         <h1 class="text-3xl font-bold tracking-tight text-white mb-2">
           NWN Modules Translator
         </h1>
         <p class="text-nwn-muted text-sm max-w-md mx-auto">
-          Перевод модулей Neverwinter Nights через OpenRouter. Загрузите .mod, укажите язык и
-          ключ API.
+          {{ i("app.desc") }}
         </p>
       </header>
 
-      <div v-if="t.step === 'setup'" class="space-y-8">
+      <div v-if="t.step === 'setup'" class="space-y-6">
         <FileUpload />
         <TranslationForm />
         <p v-if="formError" class="text-sm text-red-400">{{ formError }}</p>
@@ -58,7 +74,7 @@ async function onSubmit() {
           :disabled="busy || !t.selectedFile || !t.apiKey?.trim()"
           @click="onSubmit"
         >
-          {{ busy ? "Запуск…" : "Перевести модуль" }}
+          {{ busy ? i("app.translating") : i("app.translate") }}
         </button>
       </div>
 
@@ -68,5 +84,11 @@ async function onSubmit() {
 
       <ResultPanel v-else-if="t.step === 'done'" />
     </div>
+
+    <footer v-if="t.step === 'setup'" class="text-center text-xs text-nwn-muted/60 mt-10 pb-4">
+      Open-source · MIT License
+      <br />
+      <a href="https://github.com/sandr-flow/nwn-translator-ai" target="_blank" rel="noopener noreferrer" class="text-nwn-muted/80 hover:text-nwn-accent">&#11088; {{ i("footer.star") }}</a>
+    </footer>
   </div>
 </template>

@@ -1,21 +1,34 @@
 <script setup>
-import { inject, ref } from "vue";
+import { inject, ref, computed } from "vue";
 import { TranslationStateKey } from "../composables/useTranslation.js";
+import { useI18n } from "../composables/useI18n.js";
+import CustomSelect from "./CustomSelect.vue";
+import ModelSelect from "./ModelSelect.vue";
 
 const { t, testConnection } = inject(TranslationStateKey);
+const { t: i } = useI18n();
 const testing = ref(false);
 const testMsg = ref("");
 
-const languages = [
-  { value: "russian", label: "Русский" },
-  { value: "english", label: "Английский" },
-  { value: "spanish", label: "Испанский" },
-  { value: "french", label: "Французский" },
-  { value: "german", label: "Немецкий" },
-  { value: "italian", label: "Итальянский" },
-  { value: "polish", label: "Польский" },
-  { value: "ukrainian", label: "Украинский" },
+const langKeys = [
+  "russian", "english", "ukrainian", "polish", "german", "french",
+  "spanish", "italian", "portuguese", "czech", "romanian", "hungarian",
+  "dutch", "turkish", "chinese", "japanese", "korean",
 ];
+
+const languages = computed(() =>
+  langKeys.map((k) => ({ value: k, label: i(`lang.${k}`) }))
+);
+
+const sourceLanguages = computed(() => [
+  { value: "auto", label: i("lang.auto") },
+  ...languages.value,
+]);
+
+const genderOptions = computed(() => [
+  { value: "male", label: i("form.genderMale") },
+  { value: "female", label: i("form.genderFemale") },
+]);
 
 async function onTest() {
   testMsg.value = "";
@@ -23,9 +36,9 @@ async function onTest() {
   try {
     const r = await testConnection();
     if (r.ok) {
-      testMsg.value = `Ок: «${r.translated?.slice(0, 80) ?? ""}…»`;
+      testMsg.value = `${i("form.testOk")}: «${r.translated?.slice(0, 80) ?? ""}…»`;
     } else {
-      testMsg.value = `Ошибка: ${r.error ?? "неизвестно"}`;
+      testMsg.value = `${i("form.testError")}: ${r.error ?? "—"}`;
     }
   } catch (e) {
     testMsg.value = String(e.message ?? e);
@@ -38,105 +51,46 @@ async function onTest() {
 <template>
   <div class="space-y-4">
     <div>
-      <label class="block text-sm text-nwn-muted mb-1">API-ключ OpenRouter</label>
-      <input
-        v-model="t.apiKey"
-        type="password"
-        autocomplete="off"
-        placeholder="sk-or-…"
-        class="w-full rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-2 text-sm focus:border-nwn-accent focus:outline-none"
-      />
-      <p class="text-xs text-nwn-muted mt-1">
-        Ключ не сохраняется на сервере — передаётся только на время перевода.
-      </p>
-    </div>
-
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div>
-        <label class="block text-sm text-nwn-muted mb-1">Целевой язык</label>
-        <select
-          v-model="t.targetLang"
-          class="w-full rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-2 text-sm focus:border-nwn-accent focus:outline-none"
-        >
-          <option v-for="opt in languages" :key="opt.value" :value="opt.value">
-            {{ opt.label }}
-          </option>
-        </select>
-      </div>
-      <div>
-        <label class="block text-sm text-nwn-muted mb-1">Исходный язык</label>
-        <select
-          v-model="t.sourceLang"
-          class="w-full rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-2 text-sm focus:border-nwn-accent focus:outline-none"
-        >
-          <option value="auto">Авто</option>
-          <option value="english">Английский</option>
-          <option value="russian">Русский</option>
-          <option value="german">Немецкий</option>
-          <option value="french">Французский</option>
-        </select>
-      </div>
+      <label class="block text-sm text-nwn-muted mb-1">{{ i("form.model") }}</label>
+      <ModelSelect v-model="t.model" />
     </div>
 
     <div>
-      <label class="block text-sm text-nwn-muted mb-1">Модель OpenRouter</label>
-      <input
-        v-model="t.model"
-        type="text"
-        list="nwn-openrouter-models"
-        autocomplete="off"
-        spellcheck="false"
-        placeholder="slug модели, напр. deepseek/deepseek-v3.2"
-        class="w-full rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-2 text-sm font-mono focus:border-nwn-accent focus:outline-none"
-      />
-      <datalist id="nwn-openrouter-models">
-        <option v-for="m in t.defaultModels" :key="m" :value="m" />
-      </datalist>
-      <p class="text-xs text-nwn-muted mt-1">
-        Можно ввести любой slug с
-        <a
-          href="https://openrouter.ai/models"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-nwn-accent hover:underline"
-          >openrouter.ai/models</a
+      <label class="block text-sm text-nwn-muted mb-1">{{ i("form.apiKey") }}</label>
+      <div class="flex items-center gap-3">
+        <input
+          v-model="t.apiKey"
+          type="password"
+          autocomplete="off"
+          :placeholder="i('form.apiKeyPlaceholder')"
+          class="flex-1 min-w-0 rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-2 text-sm focus:border-nwn-accent focus:outline-none"
+        />
+        <button
+          type="button"
+          class="shrink-0 text-sm text-nwn-accent hover:underline whitespace-nowrap"
+          :disabled="testing"
+          @click="onTest"
         >
-        или выбрать из подсказок при вводе.
-        <span v-if="t.defaultModelSlug"> По умолчанию: {{ t.defaultModelSlug }}</span>
-      </p>
+          {{ testing ? i("form.checking") : i("form.checkKey") }}
+        </button>
+      </div>
+      <p v-if="testMsg" class="text-xs text-nwn-muted mt-1">{{ testMsg }}</p>
     </div>
 
-    <div class="flex flex-wrap gap-4 items-end text-sm">
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input v-model="t.preserveTokens" type="checkbox" class="rounded border-nwn-muted/50" />
-        Сохранять игровые токены (&lt;FirstName&gt; и т.д.)
-      </label>
-      <label class="flex items-center gap-2 cursor-pointer">
-        <input v-model="t.useContext" type="checkbox" class="rounded border-nwn-muted/50" />
-        Контекстный перевод диалогов
-      </label>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
       <div>
-        <label class="block text-sm text-nwn-muted mb-1">Пол ГГ</label>
-        <select
-          v-model="t.playerGender"
-          class="rounded-lg bg-nwn-dark border border-nwn-muted/30 px-3 py-1.5 text-sm focus:border-nwn-accent focus:outline-none"
-        >
-          <option value="male">Мужской</option>
-          <option value="female">Женский</option>
-        </select>
+        <label class="block text-sm text-nwn-muted mb-1">{{ i("form.sourceLang") }}</label>
+        <CustomSelect v-model="t.sourceLang" :options="sourceLanguages" />
+      </div>
+      <div>
+        <label class="block text-sm text-nwn-muted mb-1">{{ i("form.targetLang") }}</label>
+        <CustomSelect v-model="t.targetLang" :options="languages" />
+      </div>
+      <div>
+        <label class="block text-sm text-nwn-muted mb-1">{{ i("form.gender") }}</label>
+        <CustomSelect v-model="t.playerGender" :options="genderOptions" />
       </div>
     </div>
 
-    <div class="flex flex-wrap items-center gap-3">
-      <button
-        type="button"
-        class="text-sm text-nwn-accent hover:underline"
-        :disabled="testing"
-        @click="onTest"
-      >
-        {{ testing ? "Проверка…" : "Проверить ключ и модель" }}
-      </button>
-      <span v-if="testMsg" class="text-xs text-nwn-muted max-w-md">{{ testMsg }}</span>
-    </div>
   </div>
 </template>

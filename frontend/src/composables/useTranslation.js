@@ -7,20 +7,22 @@ import {
   postRebuild,
   downloadUrl,
 } from "../api/client.js";
+import { useI18n } from "./useI18n.js";
 
 /** provide/inject key for translation UI state */
 export const TranslationStateKey = Symbol("TranslationState");
 
-const PHASE_LABELS = {
-  extracting: "Распаковка модуля",
-  scanning: "Анализ мира и глоссарий",
-  translating: "Перевод ресурсов",
-  translating_item: "Перевод ресурсов",
-  building: "Сборка .mod",
-  pending: "Ожидание",
+const PHASE_KEYS = {
+  extracting: "phase.extracting",
+  scanning: "phase.scanning",
+  translating: "phase.translating",
+  translating_item: "phase.translating",
+  building: "phase.building",
+  pending: "phase.pending",
 };
 
 export function useTranslation() {
+  const { t: i } = useI18n();
   const t = reactive({
     step: "setup",
     selectedFile: null,
@@ -52,7 +54,7 @@ export function useTranslation() {
   let sseRetryTimer = null;
   const SSE_MAX_RETRIES = 5;
 
-  const phaseLabel = computed(() => PHASE_LABELS[t.phase] ?? t.phase ?? "");
+  const phaseLabel = computed(() => PHASE_KEYS[t.phase] ? i(PHASE_KEYS[t.phase]) : t.phase ?? "");
 
   function reset() {
     closeSse();
@@ -126,7 +128,7 @@ export function useTranslation() {
         }
         if (msg.type === "failed") {
           t.status = "failed";
-          t.error = msg.error ?? "Ошибка";
+          t.error = msg.error ?? i("error.default");
           t.step = "done";
           closeSse();
           return;
@@ -156,7 +158,7 @@ export function useTranslation() {
             if (res.status === 404) {
               // Task gone (backend restarted) — stop retrying
               t.status = "failed";
-              t.error = "Задача не найдена — сервер был перезапущен";
+              t.error = i("error.taskNotFound");
               t.step = "done";
               return;
             }
@@ -184,10 +186,10 @@ export function useTranslation() {
 
   async function startTranslation() {
     if (!t.selectedFile) {
-      throw new Error("Выберите файл .mod");
+      throw new Error(i("error.noFile"));
     }
     if (!t.apiKey?.trim()) {
-      throw new Error("Укажите API-ключ OpenRouter");
+      throw new Error(i("error.noKey"));
     }
 
     t.error = "";
@@ -216,7 +218,7 @@ export function useTranslation() {
 
   async function testConnection() {
     if (!t.apiKey?.trim()) {
-      throw new Error("Укажите API-ключ");
+      throw new Error(i("error.noKeyShort"));
     }
     const modelSlug = typeof t.model === "string" ? t.model.trim() : "";
     return postTestConnection({

@@ -1,8 +1,10 @@
 <script setup>
 import { inject, ref, computed, onMounted, watch, nextTick } from "vue";
 import { TranslationStateKey } from "../composables/useTranslation.js";
+import { useI18n } from "../composables/useI18n.js";
 
 const { t, loadTranslations, rebuildWithEdits, reset } = inject(TranslationStateKey);
+const { t: i } = useI18n();
 
 const loading = ref(true);
 const error = ref("");
@@ -30,32 +32,32 @@ onMounted(async () => {
 const selectedFile = computed(() => editableFiles.value[selectedFileIdx.value] ?? null);
 
 // Group files by NWN type for sidebar navigation
-const EXT_LABELS = {
-  ".dlg": "Диалоги",
-  ".jrl": "Журналы",
-  ".utc": "Существа",
-  ".uti": "Предметы",
-  ".are": "Области",
-  ".utt": "Триггеры",
-  ".utp": "Размещаемые",
-  ".utd": "Двери",
-  ".utm": "Магазины",
-  ".ifo": "Модуль",
+const EXT_KEYS = {
+  ".dlg": "type.dialogs",
+  ".jrl": "type.journals",
+  ".utc": "type.creatures",
+  ".uti": "type.items",
+  ".are": "type.areas",
+  ".utt": "type.triggers",
+  ".utp": "type.placeables",
+  ".utd": "type.doors",
+  ".utm": "type.stores",
+  ".ifo": "type.module",
 };
 
 const fileGroups = computed(() => {
   const groups = {};
+  const otherLabel = i("type.other");
   editableFiles.value.forEach((file, idx) => {
     const dot = file.filename.lastIndexOf(".");
     const ext = dot !== -1 ? file.filename.substring(dot).toLowerCase() : "";
-    const label = EXT_LABELS[ext] || ext || "Другое";
+    const label = EXT_KEYS[ext] ? i(EXT_KEYS[ext]) : ext || otherLabel;
     if (!groups[label]) groups[label] = [];
     groups[label].push({ file, idx });
   });
-  // Sort groups by label, but keep "Другое" last
   return Object.entries(groups).sort((a, b) => {
-    if (a[0] === "Другое") return 1;
-    if (b[0] === "Другое") return -1;
+    if (a[0] === otherLabel) return 1;
+    if (b[0] === otherLabel) return -1;
     return a[0].localeCompare(b[0]);
   });
 });
@@ -93,13 +95,12 @@ function onTranslationInput(event, item) {
 function navigateToFile(filename) {
   const idx = editableFiles.value.findIndex((f) => f.filename === filename);
   if (idx === -1) return;
-  // Expand the target file's group if collapsed
   const dot = filename.lastIndexOf(".");
   const ext = dot !== -1 ? filename.substring(dot).toLowerCase() : "";
-  const label = EXT_LABELS[ext] || ext || "Другое";
+  const otherLabel = i("type.other");
+  const label = EXT_KEYS[ext] ? i(EXT_KEYS[ext]) : ext || otherLabel;
   if (collapsedGroups.value[label]) collapsedGroups.value[label] = false;
   selectedFileIdx.value = idx;
-  // Scroll sidebar to the selected file button
   nextTick(() => {
     const sidebar = document.querySelector(".editor-sidebar");
     const active = sidebar?.querySelector(".sidebar-file-btn-active");
@@ -138,7 +139,6 @@ const rebuildError = ref("");
 
 async function onRebuild() {
   rebuildError.value = "";
-  // Collect only changed translations
   const edits = {};
   const origFiles = t.translationFiles;
   for (let fi = 0; fi < editableFiles.value.length; fi++) {
@@ -187,18 +187,18 @@ function goBack() {
 <template>
   <div class="rounded-xl bg-nwn-panel/80 border border-nwn-muted/20 p-6">
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-semibold text-nwn-accent">Редактор перевода</h2>
+      <h2 class="text-lg font-semibold text-nwn-accent">{{ i("editor.title") }}</h2>
       <button
         type="button"
         class="text-sm text-nwn-muted hover:text-gray-300"
         @click="goBack"
       >
-        Назад
+        {{ i("editor.back") }}
       </button>
     </div>
 
     <div v-if="loading" class="text-sm text-nwn-muted py-8 text-center">
-      Загрузка переводов...
+      {{ i("editor.loading") }}
     </div>
 
     <div v-else-if="error" class="text-sm text-red-400 py-4">{{ error }}</div>
@@ -208,7 +208,7 @@ function goBack() {
         <!-- File list sidebar grouped by type -->
         <div class="w-56 shrink-0 overflow-y-auto border-r border-nwn-muted/20 pr-3 editor-sidebar" style="max-height: 75vh">
           <p class="text-xs text-nwn-muted mb-2">
-            Файлы ({{ editableFiles.length }})
+            {{ i("editor.files") }} ({{ editableFiles.length }})
           </p>
           <div v-for="[label, entries] in fileGroups" :key="label" class="mb-1.5">
             <button
@@ -225,7 +225,7 @@ function goBack() {
                 v-for="{ file, idx } in entries"
                 :key="file.filename"
                 type="button"
-                class="block w-full text-left pl-4 pr-2 py-1 rounded text-sm font-mono truncate mb-0.5"
+                class="block w-full text-left pl-6 pr-2 py-1 rounded text-sm font-mono truncate mb-0.5"
                 :class="[
                   idx === selectedFileIdx
                     ? 'bg-nwn-accent/20 text-nwn-accent sidebar-file-btn-active'
@@ -241,27 +241,28 @@ function goBack() {
         </div>
 
         <!-- Main editor area -->
-        <div class="flex-1 min-w-0 overflow-y-auto translation-editor-area pr-2" style="max-height: 75vh">
-          <div v-if="selectedFile" class="space-y-3">
-            <div class="flex items-center gap-3 mb-3 flex-wrap">
-              <h3 class="text-sm font-semibold text-gray-200">
-                {{ selectedFile.filename }}
-              </h3>
+        <div class="flex-1 min-w-0 flex flex-col" style="max-height: 75vh">
+          <div v-if="selectedFile" class="flex items-center gap-3 mb-3 flex-wrap shrink-0 pr-2">
+            <h3 class="text-sm font-semibold text-gray-200">
+              {{ selectedFile.filename }}
+            </h3>
+            <input
+              v-model="searchQuery"
+              type="text"
+              :placeholder="i('editor.search')"
+              class="px-2 py-1 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 placeholder-nwn-muted/50 w-48"
+            />
+            <label class="flex items-center gap-1.5 text-xs text-nwn-muted cursor-pointer select-none ml-auto">
               <input
-                v-model="searchQuery"
-                type="text"
-                placeholder="Поиск..."
-                class="px-2 py-1 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 placeholder-nwn-muted/50 w-48"
+                type="checkbox"
+                v-model="syncShared"
+                class="accent-nwn-accent"
               />
-              <label class="flex items-center gap-1.5 text-xs text-nwn-muted cursor-pointer select-none ml-auto">
-                <input
-                  type="checkbox"
-                  v-model="syncShared"
-                  class="accent-nwn-accent"
-                />
-                Править во всех файлах сразу
-              </label>
-            </div>
+              {{ i("editor.syncShared") }}
+            </label>
+          </div>
+          <div class="overflow-y-auto translation-editor-area pr-2 flex-1 min-h-0">
+          <div v-if="selectedFile" class="space-y-3">
 
             <div
               v-for="(item, idx) in filteredItems"
@@ -270,11 +271,11 @@ function goBack() {
             >
               <div class="grid grid-cols-2 gap-3 p-3">
                 <div>
-                  <p class="text-xs text-nwn-muted mb-1">Оригинал</p>
+                  <p class="text-xs text-nwn-muted mb-1">{{ i("editor.original") }}</p>
                   <p class="text-sm text-gray-300 whitespace-pre-wrap break-words">{{ item.original }}</p>
                 </div>
                 <div>
-                  <p class="text-xs text-nwn-muted mb-1">Перевод</p>
+                  <p class="text-xs text-nwn-muted mb-1">{{ i("editor.translation") }}</p>
                   <textarea
                     :value="item.translated"
                     class="w-full px-2 py-1.5 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 resize-none overflow-hidden"
@@ -288,7 +289,7 @@ function goBack() {
                 v-if="item.shared_with && item.shared_with.length"
                 class="px-3 pb-2 flex flex-wrap items-center gap-1.5"
               >
-                <span class="text-xs text-nwn-muted">Идентичный текст в:</span>
+                <span class="text-xs text-nwn-muted">{{ i("editor.sharedWith") }}</span>
                 <button
                   v-for="fname in item.shared_with"
                   :key="fname"
@@ -303,8 +304,9 @@ function goBack() {
               v-if="filteredItems.length === 0"
               class="text-sm text-nwn-muted py-4 text-center"
             >
-              Нет совпадений
+              {{ i("editor.noMatches") }}
             </p>
+          </div>
           </div>
         </div>
       </div>
@@ -317,10 +319,10 @@ function goBack() {
           :disabled="t.rebuilding"
           @click="onRebuild"
         >
-          {{ t.rebuilding ? "Сборка..." : "Собрать модуль" }}
+          {{ t.rebuilding ? i("editor.rebuilding") : i("editor.rebuild") }}
         </button>
         <span v-if="editedCount > 0" class="text-sm text-nwn-accent">
-          Изменено: {{ editedCount }}
+          {{ i("editor.edited") }} {{ editedCount }}
         </span>
         <p v-if="rebuildError" class="text-sm text-red-400">{{ rebuildError }}</p>
       </div>

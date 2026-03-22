@@ -12,12 +12,15 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 from .config import (
+    GLOSSARY_LLM_TIMEOUT,
+    GLOSSARY_RUN_TIMEOUT,
     GLOSSARY_TEMPERATURE,
     GLOSSARY_FALLBACK_TEMPERATURE,
     GLOSSARY_MAX_TOKENS,
+    ProgressCallback,
 )
 from .translators.token_handler import sanitize_text
 
@@ -29,21 +32,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Max names per single LLM request to stay within context/token limits.
-_BATCH_SIZE = 80
+_BATCH_SIZE = 40
 
 # How many times to retry the entire glossary build (per batch) on parse failure.
 _MAX_RETRIES = 2
 
-# Timeout (seconds) for a single LLM glossary call.
-_LLM_CALL_TIMEOUT: float = 180.0
+# Max concurrent glossary batches (limits parallel LLM calls).
+_MAX_GLOSSARY_CONCURRENCY = 3
 
-# Overall timeout (seconds) for run_async when calling the LLM.
-_RUN_ASYNC_TIMEOUT: float = 210.0
+# Ceiling for overall glossary build timeout (seconds).
+_MAX_OVERALL_TIMEOUT = 900.0
 
 
 @dataclass
 class Glossary:
-    """Canonical English → target-language mappings for world proper names."""
+    """Canonical English -> target-language mappings for world proper names."""
 
     entries: Dict[str, str] = field(default_factory=dict)
 
@@ -87,10 +90,10 @@ class GlossaryBuilder:
     ) -> Glossary:
         """Collect names from *world_context* and ask the model for translations.
 
-        Large name lists are split into batches of ~80 to stay within token
-        limits.  Each batch is retried up to ``_MAX_RETRIES`` times on parse
-        failure.  If any batch ultimately fails the method raises
-        ``RuntimeError`` so the caller can abort early.
+        Large name lists are split into batches of ~40 to stay within token
+        limits.  Batches run concurrently (up to ``_MAX_GLOSSARY_CONCURRENCY``).
+        Each batch is retried up to ``_MAX_RETRIES`` times on parse failure,
+        with partial results merged across attempts.
 
         Raises:
             RuntimeError: If the glossary cannot be built after retries.
@@ -131,32 +134,38 @@ class GlossaryBuilder:
             len(batches),
         )
 
+        t0_total = time.monotonic()
+
+        # Overall timeout scales with batch count but has a ceiling.
+        overall_timeout = min(GLOSSARY_RUN_TIMEOUT * len(batches), _MAX_OVERALL_TIMEOUT)
+
+        from .async_utils import run_async
+
+        results = run_async(
+            self._build_all_batches_async(
+                batches, seen, provider, config, progress_callback,
+            ),
+            cleanup=provider.close_async_client,
+            timeout=overall_timeout,
+        )
+
+        # Merge results from all batches.
         all_entries: Dict[str, str] = {}
-        failed_batches: int = 0
-        for batch_idx, batch_names in enumerate(batches, 1):
-            if progress_callback:
-                progress_callback(
-                    "scanning", batch_idx - 1, len(batches),
-                    f"Glossary batch {batch_idx}/{len(batches)}…",
-                )
-            batch_seen = {n: seen[n] for n in batch_names}
-            t0 = time.monotonic()
-            entries = self._translate_batch(
-                batch_seen, provider, config, batch_idx, len(batches)
-            )
-            elapsed = time.monotonic() - t0
-            if entries:
-                all_entries.update(entries)
-                logger.info(
-                    "Glossary batch %d/%d: %d entries in %.1fs",
-                    batch_idx, len(batches), len(entries), elapsed,
-                )
-            else:
+        failed_batches = 0
+        for batch_idx, result in enumerate(results, 1):
+            if isinstance(result, BaseException):
                 failed_batches += 1
                 logger.warning(
-                    "Glossary batch %d/%d failed after %.1fs (0 entries)",
-                    batch_idx, len(batches), elapsed,
+                    "Glossary batch %d/%d failed with exception: %s",
+                    batch_idx, len(batches), result,
                 )
+            elif result:
+                all_entries.update(result)
+            else:
+                failed_batches += 1
+
+        total_elapsed = time.monotonic() - t0_total
+        logger.info("Glossary build completed in %.1fs", total_elapsed)
 
         if not all_entries:
             raise RuntimeError(
@@ -178,145 +187,210 @@ class GlossaryBuilder:
 
         return Glossary(entries=all_entries)
 
-    def _translate_batch(
+    async def _build_all_batches_async(
         self,
+        batches: List[List[str]],
+        seen: Dict[str, str],
+        provider: "OpenRouterProvider",
+        config: "TranslationConfig",
+        progress_callback: Optional[ProgressCallback],
+    ) -> List[Dict[str, str] | BaseException]:
+        """Run all glossary batches concurrently with a semaphore."""
+        sem = asyncio.Semaphore(min(_MAX_GLOSSARY_CONCURRENCY, config.max_concurrent_requests))
+        total = len(batches)
+
+        async def process_batch(batch_idx: int, batch_names: List[str]):
+            batch_seen = {n: seen[n] for n in batch_names}
+            return await self._translate_batch_async(
+                sem, batch_seen, provider, config,
+                batch_idx, total, progress_callback,
+            )
+
+        results = await asyncio.gather(
+            *[process_batch(i + 1, b) for i, b in enumerate(batches)],
+            return_exceptions=True,
+        )
+        return results
+
+    async def _translate_batch_async(
+        self,
+        sem: asyncio.Semaphore,
         seen: Dict[str, str],
         provider: "OpenRouterProvider",
         config: "TranslationConfig",
         batch_idx: int,
         total_batches: int,
+        progress_callback: Optional[ProgressCallback],
     ) -> Dict[str, str]:
-        """Translate one batch of names, retrying on parse failure.
+        """Translate one batch of names with retries, merging partial results.
 
-        Returns an empty dict on total failure instead of raising, so that
-        other batches can still proceed.
-
-        Args:
-            seen: Mapping of name → category for this batch.
-            provider: OpenRouter provider instance.
-            config: Translation config.
-            batch_idx: 1-based batch index (for logging).
-            total_batches: Total number of batches (for logging).
+        Acquires the semaphore before each LLM call.  On each retry, only
+        the keys still missing are requested.
 
         Returns:
-            Dict of name → translation for successfully parsed entries.
+            Dict of name -> translation for successfully parsed entries.
         """
-        names_lines = [
-            f"- {name} ({seen[name]})" for name in sorted(seen.keys(), key=str.lower)
-        ]
-        expected_keys: Set[str] = set(seen.keys())
-
-        system_prompt = self._build_system_prompt(config.target_lang)
-        user_prompt = (
-            "Translate every name below. "
-            "Keys in your JSON must be the English name only, "
-            "without the parenthesized category hint:\n\n"
-            + "\n".join(names_lines)
-        )
-        keys_for_schema = sorted(seen.keys(), key=str.lower)
-
-        last_raw = ""
         batch_label = (
             f"batch {batch_idx}/{total_batches}" if total_batches > 1 else "glossary"
         )
+        system_prompt = self._build_system_prompt(config.target_lang)
+
+        all_batch_entries: Dict[str, str] = {}
+        remaining_keys: Set[str] = set(seen.keys())
+        last_raw = ""
+
+        logger.info(
+            "Glossary %s: translating %d names…",
+            batch_label, len(remaining_keys),
+        )
 
         for attempt in range(1, _MAX_RETRIES + 2):  # +2 because range is exclusive
+            if not remaining_keys:
+                break
+
+            attempt_seen = {k: seen[k] for k in remaining_keys}
+
+            if progress_callback:
+                progress_callback(
+                    "scanning", batch_idx - 1, total_batches,
+                    f"Glossary {batch_label} (attempt {attempt}/{_MAX_RETRIES + 1})…",
+                )
+
             if attempt > 1:
                 logger.info(
-                    "Retrying %s (attempt %d/%d)…",
-                    batch_label,
-                    attempt,
-                    _MAX_RETRIES + 1,
+                    "Retrying %s (attempt %d/%d, %d keys remaining)…",
+                    batch_label, attempt, _MAX_RETRIES + 1, len(remaining_keys),
                 )
 
+            names_lines = [
+                f"- {name} ({attempt_seen[name]})"
+                for name in sorted(attempt_seen.keys(), key=str.lower)
+            ]
+            user_prompt = (
+                "Translate every name below. "
+                "Keys in your JSON must be the English name only, "
+                "without the parenthesized category hint:\n\n"
+                + "\n".join(names_lines)
+            )
+            keys_for_schema = sorted(attempt_seen.keys(), key=str.lower)
+
+            t0 = time.monotonic()
             try:
-                raw = self._run_llm(provider, system_prompt, user_prompt, keys_for_schema)
-            except (TimeoutError, Exception) as exc:
+                async with sem:
+                    raw = await self._call_llm_async(
+                        provider, system_prompt, user_prompt, keys_for_schema,
+                    )
+            except (TimeoutError, asyncio.TimeoutError, Exception) as exc:
+                elapsed = time.monotonic() - t0
                 logger.warning(
-                    "%s attempt %d: LLM call failed: %s",
-                    batch_label.capitalize(), attempt, exc,
+                    "Glossary %s attempt %d: LLM timed out after %.1fs: %s",
+                    batch_label, attempt, elapsed, exc,
                 )
                 last_raw = f"[LLM error: {exc}]"
+                if progress_callback:
+                    progress_callback(
+                        "scanning", batch_idx - 1, total_batches,
+                        f"Glossary {batch_label}: attempt {attempt} failed, retrying…",
+                    )
                 continue
 
+            elapsed = time.monotonic() - t0
             last_raw = raw
 
-            entries = self._parse_glossary_json(raw, expected_keys)
+            entries = self._parse_glossary_json(raw, remaining_keys)
             if entries:
-                coverage = len(entries) / len(expected_keys) * 100
-                logger.info(
-                    "%s: %d/%d entries (%.0f%% coverage)",
-                    batch_label.capitalize(),
-                    len(entries),
-                    len(expected_keys),
-                    coverage,
-                )
-                return entries
+                # Detect echo-backs: model returned the English name unchanged.
+                # These are likely untranslated; exclude and retry them.
+                echobacks = {k for k, v in entries.items() if v == k}
+                if echobacks:
+                    logger.warning(
+                        "Glossary %s attempt %d: %d echo-back(s) (value == key), will retry: %s",
+                        batch_label, attempt, len(echobacks),
+                        ", ".join(sorted(echobacks)[:10]),
+                    )
+                    for k in echobacks:
+                        del entries[k]
 
+                all_batch_entries.update(entries)
+                remaining_keys -= set(entries.keys())
+                coverage = len(all_batch_entries) / len(seen) * 100
+                logger.info(
+                    "Glossary %s attempt %d: %d entries in %.1fs (%.0f%% cumulative coverage, %d remaining)",
+                    batch_label, attempt, len(entries), elapsed, coverage,
+                    len(remaining_keys),
+                )
+                if progress_callback:
+                    progress_callback(
+                        "scanning", batch_idx - 1, total_batches,
+                        f"Glossary {batch_label}: {len(all_batch_entries)}/{len(seen)} names done",
+                    )
+            else:
+                logger.warning(
+                    "%s attempt %d: no usable entries parsed in %.1fs. Raw (truncated): %s",
+                    batch_label.capitalize(), attempt, elapsed,
+                    (last_raw[:600] + "…") if len(last_raw) > 600 else last_raw,
+                )
+                if progress_callback:
+                    progress_callback(
+                        "scanning", batch_idx - 1, total_batches,
+                        f"Glossary {batch_label}: attempt {attempt} failed, retrying…",
+                    )
+
+        if remaining_keys:
             logger.warning(
-                "%s attempt %d: no usable entries parsed. Raw (truncated): %s",
-                batch_label.capitalize(),
-                attempt,
-                (last_raw[:600] + "…") if len(last_raw) > 600 else last_raw,
+                "Glossary %s: %d/%d keys still missing after all attempts: %s",
+                batch_label, len(remaining_keys), len(seen),
+                ", ".join(sorted(remaining_keys)[:15])
+                + ("…" if len(remaining_keys) > 15 else ""),
             )
 
-        # All retries exhausted — return empty dict instead of crashing
-        logger.error(
-            "Glossary %s returned no usable entries after %d attempts. "
-            "Raw (truncated): %s",
-            batch_label,
-            _MAX_RETRIES + 1,
-            (last_raw[:400] + "…") if len(last_raw) > 400 else last_raw,
-        )
-        return {}
+        if not all_batch_entries:
+            logger.error(
+                "Glossary %s returned no usable entries after %d attempts. "
+                "Raw (truncated): %s",
+                batch_label, _MAX_RETRIES + 1,
+                (last_raw[:400] + "…") if len(last_raw) > 400 else last_raw,
+            )
+
+        return all_batch_entries
+
+    @staticmethod
+    async def _call_llm_async(
+        provider: "OpenRouterProvider",
+        system_prompt: str,
+        user_prompt: str,
+        keys_for_schema: List[str],
+    ) -> str:
+        """Call the LLM for glossary translation (async coroutine).
+
+        Wraps the provider call with ``asyncio.wait_for`` so a stalled
+        call is cancelled after :data:`GLOSSARY_LLM_TIMEOUT` seconds.
+
+        Raises:
+            TimeoutError: If the LLM call does not complete in time.
+        """
+        if hasattr(provider, "complete_glossary_chat_async"):
+            coro = provider.complete_glossary_chat_async(
+                system_prompt,
+                user_prompt,
+                glossary_keys=keys_for_schema,
+                max_tokens=GLOSSARY_MAX_TOKENS,
+                temperature=GLOSSARY_TEMPERATURE,
+            )
+        else:
+            coro = provider.complete_json_chat_async(
+                system_prompt,
+                user_prompt,
+                max_tokens=GLOSSARY_MAX_TOKENS,
+                temperature=GLOSSARY_FALLBACK_TEMPERATURE,
+            )
+        return await asyncio.wait_for(coro, timeout=GLOSSARY_LLM_TIMEOUT)
 
     @staticmethod
     def _build_system_prompt(target_lang: str) -> str:
         """Build the system prompt for glossary translation."""
         from .prompts import build_glossary_system_prompt
         return build_glossary_system_prompt(target_lang)
-
-    @staticmethod
-    def _run_llm(
-        provider: "OpenRouterProvider",
-        system_prompt: str,
-        user_prompt: str,
-        keys_for_schema: List[str],
-    ) -> str:
-        """Call the LLM for glossary translation (handles event loop).
-
-        Wraps the inner coroutine with ``asyncio.wait_for`` so a stalled
-        provider call is cancelled after :data:`_LLM_CALL_TIMEOUT` seconds.
-
-        Raises:
-            TimeoutError: If the LLM call does not complete in time.
-        """
-
-        async def _call() -> str:
-            coro: asyncio.coroutines
-            if hasattr(provider, "complete_glossary_chat_async"):
-                coro = provider.complete_glossary_chat_async(
-                    system_prompt,
-                    user_prompt,
-                    glossary_keys=keys_for_schema,
-                    max_tokens=GLOSSARY_MAX_TOKENS,
-                    temperature=GLOSSARY_TEMPERATURE,
-                )
-            else:
-                coro = provider.complete_json_chat_async(
-                    system_prompt,
-                    user_prompt,
-                    max_tokens=GLOSSARY_MAX_TOKENS,
-                    temperature=GLOSSARY_FALLBACK_TEMPERATURE,
-                )
-            return await asyncio.wait_for(coro, timeout=_LLM_CALL_TIMEOUT)
-
-        from .async_utils import run_async
-        return run_async(
-            _call(),
-            cleanup=provider.close_async_client,
-            timeout=_RUN_ASYNC_TIMEOUT,
-        )
 
     @staticmethod
     def _parse_glossary_json(raw: str, expected_keys: Set[str]) -> Dict[str, str]:

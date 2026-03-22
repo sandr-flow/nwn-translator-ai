@@ -50,35 +50,6 @@ class OpenRouterError(ProviderError):
     pass
 
 
-# OpenRouter structured outputs: keep schema size reasonable for providers.
-_GLOSSARY_JSON_SCHEMA_MAX_KEYS = 96
-
-
-def _glossary_json_schema_response_format(glossary_keys: List[str]) -> Dict[str, Any]:
-    """Build OpenRouter ``response_format`` with strict JSON Schema for glossary keys."""
-    properties: Dict[str, Any] = {}
-    for key in glossary_keys:
-        properties[key] = {
-            "type": "string",
-            "description": (
-                "Canonical translation of this English proper name into the target language "
-                "(nominative / dictionary form)."
-            ),
-        }
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "nwn_glossary",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "properties": properties,
-                "required": list(properties.keys()),
-                "additionalProperties": False,
-            },
-        },
-    }
-
 
 class OpenRouterProvider(BaseAIProvider):
     """AI provider implementation for OpenRouter.
@@ -400,13 +371,6 @@ class OpenRouterProvider(BaseAIProvider):
             response_format={"type": "json_object"},
         )
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True,
-    )
     async def complete_glossary_chat_async(
         self,
         system_prompt: str,
@@ -416,36 +380,16 @@ class OpenRouterProvider(BaseAIProvider):
         max_tokens: int = GLOSSARY_MAX_TOKENS,
         temperature: float = GLOSSARY_TEMPERATURE,
     ) -> str:
-        """Glossary batch: prefer strict ``json_schema`` (structured outputs), else ``json_object``."""
-        keys = sorted({str(k).strip() for k in glossary_keys if str(k).strip()})
-        use_schema = 0 < len(keys) <= _GLOSSARY_JSON_SCHEMA_MAX_KEYS
+        """Glossary batch via ``json_object`` mode (no retries — caller retries).
 
-        if use_schema:
-            try:
-                rf = _glossary_json_schema_response_format(keys)
-                raw = await self._chat_completion_json_async(
-                    system_prompt,
-                    user_prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    response_format=rf,
-                )
-                if raw:
-                    return raw
-                logger.warning(
-                    "Glossary structured output returned empty content; falling back to json_object."
-                )
-            except RateLimitError:
-                raise
-            except Exception as e:
-                logger.warning(
-                    "Glossary json_schema request failed (%s); falling back to json_object.",
-                    e,
-                )
+        Uses ``json_object`` response format for maximum model compatibility.
+        Structured outputs (``json_schema`` with ``strict: true``) cause
+        timeouts/hangs on models without native support (DeepSeek, Qwen, etc.)
+        because OpenRouter's constrained-decoding wrapper is extremely slow.
 
-        # Fallback: use the *unwrapped* internal helper to avoid nested retry.
-        # ``complete_json_chat_async`` is itself ``@retry``-decorated, which
-        # would create 3×3 = 9 attempts when called from this ``@retry`` method.
+        Callers (``GlossaryBuilder._translate_batch_async``) handle retries
+        and partial-result merging, so no tenacity decorator here.
+        """
         return await self._chat_completion_json_async(
             system_prompt,
             user_prompt,

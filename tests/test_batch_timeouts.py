@@ -73,70 +73,31 @@ class TestGlossaryPartialFailure:
     """Glossary builder must survive individual batch failures."""
 
     def test_single_batch_failure_does_not_crash(self):
-        """If one batch fails, the builder must still return entries from other batches."""
+        """If one batch fails (all retries timeout), _translate_batch_async returns {}."""
         from src.nwn_translator.glossary import GlossaryBuilder
 
         builder = GlossaryBuilder()
-
-        # Build a mock world_context with enough names for 2 batches
-        mock_wc = Mock()
-        names = [(f"Name{i}", "character") for i in range(100)]
-        mock_wc.get_all_names.return_value = names
-
-        # Mock provider: first LLM call raises TimeoutError, second succeeds
-        call_count = 0
-
-        async def fake_glossary_chat(system_prompt, user_prompt, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            # First batch (calls 1-3 with retries) -> always fail
-            if call_count <= 3:
-                raise TimeoutError("Simulated timeout")
-            # Second batch -> succeed with a simple JSON
-            import json
-            keys = kwargs.get("glossary_keys", [])
-            result = {k: f"Перевод_{k}" for k in keys}
-            return json.dumps(result)
+        batch_seen = {"TestName": "character"}
 
         mock_provider = Mock()
         mock_provider.complete_glossary_chat_async = AsyncMock(
-            side_effect=fake_glossary_chat
+            side_effect=TimeoutError("timeout")
         )
         mock_provider.close_async_client = AsyncMock()
 
         mock_config = Mock()
         mock_config.target_lang = "russian"
 
-        # Patch _run_llm to use smaller timeout for test speed
-        with patch.object(
-            GlossaryBuilder, '_run_llm',
-            side_effect=lambda prov, sp, up, keys: _sync_call_provider(
-                prov, sp, up, keys
-            ),
-        ):
-            # Use the original build but with patched internals
-            pass
+        sem = asyncio.Semaphore(1)
 
-        # Direct test: _translate_batch should return {} on total failure
-        batch_seen = {"TestName": "character"}
-        mock_provider2 = Mock()
-        mock_provider2.complete_glossary_chat_async = AsyncMock(
-            side_effect=TimeoutError("timeout")
-        )
-        mock_provider2.close_async_client = AsyncMock()
-
-        # Patch _run_llm to always raise TimeoutError
-        original_run_llm = GlossaryBuilder._run_llm
-
-        def failing_run_llm(provider, system_prompt, user_prompt, keys_for_schema):
-            raise TimeoutError("Simulated LLM timeout")
-
-        with patch.object(GlossaryBuilder, '_run_llm', side_effect=failing_run_llm):
-            result = builder._translate_batch(
-                batch_seen, mock_provider2, mock_config, 1, 1
+        async def run_test():
+            return await builder._translate_batch_async(
+                sem, batch_seen, mock_provider, mock_config, 1, 1, None,
             )
-            # Must return empty dict, NOT raise RuntimeError
-            assert result == {}
+
+        result = run_async(run_test(), timeout=10.0)
+        # Must return empty dict, NOT raise RuntimeError
+        assert result == {}
 
     def test_translate_batch_returns_entries_on_success(self):
         """Successful batch returns entries normally."""
@@ -151,14 +112,96 @@ class TestGlossaryPartialFailure:
 
         expected_json = json.dumps({"Perin": "Перин", "Dark Forest": "Тёмный Лес"})
 
-        def success_run_llm(provider, system_prompt, user_prompt, keys_for_schema):
-            return expected_json
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(
+            return_value=expected_json
+        )
 
-        with patch.object(GlossaryBuilder, '_run_llm', side_effect=success_run_llm):
-            result = builder._translate_batch(
-                batch_seen, Mock(), mock_config, 1, 1
+        sem = asyncio.Semaphore(1)
+
+        async def run_test():
+            return await builder._translate_batch_async(
+                sem, batch_seen, mock_provider, mock_config, 1, 1, None,
             )
-            assert result == {"Perin": "Перин", "Dark Forest": "Тёмный Лес"}
+
+        result = run_async(run_test(), timeout=10.0)
+        assert result == {"Perin": "Перин", "Dark Forest": "Тёмный Лес"}
+
+    def test_echoback_detection_retries_untranslated(self):
+        """Echo-backs (value == key) must be excluded and retried."""
+        import json
+        from src.nwn_translator.glossary import GlossaryBuilder
+
+        builder = GlossaryBuilder()
+        batch_seen = {"Perin": "character", "Dark Forest": "location"}
+
+        call_count = 0
+
+        async def fake_glossary(system_prompt, user_prompt, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First attempt: one correct, one echo-back
+                return json.dumps({"Perin": "Перин", "Dark Forest": "Dark Forest"})
+            else:
+                # Retry: only missing key, now correct
+                return json.dumps({"Dark Forest": "Тёмный Лес"})
+
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(
+            side_effect=fake_glossary
+        )
+        mock_config = Mock()
+        mock_config.target_lang = "russian"
+
+        sem = asyncio.Semaphore(1)
+
+        async def run_test():
+            return await builder._translate_batch_async(
+                sem, batch_seen, mock_provider, mock_config, 1, 1, None,
+            )
+
+        result = run_async(run_test(), timeout=10.0)
+        assert result == {"Perin": "Перин", "Dark Forest": "Тёмный Лес"}
+        assert call_count == 2  # Must have retried for the echo-back
+
+    def test_partial_results_merged_across_attempts(self):
+        """Partial results from multiple attempts must be merged."""
+        import json
+        from src.nwn_translator.glossary import GlossaryBuilder
+
+        builder = GlossaryBuilder()
+        batch_seen = {"Alpha": "character", "Beta": "location", "Gamma": "item"}
+
+        call_count = 0
+
+        async def fake_glossary(system_prompt, user_prompt, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First attempt: only 1 of 3
+                return json.dumps({"Alpha": "Альфа"})
+            else:
+                # Retry: remaining 2
+                return json.dumps({"Beta": "Бета", "Gamma": "Гамма"})
+
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(
+            side_effect=fake_glossary
+        )
+        mock_config = Mock()
+        mock_config.target_lang = "russian"
+
+        sem = asyncio.Semaphore(1)
+
+        async def run_test():
+            return await builder._translate_batch_async(
+                sem, batch_seen, mock_provider, mock_config, 1, 1, None,
+            )
+
+        result = run_async(run_test(), timeout=10.0)
+        assert result == {"Alpha": "Альфа", "Beta": "Бета", "Gamma": "Гамма"}
+        assert call_count == 2
 
 
 # ---------------------------------------------------------------------------

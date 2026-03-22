@@ -19,6 +19,34 @@ GLOSSARY_FALLBACK_TEMPERATURE: float = 0.2
 GLOSSARY_MAX_TOKENS: int = 8192
 
 
+def _glossary_llm_timeout() -> float:
+    """Timeout (seconds) for a single LLM glossary call.
+
+    Override with ``NWN_GLOSSARY_LLM_TIMEOUT`` env var (min 30s).
+    """
+    raw = os.getenv("NWN_GLOSSARY_LLM_TIMEOUT", "300").strip()
+    try:
+        return max(30.0, float(raw))
+    except ValueError:
+        return 300.0
+
+
+def _glossary_run_timeout() -> float:
+    """Overall timeout (seconds) for the run_async wrapper around a glossary LLM call.
+
+    Override with ``NWN_GLOSSARY_RUN_TIMEOUT`` env var (min 60s).
+    """
+    raw = os.getenv("NWN_GLOSSARY_RUN_TIMEOUT", "360").strip()
+    try:
+        return max(60.0, float(raw))
+    except ValueError:
+        return 360.0
+
+
+GLOSSARY_LLM_TIMEOUT: float = _glossary_llm_timeout()
+GLOSSARY_RUN_TIMEOUT: float = _glossary_run_timeout()
+
+
 def max_concurrent_from_environment() -> int:
     """Max parallel OpenRouter HTTP requests (asyncio + semaphore, not OS threads).
 

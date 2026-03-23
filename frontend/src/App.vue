@@ -10,12 +10,13 @@ import TranslationForm from "./components/TranslationForm.vue";
 import ProgressTracker from "./components/ProgressTracker.vue";
 import ResultPanel from "./components/ResultPanel.vue";
 import TranslationEditor from "./components/TranslationEditor.vue";
+import HistoryPanel from "./components/HistoryPanel.vue";
 
 const { t: i, locale, setLocale } = useI18n();
 const translation = useTranslation();
 provide(TranslationStateKey, translation);
 
-const { t, loadModels, startTranslation } = translation;
+const { t, loadModels, startTranslation, openHistory } = translation;
 const busy = ref(false);
 const formError = ref("");
 
@@ -39,7 +40,7 @@ async function onSubmit() {
 
 <template>
   <div class="min-h-screen py-10 px-4">
-    <div :class="t.step === 'editing' ? 'max-w-6xl mx-auto' : 'max-w-2xl mx-auto'">
+    <div :class="t.step === 'editing' ? 'max-w-6xl mx-auto' : 'max-w-3xl mx-auto'">
       <header class="text-center mb-10 relative">
         <div class="absolute right-0 top-0 flex gap-1 text-sm">
           <button
@@ -76,6 +77,13 @@ async function onSubmit() {
         >
           {{ busy ? i("app.translating") : i("app.translate") }}
         </button>
+        <button
+          type="button"
+          class="w-full py-2.5 rounded-xl border border-nwn-muted/30 text-sm text-nwn-muted hover:text-gray-300 hover:border-nwn-muted/50 transition-colors"
+          @click="openHistory"
+        >
+          {{ i("history.title") }}
+        </button>
       </div>
 
       <ProgressTracker v-else-if="t.step === 'running'" />
@@ -83,6 +91,8 @@ async function onSubmit() {
       <TranslationEditor v-else-if="t.step === 'editing'" />
 
       <ResultPanel v-else-if="t.step === 'done'" />
+
+      <HistoryPanel v-else-if="t.step === 'history'" />
     </div>
 
     <footer v-if="t.step === 'setup'" class="text-center text-xs text-nwn-muted/60 mt-10 pb-4">

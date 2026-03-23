@@ -6,6 +6,9 @@ import {
   fetchTranslations,
   postRebuild,
   downloadUrl,
+  fetchHistory,
+  deleteTask,
+  fetchJson,
 } from "../api/client.js";
 import { useI18n } from "./useI18n.js";
 
@@ -47,6 +50,7 @@ export function useTranslation() {
     totalFiles: 0,
     translationFiles: [],
     rebuilding: false,
+    historyItems: [],
   });
 
   let eventSource = null;
@@ -260,6 +264,39 @@ export function useTranslation() {
     }
   }
 
+  function openHistory() {
+    t.step = "history";
+  }
+
+  async function loadHistory() {
+    try {
+      const data = await fetchHistory();
+      t.historyItems = data.items ?? [];
+    } catch {
+      t.historyItems = [];
+    }
+  }
+
+  async function openHistoryTask(taskId) {
+    // Load task status and set up state as if it just completed
+    try {
+      const status = await fetchJson(`/api/tasks/${taskId}/status`);
+      t.taskId = taskId;
+      t.status = status.status;
+      t.resultFilename = status.result_filename ?? "";
+      t.stats = status.stats ?? null;
+      t.error = status.error ?? "";
+      t.step = "done";
+    } catch (e) {
+      t.error = String(e.message ?? e);
+    }
+  }
+
+  async function deleteHistoryTask(taskId) {
+    await deleteTask(taskId);
+    t.historyItems = t.historyItems.filter((x) => x.task_id !== taskId);
+  }
+
   return {
     t,
     phaseLabel,
@@ -273,5 +310,9 @@ export function useTranslation() {
     loadTranslations,
     enterEditor,
     rebuildWithEdits,
+    openHistory,
+    loadHistory,
+    openHistoryTask,
+    deleteHistoryTask,
   };
 }

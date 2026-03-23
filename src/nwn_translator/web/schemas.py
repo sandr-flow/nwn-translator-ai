@@ -88,3 +88,23 @@ class RebuildResponse(BaseModel):
     """Response after rebuild completes."""
 
     result_filename: str
+
+
+class TaskHistoryItem(BaseModel):
+    """One task in the history list."""
+
+    task_id: str
+    input_filename: str
+    status: str
+    created_at: float
+    target_lang: Optional[str] = None
+    source_lang: Optional[str] = None
+    model: Optional[str] = None
+    updated_at: Optional[float] = None
+    stats: Optional[Dict[str, Any]] = None
+
+
+class TaskHistoryResponse(BaseModel):
+    """List of tasks for a client token."""
+
+    items: List[TaskHistoryItem]

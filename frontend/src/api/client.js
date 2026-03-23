@@ -7,11 +7,25 @@ export function apiUrl(path) {
   return p;
 }
 
+/**
+ * Get or create a persistent anonymous client token (UUID v4 in localStorage).
+ */
+export function getClientToken() {
+  const key = "nwn_client_token";
+  let token = localStorage.getItem(key);
+  if (!token) {
+    token = crypto.randomUUID();
+    localStorage.setItem(key, token);
+  }
+  return token;
+}
+
 export async function fetchJson(path, options = {}) {
   const res = await fetch(apiUrl(path), {
     ...options,
     headers: {
       Accept: "application/json",
+      "X-Client-Token": getClientToken(),
       ...options.headers,
     },
   });
@@ -34,6 +48,9 @@ export async function fetchJson(path, options = {}) {
 export async function postTranslate(formData) {
   const res = await fetch(apiUrl("/api/translate"), {
     method: "POST",
+    headers: {
+      "X-Client-Token": getClientToken(),
+    },
     body: formData,
   });
   const text = await res.text();
@@ -79,4 +96,12 @@ export async function postRebuild(taskId, translations) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ translations }),
   });
+}
+
+export async function fetchHistory() {
+  return fetchJson("/api/history");
+}
+
+export async function deleteTask(taskId) {
+  return fetchJson(`/api/tasks/${taskId}`, { method: "DELETE" });
 }

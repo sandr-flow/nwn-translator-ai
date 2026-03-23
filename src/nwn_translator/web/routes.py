@@ -19,10 +19,20 @@ from ..config import max_concurrent_from_environment
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..ai_providers import OpenRouterProvider, create_provider
+from .database import (
+    delete_task_row,
+    get_task_row,
+    get_translation_map_by_task,
+    get_translations_by_task,
+    list_tasks_by_token,
+    update_task_row,
+)
 from .schemas import (
     ModelsResponse,
     RebuildRequest,
     RebuildResponse,
+    TaskHistoryItem,
+    TaskHistoryResponse,
     TaskStatusResponse,
     TestConnectionRequest,
     TestConnectionResponse,
@@ -68,6 +78,11 @@ def _client_ip(request: Request) -> str:
     if request.client:
         return request.client.host
     return "unknown"
+
+
+def _client_token(request: Request) -> str:
+    """Extract the anonymous client token from ``X-Client-Token`` header."""
+    return (request.headers.get("x-client-token") or "").strip()
 
 
 @router.post("/translate", response_model=TranslateResponse)
@@ -121,7 +136,16 @@ async def start_translate(
             detail=f"Файл слишком большой (максимум {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ)",
         )
 
-    task = tm.create_task(ip, file.filename)
+    token = _client_token(request)
+    model_slug = model.strip() if model else None
+    task = tm.create_task(
+        ip,
+        file.filename,
+        client_token=token,
+        target_lang=target_lang.strip(),
+        source_lang=source_lang.strip() or "auto",
+        model=model_slug,
+    )
     base = tm.workspace_for_task(task.task_id)
     input_path = base / Path(file.filename).name
     input_path.write_bytes(body)
@@ -140,7 +164,7 @@ async def start_translate(
             api_key=api_key.strip(),
             target_lang=target_lang.strip(),
             source_lang=source_lang.strip() or "auto",
-            model=model.strip() if model else None,
+            model=model_slug,
             preserve_tokens=preserve_tokens,
             use_context=use_context,
             max_concurrent_requests=mc,
@@ -153,24 +177,45 @@ async def start_translate(
 
 
 def _task_or_404(task_id: str) -> TranslationTask:
-    """Look up a translation task by ID or raise HTTP 404.
+    """Look up a translation task by ID — first in-memory, then DB.
 
-    Args:
-        task_id: UUID string of the task.
-
-    Returns:
-        The matching ``TranslationTask``.
+    For tasks found only in DB (finished, evicted from memory), a minimal
+    ``TranslationTask`` is reconstructed from the stored row.
 
     Raises:
         HTTPException: 400 if task_id is not a valid UUID.
-        HTTPException: 404 if the task is not found.
+        HTTPException: 404 if the task is not found anywhere.
     """
     if not _UUID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Неверный формат task_id")
     tm = get_task_manager()
     task = tm.get(task_id)
-    if not task:
+    if task:
+        return task
+    # Fallback: reconstruct from DB
+    row = get_task_row(task_id)
+    if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    task = TranslationTask(
+        task_id=row["task_id"],
+        client_ip=row["client_ip"],
+        client_token=row.get("client_token", ""),
+        created_at=row["created_at"],
+        status=row["status"],
+        input_filename=row.get("input_filename", ""),
+    )
+    if row.get("result_path"):
+        task.result_path = Path(row["result_path"])
+    if row.get("extract_dir"):
+        task.extract_dir = Path(row["extract_dir"])
+    if row.get("input_path"):
+        task.input_path = Path(row["input_path"])
+    task.error = row.get("error")
+    if row.get("stats"):
+        try:
+            task.stats = json.loads(row["stats"])
+        except (json.JSONDecodeError, TypeError):
+            pass
     return task
 
 
@@ -261,56 +306,53 @@ async def download_result(task_id: str) -> FileResponse:
 
 
 @router.get("/tasks/{task_id}/log")
-async def download_log(task_id: str) -> FileResponse:
-    """Download the JSONL translation log for a task."""
-    task = _task_or_404(task_id)
-    if not task.log_path or not task.log_path.is_file():
+async def download_log(task_id: str) -> StreamingResponse:
+    """Download the translation log as JSONL (generated from SQLite)."""
+    _task_or_404(task_id)
+    rows = get_translations_by_task(task_id)
+    if not rows:
         raise HTTPException(status_code=404, detail="Лог недоступен")
-    return FileResponse(
-        path=task.log_path,
-        filename="translation_log.jsonl",
+
+    def generate():
+        for row in rows:
+            yield json.dumps(row, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        generate(),
         media_type="application/jsonl",
+        headers={"Content-Disposition": "attachment; filename=translation_log.jsonl"},
     )
 
 
 @router.get("/tasks/{task_id}/translations", response_model=TranslationsResponse)
 async def get_translations(task_id: str) -> TranslationsResponse:
     """Return structured translation data grouped by source file for the editor."""
-    task = _task_or_404(task_id)
-    if not task.log_path or not task.log_path.is_file():
-        raise HTTPException(status_code=404, detail="Лог переводов недоступен")
+    _task_or_404(task_id)  # validate exists
+
+    rows = get_translations_by_task(task_id)
+    if not rows:
+        return TranslationsResponse(files=[])
 
     groups: dict[str, list[TranslationItem]] = {}
     seen: dict[str, set[str]] = {}
-    # Track which files contain each original text (for shared_with)
     text_to_files: dict[str, list[str]] = {}
 
-    with open(task.log_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            original = entry.get("original", "")
-            translated = entry.get("translated", "")
-            filename = entry.get("file") or "unknown"
-            if not original:
-                continue
-            if filename not in groups:
-                groups[filename] = []
-                seen[filename] = set()
-            if original not in seen[filename]:
-                seen[filename].add(original)
-                groups[filename].append(TranslationItem(original=original, translated=translated))
-                # Record file for this text
-                if original not in text_to_files:
-                    text_to_files[original] = []
-                text_to_files[original].append(filename)
+    for entry in rows:
+        original = entry["original"]
+        translated = entry["translated"]
+        filename = entry.get("file") or "unknown"
+        if not original:
+            continue
+        if filename not in groups:
+            groups[filename] = []
+            seen[filename] = set()
+        if original not in seen[filename]:
+            seen[filename].add(original)
+            groups[filename].append(TranslationItem(original=original, translated=translated))
+            if original not in text_to_files:
+                text_to_files[original] = []
+            text_to_files[original].append(filename)
 
-    # Populate shared_with: for each item, list other files with the same text
     for filename, items in groups.items():
         for item in items:
             all_files = text_to_files.get(item.original, [])
@@ -335,26 +377,9 @@ async def rebuild_task(task_id: str, body: RebuildRequest) -> RebuildResponse:
             status_code=400,
             detail="Извлечённые файлы модуля недоступны (возможно, были очищены)",
         )
-    if not task.log_path or not task.log_path.is_file():
-        raise HTTPException(status_code=400, detail="Лог переводов недоступен")
 
-    # Build full translation map from log, then apply user overrides
-    all_translations: dict[str, str] = {}
-    with open(task.log_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            original = entry.get("original", "")
-            translated = entry.get("translated", "")
-            if original:
-                all_translations[original] = translated
-
-    # Apply user edits on top
+    # Build full translation map from SQLite, then apply user overrides
+    all_translations = get_translation_map_by_task(task_id)
     all_translations.update(body.translations)
 
     extract_dir = Path(task.extract_dir)
@@ -374,7 +399,68 @@ async def rebuild_task(task_id: str, body: RebuildRequest) -> RebuildResponse:
         logger.exception("Rebuild failed for task %s", task.task_id)
         raise HTTPException(status_code=500, detail=f"Ошибка сборки: {e}")
 
+    import time
+    update_task_row(task_id, updated_at=time.time())
     return RebuildResponse(result_filename=output_path.name)
+
+
+@router.get("/history", response_model=TaskHistoryResponse)
+async def task_history(request: Request) -> TaskHistoryResponse:
+    """Return translation history for the client identified by ``X-Client-Token``."""
+    token = _client_token(request)
+    if not token:
+        return TaskHistoryResponse(items=[])
+    rows = list_tasks_by_token(token)
+    items = []
+    for r in rows:
+        stats = None
+        if r.get("stats"):
+            try:
+                stats = json.loads(r["stats"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        items.append(
+            TaskHistoryItem(
+                task_id=r["task_id"],
+                input_filename=r.get("input_filename", ""),
+                status=r["status"],
+                created_at=r["created_at"],
+                target_lang=r.get("target_lang"),
+                source_lang=r.get("source_lang"),
+                model=r.get("model"),
+                updated_at=r.get("updated_at"),
+                stats=stats,
+            )
+        )
+    return TaskHistoryResponse(items=items)
+
+
+@router.delete("/tasks/{task_id}")
+async def delete_task(task_id: str, request: Request) -> dict:
+    """Delete a task from history. Only the owning client can delete."""
+    if not _UUID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Неверный формат task_id")
+    token = _client_token(request)
+    row = get_task_row(task_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if token and row.get("client_token") != token:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
+
+    # Remove workspace from disk
+    tm = get_task_manager()
+    workspace = tm.workspace_root / task_id
+    if workspace.is_dir():
+        import shutil
+        shutil.rmtree(workspace, ignore_errors=True)
+
+    # Remove from in-memory store
+    with tm._lock:
+        tm._tasks.pop(task_id, None)
+
+    # Delete from DB (CASCADE removes translations)
+    delete_task_row(task_id)
+    return {"ok": True}
 
 
 @router.post("/test-connection", response_model=TestConnectionResponse)

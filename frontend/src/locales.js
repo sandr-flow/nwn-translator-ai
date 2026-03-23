@@ -113,6 +113,24 @@ export default {
     "type.module": "Модуль",
     "type.other": "Другое",
 
+    // History
+    "history.title": "История переводов",
+    "history.back": "Назад",
+    "history.loading": "Загрузка…",
+    "history.empty": "Переводов пока нет",
+    "history.open": "Открыть",
+    "history.delete": "Удалить",
+    "history.files": "файлов",
+    "history.lines": "строк",
+    "history.status.completed": "Готово",
+    "history.status.failed": "Ошибка",
+    "history.status.pending": "Ожидание",
+    "history.status.extracting": "Распаковка",
+    "history.status.translating": "Перевод",
+    "history.status.building": "Сборка",
+    "history.edited": "изм.",
+    "history.expired": "Файлы удалены (истёк срок хранения)",
+
     // Errors
     "error.noFile": "Выберите файл .mod",
     "error.noKey": "Укажите API-ключ OpenRouter",
@@ -234,6 +252,24 @@ export default {
     "type.stores": "Stores",
     "type.module": "Module",
     "type.other": "Other",
+
+    // History
+    "history.title": "Translation history",
+    "history.back": "Back",
+    "history.loading": "Loading…",
+    "history.empty": "No translations yet",
+    "history.open": "Open",
+    "history.delete": "Delete",
+    "history.files": "files",
+    "history.lines": "lines",
+    "history.status.completed": "Done",
+    "history.status.failed": "Error",
+    "history.status.pending": "Pending",
+    "history.status.extracting": "Extracting",
+    "history.status.translating": "Translating",
+    "history.status.building": "Building",
+    "history.edited": "edited",
+    "history.expired": "Files deleted (expired)",
 
     // Errors
     "error.noFile": "Please select a .mod file",

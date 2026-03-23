@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from .database import init_db
 from .routes import router
 from .task_manager import purge_loop_task_manager
 
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
     Starts a background task that periodically purges expired translation
     tasks and cancels it on shutdown.
     """
+    init_db()
     purge_task = asyncio.create_task(purge_loop_task_manager(3600))
     yield
     purge_task.cancel()

@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..config import TranslationConfig, lang_suffix
 from ..main import ModuleTranslator
+from .database import SqliteTranslationLogWriter, create_task_row, update_task_row
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +31,13 @@ class TranslationTask:
 
     task_id: str
     client_ip: str
+    client_token: str = ""
     created_at: float = field(default_factory=time.time)
     status: str = "pending"
     progress: float = 0.0
     phase: Optional[str] = None
     current_file: Optional[str] = None
     result_path: Optional[Path] = None
-    log_path: Optional[Path] = None
     extract_dir: Optional[Path] = None
     input_path: Optional[Path] = None
     error: Optional[str] = None
@@ -115,20 +116,47 @@ class TaskManager:
                 return tid
             return None
 
-    def create_task(self, client_ip: str, input_filename: str) -> TranslationTask:
+    def create_task(
+        self,
+        client_ip: str,
+        input_filename: str,
+        client_token: str = "",
+        target_lang: Optional[str] = None,
+        source_lang: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> TranslationTask:
         """Create and register a new translation task.
 
         Args:
             client_ip: Originating client IP address.
             input_filename: Original uploaded filename.
+            client_token: Anonymous client UUID from localStorage.
+            target_lang: Target translation language.
+            source_lang: Source language.
+            model: Model slug used for translation.
 
         Returns:
             Newly created ``TranslationTask``.
         """
         task_id = str(uuid.uuid4())
-        task = TranslationTask(task_id=task_id, client_ip=client_ip, input_filename=input_filename)
+        task = TranslationTask(
+            task_id=task_id,
+            client_ip=client_ip,
+            client_token=client_token,
+            input_filename=input_filename,
+        )
         with self._lock:
             self._tasks[task_id] = task
+        create_task_row(
+            task_id=task_id,
+            client_token=client_token,
+            client_ip=client_ip,
+            created_at=task.created_at,
+            input_filename=input_filename,
+            target_lang=target_lang,
+            source_lang=source_lang,
+            model=model,
+        )
         return task
 
     def register_active(self, client_ip: str, task_id: str) -> None:
@@ -214,14 +242,17 @@ class TaskManager:
         temp_dir.mkdir(parents=True, exist_ok=True)
         lang_suf = lang_suffix(target_lang)
         output_file = base / f"{input_path.stem}{lang_suf}{input_path.suffix}"
-        log_file = base / "translation_log.jsonl"
+
+        log_writer = SqliteTranslationLogWriter(task.task_id)
 
         progress_cb = self._make_progress_callback(task)
         task.input_path = input_path
+        update_task_row(task.task_id, input_path=str(input_path))
 
         try:
             task.status = "extracting"
             self._push_event(task, {"type": "status", "status": "extracting"})
+            update_task_row(task.task_id, status="extracting")
 
             config = TranslationConfig(
                 api_key=api_key,
@@ -230,7 +261,8 @@ class TaskManager:
                 target_lang=target_lang,
                 input_file=input_path,
                 output_file=output_file,
-                translation_log=log_file,
+                translation_log=None,
+                translation_log_writer=log_writer,
                 temp_dir=temp_dir,
                 skip_cleanup=True,
                 preserve_tokens=preserve_tokens,
@@ -256,10 +288,16 @@ class TaskManager:
             result_path = translator.translate()
             task.result_path = Path(result_path)
             task.extract_dir = translator.extract_dir
-            task.log_path = log_file if log_file.exists() else None
             task.stats = translator.get_statistics()
             task.status = "completed"
             task.progress = 1.0
+            update_task_row(
+                task.task_id,
+                status="completed",
+                result_path=str(task.result_path),
+                extract_dir=str(task.extract_dir),
+                stats=task.stats,
+            )
             self._push_event(
                 task,
                 {
@@ -272,13 +310,17 @@ class TaskManager:
             logger.exception("Translation failed for task %s", task.task_id)
             task.status = "failed"
             task.error = str(e)
+            update_task_row(task.task_id, status="failed", error=str(e))
             self._push_event(task, {"type": "failed", "error": str(e)})
         finally:
             task.mark_done()
             self.release_active(task.client_ip, task.task_id)
 
     def purge_expired(self) -> None:
-        """Remove old tasks and delete workspace dirs (best effort)."""
+        """Remove finished tasks from in-memory dict to free RAM.
+
+        Workspace files and DB rows are kept — the user deletes via UI.
+        """
         now = time.time()
         with self._lock:
             to_delete: List[str] = []
@@ -286,16 +328,7 @@ class TaskManager:
                 if now - t.created_at > self.task_ttl_seconds and t.is_finished():
                     to_delete.append(tid)
             for tid in to_delete:
-                t = self._tasks.pop(tid, None)
-                if t:
-                    d = self.workspace_root / tid
-                    if d.is_dir():
-                        try:
-                            import shutil
-
-                            shutil.rmtree(d, ignore_errors=True)
-                        except OSError:
-                            pass
+                self._tasks.pop(tid, None)
 
 
 # Global manager instance (tests can replace)

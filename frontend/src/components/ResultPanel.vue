@@ -10,7 +10,7 @@ const ok = computed(() => t.status === "completed");
 const err = computed(() => t.error || (t.status === "failed" ? i("result.unknownError") : ""));
 
 const filesProcessed = computed(() => t.stats?.files_processed ?? "—");
-const itemsTranslated = computed(() => t.stats?.items_translated ?? "—");
+const textsTranslated = computed(() => t.stats?.texts_translated ?? "—");
 const errCount = computed(() => t.stats?.total_errors ?? t.stats?.errors?.length ?? 0);
 </script>
 
@@ -23,7 +23,7 @@ const errCount = computed(() => t.stats?.total_errors ?? t.stats?.errors?.length
       </p>
       <div class="text-sm text-nwn-muted mb-4 space-y-1">
         <p>{{ i("result.filesProcessed") }} {{ filesProcessed }}</p>
-        <p>{{ i("result.itemsTranslated") }} {{ itemsTranslated }}</p>
+        <p>{{ i("result.textsTranslated") }} {{ textsTranslated }}</p>
         <p v-if="errCount">{{ i("result.errors") }} {{ errCount }}</p>
       </div>
       <div class="flex flex-wrap gap-3">

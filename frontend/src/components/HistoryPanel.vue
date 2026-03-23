@@ -31,7 +31,7 @@ function statsSummary(stats) {
   if (!stats) return "";
   const parts = [];
   if (stats.files_processed) parts.push(`${stats.files_processed} ${i("history.files")}`);
-  if (stats.items_translated) parts.push(`${stats.items_translated} ${i("history.lines")}`);
+  if (stats.texts_translated) parts.push(`${stats.texts_translated} ${i("history.texts")}`);
   return parts.join(", ");
 }
 

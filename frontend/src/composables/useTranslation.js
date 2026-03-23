@@ -18,8 +18,10 @@ export const TranslationStateKey = Symbol("TranslationState");
 const PHASE_KEYS = {
   extracting: "phase.extracting",
   scanning: "phase.scanning",
+  extracting_content: "phase.extracting",
   translating: "phase.translating",
   translating_item: "phase.translating",
+  injecting: "phase.injecting",
   building: "phase.building",
   pending: "phase.pending",
 };

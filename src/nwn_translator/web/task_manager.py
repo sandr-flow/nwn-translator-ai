@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..config import TranslationConfig, lang_suffix
 from ..main import ModuleTranslator
-from .database import SqliteTranslationLogWriter, create_task_row, update_task_row
+from .database import SqliteTranslationLogWriter, create_task_row, update_task_row, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -189,14 +189,22 @@ class TaskManager:
         """
         task.event_queue.put(payload)
 
+    # Phase -> (start_pct, end_pct) for weighted global progress.
+    _PHASE_WEIGHTS = {
+        "extracting":        (0.0,  0.02),
+        "scanning":          (0.02, 0.05),
+        "extracting_content":(0.05, 0.15),
+        "translating":       (0.15, 0.85),
+        "translating_item":  (0.15, 0.85),
+        "injecting":         (0.85, 0.95),
+        "building":          (0.95, 1.0),
+    }
+
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
         """Create a progress callback that updates *task* state and pushes SSE events.
 
-        Args:
-            task: Translation task to bind the callback to.
-
-        Returns:
-            Callback compatible with :data:`~nwn_translator.config.ProgressCallback`.
+        Progress is weighted across phases and guaranteed to be monotonically
+        increasing so the progress bar never jumps backwards.
         """
         def callback(
             phase: str,
@@ -206,8 +214,13 @@ class TaskManager:
         ) -> None:
             task.phase = phase
             task.status = phase if phase in ("extracting", "scanning", "translating", "building") else task.status
-            task.progress = (current / total) if total else 0.0
             task.current_file = message
+
+            start, end = self._PHASE_WEIGHTS.get(phase, (0.0, 1.0))
+            local = (current / total) if total else 0.0
+            weighted = start + (end - start) * local
+            task.progress = max(task.progress, weighted)
+
             self._push_event(
                 task,
                 {
@@ -289,6 +302,16 @@ class TaskManager:
             task.result_path = Path(result_path)
             task.extract_dir = translator.extract_dir
             task.stats = translator.get_statistics()
+            # Replace opaque "items_translated" with actual per-file count from DB
+            try:
+                db = get_db()
+                row = db.execute(
+                    "SELECT COUNT(*) FROM translations WHERE task_id = ?",
+                    (task.task_id,),
+                ).fetchone()
+                task.stats["texts_translated"] = row[0] if row else 0
+            except Exception:
+                pass
             task.status = "completed"
             task.progress = 1.0
             update_task_row(

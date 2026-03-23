@@ -98,6 +98,25 @@ export function useTranslation() {
     if (typeof data.total === "number") t.totalFiles = data.total;
   }
 
+  async function pollTaskStatus(id) {
+    try {
+      const status = await fetchJson(`/api/tasks/${id}/status`);
+      if (status.status === "completed") {
+        t.status = "completed";
+        t.progress = 1;
+        t.resultFilename = status.result_filename ?? "";
+        t.stats = status.stats ?? null;
+        t.step = "done";
+      } else if (status.status === "failed") {
+        t.status = "failed";
+        t.error = status.error ?? i("error.default");
+        t.step = "done";
+      }
+    } catch {
+      /* backend unreachable — nothing to do */
+    }
+  }
+
   function openSse(id) {
     closeSse();
     const url = `/api/tasks/${id}/progress`;
@@ -141,6 +160,9 @@ export function useTranslation() {
         }
         if (msg.type === "done") {
           closeSse();
+          if (t.status !== "completed" && t.status !== "failed") {
+            pollTaskStatus(id);
+          }
         }
       } catch {
         /* ignore */
@@ -158,21 +180,38 @@ export function useTranslation() {
         const delay = Math.min(1000 * 2 ** sseRetryCount, 16000);
         sseRetryCount++;
         sseRetryTimer = setTimeout(async () => {
-          // Check if task still exists before reconnecting SSE
           try {
             const res = await fetch(`/api/tasks/${id}/status`);
             if (res.status === 404) {
-              // Task gone (backend restarted) — stop retrying
               t.status = "failed";
               t.error = i("error.taskNotFound");
               t.step = "done";
               return;
             }
+            if (res.ok) {
+              const status = await res.json();
+              if (status.status === "completed") {
+                t.status = "completed";
+                t.progress = 1;
+                t.resultFilename = status.result_filename ?? "";
+                t.stats = status.stats ?? null;
+                t.step = "done";
+                return;
+              }
+              if (status.status === "failed") {
+                t.status = "failed";
+                t.error = status.error ?? i("error.default");
+                t.step = "done";
+                return;
+              }
+            }
           } catch {
-            // Backend not reachable — retry later
+            /* backend not reachable — reconnect SSE */
           }
           openSse(id);
         }, delay);
+      } else if (t.status !== "completed" && t.status !== "failed") {
+        pollTaskStatus(id);
       }
     };
   }

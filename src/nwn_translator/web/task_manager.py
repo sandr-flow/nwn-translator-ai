@@ -312,15 +312,7 @@ class TaskManager:
                 task.stats["texts_translated"] = row[0] if row else 0
             except Exception:
                 pass
-            task.status = "completed"
             task.progress = 1.0
-            update_task_row(
-                task.task_id,
-                status="completed",
-                result_path=str(task.result_path),
-                extract_dir=str(task.extract_dir),
-                stats=task.stats,
-            )
             self._push_event(
                 task,
                 {
@@ -329,12 +321,20 @@ class TaskManager:
                     "stats": task.stats,
                 },
             )
+            task.status = "completed"
+            update_task_row(
+                task.task_id,
+                status="completed",
+                result_path=str(task.result_path),
+                extract_dir=str(task.extract_dir),
+                stats=task.stats,
+            )
         except Exception as e:
             logger.exception("Translation failed for task %s", task.task_id)
-            task.status = "failed"
             task.error = str(e)
-            update_task_row(task.task_id, status="failed", error=str(e))
             self._push_event(task, {"type": "failed", "error": str(e)})
+            task.status = "failed"
+            update_task_row(task.task_id, status="failed", error=str(e))
         finally:
             task.mark_done()
             self.release_active(task.client_ip, task.task_id)

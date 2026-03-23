@@ -265,8 +265,12 @@ async def task_progress(task_id: str) -> StreamingResponse:
                 msg = task.event_queue.get_nowait()
             except Empty:
                 if task.is_finished() and task.event_queue.empty():
-                    yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-                    # Small delay so the proxy flushes the final event before we close
+                    if task.status == "completed" and task.result_path:
+                        yield f"data: {json.dumps({'type': 'completed', 'result_filename': task.result_path.name, 'stats': task.stats}, ensure_ascii=False)}\n\n"
+                    elif task.status == "failed":
+                        yield f"data: {json.dumps({'type': 'failed', 'error': task.error}, ensure_ascii=False)}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.2)
                     break
                 idle_ticks += 1

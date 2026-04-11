@@ -186,6 +186,19 @@ class BaseAIProvider(ABC):
             results.append(result)
         return results
 
+    async def classify_ncs_translate_gate_batch_async(
+        self,
+        entries: List[Dict[str, Any]],
+        *,
+        source_lang: str,
+    ) -> Dict[str, bool]:
+        """Return whether each NCS string occurrence should be translated.
+
+        *entries* items must include at least ``key`` (batch index as str) and
+        ``text``. Default: approve all (no-op gate for providers without LLM).
+        """
+        return {str(e["key"]): True for e in entries}
+
     def _validate_api_key(self) -> None:
         """Validate that the API key is present and valid.
 

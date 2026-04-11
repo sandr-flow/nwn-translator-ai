@@ -21,13 +21,13 @@ class CreatureExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract creature content from a .utc file.
 
         Args:
             file_path: Path to the .utc file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             ExtractedContent with creature data
@@ -35,10 +35,10 @@ class CreatureExtractor(BaseExtractor):
         items = []
 
         # Get tag for reference
-        tag = gff_data.get("Tag", file_path.stem)
+        tag = parsed_data.get("Tag", file_path.stem)
 
         # Extract first name as separate item
-        name_obj = gff_data.get("FirstName", {})
+        name_obj = parsed_data.get("FirstName", {})
         first_name = self._extract_text_from_local_string(name_obj)
         if first_name:
             items.append(TranslatableItem(
@@ -53,7 +53,7 @@ class CreatureExtractor(BaseExtractor):
             ))
 
         # Extract last name as separate item
-        last_name_obj = gff_data.get("LastName", {})
+        last_name_obj = parsed_data.get("LastName", {})
         last_name = self._extract_text_from_local_string(last_name_obj)
         if last_name:
             items.append(TranslatableItem(
@@ -68,7 +68,7 @@ class CreatureExtractor(BaseExtractor):
             ))
 
         # Extract description as separate item
-        desc_obj = gff_data.get("Description", {})
+        desc_obj = parsed_data.get("Description", {})
         description = self._extract_text_from_local_string(desc_obj)
         if description:
             full_name = " ".join(filter(None, [first_name, last_name]))

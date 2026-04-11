@@ -6,7 +6,9 @@
       "Bash(powershell:*)",
       "Bash(head:*)",
       "Bash(tail:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(.venv/Scripts/python.exe:*)"
     ]
   }
 }

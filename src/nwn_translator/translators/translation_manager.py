@@ -76,6 +76,11 @@ class TranslationManager:
                 preserve_tokens=config.preserve_tokens,
             )
 
+        #: Final NCS translations keyed by :attr:`TranslatableItem.item_id` (per bytecode offset).
+        self.ncs_translations_by_item_id: Dict[str, str] = {}
+        #: LLM gate (or deterministic bypass) approval per ``item_id`` for ``ncs_string`` items.
+        self._ncs_gate_approval: Dict[str, bool] = {}
+
     def _find_cached_prefix(self, sanitized: str) -> Optional[tuple]:
         """Find the longest cached text that is a prefix of *sanitized*.
 
@@ -96,6 +101,66 @@ class TranslationManager:
             return best_key, self.translation_cache[best_key]
         return None
 
+    def _ncs_item_passes_gate(self, item) -> bool:
+        if (item.metadata or {}).get("type") != "ncs_string":
+            return True
+        return self._ncs_gate_approval.get(item.item_id or "", False)
+
+    def _run_ncs_llm_gate(self, translation_items: List[dict]) -> None:
+        """Populate :attr:`_ncs_gate_approval` for all ``ncs_string`` items."""
+        self._ncs_gate_approval.clear()
+        pending: List[dict] = []
+        for itd in translation_items:
+            item = itd["item"]
+            meta = item.metadata or {}
+            if meta.get("type") != "ncs_string":
+                continue
+            iid = item.item_id or ""
+            if self.config.skip_ncs_llm_gate or not meta.get("needs_llm_gate", True):
+                self._ncs_gate_approval[iid] = True
+            else:
+                pending.append(itd)
+
+        if not pending:
+            return
+
+        batches = [
+            pending[i : i + self._BATCH_SIZE]
+            for i in range(0, len(pending), self._BATCH_SIZE)
+        ]
+
+        async def run_batches() -> None:
+            for batch in batches:
+                entries = []
+                for j, itd in enumerate(batch):
+                    item = itd["item"]
+                    meta = item.metadata or {}
+                    loc = item.location or ""
+                    file_name = Path(loc).name if loc else ""
+                    off = meta.get("offset")
+                    off_s = hex(off) if isinstance(off, int) else str(off)
+                    entries.append({
+                        "key": str(j),
+                        "text": item.text,
+                        "file": file_name,
+                        "offset": off_s,
+                        "hint": str(meta.get("ncs_hint", "unknown")),
+                    })
+                partial = await self.provider.classify_ncs_translate_gate_batch_async(
+                    entries,
+                    source_lang=self.config.source_lang,
+                )
+                for j, itd in enumerate(batch):
+                    iid = itd["item"].item_id or ""
+                    self._ncs_gate_approval[iid] = partial.get(str(j), False)
+
+        from ..async_utils import run_async
+        run_async(
+            run_batches(),
+            cleanup=self.provider.close_async_client,
+            timeout=self._RUN_ASYNC_TIMEOUT,
+        )
+
     def translate_content(self, content: ExtractedContent) -> Dict[str, str]:
         """Translate multiple items individually, skipping duplicates.
 
@@ -114,6 +179,8 @@ class TranslationManager:
         if not items:
             return translations
 
+        self.ncs_translations_by_item_id.clear()
+
         source_filename = Path(content.source_file).name if content.source_file else None
 
         # Prepare translation items (sanitize tokens)
@@ -128,6 +195,8 @@ class TranslationManager:
                 "sanitized": sanitized,
                 "handler": handler,
             })
+
+        self._run_ncs_llm_gate(translation_items)
 
         # Per-session cache check
         # Avoids duplicate API calls when the same string appears multiple times across files.
@@ -161,10 +230,15 @@ class TranslationManager:
             sanitized = item_data["sanitized"]
             handler = item_data["handler"]
 
+            if not self._ncs_item_passes_gate(item):
+                continue
+
             # Cache hit?
             if sanitized in self.translation_cache:
                 translated = restore_text(self.translation_cache[sanitized], handler)
                 translations[item.text] = translated
+                if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
+                    self.ncs_translations_by_item_id[item.item_id] = translated
                 with self._stats_lock:
                     self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
                 logger.debug("Cache hit for '%s…'", sanitized[:40])
@@ -192,7 +266,10 @@ class TranslationManager:
             seen: set = set()
             unique_items: List[dict] = []
             for item_data in uncached_items:
+                item = item_data["item"]
                 key = item_data.get("_original_sanitized") or item_data["sanitized"]
+                if (item.metadata or {}).get("type") == "ncs_string":
+                    key = ("ncs", item.item_id or key)
                 if key not in seen:
                     seen.add(key)
                     unique_items.append(item_data)
@@ -525,6 +602,9 @@ class TranslationManager:
                 translated = restore_text(translated_sanitized, handler)
                 translations[item.text] = translated
                 self.stats["items_translated"] += 1
+
+            if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
+                self.ncs_translations_by_item_id[item.item_id] = translated
 
             # Prefer per-item location for file attribution (handles merged batches)
             item_filename = (

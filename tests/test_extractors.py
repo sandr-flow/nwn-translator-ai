@@ -37,13 +37,13 @@ class TestDialogExtractor:
         file_path = Path("test.dlg")
 
         # Minimal GFF data for a dialog
-        gff_data = {
+        parsed_data = {
             "StructType": "DLG",
             "EntryList": [],
             "ReplyList": [],
         }
 
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
 
         assert isinstance(result, ExtractedContent)
         assert result.content_type == "dialog"
@@ -54,7 +54,7 @@ class TestDialogExtractor:
         extractor = DialogExtractor()
         file_path = Path("test.dlg")
 
-        gff_data = {
+        parsed_data = {
             "StructType": "DLG",
             "EntryList": [
                 {
@@ -78,7 +78,7 @@ class TestDialogExtractor:
             ],
         }
 
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
 
         # One TranslatableItem per text node: 2 NPC entries + 1 player reply = 3
         assert len(result.items) == 3
@@ -102,7 +102,7 @@ class TestJournalExtractor:
         extractor = JournalExtractor()
         file_path = Path("test.jrl")
 
-        gff_data = {
+        parsed_data = {
             "StructType": "JRL",
             "Categories": [
                 {
@@ -114,7 +114,7 @@ class TestJournalExtractor:
             ],
         }
 
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
 
         assert result.content_type == "journal"
         assert len(result.items) >= 1
@@ -124,7 +124,7 @@ class TestJournalExtractor:
         extractor = JournalExtractor()
         file_path = Path("test.jrl")
 
-        gff_data = {
+        parsed_data = {
             "StructType": "JRL",
             "Categories": [
                 {
@@ -142,7 +142,7 @@ class TestJournalExtractor:
             ],
         }
 
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
 
         # 1 category name + 1 entry text
         assert len(result.items) >= 2
@@ -162,7 +162,7 @@ class TestItemExtractor:
         extractor = ItemExtractor()
         file_path = Path("sword.uti")
 
-        gff_data = {
+        parsed_data = {
             "StructType": "UTI",
             "LocalizedName": {"StrRef": -1, "Value": "Longsword of Fire"},
             "Description": {"StrRef": -1, "Value": "A magical sword that burns with flame."},
@@ -170,7 +170,7 @@ class TestItemExtractor:
             "Tag": "sword_fire",
         }
 
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
 
         assert result.content_type == "item"
         assert len(result.items) >= 2  # Name and description
@@ -180,14 +180,14 @@ class TestItemExtractor:
         extractor = ItemExtractor()
         file_path = Path("potion.uti")
 
-        gff_data = {
+        parsed_data = {
             "StructType": "UTI",
             "LocalizedName": {"StrRef": -1, "Value": "Health Potion"},
             "Description": {"StrRef": 1234},  # Using StrRef instead of Value
             "Tag": "potion_health",
         }
 
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
 
         assert len(result.items) >= 1
         # Should have name even if description uses StrRef
@@ -199,14 +199,14 @@ class TestPlaceableExtractorDescriptions:
     def test_extract_placeable_with_description(self):
         extractor = PlaceableExtractor()
         file_path = Path("chest.utp")
-        gff_data = {
+        parsed_data = {
             "StructType": "UTP",
             "Tag": "chest01",
             "Name": {"StrRef": -1, "Value": "Old Chest"},
             "Description": {"StrRef": -1, "Value": "A weathered wooden chest."},
             "DescIdentified": {"StrRef": -1, "Value": "Contains quest items."},
         }
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
         texts = {item.text for item in result.items}
         assert "Old Chest" in texts
         assert "A weathered wooden chest." in texts
@@ -216,13 +216,13 @@ class TestPlaceableExtractorDescriptions:
         extractor = PlaceableExtractor()
         file_path = Path("box.utp")
         same = "Same text"
-        gff_data = {
+        parsed_data = {
             "Tag": "box",
             "Name": {"StrRef": -1, "Value": "Box"},
             "Description": {"StrRef": -1, "Value": same},
             "DescIdentified": {"StrRef": -1, "Value": same},
         }
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
         assert sum(1 for item in result.items if item.text == same) == 1
 
 
@@ -230,12 +230,12 @@ class TestDoorExtractorDescriptions:
     def test_extract_door_name_and_description(self):
         extractor = DoorExtractor()
         file_path = Path("door.utd")
-        gff_data = {
+        parsed_data = {
             "Tag": "gate",
             "LocalizedName": {"StrRef": -1, "Value": "Iron Gate"},
             "Description": {"StrRef": -1, "Value": "Locked from the other side."},
         }
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
         texts = {item.text for item in result.items}
         assert "Iron Gate" in texts
         assert "Locked from the other side." in texts
@@ -245,12 +245,12 @@ class TestTriggerExtractorDescriptions:
     def test_extract_trigger_name_and_description(self):
         extractor = TriggerExtractor()
         file_path = Path("trap.utt")
-        gff_data = {
+        parsed_data = {
             "Tag": "trap1",
             "LocalizedName": {"StrRef": -1, "Value": "Spike Trap"},
             "Description": {"StrRef": -1, "Value": "Dangerous when armed."},
         }
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
         texts = {item.text for item in result.items}
         assert "Spike Trap" in texts
         assert "Dangerous when armed." in texts
@@ -260,12 +260,12 @@ class TestStoreExtractorDescriptions:
     def test_extract_store_name_and_description(self):
         extractor = StoreExtractor()
         file_path = Path("shop.utm")
-        gff_data = {
+        parsed_data = {
             "Tag": "merchant",
             "LocalizedName": {"StrRef": -1, "Value": "General Store"},
             "Description": {"StrRef": -1, "Value": "Weapons and potions."},
         }
-        result = extractor.extract(file_path, gff_data)
+        result = extractor.extract(file_path, parsed_data)
         texts = {item.text for item in result.items}
         assert "General Store" in texts
         assert "Weapons and potions." in texts

@@ -37,7 +37,7 @@ class DialogExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract dialog content from a .dlg file.
 
@@ -46,18 +46,18 @@ class DialogExtractor(BaseExtractor):
 
         Args:
             file_path: Path to the .dlg file
-            gff_data: Parsed GFF data from gff_to_dict
+            parsed_data: Parsed GFF data from gff_to_dict
 
         Returns:
             ExtractedContent with one TranslatableItem per text node
         """
-        entry_list = self._get_list_value(gff_data, "EntryList")
-        reply_list = self._get_list_value(gff_data, "ReplyList")
+        entry_list = self._get_list_value(parsed_data, "EntryList")
+        reply_list = self._get_list_value(parsed_data, "ReplyList")
 
         items: List[TranslatableItem] = []
         stem = file_path.stem
 
-        record_offsets = gff_data.get("_record_offsets", {})
+        record_offsets = parsed_data.get("_record_offsets", {})
         
         # Extract all entry texts
         for i, entry in enumerate(entry_list):
@@ -110,21 +110,21 @@ class DialogExtractor(BaseExtractor):
             }
         )
 
-    def build_dialog_tree(self, gff_data: Dict[str, Any]) -> List[DialogNode]:
+    def build_dialog_tree(self, parsed_data: Dict[str, Any]) -> List[DialogNode]:
         """Build a hierarchical dialog tree from flat GFF data.
 
         Useful for generating a human-readable dialog preview, but extraction
         uses the flat approach (see extract()) which is safer for translation.
 
         Args:
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             List of root DialogNode objects reachable from StartingList
         """
-        entry_list = self._get_list_value(gff_data, "EntryList")
-        reply_list = self._get_list_value(gff_data, "ReplyList")
-        starting_list = self._get_list_value(gff_data, "StartingList")
+        entry_list = self._get_list_value(parsed_data, "EntryList")
+        reply_list = self._get_list_value(parsed_data, "ReplyList")
+        starting_list = self._get_list_value(parsed_data, "StartingList")
 
         # Index by position
         entries: Dict[int, Dict[str, Any]] = {i: e for i, e in enumerate(entry_list)}

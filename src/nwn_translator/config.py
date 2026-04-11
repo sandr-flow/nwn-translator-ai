@@ -94,6 +94,9 @@ class TranslationConfig:
     max_concurrent_requests: int = field(default_factory=max_concurrent_from_environment)
     preserve_tokens: bool = True  # Preserve game tokens like <FirstName>
 
+    #: If True, skip the LLM gate for NCS strings (translate all extractor-approved items).
+    skip_ncs_llm_gate: bool = False
+
     # Progress Reporting
     verbose: bool = False
     quiet: bool = False
@@ -185,4 +188,5 @@ TRANSLATABLE_TYPES = {
     ".utd": "Door",
     ".utm": "Store",
     ".ifo": "Module Info",
+    ".ncs": "Script",
 }

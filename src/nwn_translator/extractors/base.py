@@ -121,12 +121,12 @@ class BaseExtractor(ABC):
         pass
 
     @abstractmethod
-    def extract(self, file_path: Path, gff_data: Dict[str, Any]) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract translatable content from a file.
 
         Args:
             file_path: Path to the file
-            gff_data: Parsed GFF data dictionary
+            parsed_data: Parsed GFF data dictionary
 
         Returns:
             ExtractedContent with translatable items
@@ -177,7 +177,7 @@ class BaseExtractor(ABC):
 
     def _make_name_item(
         self,
-        gff_data: Dict[str, Any],
+        parsed_data: Dict[str, Any],
         file_path: Path,
         name_field: str,
         context_prefix: str,
@@ -191,7 +191,7 @@ class BaseExtractor(ABC):
         TranslatableItem.  Returns *None* when no text is found.
 
         Args:
-            gff_data: Parsed GFF data dict.
+            parsed_data: Parsed GFF data dict.
             file_path: Source file path (used to derive tag fallback).
             name_field: GFF field key for the CExoLocString (e.g. "Name").
             context_prefix: Human-readable label for the context string
@@ -201,8 +201,8 @@ class BaseExtractor(ABC):
         Returns:
             TranslatableItem or None if no text is available.
         """
-        tag = gff_data.get("Tag", file_path.stem)
-        text_obj = gff_data.get(name_field, {})
+        tag = parsed_data.get("Tag", file_path.stem)
+        text_obj = parsed_data.get(name_field, {})
         text = self._extract_text_from_local_string(text_obj)
         if not text:
             return None

@@ -110,7 +110,7 @@ def _add_string_values_from_fields(
 
 
 def collect_git_strings_missing_from_translations(
-    gff_data: Dict[str, Any],
+    parsed_data: Dict[str, Any],
     existing_translations: Dict[str, str],
 ) -> Set[str]:
     """Gather unique locstring texts from a parsed .git that need translation.
@@ -122,7 +122,7 @@ def collect_git_strings_missing_from_translations(
     found: Set[str] = set()
 
     for list_key, field_names in INSTANCE_LISTS.items():
-        instances = gff_data.get(list_key, [])
+        instances = parsed_data.get(list_key, [])
         if not isinstance(instances, list):
             continue
         for instance in instances:
@@ -241,7 +241,7 @@ def patch_git_file(
     git_path: Path,
     translations: Dict[str, str],
     tlk=None,
-    gff_data: Optional[Dict[str, Any]] = None,
+    parsed_data: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Patch translatable strings inside a .git area instance file.
 
@@ -253,7 +253,7 @@ def patch_git_file(
         git_path: Path to the extracted .git file on disk.
         translations: Mapping of original text -> translated text.
         tlk: Optional TLK file for resolving StrRef-only names.
-        gff_data: If provided, skip reading *git_path* (must match on-disk state).
+        parsed_data: If provided, skip reading *git_path* (must match on-disk state).
 
     Returns:
         Number of individual fields that were patched.
@@ -261,8 +261,8 @@ def patch_git_file(
     if not translations:
         return 0
 
-    if gff_data is None:
-        gff_data = read_gff(git_path, tlk=tlk)
+    if parsed_data is None:
+        parsed_data = read_gff(git_path, tlk=tlk)
 
     try:
         patcher = GFFPatcher(git_path)
@@ -274,7 +274,7 @@ def patch_git_file(
     patches: List[Tuple[int, str]] = []
 
     for list_key, field_names in INSTANCE_LISTS.items():
-        instances = gff_data.get(list_key, [])
+        instances = parsed_data.get(list_key, [])
         if not isinstance(instances, list):
             continue
 

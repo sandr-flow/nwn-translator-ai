@@ -12,7 +12,7 @@ import logging
 import re
 import threading
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
@@ -500,6 +500,84 @@ class OpenRouterProvider(BaseAIProvider):
                 )
                 for item in items
             ]
+        except (RateLimitError, APIConnectionError, APITimeoutError):
+            raise
+        except Exception as e:
+            self._map_openrouter_exception(e)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def classify_ncs_translate_gate_batch_async(
+        self,
+        entries: List[Dict[str, Any]],
+        *,
+        source_lang: str,
+    ) -> Dict[str, bool]:
+        """LLM gate: whether each NCS string occurrence is player-facing."""
+        if not entries:
+            return {}
+
+        system_prompt = (
+            "You classify strings from Neverwinter Nights (NWN) compiled NWScript. "
+            "For each item, decide if it should be translated for players — text "
+            "shown as dialog, floating text, SendMessageToPC, SpeakString, etc.\n"
+            "Return ONLY a JSON object. Keys are \"0\", \"1\", … matching the input. "
+            "Each value must be an object: {\"translate\": true} or {\"translate\": false}. "
+            "Use false for script names, tags, resrefs, variable names, debug logs, "
+            "identifiers, and code-like fragments. "
+            "Short NPC lines (e.g. \"Mommy.\", \"I'm okay, sir. I think.\", \"Help!\") "
+            "are usually real dialogue — use translate: true unless it is obviously a token. "
+            "Informal or broken English in-character lines still count as dialogue. "
+            "Use true for natural language the player reads.\n"
+        )
+        user_payload: Dict[str, Dict[str, str]] = {}
+        for e in entries:
+            user_payload[str(e["key"])] = {
+                "text": e.get("text", ""),
+                "file": str(e.get("file", "")),
+                "offset": str(e.get("offset", "")),
+                "hint": str(e.get("hint", "")),
+            }
+        user_prompt = (
+            f"Source language label: {source_lang}. Classify each entry.\n\n"
+            + json.dumps(user_payload, ensure_ascii=False)
+        )
+
+        try:
+            raw = await self._chat_completion_json_async(
+                system_prompt,
+                user_prompt,
+                max_tokens=min(8192, TRANSLATION_MAX_TOKENS),
+                temperature=0.15,
+                response_format={"type": "json_object"},
+            )
+            cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+            decoder = json.JSONDecoder()
+            idx = cleaned.find("{")
+            if idx == -1:
+                return {str(e["key"]): False for e in entries}
+            parsed, _ = decoder.raw_decode(cleaned, idx)
+
+            out: Dict[str, bool] = {}
+            for e in entries:
+                k = str(e["key"])
+                cell: Union[Dict[str, Any], bool, None] = parsed.get(k)
+                if isinstance(cell, dict):
+                    out[k] = bool(cell.get("translate", False))
+                elif isinstance(cell, bool):
+                    out[k] = cell
+                else:
+                    out[k] = False
+            return out
+        except json.JSONDecodeError as err:
+            logger.warning("NCS gate JSON parse failed: %s", err)
+            return {str(e["key"]): False for e in entries}
         except (RateLimitError, APIConnectionError, APITimeoutError):
             raise
         except Exception as e:

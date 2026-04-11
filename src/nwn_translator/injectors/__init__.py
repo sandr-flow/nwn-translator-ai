@@ -9,6 +9,7 @@ from .dialog_injector import (
     JournalInjector,
     GenericInjector,
 )
+from .ncs_injector import NcsInjector
 
 __all__ = [
     "BaseInjector",
@@ -16,11 +17,12 @@ __all__ = [
     "DialogInjector",
     "JournalInjector",
     "GenericInjector",
+    "NcsInjector",
 ]
 
 # Singleton registry: content_type -> injector instance
 _INJECTOR_MAP = {}
-for _cls in [DialogInjector, JournalInjector, GenericInjector]:
+for _cls in [DialogInjector, JournalInjector, GenericInjector, NcsInjector]:
     _inst = _cls()
     _types = getattr(_inst, "SUPPORTED_TYPES", [])
     if not _types:

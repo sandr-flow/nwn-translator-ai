@@ -24,7 +24,7 @@ class DialogInjector(BaseInjector):
     def inject(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any],
+        parsed_data: Dict[str, Any],
         translations: Dict[str, str],
         metadata: Optional[Dict[str, Any]] = None,
     ) -> InjectedContent:
@@ -32,7 +32,7 @@ class DialogInjector(BaseInjector):
 
         Args:
             file_path: Path to the .dlg file
-            gff_data: Original GFF data
+            parsed_data: Original GFF data
             translations: Dictionary mapping original text to translated text
             metadata: Optional metadata (may contain dialog tree)
 
@@ -43,8 +43,8 @@ class DialogInjector(BaseInjector):
         modified = False
 
         # Get entry and reply lists
-        entry_list = gff_data.get("EntryList", [])
-        reply_list = gff_data.get("ReplyList", [])
+        entry_list = parsed_data.get("EntryList", [])
+        reply_list = parsed_data.get("ReplyList", [])
         
         try:
             patcher = GFFPatcher(file_path)
@@ -113,7 +113,7 @@ class JournalInjector(BaseInjector):
     def inject(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any],
+        parsed_data: Dict[str, Any],
         translations: Dict[str, str],
         metadata: Optional[Dict[str, Any]] = None,
     ) -> InjectedContent:
@@ -121,7 +121,7 @@ class JournalInjector(BaseInjector):
 
         Args:
             file_path: Path to the .jrl file
-            gff_data: Original GFF data
+            parsed_data: Original GFF data
             translations: Dictionary mapping original text to translated text
             metadata: Optional metadata
 
@@ -140,7 +140,7 @@ class JournalInjector(BaseInjector):
         patches: List[Tuple[int, str]] = []
 
         # Update categories (GFF field is "Categories", not "CategoriesList")
-        categories = gff_data.get("Categories", [])
+        categories = parsed_data.get("Categories", [])
         for category in categories:
             if isinstance(category, dict):
                 # Update category name
@@ -244,7 +244,7 @@ class GenericInjector(BaseInjector):
     def inject(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any],
+        parsed_data: Dict[str, Any],
         translations: Dict[str, str],
         metadata: Optional[Dict[str, Any]] = None,
     ) -> InjectedContent:
@@ -252,7 +252,7 @@ class GenericInjector(BaseInjector):
 
         Args:
             file_path: Path to the file
-            gff_data: Original GFF data
+            parsed_data: Original GFF data
             translations: Dictionary mapping original text to translated text
             metadata: Optional metadata with content_type
 
@@ -278,13 +278,13 @@ class GenericInjector(BaseInjector):
             logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
 
-        record_offsets = gff_data.get("_record_offsets", {})
+        record_offsets = parsed_data.get("_record_offsets", {})
         patches: List[Tuple[int, str]] = []
 
         # For creatures, we need to handle first and last name specially
         if content_type == "creature":
-            first_name_obj = gff_data.get("FirstName", {})
-            last_name_obj = gff_data.get("LastName", {})
+            first_name_obj = parsed_data.get("FirstName", {})
+            last_name_obj = parsed_data.get("LastName", {})
 
             if isinstance(first_name_obj, dict):
                 original_first = first_name_obj.get("Value", "")
@@ -309,8 +309,8 @@ class GenericInjector(BaseInjector):
             if key == "first_name" or key == "last_name":
                 continue  # Already handled above
 
-            if field_name in gff_data:
-                field_obj = gff_data[field_name]
+            if field_name in parsed_data:
+                field_obj = parsed_data[field_name]
                 if isinstance(field_obj, dict):
                     original_text = field_obj.get("Value", "")
                     if original_text and original_text in translations:

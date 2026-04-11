@@ -21,13 +21,13 @@ class ItemExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract item content from a .uti file.
 
         Args:
             file_path: Path to the .uti file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             ExtractedContent with item data
@@ -35,19 +35,19 @@ class ItemExtractor(BaseExtractor):
         items = []
 
         # Extract item name
-        name_obj = gff_data.get("LocalizedName", {})
+        name_obj = parsed_data.get("LocalizedName", {})
         name = self._extract_text_from_local_string(name_obj)
 
         # Extract item description (flavor text)
-        desc_obj = gff_data.get("Description", {})
+        desc_obj = parsed_data.get("Description", {})
         description = self._extract_text_from_local_string(desc_obj)
 
         # Extract identified description (when item is identified)
-        identified_desc_obj = gff_data.get("DescIdentified", {})
+        identified_desc_obj = parsed_data.get("DescIdentified", {})
         identified_description = self._extract_text_from_local_string(identified_desc_obj)
 
         # Get tag for reference
-        tag = gff_data.get("Tag", file_path.stem)
+        tag = parsed_data.get("Tag", file_path.stem)
 
         # Create item for name
         if name:

@@ -69,7 +69,7 @@ class ModuleTranslator:
             "errors": [],
         }
         self._stats_lock = threading.Lock()
-        
+
         # TLK file for resolving StrRef names
         self.tlk: Optional[TLKFile] = None
 
@@ -78,6 +78,8 @@ class ModuleTranslator:
         self.glossary: Optional[Glossary] = None
         #: Per-run GFF parse cache: (resolved_path, tlk_id) -> dict
         self._gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = {}
+        #: Latest NCS per-``item_id`` translations from :class:`TranslationManager` (Phase B).
+        self._ncs_translations_by_item_id: Dict[str, str] = {}
 
     def translate(self) -> Path:
         """Translate the module.
@@ -160,7 +162,7 @@ class ModuleTranslator:
         logger.info("Phase A: extracting translatable content...")
         total_files = len(translatable_files)
 
-        # file_path -> (gff_data, ExtractedContent, file_ext)
+        # file_path -> (parsed_data, ExtractedContent, file_ext)
         extracted_map: Dict[Path, Tuple[Dict[str, Any], ExtractedContent, str]] = {}
         # .dlg files that need contextual translation (handled separately)
         dialog_files: List[Path] = []
@@ -184,8 +186,8 @@ class ModuleTranslator:
                 try:
                     result = future.result()
                     if result is not None:
-                        gff_data, extracted, file_ext = result
-                        extracted_map[file_path] = (gff_data, extracted, file_ext)
+                        parsed_data, extracted, file_ext = result
+                        extracted_map[file_path] = (parsed_data, extracted, file_ext)
                         if file_ext == ".dlg" and self.config.use_context and context_manager:
                             dialog_files.append(file_path)
                 except Exception as e:
@@ -196,7 +198,7 @@ class ModuleTranslator:
 
         # Collect all unique non-dialog items into a single ExtractedContent
         non_dialog_items: List[TranslatableItem] = []
-        for file_path, (gff_data, extracted, file_ext) in extracted_map.items():
+        for file_path, (parsed_data, extracted, file_ext) in extracted_map.items():
             if file_path not in dialog_files:
                 non_dialog_items.extend(extracted.items)
 
@@ -224,6 +226,7 @@ class ModuleTranslator:
             non_dialog_translations = manager.translate_content(combined)
             if non_dialog_translations:
                 all_translations.update(non_dialog_translations)
+            self._ncs_translations_by_item_id = manager.ncs_translations_by_item_id
             self._sync_manager_stats(manager)
 
         # B-2: Translate dialog files (contextual, sequential to benefit from cache)
@@ -232,9 +235,9 @@ class ModuleTranslator:
                 self.config.progress_callback(
                     "translating", idx, len(dialog_files), file_path.name
                 )
-            gff_data, extracted, file_ext = extracted_map[file_path]
+            parsed_data, extracted, file_ext = extracted_map[file_path]
             try:
-                translations = context_manager.translate_dialog(file_path, gff_data)
+                translations = context_manager.translate_dialog(file_path, parsed_data)
                 if translations:
                     all_translations.update(translations)
             except Exception as e:
@@ -258,7 +261,7 @@ class ModuleTranslator:
             future_to_file = {
                 executor.submit(
                     self._inject_file, file_path,
-                    extracted_map[file_path][0],  # gff_data
+                    extracted_map[file_path][0],  # parsed_data
                     extracted_map[file_path][1],  # extracted
                     all_translations,
                 ): file_path
@@ -393,27 +396,38 @@ class ModuleTranslator:
         """Extract translatable content from a single file (Phase A).
 
         Returns:
-            (gff_data, ExtractedContent, file_ext) or None if nothing to extract.
+            (parsed_data, ExtractedContent, file_ext) or None if nothing to extract.
         """
-        gff_data = read_gff(file_path, tlk=self.tlk, cache=self._gff_cache)
         file_ext = file_path.suffix.lower()
+
+        if file_ext == ".ncs":
+            # NCS files are compiled bytecode, NOT GFF format
+            from .file_handlers.ncs_parser import parse_ncs, NCSParseError
+            try:
+                ncs_file = parse_ncs(file_path)
+            except NCSParseError as e:
+                logger.debug("Skipping unparseable NCS file %s: %s", file_path.name, e)
+                return None
+            parsed_data = {"_ncs_file": ncs_file}
+        else:
+            parsed_data = read_gff(file_path, tlk=self.tlk, cache=self._gff_cache)
 
         extractor = get_extractor_for_file(file_ext)
         if not extractor:
             logger.debug(f"No extractor for {file_ext}: {file_path.name}")
             return None
 
-        extracted = extractor.extract(file_path, gff_data)
+        extracted = extractor.extract(file_path, parsed_data)
         if not extracted.items:
             logger.debug(f"No translatable content in: {file_path.name}")
             return None
 
-        return gff_data, extracted, file_ext
+        return parsed_data, extracted, file_ext
 
     def _inject_file(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any],
+        parsed_data: Dict[str, Any],
         extracted: ExtractedContent,
         all_translations: Dict[str, str],
     ) -> None:
@@ -421,7 +435,12 @@ class ModuleTranslator:
         injector = get_injector_for_content(extracted.content_type)
         if injector:
             inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
-            result = injector.inject(file_path, gff_data, all_translations, inject_metadata)
+            if extracted.content_type == "ncs_script":
+                inject_metadata["ncs_translations_by_item_id"] = (
+                    self._ncs_translations_by_item_id
+                )
+                inject_metadata["ncs_extracted_items"] = extracted.items
+            result = injector.inject(file_path, parsed_data, all_translations, inject_metadata)
             if result.modified:
                 logger.info(f"Updated {file_path.name}: {result.items_updated} items")
 
@@ -449,12 +468,19 @@ class ModuleTranslator:
                 if not item.has_text():
                     continue
                 translated = all_translations.get(item.text)
+                if translated is None and (item.metadata or {}).get("type") == "ncs_string":
+                    translated = manager.ncs_translations_by_item_id.get(
+                        item.item_id or ""
+                    )
                 if translated is None:
                     continue
-                key = (file_path.name, item.text)
-                if key in already_logged:
+                if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
+                    log_key: Tuple[str, str] = (file_path.name, item.item_id)
+                else:
+                    log_key = (file_path.name, item.text)
+                if log_key in already_logged:
                     continue
-                already_logged.add(key)
+                already_logged.add(log_key)
                 try:
                     log_writer.write({
                         "original": item.text,
@@ -480,12 +506,12 @@ class ModuleTranslator:
         pending: Set[str] = set()
         for git_path in git_files:
             try:
-                gff_data = read_gff(git_path, tlk=self.tlk, cache=self._gff_cache)
+                parsed_data = read_gff(git_path, tlk=self.tlk, cache=self._gff_cache)
             except Exception as e:
                 logger.error("Failed to read %s for git string collection: %s", git_path.name, e)
                 continue
             pending |= collect_git_strings_missing_from_translations(
-                gff_data, all_translations
+                parsed_data, all_translations
             )
 
         if not pending:
@@ -545,7 +571,7 @@ class ModuleTranslator:
                     git_path,
                     translations,
                     tlk=self.tlk,
-                    gff_data=gff_cached,
+                    parsed_data=gff_cached,
                 )
                 total_patched += patched
             except Exception as e:
@@ -653,8 +679,35 @@ def rebuild_module(
         if ext not in TRANSLATABLE_TYPES:
             continue
 
+        if ext == ".ncs":
+            from .file_handlers.ncs_parser import parse_ncs, NCSParseError
+            from .file_handlers.ncs_patcher import (
+                NCSPatchError,
+                patch_ncs_string_replacements,
+            )
+            from .extractors.ncs_extractor import NcsExtractor
+            try:
+                ncs_file = parse_ncs(file_path)
+            except NCSParseError:
+                continue
+            extracted = NcsExtractor().extract(file_path, {"_ncs_file": ncs_file})
+            specs: List[Tuple[int, str, str]] = []
+            for item in extracted.items:
+                new_t = translations.get(item.text)
+                if new_t is None or new_t == item.text:
+                    continue
+                off = (item.metadata or {}).get("offset")
+                if off is not None:
+                    specs.append((int(off), item.text, new_t))
+            if specs:
+                try:
+                    patch_ncs_string_replacements(file_path, specs)
+                except NCSPatchError as e:
+                    logger.warning("Failed to patch NCS %s during rebuild: %s", file_path.name, e)
+            continue
+
         try:
-            gff_data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+            parsed_data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         except Exception as e:
             logger.warning("Failed to read %s during rebuild: %s", file_path.name, e)
             continue
@@ -663,21 +716,21 @@ def rebuild_module(
         if not extractor:
             continue
 
-        extracted = extractor.extract(file_path, gff_data)
+        extracted = extractor.extract(file_path, parsed_data)
         if not extracted.items:
             continue
 
         injector = get_injector_for_content(extracted.content_type)
         if injector:
             inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
-            injector.inject(file_path, gff_data, translations, inject_metadata)
+            injector.inject(file_path, parsed_data, translations, inject_metadata)
 
     # Patch .git area instance files
     from .injectors.git_injector import patch_git_file
     for git_path in extract_dir.glob("*.git"):
         try:
-            gff_data = read_gff(git_path, tlk=tlk, cache=gff_cache)
-            patch_git_file(git_path, translations, tlk=tlk, gff_data=gff_data)
+            parsed_data = read_gff(git_path, tlk=tlk, cache=gff_cache)
+            patch_git_file(git_path, translations, tlk=tlk, parsed_data=parsed_data)
         except Exception as e:
             logger.warning("Failed to patch %s during rebuild: %s", git_path.name, e)
 

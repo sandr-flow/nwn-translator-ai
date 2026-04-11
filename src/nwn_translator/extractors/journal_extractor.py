@@ -21,13 +21,13 @@ class JournalExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract journal content from a .jrl file.
 
         Args:
             file_path: Path to the .jrl file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             ExtractedContent with journal items
@@ -35,7 +35,7 @@ class JournalExtractor(BaseExtractor):
         items = []
 
         # Extract journal categories (GFF field is "Categories", not "CategoriesList")
-        categories = self._get_list_value(gff_data, "Categories")
+        categories = self._get_list_value(parsed_data, "Categories")
         for i, category in enumerate(categories):
             # Extract category name
             category_items = self._extract_category(category, i, file_path)

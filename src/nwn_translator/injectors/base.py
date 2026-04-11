@@ -54,7 +54,7 @@ class BaseInjector(ABC):
     def inject(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any],
+        parsed_data: Dict[str, Any],
         translations: Dict[str, str],
         metadata: Optional[Dict[str, Any]] = None,
     ) -> InjectedContent:
@@ -62,7 +62,7 @@ class BaseInjector(ABC):
 
         Args:
             file_path: Path to the file
-            gff_data: Original GFF data dictionary
+            parsed_data: Original GFF data dictionary
             translations: Dictionary mapping original text to translated text
             metadata: Additional metadata about the translation
 

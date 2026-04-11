@@ -21,13 +21,13 @@ class AreaExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract area content from an .are file.
 
         Args:
             file_path: Path to the .are file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             ExtractedContent with area data
@@ -35,16 +35,16 @@ class AreaExtractor(BaseExtractor):
         items = []
 
         # Extract area name
-        name_obj = gff_data.get("Name", {})
+        name_obj = parsed_data.get("Name", {})
         name = self._extract_text_from_local_string(name_obj)
 
         # Extract area description (if present)
         # Note: Not all areas have descriptions
-        desc_obj = gff_data.get("Description", {})
+        desc_obj = parsed_data.get("Description", {})
         description = self._extract_text_from_local_string(desc_obj)
 
         # Get tag for reference
-        tag = gff_data.get("Tag", file_path.stem)
+        tag = parsed_data.get("Tag", file_path.stem)
 
         # Create item for name
         if name:
@@ -99,25 +99,25 @@ class TriggerExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract trigger content from a .utt file.
 
         Args:
             file_path: Path to the .utt file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             ExtractedContent with trigger data
         """
-        tag = gff_data.get("Tag", file_path.stem)
+        tag = parsed_data.get("Tag", file_path.stem)
         items: List[TranslatableItem] = []
         name_item = self._make_name_item(
-            gff_data, file_path, "LocalizedName", "Trigger", "trigger_name"
+            parsed_data, file_path, "LocalizedName", "Trigger", "trigger_name"
         )
         if name_item:
             items.append(name_item)
-        desc = self._extract_text_from_local_string(gff_data.get("Description", {}))
+        desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))
         if desc:
             items.append(
                 TranslatableItem(
@@ -152,26 +152,26 @@ class PlaceableExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract placeable content from a .utp file.
 
         Args:
             file_path: Path to the .utp file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             ExtractedContent with placeable data
         """
-        tag = gff_data.get("Tag", file_path.stem)
+        tag = parsed_data.get("Tag", file_path.stem)
         # .utp uses 'Name' (CExoLocString), not 'LocalizedName'
         items: List[TranslatableItem] = []
         name_item = self._make_name_item(
-            gff_data, file_path, "Name", "Placeable", "placeable_name"
+            parsed_data, file_path, "Name", "Placeable", "placeable_name"
         )
         if name_item:
             items.append(name_item)
-        desc = self._extract_text_from_local_string(gff_data.get("Description", {}))
+        desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))
         if desc:
             items.append(
                 TranslatableItem(
@@ -183,7 +183,7 @@ class PlaceableExtractor(BaseExtractor):
                 )
             )
         idesc = self._extract_text_from_local_string(
-            gff_data.get("DescIdentified", {})
+            parsed_data.get("DescIdentified", {})
         )
         if idesc and idesc != desc:
             items.append(
@@ -215,25 +215,25 @@ class DoorExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract door content from a .utd file.
 
         Args:
             file_path: Path to the .utd file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             ExtractedContent with door data
         """
-        tag = gff_data.get("Tag", file_path.stem)
+        tag = parsed_data.get("Tag", file_path.stem)
         items: List[TranslatableItem] = []
         name_item = self._make_name_item(
-            gff_data, file_path, "LocalizedName", "Door", "door_name"
+            parsed_data, file_path, "LocalizedName", "Door", "door_name"
         )
         if name_item:
             items.append(name_item)
-        desc = self._extract_text_from_local_string(gff_data.get("Description", {}))
+        desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))
         if desc:
             items.append(
                 TranslatableItem(
@@ -264,25 +264,25 @@ class StoreExtractor(BaseExtractor):
     def extract(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> ExtractedContent:
         """Extract store content from a .utm file.
 
         Args:
             file_path: Path to the .utm file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             ExtractedContent with store data
         """
-        tag = gff_data.get("Tag", file_path.stem)
+        tag = parsed_data.get("Tag", file_path.stem)
         items: List[TranslatableItem] = []
         name_item = self._make_name_item(
-            gff_data, file_path, "LocalizedName", "Store", "store_name"
+            parsed_data, file_path, "LocalizedName", "Store", "store_name"
         )
         if name_item:
             items.append(name_item)
-        desc = self._extract_text_from_local_string(gff_data.get("Description", {}))
+        desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))
         if desc:
             items.append(
                 TranslatableItem(

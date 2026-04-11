@@ -14,6 +14,23 @@ from enum import IntEnum
 logger = logging.getLogger(__name__)
 
 
+def _decode_gff_text_bytes(raw: bytes) -> str:
+    """Decode CExoString / CExoLocString payload bytes to Unicode.
+
+    Classic modules use Windows-1252; Russian patches often use CP1251;
+    NWN:EE may store UTF-8. Order avoids mojibake and keeps ``translations`` keys
+    aligned with on-disk bytes for :func:`~nwn_translator.injectors.git_injector.patch_git_file`.
+    """
+    if not raw:
+        return ""
+    for enc in ("utf-8", "cp1251", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
 class GFFType(IntEnum):
     """GFF data type identifiers."""
 
@@ -320,10 +337,7 @@ class GFFParser:
                 return ""
             if offset + 4 + length > len(self.data):
                 return ""
-            try:
-                return self.data[offset+4:offset+4+length].decode('utf-8')
-            except Exception:
-                return self.data[offset+4:offset+4+length].decode('utf-8', errors='ignore')
+            return _decode_gff_text_bytes(self.data[offset + 4 : offset + 4 + length])
 
         elif field.type == GFFType.CResRef:
             # Layout in Field Data block: [size BYTE (1)] [string bytes (size)]
@@ -365,12 +379,9 @@ class GFFParser:
                     sub_offset += 4
                     if sub_offset + length > len(self.data):
                         break
-                    raw = self.data[sub_offset:sub_offset+length]
+                    raw = self.data[sub_offset : sub_offset + length]
                     sub_offset += length
-                    try:
-                        value = raw.decode('utf-8')
-                    except Exception:
-                        value = raw.decode('utf-8', errors='ignore')
+                    value = _decode_gff_text_bytes(raw)
                     if value:
                         return {"StrRef": str_ref, "Value": value}
             except Exception:

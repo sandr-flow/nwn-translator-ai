@@ -50,13 +50,13 @@ class ContextualTranslationManager:
     def translate_dialog(
         self,
         file_path: Path,
-        gff_data: Dict[str, Any]
+        parsed_data: Dict[str, Any]
     ) -> Dict[str, str]:
         """Translate a complete dialog tree.
 
         Args:
             file_path: Path to the .dlg file
-            gff_data: Parsed GFF data
+            parsed_data: Parsed GFF data
 
         Returns:
             Dictionary mapping original text to translated text
@@ -71,7 +71,7 @@ class ContextualTranslationManager:
         extractor = DialogExtractor()
 
         # Build hierarchical tree for context
-        tree = extractor.build_dialog_tree(gff_data)
+        tree = extractor.build_dialog_tree(parsed_data)
         if not tree:
             return {}
 

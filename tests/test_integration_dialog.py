@@ -37,8 +37,8 @@ def test_dialog_read(module_reader):
         success = module_reader.extract_resource(res_ref, res_type, out_file)
         assert success, f"Failed to extract {res_ref}.dlg"
 
-        gff_data = read_gff(out_file)
-        extracted = DialogExtractor().extract(out_file, gff_data)
+        parsed_data = read_gff(out_file)
+        extracted = DialogExtractor().extract(out_file, parsed_data)
 
     assert len(extracted.items) > 0, "DialogExtractor produced 0 items"
     assert all(item.has_text() for item in extracted.items)

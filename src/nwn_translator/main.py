@@ -16,7 +16,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from tqdm import tqdm
 
-from .config import TranslationConfig, TRANSLATABLE_TYPES
+from .config import (
+    TranslationConfig,
+    TRANSLATABLE_TYPES,
+    module_string_encoding_for_target_lang,
+)
 from .file_handlers import (
     ERFReader,
     create_mod_from_directory,
@@ -82,12 +86,16 @@ def inject_translations_into_file(
     *,
     ncs_translations_by_item_id: Optional[Dict[str, str]] = None,
     log_updates: bool = False,
+    target_lang: Optional[str] = None,
 ) -> None:
     """Run the appropriate injector for *extracted* (shared by Phase C and rebuild)."""
     injector = get_injector_for_content(extracted.content_type)
     if not injector:
         return
     inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
+    inject_metadata["module_text_encoding"] = module_string_encoding_for_target_lang(
+        target_lang
+    )
     if extracted.content_type == "ncs_script":
         if ncs_translations_by_item_id is not None:
             inject_metadata["ncs_translations_by_item_id"] = dict(
@@ -490,6 +498,7 @@ class ModuleTranslator:
             all_translations,
             ncs_translations_by_item_id=self._ncs_translations_by_item_id,
             log_updates=True,
+            target_lang=self.config.target_lang,
         )
 
     def _log_per_file_translations(
@@ -615,6 +624,9 @@ class ModuleTranslator:
                     translations,
                     tlk=self.tlk,
                     parsed_data=gff_cached,
+                    text_encoding=module_string_encoding_for_target_lang(
+                        self.config.target_lang
+                    ),
                 )
                 total_patched += patched
             except Exception as e:
@@ -689,6 +701,7 @@ def rebuild_module(
     translations: Dict[str, str],
     output_path: Path,
     original_mod_path: Path,
+    target_lang: Optional[str] = None,
 ) -> Path:
     """Re-inject translations and reassemble a .mod without LLM calls.
 
@@ -713,6 +726,7 @@ def rebuild_module(
             pass
 
     gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = {}
+    text_enc = module_string_encoding_for_target_lang(target_lang)
 
     # Inject translations into each translatable file
     for file_path in extract_dir.rglob("*"):
@@ -737,6 +751,7 @@ def rebuild_module(
             translations,
             ncs_translations_by_item_id=None,
             log_updates=False,
+            target_lang=target_lang,
         )
 
     # Patch .git area instance files
@@ -744,7 +759,13 @@ def rebuild_module(
     for git_path in extract_dir.glob("*.git"):
         try:
             parsed_data = read_gff(git_path, tlk=tlk, cache=gff_cache)
-            patch_git_file(git_path, translations, tlk=tlk, parsed_data=parsed_data)
+            patch_git_file(
+                git_path,
+                translations,
+                tlk=tlk,
+                parsed_data=parsed_data,
+                text_encoding=text_enc,
+            )
         except Exception as e:
             logger.warning("Failed to patch %s during rebuild: %s", git_path.name, e)
 

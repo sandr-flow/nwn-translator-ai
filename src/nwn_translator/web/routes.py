@@ -15,7 +15,7 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from ..config import max_concurrent_from_environment
+from ..config import max_concurrent_from_environment, target_lang_supported_for_nwn_injection
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..ai_providers import OpenRouterProvider, create_provider
@@ -153,6 +153,19 @@ async def start_translate(
             detail="Допустимы только файлы .mod, .erf или .hak",
         )
 
+    _cp1251_lang_error = (
+        "Недоступно для модулей NWN: строки записываются в однобайтовую кодировку Windows "
+        "(зависит от языка); китайский, японский и корейский в игре не отображаются. "
+        "Выберите другой язык."
+    )
+    tl_norm = target_lang.strip()
+    if not target_lang_supported_for_nwn_injection(tl_norm):
+        raise HTTPException(status_code=400, detail=f"Целевой язык: {_cp1251_lang_error}")
+
+    sl_norm = (source_lang or "").strip() or "auto"
+    if sl_norm.lower() != "auto" and not target_lang_supported_for_nwn_injection(sl_norm):
+        raise HTTPException(status_code=400, detail=f"Исходный язык: {_cp1251_lang_error}")
+
     cl = request.headers.get("content-length")
     if cl is not None:
         try:
@@ -237,6 +250,8 @@ def _task_or_404(task_id: str, tm: TaskManager) -> TranslationTask:
         task.extract_dir = Path(row["extract_dir"])
     if row.get("input_path"):
         task.input_path = Path(row["input_path"])
+    task.target_lang = row.get("target_lang")
+    task.source_lang = row.get("source_lang")
     task.error = row.get("error")
     if row.get("stats"):
         try:
@@ -253,6 +268,11 @@ async def task_status(
     """Return a JSON snapshot of the current task state."""
     task = _task_or_404(task_id, tm)
     result_name = task.result_path.name if task.result_path else None
+    target_lang = task.target_lang
+    if not target_lang:
+        row = get_task_row(task_id)
+        if row:
+            target_lang = row.get("target_lang")
     return TaskStatusResponse(
         task_id=task.task_id,
         status=task.status,
@@ -262,6 +282,7 @@ async def task_status(
         result_filename=result_name,
         error=task.error,
         stats=task.stats,
+        target_lang=target_lang,
     )
 
 
@@ -433,12 +454,18 @@ async def rebuild_task(
 
     try:
         from ..main import rebuild_module
+
+        row = get_task_row(task_id)
+        req_tl = (body.target_lang or "").strip() or None
+        rebuild_target_lang = req_tl or task.target_lang or (row or {}).get("target_lang")
+
         await asyncio.to_thread(
             rebuild_module,
             extract_dir,
             all_translations,
             output_path,
             original_mod_path=original_mod_path,
+            target_lang=rebuild_target_lang,
         )
     except Exception as e:
         logger.exception("Rebuild failed for task %s", task.task_id)

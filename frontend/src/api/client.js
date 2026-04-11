@@ -90,11 +90,15 @@ export async function fetchTranslations(taskId) {
   return fetchJson(`/api/tasks/${taskId}/translations`);
 }
 
-export async function postRebuild(taskId, translations) {
+export async function postRebuild(taskId, translations, targetLang) {
+  const payload = { translations };
+  if (targetLang != null && String(targetLang).trim()) {
+    payload.target_lang = String(targetLang).trim();
+  }
   return fetchJson(`/api/tasks/${taskId}/rebuild`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ translations }),
+    body: JSON.stringify(payload),
   });
 }
 

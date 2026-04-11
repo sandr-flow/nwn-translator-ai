@@ -126,6 +126,47 @@ class TranslationConfig:
         return self.api_key
 
 
+# GFF/NCS injection encodes player-visible strings with a Windows code page chosen
+# from the target language (see :func:`module_string_encoding_for_target_lang` and
+# ``gff_patcher`` / ``ncs_patcher``).
+#
+# **CJK** cannot be represented in these single-byte pages; those tags are blocked in
+# the web UI / API.
+GAME_INCOMPATIBLE_TARGET_LANGS = frozenset({"chinese", "japanese", "korean"})
+
+# Language slug -> Python codec (must stay in sync with ``gff_patcher`` allow-list).
+_LANG_TO_WINDOWS_ENCODING: dict[str, str] = {
+    "russian": "cp1251",
+    "ukrainian": "cp1251",
+    "polish": "cp1250",
+    "czech": "cp1250",
+    "hungarian": "cp1250",
+    "romanian": "cp1250",
+    "german": "cp1252",
+    "french": "cp1252",
+    "spanish": "cp1252",
+    "italian": "cp1252",
+    "portuguese": "cp1252",
+    "dutch": "cp1252",
+    "english": "cp1252",
+    "turkish": "cp1254",
+}
+
+
+def target_lang_supported_for_nwn_injection(target_lang: str) -> bool:
+    """Whether *target_lang* can be represented after binary inject into module resources."""
+    key = (target_lang or "").strip().lower()
+    return key not in GAME_INCOMPATIBLE_TARGET_LANGS
+
+
+def module_string_encoding_for_target_lang(target_lang: Optional[str]) -> str:
+    """Windows code page name used for GFF/NCS string bytes for *target_lang*."""
+    key = (target_lang or "").strip().lower()
+    if not key:
+        return "cp1251"
+    return _LANG_TO_WINDOWS_ENCODING.get(key, "cp1252")
+
+
 def sanitized_mod_stem(stem: str) -> str:
     """Stem for translated module files: underscores are not allowed (use hyphens)."""
     return stem.replace("_", "-")

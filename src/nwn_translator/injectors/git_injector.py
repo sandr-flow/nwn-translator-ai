@@ -242,6 +242,7 @@ def patch_git_file(
     translations: Dict[str, str],
     tlk=None,
     parsed_data: Optional[Dict[str, Any]] = None,
+    text_encoding: str = "cp1251",
 ) -> int:
     """Patch translatable strings inside a .git area instance file.
 
@@ -254,6 +255,7 @@ def patch_git_file(
         translations: Mapping of original text -> translated text.
         tlk: Optional TLK file for resolving StrRef-only names.
         parsed_data: If provided, skip reading *git_path* (must match on-disk state).
+        text_encoding: Windows code page for CExoLocString bytes (e.g. ``cp1252``).
 
     Returns:
         Number of individual fields that were patched.
@@ -265,7 +267,7 @@ def patch_git_file(
         parsed_data = read_gff(git_path, tlk=tlk)
 
     try:
-        patcher = GFFPatcher(git_path)
+        patcher = GFFPatcher(git_path, text_encoding=text_encoding)
     except Exception as e:
         logger.error("Failed to initialize GFFPatcher for %s: %s", git_path, e)
         return 0

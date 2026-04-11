@@ -85,8 +85,11 @@ class NcsInjector(BaseInjector):
                 metadata={"type": "ncs_script"},
             )
 
+        enc = (metadata or {}).get("module_text_encoding") or "cp1251"
         try:
-            patched_count = patch_ncs_string_replacements(file_path, replacements)
+            patched_count = patch_ncs_string_replacements(
+                file_path, replacements, text_encoding=enc
+            )
         except NCSPatchError as e:
             logger.error("Failed to patch NCS file %s: %s", file_path.name, e)
             return InjectedContent(

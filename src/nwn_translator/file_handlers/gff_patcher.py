@@ -16,37 +16,52 @@ class GFFPatchError(Exception):
     pass
 
 
-# TODO: Dashes/hyphens in numeric ranges (e.g. "5–15") may become '?' after
-# CP1251 encoding if the dash character is not representable in CP1251.
+# TODO: Some Unicode dashes in numeric ranges may become '?' if missing from the
+# active Windows code page.
 
-# Fallback replacements for common Unicode chars that are NOT in CP1251.
-_CP1251_FALLBACKS = {
-    "\u2018": "'",   # left single quotation mark
-    "\u2019": "'",   # right single quotation mark
-    "\u201c": '"',   # left double quotation mark
-    "\u201d": '"',   # right double quotation mark
-    "\u00a0": " ",   # non-breaking space
-    "\u200b": "",    # zero-width space
-    "\u200c": "",    # zero-width non-joiner
-    "\u200d": "",    # zero-width joiner
-    "\ufeff": "",    # BOM / zero-width no-break space
+# Fallback replacements for common Unicode punctuation not in every legacy page.
+_UNICODE_LEGACY_FALLBACKS = {
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u00a0": " ",
+    "\u200b": "",
+    "\u200c": "",
+    "\u200d": "",
+    "\ufeff": "",
 }
 
+# Romanian standard comma-below → legacy cedilla forms present in cp1250.
+_ROMANIAN_COMMA_BELOW_TO_CP1250 = str.maketrans(
+    {
+        "\u0219": "\u015f",
+        "\u021b": "\u0163",
+        "\u0218": "\u015e",
+        "\u021a": "\u0162",
+    }
+)
 
-def _sanitize_for_cp1251(text: str) -> str:
-    """Replace Unicode characters that cannot be encoded to CP1251.
+_ALLOWED_MODULE_ENCODINGS = frozenset({"cp1250", "cp1251", "cp1252", "cp1254"})
 
-    Characters that ARE valid in CP1251 (em dash, en dash, ellipsis, «, »,
-    etc.) are kept as-is.  Only truly unencodable chars are replaced using
-    a fallback table, or dropped if no fallback exists.
-    """
+
+def normalize_for_module_encoding(text: str, encoding: str) -> str:
+    """Normalize Unicode for legacy Windows encodings (e.g. Romanian for cp1250)."""
+    if encoding == "cp1250":
+        return text.translate(_ROMANIAN_COMMA_BELOW_TO_CP1250)
+    return text
+
+
+def sanitize_for_module_encoding(text: str, encoding: str) -> str:
+    """Drop or replace characters that cannot be encoded to *encoding*."""
+    text = normalize_for_module_encoding(text, encoding)
     out: list[str] = []
     for ch in text:
         try:
-            ch.encode("cp1251")
+            ch.encode(encoding)
             out.append(ch)
         except UnicodeEncodeError:
-            out.append(_CP1251_FALLBACKS.get(ch, ""))
+            out.append(_UNICODE_LEGACY_FALLBACKS.get(ch, ""))
     return "".join(out)
 
 
@@ -70,13 +85,17 @@ class GFFPatcher:
     _HDR_LISTINDICES_OFFSET = 48
     _HDR_LISTINDICES_SIZE = 52
 
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, text_encoding: str = "cp1251"):
         """Initialize the patcher.
 
         Args:
             file_path: Path to the GFF binary file to modify.
+            text_encoding: Windows code page name (e.g. ``cp1252``, ``cp1250``).
         """
+        if text_encoding not in _ALLOWED_MODULE_ENCODINGS:
+            raise GFFPatchError(f"Unsupported module text encoding: {text_encoding!r}")
         self.file_path = file_path
+        self._text_encoding = text_encoding
         if not self.file_path.exists():
             raise GFFPatchError(f"File not found: {self.file_path}")
 
@@ -102,10 +121,10 @@ class GFFPatcher:
             "listindices_size":     dword(self._HDR_LISTINDICES_SIZE),
         }
 
-    @staticmethod
-    def _build_cexo_locstring_payload(new_text: str) -> bytearray:
-        """Binary CExoLocString payload for *new_text* (CP1251)."""
-        encoded = _sanitize_for_cp1251(new_text).encode("cp1251", errors="replace")
+    def _build_cexo_locstring_payload(self, new_text: str) -> bytearray:
+        """Binary CExoLocString payload for *new_text* using :attr:`_text_encoding`."""
+        safe = sanitize_for_module_encoding(new_text, self._text_encoding)
+        encoded = safe.encode(self._text_encoding, errors="replace")
         substring_count = 1 if encoded else 0
         total_size = 4 + 4 + (4 + 4 + len(encoded)) * substring_count
 
@@ -195,6 +214,6 @@ class GFFPatcher:
 
         Args:
             record_offset: Absolute byte offset of the 12-byte GFF field record.
-            new_text: The translated text to inject (will be encoded as CP1251).
+            new_text: The translated text to inject (encoded with ``text_encoding``).
         """
         self.patch_multiple([(record_offset, new_text)])

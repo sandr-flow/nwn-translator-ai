@@ -28,7 +28,7 @@ from .ncs_parser import (
     parse_ncs,
     parse_ncs_bytes,
 )
-from .gff_patcher import _sanitize_for_cp1251
+from .gff_patcher import sanitize_for_module_encoding
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,10 @@ class NCSPatchError(Exception):
     """Raised when NCS patching fails."""
 
 
-def _encode_string(text: str) -> bytes:
-    """Encode a translated string for NCS bytecode (CP1251)."""
-    sanitized = _sanitize_for_cp1251(text)
-    return sanitized.encode("cp1251", errors="replace")
+def _encode_string(text: str, encoding: str) -> bytes:
+    """Encode a translated string for NCS bytecode using *encoding*."""
+    sanitized = sanitize_for_module_encoding(text, encoding)
+    return sanitized.encode(encoding, errors="replace")
 
 
 def _build_consts_bytes(encoded_string: bytes) -> bytes:
@@ -131,6 +131,7 @@ def _apply_instruction_patches(
     file_path: Path,
     ncs: NCSFile,
     patches: List[Tuple[NCSInstruction, str]],
+    text_encoding: str,
 ) -> int:
     """Apply validated (instruction, new_text) patches; write file or rollback."""
     if not patches:
@@ -143,7 +144,7 @@ def _apply_instruction_patches(
     instructions = ncs.instructions
 
     for instr, translated_text in patches:
-        encoded = _encode_string(translated_text)
+        encoded = _encode_string(translated_text, text_encoding)
         new_bytes = _build_consts_bytes(encoded)
         new_size = len(new_bytes)
         old_size = instr.size
@@ -201,6 +202,7 @@ def _apply_instruction_patches(
 def patch_ncs_string_replacements(
     file_path: Path,
     replacements: Sequence[Tuple[int, str, str]],
+    text_encoding: str = "cp1251",
 ) -> int:
     """Patch only listed string CONSTS (by offset), with original-text checks.
 
@@ -212,6 +214,7 @@ def patch_ncs_string_replacements(
     Args:
         file_path: Path to the ``.ncs`` file.
         replacements: Non-empty sequence of explicit replacement specs.
+        text_encoding: Codec for written string bytes (default ``cp1251``).
 
     Returns:
         Number of CONSTS instructions patched.
@@ -248,12 +251,13 @@ def patch_ncs_string_replacements(
     if not patches:
         return 0
 
-    return _apply_instruction_patches(file_path, ncs, patches)
+    return _apply_instruction_patches(file_path, ncs, patches, text_encoding)
 
 
 def patch_ncs_strings(
     file_path: Path,
     translations: Dict[str, str],
+    text_encoding: str = "cp1251",
 ) -> int:
     """Patch every string CONSTS whose value is a key in *translations*.
 
@@ -274,4 +278,4 @@ def patch_ncs_strings(
 
     if not patches:
         return 0
-    return _apply_instruction_patches(file_path, ncs, patches)
+    return _apply_instruction_patches(file_path, ncs, patches, text_encoding)

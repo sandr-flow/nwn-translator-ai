@@ -14,6 +14,10 @@ from ..extractors.base import DialogNode
 logger = logging.getLogger(__name__)
 
 
+def _module_text_encoding(metadata: Optional[Dict[str, Any]]) -> str:
+    return (metadata or {}).get("module_text_encoding") or "cp1251"
+
+
 class DialogInjector(BaseInjector):
     """Injector for dialog (.dlg) files."""
 
@@ -47,7 +51,9 @@ class DialogInjector(BaseInjector):
         reply_list = parsed_data.get("ReplyList", [])
         
         try:
-            patcher = GFFPatcher(file_path)
+            patcher = GFFPatcher(
+                file_path, text_encoding=_module_text_encoding(metadata)
+            )
         except Exception as e:
             logger.error(f"Failed to initialize GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
@@ -132,7 +138,9 @@ class JournalInjector(BaseInjector):
         modified = False
 
         try:
-            patcher = GFFPatcher(file_path)
+            patcher = GFFPatcher(
+                file_path, text_encoding=_module_text_encoding(metadata)
+            )
         except Exception as e:
             logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
@@ -273,7 +281,9 @@ class GenericInjector(BaseInjector):
         fields = self.FIELD_MAP[content_type]
         
         try:
-            patcher = GFFPatcher(file_path)
+            patcher = GFFPatcher(
+                file_path, text_encoding=_module_text_encoding(metadata)
+            )
         except Exception as e:
             logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)

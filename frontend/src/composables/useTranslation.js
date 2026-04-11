@@ -297,7 +297,7 @@ export function useTranslation() {
     if (!t.taskId) return;
     t.rebuilding = true;
     try {
-      const data = await postRebuild(t.taskId, editedTranslations);
+      const data = await postRebuild(t.taskId, editedTranslations, t.targetLang);
       t.resultFilename = data.result_filename ?? t.resultFilename;
       t.step = "done";
     } finally {
@@ -327,6 +327,9 @@ export function useTranslation() {
       t.resultFilename = status.result_filename ?? "";
       t.stats = status.stats ?? null;
       t.error = status.error ?? "";
+      if (status.target_lang) {
+        t.targetLang = status.target_lang;
+      }
       t.step = "done";
     } catch (e) {
       t.error = String(e.message ?? e);

@@ -109,6 +109,7 @@ def test_translate_status_download(client: TestClient) -> None:
             break
         time.sleep(0.05)
     assert status_payload.get("status") == "completed", status_payload
+    assert status_payload.get("target_lang") == "russian"
 
     d = client.get(f"/api/tasks/{task_id}/download")
     assert d.status_code == 200
@@ -165,6 +166,34 @@ def test_reject_wrong_extension(client: TestClient) -> None:
     data = {"api_key": "sk-z", "target_lang": "russian"}
     r = client.post("/api/translate", files=files, data=data)
     assert r.status_code == 400
+
+
+def test_reject_cjk_target_lang_not_representable_in_game(client: TestClient) -> None:
+    """Legacy Windows code pages cannot encode CJK; API must reject before starting a job."""
+    files = {"file": ("m.mod", b"\x00" * 200, "application/octet-stream")}
+    for lang in ("korean", "Korean", "chinese", "japanese"):
+        data = {"api_key": "sk-cjk", "target_lang": lang}
+        r = client.post("/api/translate", files=files, data=data)
+        assert r.status_code == 400, lang
+        detail = r.json()["detail"]
+        assert "NWN" in detail
+        assert "Windows" in detail
+        assert "Целевой" in detail
+
+
+def test_reject_cjk_source_lang_not_representable_in_game(client: TestClient) -> None:
+    files = {"file": ("m.mod", b"\x00" * 200, "application/octet-stream")}
+    data = {
+        "api_key": "sk-cjk2",
+        "target_lang": "russian",
+        "source_lang": "korean",
+    }
+    r = client.post("/api/translate", files=files, data=data)
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "NWN" in detail
+    assert "Windows" in detail
+    assert "Исходный" in detail
 
 
 def test_translate_streamed_upload_bytes_preserved(

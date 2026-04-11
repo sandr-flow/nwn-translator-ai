@@ -14,7 +14,12 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable, Dict, List, Optional
 
-from ..config import TranslationConfig, lang_suffix, sanitized_mod_stem
+from ..config import (
+    TranslationConfig,
+    lang_suffix,
+    module_string_encoding_for_target_lang,
+    sanitized_mod_stem,
+)
 from ..main import ModuleTranslator
 from .database import SqliteTranslationLogWriter, create_task_row, update_task_row, get_db
 
@@ -44,6 +49,9 @@ class TranslationTask:
     error: Optional[str] = None
     stats: Optional[Dict[str, Any]] = None
     input_filename: str = ""
+    #: Language tags (mirrors SQLite tasks row; used by API status / rebuild fallback).
+    target_lang: Optional[str] = None
+    source_lang: Optional[str] = None
     #: Thread-safe queue for SSE (worker thread -> async reader)
     event_queue: "Queue[Dict[str, Any]]" = field(default_factory=Queue)
     _done: threading.Event = field(default_factory=threading.Event)
@@ -147,6 +155,8 @@ class TaskManager:
             client_ip=client_ip,
             client_token=client_token,
             input_filename=input_filename,
+            target_lang=target_lang,
+            source_lang=source_lang,
         )
         with self._lock:
             self._tasks[task_id] = task
@@ -264,9 +274,18 @@ class TaskManager:
 
         progress_cb = self._make_progress_callback(task)
         task.input_path = input_path
+        task.target_lang = target_lang
+        task.source_lang = source_lang
         update_task_row(task.task_id, input_path=str(input_path))
 
         try:
+            logger.info(
+                "Task %s: target_lang=%r source_lang=%r module_encoding=%s",
+                task.task_id,
+                target_lang,
+                source_lang,
+                module_string_encoding_for_target_lang(target_lang),
+            )
             task.status = "extracting"
             self._push_event(task, {"type": "status", "status": "extracting"})
             update_task_row(task.task_id, status="extracting")

@@ -22,6 +22,7 @@ class TaskStatusResponse(BaseModel):
     result_filename: Optional[str] = None
     error: Optional[str] = None
     stats: Optional[Dict[str, Any]] = None
+    target_lang: Optional[str] = None
 
 
 class TestConnectionRequest(BaseModel):
@@ -82,6 +83,8 @@ class RebuildRequest(BaseModel):
     """Request to rebuild .mod with edited translations."""
 
     translations: Dict[str, str]
+    #: Must match the language used for translation (drives GFF/NCS encoding).
+    target_lang: Optional[str] = None
 
 
 class RebuildResponse(BaseModel):

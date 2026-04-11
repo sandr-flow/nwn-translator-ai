@@ -10,19 +10,20 @@ const { t: i } = useI18n();
 const testing = ref(false);
 const testMsg = ref("");
 
-const langKeys = [
+// Source and target use the same set: in-game strings are CP1251; CJK is not offered.
+const gameSupportedLangKeys = [
   "russian", "english", "ukrainian", "polish", "german", "french",
   "spanish", "italian", "portuguese", "czech", "romanian", "hungarian",
-  "dutch", "turkish", "chinese", "japanese", "korean",
+  "dutch", "turkish",
 ];
 
-const languages = computed(() =>
-  langKeys.map((k) => ({ value: k, label: i(`lang.${k}`) }))
+const targetLanguages = computed(() =>
+  gameSupportedLangKeys.map((k) => ({ value: k, label: i(`lang.${k}`) }))
 );
 
 const sourceLanguages = computed(() => [
   { value: "auto", label: i("lang.auto") },
-  ...languages.value,
+  ...targetLanguages.value,
 ]);
 
 const genderOptions = computed(() => [
@@ -84,7 +85,7 @@ async function onTest() {
       </div>
       <div>
         <label class="block text-sm text-nwn-muted mb-1">{{ i("form.targetLang") }}</label>
-        <CustomSelect v-model="t.targetLang" :options="languages" />
+        <CustomSelect v-model="t.targetLang" :options="targetLanguages" />
       </div>
       <div>
         <label class="block text-sm text-nwn-muted mb-1">{{ i("form.gender") }}</label>

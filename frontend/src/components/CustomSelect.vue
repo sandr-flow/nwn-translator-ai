@@ -13,9 +13,17 @@ const dropUp = ref(false);
 const root = ref(null);
 const trigger = ref(null);
 
-const selected = computed(
-  () => props.options.find((o) => o.value === props.modelValue) || props.options[0]
-);
+const selected = computed(() => {
+  const found = props.options.find((o) => o.value === props.modelValue);
+  if (found) {
+    return found;
+  }
+  const raw = props.modelValue;
+  return {
+    value: raw,
+    label: raw ? String(raw) : "—",
+  };
+});
 
 function toggle() {
   if (!open.value) {

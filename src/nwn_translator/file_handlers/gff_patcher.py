@@ -16,11 +16,10 @@ class GFFPatchError(Exception):
     pass
 
 
-# TODO: Some Unicode dashes in numeric ranges may become '?' if missing from the
-# active Windows code page.
-
 # Fallback replacements for common Unicode punctuation not in every legacy page.
 _UNICODE_LEGACY_FALLBACKS = {
+    "\u2013": "-",
+    "\u2014": "-",
     "\u2018": "'",
     "\u2019": "'",
     "\u201c": '"',
@@ -43,10 +42,17 @@ _ROMANIAN_COMMA_BELOW_TO_CP1250 = str.maketrans(
 )
 
 _ALLOWED_MODULE_ENCODINGS = frozenset({"cp1250", "cp1251", "cp1252", "cp1254"})
+_COMMON_ASCII_NORMALIZE = str.maketrans(
+    {
+        "\u2013": "-",
+        "\u2014": "-",
+    }
+)
 
 
 def normalize_for_module_encoding(text: str, encoding: str) -> str:
     """Normalize Unicode for legacy Windows encodings (e.g. Romanian for cp1250)."""
+    text = text.translate(_COMMON_ASCII_NORMALIZE)
     if encoding == "cp1250":
         return text.translate(_ROMANIAN_COMMA_BELOW_TO_CP1250)
     return text

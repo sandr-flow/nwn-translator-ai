@@ -116,14 +116,9 @@ class WorldContext:
                 
                 npc_line = f"  * [{tag}] {full_name}{traits_str}{gloss}"
                 
-                # Truncate description if it's too long to save context window tokens
                 desc = (npc.description or "").strip()
                 if desc:
-                    # Take first 150 chars or up to first newline
-                    short_desc = desc.split("\n")[0]
-                    if len(short_desc) > 150:
-                        short_desc = short_desc[:147] + "..."
-                    npc_line += f" - {short_desc}"
+                    npc_line += f" - {desc}"
                     
                 lines.append(npc_line)
 

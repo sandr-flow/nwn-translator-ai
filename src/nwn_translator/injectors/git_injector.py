@@ -34,8 +34,10 @@ INSTANCE_LISTS = {
     "Creature List": ["FirstName", "LastName", "Description"],
     "Placeable List": ["LocName", "Description"],
     "Door List": ["LocalizedName", "Description"],
-    "Trigger List": ["LocalizedName", "Description"],
-    "WaypointList": ["LocalizedName", "Description"],
+    # GFF label is ``TriggerList`` (no space); ``Trigger List`` would never match.
+    "TriggerList": ["LocalizedName", "Description"],
+    # Waypoint map labels shown on minimap/automap are stored in MapNote.
+    "WaypointList": ["LocalizedName", "Description", "MapNote"],
     "StoreList": ["LocName", "LocalizedName", "Description"],
 }
 

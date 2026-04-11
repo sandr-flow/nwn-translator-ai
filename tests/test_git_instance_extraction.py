@@ -157,6 +157,19 @@ class TestCollectGitStrings:
         found = collect_git_strings_missing_from_translations(gff, {})
         assert "Coffee Merchant" in found
 
+    def test_collects_waypoint_map_note_labels(self):
+        gff = {
+            "WaypointList": [
+                {
+                    "LocalizedName": {"StrRef": -1, "Value": "WP_CityGate"},
+                    "MapNote": {"StrRef": -1, "Value": "City Gate"},
+                }
+            ]
+        }
+        found = collect_git_strings_missing_from_translations(gff, {})
+        assert "City Gate" in found
+        assert "WP_CityGate" not in found
+
     def test_collects_store_list_nested_item_list_strings(self):
         gff = {
             "StoreList": [
@@ -185,6 +198,27 @@ class TestCollectGitStrings:
 
 
 class TestPatchGitInventory:
+    @patch("src.nwn_translator.injectors.git_injector.GFFPatcher")
+    @patch("src.nwn_translator.injectors.git_injector.read_gff")
+    def test_patches_waypoint_map_note_labels(self, mock_read_gff, mock_patcher_cls):
+        mock_read_gff.return_value = {
+            "WaypointList": [
+                {
+                    "LocalizedName": {"StrRef": -1, "Value": "WP_CityGate"},
+                    "MapNote": {"StrRef": -1, "Value": "City Gate"},
+                    "_record_offsets": {"LocalizedName": 0, "MapNote": 222},
+                }
+            ]
+        }
+        patcher = MagicMock()
+        mock_patcher_cls.return_value = patcher
+        path = Path(__file__).parent / "_fake_waypoint.git"
+        translations = {"City Gate": "Городские ворота"}
+        count = patch_git_file(path, translations, tlk=None)
+        assert count == 1
+        plist = patcher.patch_multiple.call_args[0][0]
+        assert set(plist) == {(222, "Городские ворота")}
+
     @patch("src.nwn_translator.injectors.git_injector.GFFPatcher")
     @patch("src.nwn_translator.injectors.git_injector.read_gff")
     def test_patches_item_list_fields(self, mock_read_gff, mock_patcher_cls):

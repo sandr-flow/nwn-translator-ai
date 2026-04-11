@@ -84,6 +84,40 @@ def test_git_extractor_nested_store_shelves():
     assert "Coffee" in texts
 
 
+def test_git_extractor_collects_trigger_list_map_note_names():
+    """Real .git files use the GFF key ``TriggerList`` (not ``Trigger List``)."""
+    extractor = GitExtractor()
+    path = Path("town.git")
+    gff = {
+        "TriggerList": [
+            {
+                "LocalizedName": {"StrRef": -1, "Value": "Market Square"},
+                "Description": {"StrRef": -1, "Value": ""},
+            }
+        ],
+    }
+    result = extractor.extract(path, gff)
+    texts = {item.text for item in result.items}
+    assert "Market Square" in texts
+
+
+def test_git_extractor_collects_waypoint_map_note_labels():
+    extractor = GitExtractor()
+    path = Path("city.git")
+    gff = {
+        "WaypointList": [
+            {
+                "LocalizedName": {"StrRef": -1, "Value": "WP_CityGate"},
+                "MapNote": {"StrRef": -1, "Value": "City Gate"},
+            }
+        ]
+    }
+    result = extractor.extract(path, gff)
+    by_text = {item.text: item.metadata.get("type") for item in result.items}
+    assert by_text.get("City Gate") == "waypoint_map_note"
+    assert "WP_CityGate" not in by_text
+
+
 def test_git_extractor_skips_internal_tags():
     extractor = GitExtractor()
     path = Path("way.git")

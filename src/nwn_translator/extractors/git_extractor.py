@@ -38,7 +38,7 @@ def _meta_for_instance_field(list_key: str, field_name: str) -> Tuple[str, str]:
             return "door_name", "Door name (area instance)"
         if field_name == "Description":
             return "door_description", "Door description (area instance)"
-    if list_key == "Trigger List":
+    if list_key == "TriggerList":
         if field_name == "LocalizedName":
             return "trigger_name", "Trigger name (area instance)"
         if field_name == "Description":
@@ -48,6 +48,8 @@ def _meta_for_instance_field(list_key: str, field_name: str) -> Tuple[str, str]:
             return "waypoint_name", "Waypoint name (area instance)"
         if field_name == "Description":
             return "waypoint_description", "Waypoint description (area instance)"
+        if field_name == "MapNote":
+            return "waypoint_map_note", "Waypoint map note label (area instance)"
     if list_key == "StoreList":
         if field_name in ("LocName", "LocalizedName"):
             return "store_name", "Store name (area instance)"

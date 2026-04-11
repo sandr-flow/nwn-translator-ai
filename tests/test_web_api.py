@@ -165,3 +165,27 @@ def test_reject_wrong_extension(client: TestClient) -> None:
     data = {"api_key": "sk-z", "target_lang": "russian"}
     r = client.post("/api/translate", files=files, data=data)
     assert r.status_code == 400
+
+
+def test_translate_streamed_upload_bytes_preserved(
+    client: TestClient, task_workspace: Path
+) -> None:
+    """Large body is written via chunked read; on-disk file matches payload."""
+    payload = (b"\xab\xcd" * 700) * 1024  # ~1.4 MiB
+    files = {"file": ("chunky.mod", payload, "application/octet-stream")}
+    data = {"api_key": "sk-stream", "target_lang": "russian"}
+    r = client.post("/api/translate", files=files, data=data)
+    assert r.status_code == 200
+    task_id = r.json()["task_id"]
+    saved = task_workspace / task_id / "chunky.mod"
+    assert saved.is_file()
+    assert saved.read_bytes() == payload
+
+
+def test_translate_rejects_oversized_stream(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("nwn_translator.web.routes.MAX_UPLOAD_BYTES", 800)
+    payload = b"y" * 900
+    files = {"file": ("huge.mod", payload, "application/octet-stream")}
+    data = {"api_key": "sk-big", "target_lang": "russian"}
+    r = client.post("/api/translate", files=files, data=data)
+    assert r.status_code == 413

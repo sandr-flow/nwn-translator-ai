@@ -13,9 +13,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .database import init_db
+from .database import get_db, init_db
 from .routes import router
-from .task_manager import purge_loop_task_manager
+from .task_manager import get_task_manager, purge_loop_task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,11 @@ async def lifespan(app: FastAPI):
     tasks and cancels it on shutdown.
     """
     init_db()
-    purge_task = asyncio.create_task(purge_loop_task_manager(3600))
+    app.state.db = get_db()
+    app.state.task_manager = get_task_manager()
+    purge_task = asyncio.create_task(
+        purge_loop_task_manager(app.state.task_manager, 3600)
+    )
     yield
     purge_task.cancel()
     try:

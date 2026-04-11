@@ -42,6 +42,74 @@ import concurrent.futures
 logger = logging.getLogger(__name__)
 
 
+def load_parsed_and_extracted(
+    file_path: Path,
+    file_ext: str,
+    tlk: Optional[TLKFile],
+    gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+) -> Optional[Tuple[Dict[str, Any], ExtractedContent]]:
+    """Parse *file_path* and run the extractor; return data or ``None`` if skipped."""
+    if file_ext == ".ncs":
+        from .file_handlers.ncs_parser import parse_ncs, NCSParseError
+
+        try:
+            ncs_file = parse_ncs(file_path)
+        except NCSParseError as e:
+            logger.debug("Skipping unparseable NCS file %s: %s", file_path.name, e)
+            return None
+        parsed_data: Dict[str, Any] = {"_ncs_file": ncs_file}
+    else:
+        parsed_data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+
+    extractor = get_extractor_for_file(file_ext)
+    if not extractor:
+        logger.debug("No extractor for %s: %s", file_ext, file_path.name)
+        return None
+
+    extracted = extractor.extract(file_path, parsed_data)
+    if not extracted.items:
+        logger.debug("No translatable content in: %s", file_path.name)
+        return None
+
+    return parsed_data, extracted
+
+
+def inject_translations_into_file(
+    file_path: Path,
+    parsed_data: Dict[str, Any],
+    extracted: ExtractedContent,
+    translations: Dict[str, str],
+    *,
+    ncs_translations_by_item_id: Optional[Dict[str, str]] = None,
+    log_updates: bool = False,
+) -> None:
+    """Run the appropriate injector for *extracted* (shared by Phase C and rebuild)."""
+    injector = get_injector_for_content(extracted.content_type)
+    if not injector:
+        return
+    inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
+    if extracted.content_type == "ncs_script":
+        if ncs_translations_by_item_id is not None:
+            inject_metadata["ncs_translations_by_item_id"] = dict(
+                ncs_translations_by_item_id
+            )
+        else:
+            by_id: Dict[str, str] = {}
+            for item in extracted.items:
+                tid = item.item_id or ""
+                if not tid:
+                    continue
+                new_t = translations.get(item.text)
+                if new_t is None or new_t == item.text:
+                    continue
+                by_id[tid] = new_t
+            inject_metadata["ncs_translations_by_item_id"] = by_id
+        inject_metadata["ncs_extracted_items"] = extracted.items
+    result = injector.inject(file_path, parsed_data, translations, inject_metadata)
+    if log_updates and result.modified:
+        logger.info("Updated %s: %s items", file_path.name, result.items_updated)
+
+
 class ModuleTranslator:
     """Main translator for NWN modules."""
 
@@ -399,29 +467,12 @@ class ModuleTranslator:
             (parsed_data, ExtractedContent, file_ext) or None if nothing to extract.
         """
         file_ext = file_path.suffix.lower()
-
-        if file_ext == ".ncs":
-            # NCS files are compiled bytecode, NOT GFF format
-            from .file_handlers.ncs_parser import parse_ncs, NCSParseError
-            try:
-                ncs_file = parse_ncs(file_path)
-            except NCSParseError as e:
-                logger.debug("Skipping unparseable NCS file %s: %s", file_path.name, e)
-                return None
-            parsed_data = {"_ncs_file": ncs_file}
-        else:
-            parsed_data = read_gff(file_path, tlk=self.tlk, cache=self._gff_cache)
-
-        extractor = get_extractor_for_file(file_ext)
-        if not extractor:
-            logger.debug(f"No extractor for {file_ext}: {file_path.name}")
+        loaded = load_parsed_and_extracted(
+            file_path, file_ext, self.tlk, self._gff_cache
+        )
+        if loaded is None:
             return None
-
-        extracted = extractor.extract(file_path, parsed_data)
-        if not extracted.items:
-            logger.debug(f"No translatable content in: {file_path.name}")
-            return None
-
+        parsed_data, extracted = loaded
         return parsed_data, extracted, file_ext
 
     def _inject_file(
@@ -432,17 +483,14 @@ class ModuleTranslator:
         all_translations: Dict[str, str],
     ) -> None:
         """Inject translations into a single file (Phase C)."""
-        injector = get_injector_for_content(extracted.content_type)
-        if injector:
-            inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
-            if extracted.content_type == "ncs_script":
-                inject_metadata["ncs_translations_by_item_id"] = (
-                    self._ncs_translations_by_item_id
-                )
-                inject_metadata["ncs_extracted_items"] = extracted.items
-            result = injector.inject(file_path, parsed_data, all_translations, inject_metadata)
-            if result.modified:
-                logger.info(f"Updated {file_path.name}: {result.items_updated} items")
+        inject_translations_into_file(
+            file_path,
+            parsed_data,
+            extracted,
+            all_translations,
+            ncs_translations_by_item_id=self._ncs_translations_by_item_id,
+            log_updates=True,
+        )
 
     def _log_per_file_translations(
         self,
@@ -458,7 +506,6 @@ class ModuleTranslator:
         (one entry per deduplicated text).  This method adds entries for
         every (file, item) pair so the web editor can group by source file.
         """
-        log_writer = manager._log_writer
         already_logged: Set[Tuple[str, str]] = set()
 
         for file_path, (_gff, extracted, file_ext) in extracted_map.items():
@@ -481,16 +528,12 @@ class ModuleTranslator:
                 if log_key in already_logged:
                     continue
                 already_logged.add(log_key)
-                try:
-                    log_writer.write({
-                        "original": item.text,
-                        "translated": translated,
-                        "context": item.context,
-                        "model": self.config.model,
-                        "file": file_path.name,
-                    })
-                except Exception:
-                    pass
+                manager.log_per_file_item(
+                    original=item.text,
+                    translated=translated,
+                    context=item.context,
+                    source_filename=file_path.name,
+                )
 
     def _translate_git_instances(
         self,
@@ -669,7 +712,7 @@ def rebuild_module(
         except Exception:
             pass
 
-    gff_cache: Dict[str, Any] = {}
+    gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = {}
 
     # Inject translations into each translatable file
     for file_path in extract_dir.rglob("*"):
@@ -679,51 +722,22 @@ def rebuild_module(
         if ext not in TRANSLATABLE_TYPES:
             continue
 
-        if ext == ".ncs":
-            from .file_handlers.ncs_parser import parse_ncs, NCSParseError
-            from .file_handlers.ncs_patcher import (
-                NCSPatchError,
-                patch_ncs_string_replacements,
-            )
-            from .extractors.ncs_extractor import NcsExtractor
-            try:
-                ncs_file = parse_ncs(file_path)
-            except NCSParseError:
-                continue
-            extracted = NcsExtractor().extract(file_path, {"_ncs_file": ncs_file})
-            specs: List[Tuple[int, str, str]] = []
-            for item in extracted.items:
-                new_t = translations.get(item.text)
-                if new_t is None or new_t == item.text:
-                    continue
-                off = (item.metadata or {}).get("offset")
-                if off is not None:
-                    specs.append((int(off), item.text, new_t))
-            if specs:
-                try:
-                    patch_ncs_string_replacements(file_path, specs)
-                except NCSPatchError as e:
-                    logger.warning("Failed to patch NCS %s during rebuild: %s", file_path.name, e)
-            continue
-
         try:
-            parsed_data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+            loaded = load_parsed_and_extracted(file_path, ext, tlk, gff_cache)
         except Exception as e:
             logger.warning("Failed to read %s during rebuild: %s", file_path.name, e)
             continue
-
-        extractor = get_extractor_for_file(ext)
-        if not extractor:
+        if loaded is None:
             continue
-
-        extracted = extractor.extract(file_path, parsed_data)
-        if not extracted.items:
-            continue
-
-        injector = get_injector_for_content(extracted.content_type)
-        if injector:
-            inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
-            injector.inject(file_path, parsed_data, translations, inject_metadata)
+        parsed_data, extracted = loaded
+        inject_translations_into_file(
+            file_path,
+            parsed_data,
+            extracted,
+            translations,
+            ncs_translations_by_item_id=None,
+            log_updates=False,
+        )
 
     # Patch .git area instance files
     from .injectors.git_injector import patch_git_file

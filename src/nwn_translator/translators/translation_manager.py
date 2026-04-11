@@ -17,9 +17,9 @@ from ..translation_logging import translation_log_writer_for_config
 
 if TYPE_CHECKING:
     from ..glossary import Glossary
-from ..extractors import get_extractor_for_file, ExtractedContent
-from ..injectors import get_injector_for_content
+from ..extractors import ExtractedContent
 from ..ai_providers import BaseAIProvider, TranslationItem, TranslationResult
+from .prefix_translation_cache import PrefixAwareTranslationCache
 from .token_handler import TokenHandler, sanitize_text, restore_text
 
 # Minimum length (characters) for a cached key to qualify as a prefix match.
@@ -67,8 +67,8 @@ class TranslationManager:
         }
 
         # Global cache for this translation session
-        # sanitized_text -> translated_text
-        self.translation_cache: Dict[str, str] = {}
+        # sanitized_text -> translated_text (with trie for longest-prefix hits)
+        self.translation_cache = PrefixAwareTranslationCache()
         self._stats_lock = threading.Lock()
         if glossary:
             glossary.seed_cache(
@@ -81,6 +81,28 @@ class TranslationManager:
         #: LLM gate (or deterministic bypass) approval per ``item_id`` for ``ncs_string`` items.
         self._ncs_gate_approval: Dict[str, bool] = {}
 
+    def log_per_file_item(
+        self,
+        *,
+        original: str,
+        translated: str,
+        context: Optional[str],
+        source_filename: str,
+    ) -> None:
+        """Write one translation log row for web per-file grouping (non-dialog paths)."""
+        try:
+            self._log_writer.write(
+                {
+                    "original": original,
+                    "translated": translated,
+                    "context": context,
+                    "model": self.config.model,
+                    "file": source_filename,
+                }
+            )
+        except Exception:
+            pass
+
     def _find_cached_prefix(self, sanitized: str) -> Optional[tuple]:
         """Find the longest cached text that is a prefix of *sanitized*.
 
@@ -90,16 +112,7 @@ class TranslationManager:
         Returns:
             ``(cached_key, cached_translation)`` or *None*.
         """
-        best_key: Optional[str] = None
-        best_len = 0
-        for key in self.translation_cache:
-            klen = len(key)
-            if klen > best_len and klen >= _MIN_PREFIX_LEN and sanitized.startswith(key):
-                best_key = key
-                best_len = klen
-        if best_key is not None:
-            return best_key, self.translation_cache[best_key]
-        return None
+        return self.translation_cache.longest_prefix_match(sanitized, _MIN_PREFIX_LEN)
 
     def _ncs_item_passes_gate(self, item) -> bool:
         if (item.metadata or {}).get("type") != "ncs_string":

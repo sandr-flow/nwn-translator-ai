@@ -13,12 +13,13 @@ from typing import Optional
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from ..config import max_concurrent_from_environment
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..ai_providers import OpenRouterProvider, create_provider
+from .deps import web_task_manager
 from .database import (
     delete_task_row,
     get_task_row,
@@ -41,11 +42,45 @@ from .schemas import (
     TranslationItem,
     TranslationsResponse,
 )
-from .task_manager import MAX_UPLOAD_BYTES, TranslationTask, get_task_manager
+from .task_manager import MAX_UPLOAD_BYTES, TaskManager, TranslationTask
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+
+_READ_CHUNK = 1024 * 1024
+
+
+async def _stream_upload_to_file(upload: UploadFile, dest: Path, max_bytes: int) -> None:
+    """Write upload body to *dest* in chunks; enforce *max_bytes* total size."""
+    total = 0
+    try:
+        with dest.open("wb") as out:
+            while True:
+                chunk = await upload.read(_READ_CHUNK)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Файл слишком большой (максимум {max_bytes // (1024 * 1024)} МБ)",
+                    )
+                out.write(chunk)
+    except HTTPException:
+        if dest.exists():
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+        raise
+    except Exception:
+        if dest.exists():
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+        raise
 
 
 @router.get("/health")
@@ -88,6 +123,7 @@ def _client_token(request: Request) -> str:
 @router.post("/translate", response_model=TranslateResponse)
 async def start_translate(
     request: Request,
+    tm: TaskManager = Depends(web_task_manager),
     file: UploadFile = File(...),
     api_key: str = Form(...),
     target_lang: str = Form(...),
@@ -99,7 +135,6 @@ async def start_translate(
     player_gender: str = Form("male"),
 ) -> TranslateResponse:
     """Accept a .mod/.erf/.hak upload and start translation in the background."""
-    tm = get_task_manager()
     ip = _client_ip(request)
     active = tm.active_task_id_for_ip(ip)
     if active:
@@ -129,13 +164,6 @@ async def start_translate(
         except ValueError:
             pass
 
-    body = await file.read()
-    if len(body) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Файл слишком большой (максимум {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ)",
-        )
-
     token = _client_token(request)
     model_slug = model.strip() if model else None
     task = tm.create_task(
@@ -148,7 +176,7 @@ async def start_translate(
     )
     base = tm.workspace_for_task(task.task_id)
     input_path = base / Path(file.filename).name
-    input_path.write_bytes(body)
+    await _stream_upload_to_file(file, input_path, MAX_UPLOAD_BYTES)
     tm.register_active(ip, task.task_id)
 
     mc = (
@@ -176,7 +204,7 @@ async def start_translate(
     return TranslateResponse(task_id=task.task_id)
 
 
-def _task_or_404(task_id: str) -> TranslationTask:
+def _task_or_404(task_id: str, tm: TaskManager) -> TranslationTask:
     """Look up a translation task by ID — first in-memory, then DB.
 
     For tasks found only in DB (finished, evicted from memory), a minimal
@@ -188,7 +216,6 @@ def _task_or_404(task_id: str) -> TranslationTask:
     """
     if not _UUID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Неверный формат task_id")
-    tm = get_task_manager()
     task = tm.get(task_id)
     if task:
         return task
@@ -220,9 +247,11 @@ def _task_or_404(task_id: str) -> TranslationTask:
 
 
 @router.get("/tasks/{task_id}/status", response_model=TaskStatusResponse)
-async def task_status(task_id: str) -> TaskStatusResponse:
+async def task_status(
+    task_id: str, tm: TaskManager = Depends(web_task_manager)
+) -> TaskStatusResponse:
     """Return a JSON snapshot of the current task state."""
-    task = _task_or_404(task_id)
+    task = _task_or_404(task_id, tm)
     result_name = task.result_path.name if task.result_path else None
     return TaskStatusResponse(
         task_id=task.task_id,
@@ -237,9 +266,11 @@ async def task_status(task_id: str) -> TaskStatusResponse:
 
 
 @router.get("/tasks/{task_id}/progress")
-async def task_progress(task_id: str) -> StreamingResponse:
+async def task_progress(
+    task_id: str, tm: TaskManager = Depends(web_task_manager)
+) -> StreamingResponse:
     """Server-Sent Events stream of progress updates."""
-    task = _task_or_404(task_id)
+    task = _task_or_404(task_id, tm)
 
     async def event_stream():
         # Send current snapshot first
@@ -297,9 +328,11 @@ async def task_progress(task_id: str) -> StreamingResponse:
 
 
 @router.get("/tasks/{task_id}/download")
-async def download_result(task_id: str) -> FileResponse:
+async def download_result(
+    task_id: str, tm: TaskManager = Depends(web_task_manager)
+) -> FileResponse:
     """Download the translated module file for a completed task."""
-    task = _task_or_404(task_id)
+    task = _task_or_404(task_id, tm)
     if task.status != "completed" or not task.result_path or not task.result_path.is_file():
         raise HTTPException(status_code=400, detail="Файл результата ещё не готов")
     return FileResponse(
@@ -310,9 +343,11 @@ async def download_result(task_id: str) -> FileResponse:
 
 
 @router.get("/tasks/{task_id}/log")
-async def download_log(task_id: str) -> StreamingResponse:
+async def download_log(
+    task_id: str, tm: TaskManager = Depends(web_task_manager)
+) -> StreamingResponse:
     """Download the translation log as JSONL (generated from SQLite)."""
-    _task_or_404(task_id)
+    _task_or_404(task_id, tm)
     rows = get_translations_by_task(task_id)
     if not rows:
         raise HTTPException(status_code=404, detail="Лог недоступен")
@@ -329,9 +364,11 @@ async def download_log(task_id: str) -> StreamingResponse:
 
 
 @router.get("/tasks/{task_id}/translations", response_model=TranslationsResponse)
-async def get_translations(task_id: str) -> TranslationsResponse:
+async def get_translations(
+    task_id: str, tm: TaskManager = Depends(web_task_manager)
+) -> TranslationsResponse:
     """Return structured translation data grouped by source file for the editor."""
-    _task_or_404(task_id)  # validate exists
+    _task_or_404(task_id, tm)  # validate exists
 
     rows = get_translations_by_task(task_id)
     if not rows:
@@ -371,9 +408,13 @@ async def get_translations(task_id: str) -> TranslationsResponse:
 
 
 @router.post("/tasks/{task_id}/rebuild", response_model=RebuildResponse)
-async def rebuild_task(task_id: str, body: RebuildRequest) -> RebuildResponse:
+async def rebuild_task(
+    task_id: str,
+    body: RebuildRequest,
+    tm: TaskManager = Depends(web_task_manager),
+) -> RebuildResponse:
     """Rebuild the .mod file with edited translations (no LLM calls)."""
-    task = _task_or_404(task_id)
+    task = _task_or_404(task_id, tm)
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="Задача ещё не завершена")
     if not task.extract_dir or not Path(task.extract_dir).is_dir():
@@ -440,7 +481,11 @@ async def task_history(request: Request) -> TaskHistoryResponse:
 
 
 @router.delete("/tasks/{task_id}")
-async def delete_task(task_id: str, request: Request) -> dict:
+async def delete_task(
+    task_id: str,
+    request: Request,
+    tm: TaskManager = Depends(web_task_manager),
+) -> dict:
     """Delete a task from history. Only the owning client can delete."""
     if not _UUID_RE.match(task_id):
         raise HTTPException(status_code=400, detail="Неверный формат task_id")
@@ -452,7 +497,6 @@ async def delete_task(task_id: str, request: Request) -> dict:
         raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
 
     # Remove workspace from disk
-    tm = get_task_manager()
     workspace = tm.workspace_root / task_id
     if workspace.is_dir():
         import shutil

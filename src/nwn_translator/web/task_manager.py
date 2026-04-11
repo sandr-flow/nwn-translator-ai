@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 import threading
 import time
 import uuid
@@ -13,7 +14,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable, Dict, List, Optional
 
-from ..config import TranslationConfig, lang_suffix
+from ..config import TranslationConfig, lang_suffix, sanitized_mod_stem
 from ..main import ModuleTranslator
 from .database import SqliteTranslationLogWriter, create_task_row, update_task_row, get_db
 
@@ -63,11 +64,13 @@ class TaskManager:
         self,
         workspace_root: Optional[Path] = None,
         task_ttl_seconds: float = DEFAULT_TASK_TTL_SECONDS,
+        db_connection: Optional[sqlite3.Connection] = None,
     ) -> None:
         self.workspace_root = (
             Path(workspace_root) if workspace_root is not None else Path("workspace") / "web"
         )
         self.task_ttl_seconds = task_ttl_seconds
+        self._db_connection = db_connection
         self._tasks: Dict[str, TranslationTask] = {}
         self._lock = threading.Lock()
         #: IP -> task_id while job is running (not completed/failed)
@@ -254,7 +257,8 @@ class TaskManager:
         temp_dir = base / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
         lang_suf = lang_suffix(target_lang)
-        output_file = base / f"{input_path.stem}{lang_suf}{input_path.suffix}"
+        out_stem = sanitized_mod_stem(input_path.stem)
+        output_file = base / f"{out_stem}{lang_suf}{input_path.suffix}"
 
         log_writer = SqliteTranslationLogWriter(task.task_id)
 
@@ -304,7 +308,7 @@ class TaskManager:
             task.stats = translator.get_statistics()
             # Replace opaque "items_translated" with actual per-file count from DB
             try:
-                db = get_db()
+                db = self._db_connection or get_db()
                 row = db.execute(
                     "SELECT COUNT(*) FROM translations WHERE task_id = ?",
                     (task.task_id,),
@@ -364,7 +368,7 @@ def get_task_manager() -> TaskManager:
     if _manager is None:
         root_env = os.environ.get("NWN_WEB_TASK_ROOT", "").strip()
         root = Path(root_env) if root_env else None
-        _manager = TaskManager(workspace_root=root)
+        _manager = TaskManager(workspace_root=root, db_connection=get_db())
     return _manager
 
 
@@ -378,8 +382,10 @@ def set_task_manager(m: Optional[TaskManager]) -> None:
     _manager = m
 
 
-async def purge_loop_task_manager(interval_seconds: float = 3600) -> None:
+async def purge_loop_task_manager(
+    task_manager: TaskManager, interval_seconds: float = 3600
+) -> None:
     """Background loop to purge expired tasks."""
     while True:
         await asyncio.sleep(interval_seconds)
-        get_task_manager().purge_expired()
+        task_manager.purge_expired()

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from src.nwn_translator.file_handlers.erf_writer import ERFWriter, ERFWriterError
-from src.nwn_translator.file_handlers.erf_reader import ERFReader, ERFHeader
+from src.nwn_translator.file_handlers.erf_reader import ERFEntry, ERFReader, ERFHeader
 
 
 # ---------------------------------------------------------------------------
@@ -261,3 +261,32 @@ class TestERFWriterRoundTrip:
         assert len(entries) == 1
         entry = entries[0]
         assert raw[entry.offset: entry.offset + entry.size] == b"DLG FILE CONTENT"
+
+    @pytest.mark.parametrize(
+        ("signature", "expected_ext"),
+        [
+            (b"DLG ", ".dlg"),
+            (b"JRL ", ".jrl"),
+            (b"UTI ", ".uti"),
+            (b"UTC ", ".utc"),
+            (b"ARE ", ".are"),
+            (b"UTT ", ".utt"),
+            (b"UTP ", ".utp"),
+            (b"UTD ", ".utd"),
+            (b"UTM ", ".utm"),
+            (b"IFO ", ".ifo"),
+            (b"GIT ", ".git"),
+            (b"NCS ", ".ncs"),
+        ],
+    )
+    def test_detect_type_from_header_maps_known_signatures(
+        self, tmp_path, signature, expected_ext
+    ):
+        """Known file signatures must override unknown numeric resource type IDs."""
+        raw = tmp_path / f"{expected_ext[1:]}_blob.bin"
+        raw.write_bytes(signature + b"\x00" * 8)
+
+        reader = ERFReader(raw)
+        entry = ERFEntry("resource", 0, 6789, 0, 12)
+
+        assert reader.detect_type_from_header(entry) == expected_ext

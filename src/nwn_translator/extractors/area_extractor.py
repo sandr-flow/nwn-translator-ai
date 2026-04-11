@@ -277,9 +277,14 @@ class StoreExtractor(BaseExtractor):
         """
         tag = parsed_data.get("Tag", file_path.stem)
         items: List[TranslatableItem] = []
+        # NWN store templates use LocName; some modules use LocalizedName instead.
         name_item = self._make_name_item(
-            parsed_data, file_path, "LocalizedName", "Store", "store_name"
+            parsed_data, file_path, "LocName", "Store", "store_name"
         )
+        if not name_item:
+            name_item = self._make_name_item(
+                parsed_data, file_path, "LocalizedName", "Store", "store_name"
+            )
         if name_item:
             items.append(name_item)
         desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))

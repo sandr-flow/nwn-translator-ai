@@ -270,6 +270,19 @@ class TestStoreExtractorDescriptions:
         assert "General Store" in texts
         assert "Weapons and potions." in texts
 
+    def test_extract_store_prefers_loc_name(self):
+        extractor = StoreExtractor()
+        file_path = Path("coffee.utm")
+        parsed_data = {
+            "Tag": "coffee",
+            "LocName": {"StrRef": -1, "Value": "Coffee Stall"},
+            "LocalizedName": {"StrRef": -1, "Value": "Wrong Title"},
+            "Description": {"StrRef": -1, "Value": ""},
+        }
+        result = extractor.extract(file_path, parsed_data)
+        names = [item.text for item in result.items if item.metadata.get("type") == "store_name"]
+        assert names == ["Coffee Stall"]
+
 
 class TestTranslatableItem:
     """Tests for TranslatableItem dataclass."""

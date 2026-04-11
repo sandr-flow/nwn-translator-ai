@@ -304,14 +304,29 @@ class ERFReader:
         self._fill_header_type_cache()
         return self.entries
 
+    # Signature-based detection for resources whose numeric Type ID may be custom
+    # or non-standard in third-party modules. This allows unknown extensions like
+    # ".2051" to be mapped into a known pipeline type by inspecting file headers.
     _GFF_SIG_MAP = {
-        b"DLG ": ".dlg",
-        b"UTC ": ".utc",
-        b"UTI ": ".uti",
         b"ARE ": ".are",
+        b"DLG ": ".dlg",
+        b"FAC ": ".fac",
+        b"GFF ": ".gff",
+        b"GIC ": ".gic",
         b"GIT ": ".git",
         b"IFO ": ".ifo",
+        b"JRL ": ".jrl",
         b"NCS ": ".ncs",
+        b"UTE ": ".ute",
+        b"UTD ": ".utd",
+        b"UTI ": ".uti",
+        b"UTM ": ".utm",
+        b"UTP ": ".utp",
+        b"UTR ": ".utr",
+        b"UTS ": ".uts",
+        b"UTT ": ".utt",
+        b"UTW ": ".utw",
+        b"UTC ": ".utc",
     }
 
     def _fill_header_type_cache(self) -> None:

@@ -236,7 +236,6 @@ class GenericInjector(BaseInjector):
             "description": "Description",
         },
         "store": {
-            "name": "LocalizedName",
             "description": "Description",
         },
         "module": {
@@ -290,6 +289,27 @@ class GenericInjector(BaseInjector):
 
         record_offsets = parsed_data.get("_record_offsets", {})
         patches: List[Tuple[int, str]] = []
+
+        # Store templates use LocName; fall back to LocalizedName when absent.
+        if content_type == "store":
+            for name_field in ("LocName", "LocalizedName"):
+                if name_field not in parsed_data:
+                    continue
+                field_obj = parsed_data[name_field]
+                if not isinstance(field_obj, dict):
+                    continue
+                original_text = field_obj.get("Value", "")
+                if not original_text or original_text not in translations:
+                    continue
+                translated_text = translations[original_text]
+                if translated_text == original_text:
+                    continue
+                rec_offset = record_offsets.get(name_field, 0)
+                if rec_offset > 0:
+                    patches.append((rec_offset, translated_text))
+                    items_updated += 1
+                    modified = True
+                    break
 
         # For creatures, we need to handle first and last name specially
         if content_type == "creature":

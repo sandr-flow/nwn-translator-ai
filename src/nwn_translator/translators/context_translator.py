@@ -6,11 +6,11 @@ Translates entire dialog trees in a single batch using world context.
 import asyncio
 import json
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..config import TranslationConfig, TRANSLATION_TEMPERATURE, TRANSLATION_MAX_TOKENS
+from ..json_utils import json_extract_first_object, strip_json_markdown_fences
 from ..ai_providers import BaseAIProvider
 from ..ai_providers.openrouter_provider import OpenRouterProvider
 from ..translation_logging import translation_log_writer_for_config
@@ -23,6 +23,10 @@ if TYPE_CHECKING:
     from ..glossary import Glossary
 
 logger = logging.getLogger(__name__)
+
+# Upper bound for dialog responses when retrying after likely truncation.
+_DIALOG_MAX_TOKENS_BOOST = min(32768, TRANSLATION_MAX_TOKENS * 2)
+
 
 class ContextualTranslationManager:
     """Manager for full-graph contextual translation."""
@@ -152,22 +156,61 @@ class ContextualTranslationManager:
 
         try:
 
-            async def call_api(sp: str, up: str) -> str:
+            async def call_api(
+                sp: str, up: str, *, max_tokens: int = TRANSLATION_MAX_TOKENS
+            ) -> str:
                 return await self.provider.complete_json_chat_async(
                     sp,
                     up,
-                    max_tokens=TRANSLATION_MAX_TOKENS,
+                    max_tokens=max_tokens,
                     temperature=TRANSLATION_TEMPERATURE,
                 )
 
-            async def run_primary() -> str:
-                return await call_api(system_prompt, user_prompt)
-
             from ..async_utils import run_async
-            raw_response = run_async(run_primary(), cleanup=self.provider.close_async_client)
 
+            raw_response = run_async(
+                call_api(system_prompt, user_prompt),
+                cleanup=self.provider.close_async_client,
+            )
             parsed_json = self._parse_json_response(raw_response, file_path.name)
+
             if parsed_json is None:
+                logger.warning(
+                    "%s: dialog JSON parse failed, retrying with repair prompt...",
+                    file_path.name,
+                )
+                repair_prompt = self._build_repair_user_prompt(
+                    file_path.name, script, keys_for_api, raw_response
+                )
+                raw_response = run_async(
+                    call_api(system_prompt, repair_prompt),
+                    cleanup=self.provider.close_async_client,
+                )
+                parsed_json = self._parse_json_response(raw_response, file_path.name)
+
+            if parsed_json is None and self._dialog_response_likely_truncated(raw_response):
+                logger.warning(
+                    "%s: dialog JSON still invalid; retry with higher max_tokens...",
+                    file_path.name,
+                )
+                repair_prompt = self._build_repair_user_prompt(
+                    file_path.name, script, keys_for_api, raw_response
+                )
+                raw_response = run_async(
+                    call_api(
+                        system_prompt,
+                        repair_prompt,
+                        max_tokens=_DIALOG_MAX_TOKENS_BOOST,
+                    ),
+                    cleanup=self.provider.close_async_client,
+                )
+                parsed_json = self._parse_json_response(raw_response, file_path.name)
+
+            if parsed_json is None:
+                logger.error(
+                    "%s: dialog translation failed after retries (invalid JSON).",
+                    file_path.name,
+                )
                 return translations
 
             api_translations = self._apply_translations(
@@ -198,11 +241,30 @@ class ContextualTranslationManager:
                     return await call_api(
                         self._build_system_prompt(),
                         self._build_user_prompt(file_path.name, retry_script),
+                        max_tokens=TRANSLATION_MAX_TOKENS,
                     )
 
                 retry_raw = run_async(run_retry(), cleanup=self.provider.close_async_client)
 
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
+                if retry_json is None and self._dialog_response_likely_truncated(
+                    retry_raw
+                ):
+                    repair = self._build_repair_user_prompt(
+                        file_path.name,
+                        retry_script,
+                        missing_keys,
+                        retry_raw,
+                    )
+                    retry_raw = run_async(
+                        call_api(
+                            self._build_system_prompt(),
+                            repair,
+                            max_tokens=_DIALOG_MAX_TOKENS_BOOST,
+                        ),
+                        cleanup=self.provider.close_async_client,
+                    )
+                    retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json:
                     retry_translations = self._apply_translations(
                         retry_json,
@@ -227,16 +289,49 @@ class ContextualTranslationManager:
 
     def _parse_json_response(self, raw: str, filename: str) -> Optional[dict]:
         """Parse a JSON object from a raw AI response string."""
+        parsed = json_extract_first_object(raw)
+        if parsed is not None:
+            return parsed
+        snippet = (raw or "").strip()[:400]
+        logger.error(
+            "Failed to parse JSON for %s (no valid object). Raw prefix: %s...",
+            filename,
+            snippet,
+        )
+        return None
+
+    @staticmethod
+    def _dialog_response_likely_truncated(raw: str) -> bool:
+        """Heuristic: model hit max_tokens mid-string."""
+        cleaned = strip_json_markdown_fences(raw)
+        idx = cleaned.find("{")
+        if idx == -1:
+            return False
         try:
-            json_match = re.search(r'\{.*\}', raw, re.DOTALL)
-            json_str = json_match.group(0) if json_match else raw
-            return json.loads(json_str)
+            json.JSONDecoder().raw_decode(cleaned, idx)
         except json.JSONDecodeError as e:
-            logger.error(
-                "Failed to parse JSON for %s: %s\nRaw: %s...",
-                filename, e, raw[:200],
-            )
-            return None
+            msg = str(e).lower()
+            return "unterminated" in msg
+        return False
+
+    def _build_repair_user_prompt(
+        self,
+        filename: str,
+        script: str,
+        keys_required: List[str],
+        bad_response: str,
+    ) -> str:
+        """Ask the model to return a single valid JSON object after a failed parse."""
+        keys_csv = ", ".join(sorted(keys_required))
+        bad_snip = (bad_response or "").strip()[:1200]
+        return (
+            f"The previous answer for {filename} was not valid JSON or was truncated.\n"
+            f"Return ONLY one JSON object: keys exactly {keys_csv} "
+            f"(same IDs as in the script), each value a string translation.\n"
+            f"No markdown, no comments, no text before or after the object.\n\n"
+            f"Dialog script:\n\n{script}\n\n"
+            f"Invalid previous output (truncated for context):\n{bad_snip}"
+        )
 
     def _apply_translations(
         self,
@@ -302,5 +397,6 @@ class ContextualTranslationManager:
         return (
             f"Translate the following dialog script from {filename}:\n\n"
             f"{script}\n\n"
-            f"Return ONLY a JSON map of ID -> translation."
+            f"Return ONLY a JSON object: map each line ID (e.g. E0, R1) to the "
+            f"translated string. No markdown fences, no extra keys, no text outside JSON."
         )

@@ -234,6 +234,7 @@ TRANSLATABLE_TYPES = {
     ".utp": "Placeable",
     ".utd": "Door",
     ".utm": "Store",
+    ".git": "Area Instance",
     ".ifo": "Module Info",
     ".ncs": "Script",
 }

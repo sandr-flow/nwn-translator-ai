@@ -36,26 +36,84 @@ INSTANCE_LISTS = {
     "Door List": ["LocalizedName", "Description"],
     "Trigger List": ["LocalizedName", "Description"],
     "WaypointList": ["LocalizedName", "Description"],
-    "StoreList": ["LocalizedName", "Description"],
+    "StoreList": ["LocName", "LocalizedName", "Description"],
 }
 
-# Instance lists that may contain nested inventory ItemList structs
-INSTANCE_LISTS_WITH_INVENTORY = frozenset({"Creature List", "Placeable List"})
+# Mapping: instance list key -> nested item list keys to process.
+# Creatures have both loose inventory (ItemList) and equipped gear
+# (Equip_ItemList); placeables/stores only carry inventory.
+INSTANCE_NESTED_ITEM_LISTS: Dict[str, List[str]] = {
+    "Creature List": ["ItemList", "Equip_ItemList"],
+    "Placeable List": ["ItemList"],
+    "StoreList": ["ItemList"],
+}
 
-# CExoLocString fields on each entry inside ItemList (container / creature inventory)
+# CExoLocString fields on each entry inside ItemList / Equip_ItemList
 ITEM_INVENTORY_FIELDS = ["LocalizedName", "Description", "DescIdentified"]
 
 
-def _iter_item_list_entries(instance: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return dict entries from the ``ItemList`` field of an instance struct.
+def _collect_strings_from_store_tree(
+    store_node: Dict[str, Any],
+    found: Set[str],
+    existing: Dict[str, str],
+) -> None:
+    """Gather locstrings from *store_node* ItemList and nested StoreList shelves."""
+    for inv_item in _iter_nested_item_entries(store_node, "ItemList"):
+        _add_string_values_from_fields(
+            inv_item,
+            ITEM_INVENTORY_FIELDS,
+            found,
+            existing,
+        )
+    children = store_node.get("StoreList", [])
+    if not isinstance(children, list):
+        return
+    for child in children:
+        if isinstance(child, dict):
+            _collect_strings_from_store_tree(child, found, existing)
+
+
+def _collect_patches_from_store_tree(
+    store_node: Dict[str, Any],
+    translations: Dict[str, str],
+    git_basename: str,
+    patches: List[Tuple[int, str]],
+) -> int:
+    """Patch ItemList rows under *store_node* and recurse into nested StoreList."""
+    total = 0
+    for inv_item in _iter_nested_item_entries(store_node, "ItemList"):
+        total += _collect_locale_patches_on_struct(
+            inv_item,
+            "StoreList.ItemList",
+            ITEM_INVENTORY_FIELDS,
+            translations,
+            git_basename,
+            patches,
+        )
+    children = store_node.get("StoreList", [])
+    if not isinstance(children, list):
+        return total
+    for child in children:
+        if isinstance(child, dict):
+            total += _collect_patches_from_store_tree(
+                child, translations, git_basename, patches
+            )
+    return total
+
+
+def _iter_nested_item_entries(
+    instance: Dict[str, Any], nested_key: str
+) -> List[Dict[str, Any]]:
+    """Return dict entries from a nested item list field of an instance struct.
 
     Args:
-        instance: Parsed GFF struct for a creature or placeable instance.
+        instance: Parsed GFF struct for a creature, placeable, or store instance.
+        nested_key: Name of the nested list (``"ItemList"`` or ``"Equip_ItemList"``).
 
     Returns:
-        List of dict entries representing inventory items.
+        List of dict entries representing inventory/equipped items.
     """
-    raw = instance.get("ItemList", [])
+    raw = instance.get(nested_key, [])
     if not isinstance(raw, list):
         return []
     return [e for e in raw if isinstance(e, dict)]
@@ -131,14 +189,19 @@ def collect_git_strings_missing_from_translations(
             _add_string_values_from_fields(
                 instance, field_names, found, existing_translations
             )
-            if list_key in INSTANCE_LISTS_WITH_INVENTORY:
-                for inv_item in _iter_item_list_entries(instance):
-                    _add_string_values_from_fields(
-                        inv_item,
-                        ITEM_INVENTORY_FIELDS,
-                        found,
-                        existing_translations,
-                    )
+            if list_key == "StoreList":
+                _collect_strings_from_store_tree(
+                    instance, found, existing_translations
+                )
+            else:
+                for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(list_key, []):
+                    for inv_item in _iter_nested_item_entries(instance, nested_key):
+                        _add_string_values_from_fields(
+                            inv_item,
+                            ITEM_INVENTORY_FIELDS,
+                            found,
+                            existing_translations,
+                        )
 
     return found
 
@@ -212,28 +275,32 @@ def _collect_inventory_item_patches(
     git_basename: str,
     patches: List[Tuple[int, str]],
 ) -> int:
-    """Collect patches for ``ItemList`` rows under a creature or placeable instance.
+    """Collect patches for nested item lists under a creature, placeable, or store.
+
+    Handles both ``ItemList`` (loose inventory) and ``Equip_ItemList``
+    (equipped gear on creatures).
 
     Args:
-        instance: Parsed GFF struct for a creature or placeable.
+        instance: Parsed GFF struct for a creature, placeable, or store.
         parent_list_key: Parent list name (e.g. ``"Creature List"``).
         translations: Mapping of original text to translated text.
         git_basename: Filename of the .git file (for log messages).
         patches: Mutable list to which patch tuples are appended.
 
     Returns:
-        Number of patches appended for inventory items.
+        Number of patches appended for inventory/equipped items.
     """
     total = 0
-    for inv_item in _iter_item_list_entries(instance):
-        total += _collect_locale_patches_on_struct(
-            inv_item,
-            f"{parent_list_key}.ItemList",
-            ITEM_INVENTORY_FIELDS,
-            translations,
-            git_basename,
-            patches,
-        )
+    for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(parent_list_key, []):
+        for inv_item in _iter_nested_item_entries(instance, nested_key):
+            total += _collect_locale_patches_on_struct(
+                inv_item,
+                f"{parent_list_key}.{nested_key}",
+                ITEM_INVENTORY_FIELDS,
+                translations,
+                git_basename,
+                patches,
+            )
     return total
 
 
@@ -293,14 +360,22 @@ def patch_git_file(
                 patches,
             )
 
-            if list_key in INSTANCE_LISTS_WITH_INVENTORY:
-                items_patched += _collect_inventory_item_patches(
-                    instance,
-                    list_key,
-                    translations,
-                    git_path.name,
-                    patches,
-                )
+            if list_key in INSTANCE_NESTED_ITEM_LISTS:
+                if list_key == "StoreList":
+                    items_patched += _collect_patches_from_store_tree(
+                        instance,
+                        translations,
+                        git_path.name,
+                        patches,
+                    )
+                else:
+                    items_patched += _collect_inventory_item_patches(
+                        instance,
+                        list_key,
+                        translations,
+                        git_path.name,
+                        patches,
+                    )
 
     if patches:
         try:

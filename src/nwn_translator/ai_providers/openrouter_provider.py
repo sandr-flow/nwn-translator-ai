@@ -505,6 +505,125 @@ class OpenRouterProvider(BaseAIProvider):
         except Exception as e:
             self._map_openrouter_exception(e)
 
+    @staticmethod
+    def _ncs_gate_system_prompt() -> str:
+        return (
+            "You classify strings from Neverwinter Nights (NWN) compiled NWScript. "
+            "For each item, decide if it should be translated for players — text "
+            "shown as dialog, floating text, SendMessageToPC, SpeakString, etc.\n"
+            "Return ONLY a JSON object. Keys are \"0\", \"1\", … matching the input. "
+            "Each value must be an object: {\"translate\": true} or {\"translate\": false}. "
+            "Use false for script names, tags, resrefs, variable names, debug logs, "
+            "identifiers, and code-like fragments. "
+            "Short NPC lines (e.g. \"Mommy.\", \"I'm okay, sir. I think.\", \"Help!\") "
+            "are usually real dialogue — use translate: true unless it is obviously a token. "
+            "Informal or broken English in-character lines still count as dialogue. "
+            "Use true for natural language the player reads.\n"
+        )
+
+    def _ncs_gate_build_user_prompt(
+        self,
+        *,
+        source_lang: str,
+        entries: List[Dict[str, Any]],
+    ) -> str:
+        user_payload: Dict[str, Dict[str, str]] = {}
+        for e in entries:
+            user_payload[str(e["key"])] = {
+                "text": e.get("text", ""),
+                "file": str(e.get("file", "")),
+                "offset": str(e.get("offset", "")),
+                "hint": str(e.get("hint", "")),
+            }
+        return (
+            f"Source language label: {source_lang}. Classify each entry.\n\n"
+            + json.dumps(user_payload, ensure_ascii=False)
+        )
+
+    def _parse_ncs_gate_raw(
+        self,
+        raw: str,
+        entries: List[Dict[str, Any]],
+    ) -> Dict[str, bool]:
+        cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+        decoder = json.JSONDecoder()
+        idx = cleaned.find("{")
+        if idx == -1:
+            raise json.JSONDecodeError("No JSON object", cleaned, 0)
+        parsed, _ = decoder.raw_decode(cleaned, idx)
+
+        out: Dict[str, bool] = {}
+        for e in entries:
+            k = str(e["key"])
+            cell: Union[Dict[str, Any], bool, None] = parsed.get(k)
+            if isinstance(cell, dict):
+                out[k] = bool(cell.get("translate", False))
+            elif isinstance(cell, bool):
+                out[k] = cell
+            else:
+                out[k] = False
+        return out
+
+    async def _ncs_gate_batch_with_recovery(
+        self,
+        entries: List[Dict[str, Any]],
+        *,
+        source_lang: str,
+    ) -> Dict[str, bool]:
+        """Parse gate JSON with token bump retries, then split batch on failure."""
+        if not entries:
+            return {}
+
+        max_tok = min(8192, TRANSLATION_MAX_TOKENS)
+        last_err: Optional[json.JSONDecodeError] = None
+        for attempt in range(2):
+            try:
+                raw = await self._chat_completion_json_async(
+                    self._ncs_gate_system_prompt(),
+                    self._ncs_gate_build_user_prompt(
+                        source_lang=source_lang, entries=entries
+                    ),
+                    max_tokens=max_tok,
+                    temperature=0.15,
+                    response_format={"type": "json_object"},
+                )
+                return self._parse_ncs_gate_raw(raw, entries)
+            except json.JSONDecodeError as err:
+                last_err = err
+                logger.warning(
+                    "NCS gate JSON parse failed (attempt %d/2, %d entries): %s",
+                    attempt + 1,
+                    len(entries),
+                    err,
+                )
+                max_tok = min(TRANSLATION_MAX_TOKENS, max(max_tok * 2, 4096))
+
+        if len(entries) <= 1:
+            logger.warning(
+                "NCS gate giving up on batch; defaulting to translate=false: %s",
+                last_err,
+            )
+            return {str(e["key"]): False for e in entries}
+
+        mid = len(entries) // 2
+        left = entries[:mid]
+        right = entries[mid:]
+        left_rekeyed = [{**e, "key": str(i)} for i, e in enumerate(left)]
+        right_rekeyed = [{**e, "key": str(i)} for i, e in enumerate(right)]
+        left_out = await self._ncs_gate_batch_with_recovery(
+            left_rekeyed, source_lang=source_lang
+        )
+        right_out = await self._ncs_gate_batch_with_recovery(
+            right_rekeyed, source_lang=source_lang
+        )
+        merged: Dict[str, bool] = {}
+        for i, e in enumerate(left):
+            merged[str(e["key"])] = left_out[str(i)]
+        for i, e in enumerate(right):
+            merged[str(e["key"])] = right_out[str(i)]
+        return merged
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=60),
@@ -519,67 +638,5 @@ class OpenRouterProvider(BaseAIProvider):
         source_lang: str,
     ) -> Dict[str, bool]:
         """LLM gate: whether each NCS string occurrence is player-facing."""
-        if not entries:
-            return {}
-
-        system_prompt = (
-            "You classify strings from Neverwinter Nights (NWN) compiled NWScript. "
-            "For each item, decide if it should be translated for players — text "
-            "shown as dialog, floating text, SendMessageToPC, SpeakString, etc.\n"
-            "Return ONLY a JSON object. Keys are \"0\", \"1\", … matching the input. "
-            "Each value must be an object: {\"translate\": true} or {\"translate\": false}. "
-            "Use false for script names, tags, resrefs, variable names, debug logs, "
-            "identifiers, and code-like fragments. "
-            "Short NPC lines (e.g. \"Mommy.\", \"I'm okay, sir. I think.\", \"Help!\") "
-            "are usually real dialogue — use translate: true unless it is obviously a token. "
-            "Informal or broken English in-character lines still count as dialogue. "
-            "Use true for natural language the player reads.\n"
-        )
-        user_payload: Dict[str, Dict[str, str]] = {}
-        for e in entries:
-            user_payload[str(e["key"])] = {
-                "text": e.get("text", ""),
-                "file": str(e.get("file", "")),
-                "offset": str(e.get("offset", "")),
-                "hint": str(e.get("hint", "")),
-            }
-        user_prompt = (
-            f"Source language label: {source_lang}. Classify each entry.\n\n"
-            + json.dumps(user_payload, ensure_ascii=False)
-        )
-
-        try:
-            raw = await self._chat_completion_json_async(
-                system_prompt,
-                user_prompt,
-                max_tokens=min(8192, TRANSLATION_MAX_TOKENS),
-                temperature=0.15,
-                response_format={"type": "json_object"},
-            )
-            cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
-            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
-            decoder = json.JSONDecoder()
-            idx = cleaned.find("{")
-            if idx == -1:
-                return {str(e["key"]): False for e in entries}
-            parsed, _ = decoder.raw_decode(cleaned, idx)
-
-            out: Dict[str, bool] = {}
-            for e in entries:
-                k = str(e["key"])
-                cell: Union[Dict[str, Any], bool, None] = parsed.get(k)
-                if isinstance(cell, dict):
-                    out[k] = bool(cell.get("translate", False))
-                elif isinstance(cell, bool):
-                    out[k] = cell
-                else:
-                    out[k] = False
-            return out
-        except json.JSONDecodeError as err:
-            logger.warning("NCS gate JSON parse failed: %s", err)
-            return {str(e["key"]): False for e in entries}
-        except (RateLimitError, APIConnectionError, APITimeoutError):
-            raise
-        except Exception as e:
-            self._map_openrouter_exception(e)
+        return await self._ncs_gate_batch_with_recovery(entries, source_lang=source_lang)
 

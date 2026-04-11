@@ -17,6 +17,7 @@ from .area_extractor import (
 )
 from .module_extractor import ModuleExtractor
 from .ncs_extractor import NcsExtractor
+from .git_extractor import GitExtractor
 
 __all__ = [
     "BaseExtractor",
@@ -34,6 +35,7 @@ __all__ = [
     "StoreExtractor",
     "ModuleExtractor",
     "NcsExtractor",
+    "GitExtractor",
 ]
 
 # Singleton registry: file extension -> extractor instance
@@ -50,6 +52,7 @@ for _cls in [
     StoreExtractor,
     ModuleExtractor,
     NcsExtractor,
+    GitExtractor,
 ]:
     _inst = _cls()
     for _ext in _inst.SUPPORTED_TYPES:

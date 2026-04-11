@@ -111,3 +111,10 @@ class TaskHistoryResponse(BaseModel):
     """List of tasks for a client token."""
 
     items: List[TaskHistoryItem]
+
+
+class ConfigResponse(BaseModel):
+    """Server-side defaults for the UI (API key from env, default model)."""
+
+    api_key: Optional[str] = None
+    default_model: str

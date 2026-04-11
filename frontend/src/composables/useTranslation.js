@@ -3,6 +3,7 @@ import {
   postTranslate,
   postTestConnection,
   fetchModels,
+  fetchConfig,
   fetchTranslations,
   postRebuild,
   downloadUrl,
@@ -229,6 +230,25 @@ export function useTranslation() {
     }
   }
 
+  async function loadConfig(retries = 5, delayMs = 1000) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const data = await fetchConfig();
+        if (data.api_key && !t.apiKey) {
+          t.apiKey = data.api_key;
+        }
+        if (data.default_model && !t.model) {
+          t.model = data.default_model;
+        }
+        return;
+      } catch {
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
+      }
+    }
+  }
+
   async function startTranslation() {
     if (!t.selectedFile) {
       throw new Error(i("error.noFile"));
@@ -346,6 +366,7 @@ export function useTranslation() {
     phaseLabel,
     reset,
     loadModels,
+    loadConfig,
     startTranslation,
     testConnection,
     resultDownloadUrl,

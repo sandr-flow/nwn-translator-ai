@@ -81,6 +81,10 @@ export async function fetchModels() {
   return fetchJson("/api/models");
 }
 
+export async function fetchConfig() {
+  return fetchJson("/api/config");
+}
+
 export function downloadUrl(taskId, kind) {
   const base = apiUrl(`/api/tasks/${taskId}/${kind}`);
   return base;

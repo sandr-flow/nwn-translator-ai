@@ -3,8 +3,11 @@
 import os
 import sys
 
+from dotenv import load_dotenv
+
 
 def main() -> None:
+    load_dotenv()
     try:
         import uvicorn
     except ImportError as e:

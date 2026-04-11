@@ -29,6 +29,7 @@ from .database import (
     update_task_row,
 )
 from .schemas import (
+    ConfigResponse,
     ModelsResponse,
     RebuildRequest,
     RebuildResponse,
@@ -566,4 +567,14 @@ async def list_models() -> ModelsResponse:
     return ModelsResponse(
         default_model=OpenRouterProvider.DEFAULT_MODEL,
         models=list(OpenRouterProvider.POPULAR_MODELS),
+    )
+
+
+@router.get("/config", response_model=ConfigResponse)
+async def get_config() -> ConfigResponse:
+    """Return server-side defaults: API key from env (if set) and default model."""
+    api_key = os.environ.get("NWN_TRANSLATE_API_KEY", "").strip() or None
+    return ConfigResponse(
+        api_key=api_key,
+        default_model=OpenRouterProvider.DEFAULT_MODEL,
     )

@@ -31,6 +31,7 @@ class TestConnectionRequest(BaseModel):
     api_key: str = Field(..., min_length=1)
     model: Optional[str] = None
     target_lang: str = "russian"
+    reasoning_effort: Optional[str] = None
 
 
 class TestConnectionResponse(BaseModel):

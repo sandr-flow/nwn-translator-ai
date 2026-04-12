@@ -46,6 +46,30 @@ def _glossary_run_timeout() -> float:
 GLOSSARY_LLM_TIMEOUT: float = _glossary_llm_timeout()
 GLOSSARY_RUN_TIMEOUT: float = _glossary_run_timeout()
 
+# OpenRouter Chat API ``reasoning.effort`` (see OpenRouter schema).
+OPENROUTER_REASONING_EFFORT_VALUES = frozenset(
+    {"xhigh", "high", "medium", "low", "minimal", "none"}
+)
+
+
+def parse_reasoning_effort(raw: Optional[str]) -> Optional[str]:
+    """Normalize OpenRouter ``reasoning.effort`` or return ``None`` when disabled.
+
+    Raises:
+        ValueError: If *raw* is non-empty but not a known effort level.
+    """
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    if not s:
+        return None
+    if s not in OPENROUTER_REASONING_EFFORT_VALUES:
+        raise ValueError(
+            f"Invalid reasoning_effort {raw!r}; expected one of "
+            f"{sorted(OPENROUTER_REASONING_EFFORT_VALUES)}"
+        )
+    return s
+
 
 def max_concurrent_from_environment() -> int:
     """Max parallel OpenRouter HTTP requests (asyncio + semaphore, not OS threads).
@@ -97,6 +121,9 @@ class TranslationConfig:
     #: If True, skip the LLM gate for NCS strings (translate all extractor-approved items).
     skip_ncs_llm_gate: bool = False
 
+    #: Optional OpenRouter ``reasoning.effort`` (``None`` = omit parameter, same as before).
+    reasoning_effort: Optional[str] = None
+
     # Progress Reporting
     verbose: bool = False
     quiet: bool = False
@@ -115,6 +142,8 @@ class TranslationConfig:
             from .ai_providers.openrouter_provider import OpenRouterProvider
 
             self.model = OpenRouterProvider.DEFAULT_MODEL
+
+        self.reasoning_effort = parse_reasoning_effort(self.reasoning_effort)
 
     def get_api_key(self) -> str:
         """Get API key, prompting if necessary."""

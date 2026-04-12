@@ -15,7 +15,11 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
-from ..config import max_concurrent_from_environment, target_lang_supported_for_nwn_injection
+from ..config import (
+    max_concurrent_from_environment,
+    parse_reasoning_effort,
+    target_lang_supported_for_nwn_injection,
+)
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..ai_providers import OpenRouterProvider, create_provider
@@ -134,6 +138,7 @@ async def start_translate(
     use_context: bool = Form(True),
     max_concurrent_requests: Optional[int] = Form(None),
     player_gender: str = Form("male"),
+    reasoning_effort: Optional[str] = Form(None),
 ) -> TranslateResponse:
     """Accept a .mod/.erf/.hak upload and start translation in the background."""
     ip = _client_ip(request)
@@ -166,6 +171,11 @@ async def start_translate(
     sl_norm = (source_lang or "").strip() or "auto"
     if sl_norm.lower() != "auto" and not target_lang_supported_for_nwn_injection(sl_norm):
         raise HTTPException(status_code=400, detail=f"Исходный язык: {_cp1251_lang_error}")
+
+    try:
+        reasoning_effort_norm = parse_reasoning_effort(reasoning_effort)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     cl = request.headers.get("content-length")
     if cl is not None:
@@ -211,6 +221,7 @@ async def start_translate(
             use_context=use_context,
             max_concurrent_requests=mc,
             player_gender=player_gender.strip() or "male",
+            reasoning_effort=reasoning_effort_norm,
             input_path=input_path,
         )
 
@@ -544,7 +555,13 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
     """Verify OpenRouter API key and model with a tiny translation."""
     text = "Hello, welcome to my module!"
     try:
-        provider = create_provider(body.api_key.strip(), body.model)
+        try:
+            reff = parse_reasoning_effort(body.reasoning_effort)
+        except ValueError as e:
+            return TestConnectionResponse(ok=False, error=str(e))
+        provider = create_provider(
+            body.api_key.strip(), body.model, reasoning_effort=reff
+        )
         result = await asyncio.to_thread(
             provider.translate, text, "english", body.target_lang
         )

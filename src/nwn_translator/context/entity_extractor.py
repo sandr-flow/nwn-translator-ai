@@ -211,6 +211,7 @@ class EntityExtractor:
                         user_prompt,
                         max_tokens=GLOSSARY_MAX_TOKENS,
                         temperature=GLOSSARY_TEMPERATURE,
+                        use_reasoning=False,
                     ),
                     timeout=GLOSSARY_LLM_TIMEOUT,
                 )

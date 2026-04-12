@@ -16,7 +16,11 @@ from rich.logging import RichHandler
 from rich.panel import Panel
 
 from .ai_providers import OpenRouterProvider, create_provider
-from .config import TranslationConfig, STANDARD_TOKENS
+from .config import (
+    OPENROUTER_REASONING_EFFORT_VALUES,
+    TranslationConfig,
+    STANDARD_TOKENS,
+)
 from .main import translate_module
 
 # Setup console and logging
@@ -163,6 +167,15 @@ def cli(ctx):
     show_default=True,
     help="Player character gender (affects grammatical forms in translation)",
 )
+@click.option(
+    "--reasoning-effort",
+    type=click.Choice(sorted(OPENROUTER_REASONING_EFFORT_VALUES)),
+    default=None,
+    help=(
+        "OpenRouter reasoning.effort for supported models; omitted by default. "
+        "If the API rejects it, the client retries without reasoning."
+    ),
+)
 def translate(
     input_file: Path,
     api_key: str,
@@ -180,6 +193,7 @@ def translate(
     max_concurrent: Optional[int],
     tlk: Path,
     player_gender: str,
+    reasoning_effort: Optional[str],
 ):
     """Translate a NWN module file.
 
@@ -231,6 +245,8 @@ def translate(
         config_kwargs["api_key"] = api_key
     if max_concurrent is not None:
         config_kwargs["max_concurrent_requests"] = max(1, max_concurrent)
+    if reasoning_effort:
+        config_kwargs["reasoning_effort"] = reasoning_effort
 
     config = TranslationConfig(**config_kwargs)
 
@@ -245,8 +261,11 @@ def translate(
         console.print(f"  Preserve tokens: {not no_tokens}")
         console.print(
             f"  Max concurrent API requests: {config.max_concurrent_requests} "
-            f"(NWN_TRANSLATE_MAX_CONCURRENT / --max-concurrent)\n"
+            f"(NWN_TRANSLATE_MAX_CONCURRENT / --max-concurrent)"
         )
+        if config.reasoning_effort:
+            console.print(f"  Reasoning effort: {config.reasoning_effort}")
+        console.print()
 
     try:
         # Perform translation
@@ -288,11 +307,18 @@ def translate(
     envvar="NWN_TRANSLATE_API_KEY",
     help="OpenRouter API key (optional if NWN_TRANSLATE_API_KEY is set, e.g. in .env)",
 )
+@click.option(
+    "--reasoning-effort",
+    type=click.Choice(sorted(OPENROUTER_REASONING_EFFORT_VALUES)),
+    default=None,
+    help="OpenRouter reasoning.effort (optional).",
+)
 def test(
     model: str,
     text: str,
     target_lang: str,
     api_key: str,
+    reasoning_effort: Optional[str],
 ):
     """Test OpenRouter with a simple translation.
 
@@ -315,7 +341,9 @@ def test(
                 "or pass --api-key"
             )
             sys.exit(1)
-        provider_instance = create_provider(key, model)
+        provider_instance = create_provider(
+            key, model, reasoning_effort=reasoning_effort
+        )
         result = provider_instance.translate(text, "english", target_lang)
 
         if result.success:

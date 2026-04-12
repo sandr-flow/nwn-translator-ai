@@ -18,7 +18,13 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, OpenAI
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AsyncOpenAI,
+    BadRequestError,
+    OpenAI,
+)
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -39,6 +45,7 @@ from ..config import (
     TRANSLATION_MAX_TOKENS,
     GLOSSARY_TEMPERATURE,
     GLOSSARY_MAX_TOKENS,
+    parse_reasoning_effort,
 )
 from ..race_dictionary import match_race_terms
 
@@ -95,11 +102,13 @@ class OpenRouterProvider(BaseAIProvider):
             site_url: Your app's URL, forwarded as HTTP-Referer header.
                 OpenRouter uses this for attribution / rate-limit tiers.
             site_name: Your app's name, forwarded as X-Title header.
-            **kwargs: Ignored (reserved for forward compatibility).
+            **kwargs: Passed to base (e.g. ``player_gender``); ``reasoning_effort`` is consumed here for OpenRouter's ``reasoning`` request field.
         """
+        reasoning_raw = kwargs.pop("reasoning_effort", None)
         self.site_url = site_url
         self.site_name = site_name
         super().__init__(api_key, model, **kwargs)
+        self._reasoning_effort = parse_reasoning_effort(reasoning_raw)
         _headers = {
             "HTTP-Referer": self.site_url,
             "X-Title": self.site_name,
@@ -165,6 +174,45 @@ class OpenRouterProvider(BaseAIProvider):
             Provider identifier string.
         """
         return "openrouter"
+
+    def _reasoning_extra_body(self) -> Optional[Dict[str, Any]]:
+        """OpenRouter ``extra_body`` fragment for ``reasoning``, or ``None``."""
+        if not self._reasoning_effort:
+            return None
+        return {"reasoning": {"effort": self._reasoning_effort}}
+
+    def _chat_completions_create_sync(self, *, use_reasoning: bool = True, **kwargs: Any):
+        """``chat.completions.create`` with optional ``reasoning``; one 400 retry without it."""
+        reasoning_extra = self._reasoning_extra_body() if use_reasoning else None
+        if reasoning_extra:
+            call_kw = {**kwargs, "extra_body": reasoning_extra}
+            try:
+                return self.client.chat.completions.create(**call_kw)
+            except BadRequestError:
+                logger.warning(
+                    "OpenRouter returned HTTP 400 with reasoning enabled; retrying without reasoning"
+                )
+                return self.client.chat.completions.create(**kwargs)
+        return self.client.chat.completions.create(**kwargs)
+
+    async def _chat_completions_create_async(
+        self,
+        *,
+        use_reasoning: bool = True,
+        **kwargs: Any,
+    ):
+        """Async ``chat.completions.create`` with optional ``reasoning``; one 400 retry without it."""
+        reasoning_extra = self._reasoning_extra_body() if use_reasoning else None
+        if reasoning_extra:
+            call_kw = {**kwargs, "extra_body": reasoning_extra}
+            try:
+                return await self.async_client.chat.completions.create(**call_kw)
+            except BadRequestError:
+                logger.warning(
+                    "OpenRouter returned HTTP 400 with reasoning enabled; retrying without reasoning"
+                )
+                return await self.async_client.chat.completions.create(**kwargs)
+        return await self.async_client.chat.completions.create(**kwargs)
 
     @staticmethod
     def _parse_model_json_response(raw_response: str) -> str:
@@ -252,7 +300,7 @@ class OpenRouterProvider(BaseAIProvider):
             system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
-            response = self.client.chat.completions.create(
+            response = self._chat_completions_create_sync(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -315,7 +363,7 @@ class OpenRouterProvider(BaseAIProvider):
             system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
-            response = await self.async_client.chat.completions.create(
+            response = await self._chat_completions_create_async(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -359,10 +407,11 @@ class OpenRouterProvider(BaseAIProvider):
         max_tokens: int,
         temperature: float,
         response_format: dict,
+        use_reasoning: bool = True,
     ) -> str:
         """One chat completion with forced JSON-style ``response_format`` (no retries)."""
         try:
-            response = await self.async_client.chat.completions.create(
+            response = await self._chat_completions_create_async(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -372,6 +421,7 @@ class OpenRouterProvider(BaseAIProvider):
                 max_tokens=max_tokens,
                 response_format=response_format,
                 stream=False,
+                use_reasoning=use_reasoning,
             )
             return (response.choices[0].message.content or "").strip()
         except (RateLimitError, APIConnectionError, APITimeoutError):
@@ -395,6 +445,7 @@ class OpenRouterProvider(BaseAIProvider):
         *,
         max_tokens: int = TRANSLATION_MAX_TOKENS,
         temperature: float = TRANSLATION_TEMPERATURE,
+        use_reasoning: bool = True,
     ) -> str:
         """Single chat completion with OpenAI/OpenRouter ``json_object`` mode."""
         return await self._chat_completion_json_async(
@@ -403,6 +454,7 @@ class OpenRouterProvider(BaseAIProvider):
             max_tokens=max_tokens,
             temperature=temperature,
             response_format={"type": "json_object"},
+            use_reasoning=use_reasoning,
         )
 
     async def complete_glossary_chat_async(
@@ -430,6 +482,7 @@ class OpenRouterProvider(BaseAIProvider):
             max_tokens=max_tokens,
             temperature=temperature,
             response_format={"type": "json_object"},
+            use_reasoning=False,
         )
 
     @retry(

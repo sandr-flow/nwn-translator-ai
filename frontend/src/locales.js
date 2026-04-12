@@ -27,6 +27,16 @@ export default {
     "form.gender": "Пол ГГ",
     "form.genderMale": "Мужской",
     "form.genderFemale": "Женский",
+    "form.reasoningEffort": "Reasoning (OpenRouter)",
+    "form.reasoningEffortHint":
+      "Для моделей с поддержкой расширенного рассуждения. Остальные продолжают работать: при отказе API запрос повторится без этого параметра.",
+    "form.reasoning.off": "Выкл.",
+    "form.reasoning.minimal": "minimal — минимум",
+    "form.reasoning.low": "low — низкий",
+    "form.reasoning.medium": "medium — средний",
+    "form.reasoning.high": "high — высокий",
+    "form.reasoning.xhigh": "xhigh — максимум",
+    "form.reasoning.none": "none (явно)",
 
     // ModelSelect
     "model.choose": "Выбрать модель…",
@@ -168,6 +178,16 @@ export default {
     "form.gender": "Player gender",
     "form.genderMale": "Male",
     "form.genderFemale": "Female",
+    "form.reasoningEffort": "Reasoning (OpenRouter)",
+    "form.reasoningEffortHint":
+      "For models that support extended reasoning. Others keep working: if the API rejects the parameter, the request is retried without it.",
+    "form.reasoning.off": "Off",
+    "form.reasoning.minimal": "minimal",
+    "form.reasoning.low": "low",
+    "form.reasoning.medium": "medium",
+    "form.reasoning.high": "high",
+    "form.reasoning.xhigh": "xhigh",
+    "form.reasoning.none": "none (explicit)",
 
     // ModelSelect
     "model.choose": "Choose model…",

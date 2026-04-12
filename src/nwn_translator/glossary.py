@@ -385,6 +385,7 @@ class GlossaryBuilder:
                 user_prompt,
                 max_tokens=GLOSSARY_MAX_TOKENS,
                 temperature=GLOSSARY_FALLBACK_TEMPERATURE,
+                use_reasoning=False,
             )
         return await asyncio.wait_for(coro, timeout=GLOSSARY_LLM_TIMEOUT)
 

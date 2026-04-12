@@ -86,6 +86,20 @@ def test_test_connection_mocked(client: TestClient, monkeypatch: pytest.MonkeyPa
     assert body["translated"] == "тест"
 
 
+def test_translate_invalid_reasoning_effort(client: TestClient) -> None:
+    files = {"file": ("tiny.mod", b"\x00" * 200, "application/octet-stream")}
+    data = {
+        "api_key": "sk-or-test",
+        "target_lang": "russian",
+        "source_lang": "auto",
+        "preserve_tokens": "true",
+        "use_context": "true",
+        "reasoning_effort": "not-a-valid-effort",
+    }
+    r = client.post("/api/translate", files=files, data=data)
+    assert r.status_code == 400
+
+
 def test_translate_status_download(client: TestClient) -> None:
     files = {"file": ("tiny.mod", b"\x00" * 200, "application/octet-stream")}
     data = {

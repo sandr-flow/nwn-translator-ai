@@ -1,7 +1,9 @@
 """Tests for OpenRouterProvider."""
 
 from unittest.mock import MagicMock, patch
+import httpx
 import pytest
+from openai import BadRequestError
 
 from src.nwn_translator.ai_providers.openrouter_provider import (
     OpenRouterProvider,
@@ -15,6 +17,12 @@ FAKE_KEY = "sk-or-v1-test1234"
 
 class TestOpenRouterProviderInit:
     """Verify provider initialisation."""
+
+    def test_invalid_reasoning_effort_raises(self):
+        """Unknown reasoning_effort must raise ValueError."""
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            with pytest.raises(ValueError, match="Invalid reasoning_effort"):
+                OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="invalid")
 
     def test_provider_name(self):
         """get_provider_name() must return 'openrouter'."""
@@ -118,6 +126,50 @@ class TestOpenRouterTranslate:
         p.client.chat.completions.create.side_effect = Exception("Internal server error")
         with pytest.raises(OpenRouterError):
             p.translate("text", "english", "russian")
+
+    def test_translate_includes_reasoning_extra_body(self):
+        """When reasoning_effort is set, chat.completions.create gets extra_body."""
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="medium")
+        mock_msg = MagicMock()
+        mock_msg.content = '{"translation": "x"}'
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        p.client = mock_client
+        result = p.translate("a", "english", "russian")
+        assert result.success is True
+        kw = mock_client.chat.completions.create.call_args.kwargs
+        assert kw["extra_body"] == {"reasoning": {"effort": "medium"}}
+
+    def test_translate_bad_request_retries_without_reasoning(self):
+        """HTTP 400 with reasoning must retry once without extra_body."""
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="high")
+
+        mock_msg = MagicMock()
+        mock_msg.content = '{"translation": "y"}'
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+
+        req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        resp = httpx.Response(400, request=req)
+        br = BadRequestError("nope", response=resp, body={"error": {}})
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [br, mock_response]
+        p.client = mock_client
+
+        result = p.translate("a", "english", "russian")
+        assert result.success is True
+        assert mock_client.chat.completions.create.call_count == 2
+        second = mock_client.chat.completions.create.call_args_list[1].kwargs
+        assert "extra_body" not in second
 
 
 class TestCreateProvider:

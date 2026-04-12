@@ -39,6 +39,7 @@ export function useTranslation() {
     preserveTokens: true,
     useContext: true,
     playerGender: "male",
+    reasoningEffort: "",
     taskId: "",
     status: "",
     progress: 0,
@@ -275,6 +276,10 @@ export function useTranslation() {
     fd.append("preserve_tokens", t.preserveTokens ? "true" : "false");
     fd.append("use_context", t.useContext ? "true" : "false");
     fd.append("player_gender", t.playerGender);
+    const reff = typeof t.reasoningEffort === "string" ? t.reasoningEffort.trim() : "";
+    if (reff) {
+      fd.append("reasoning_effort", reff);
+    }
 
     const { task_id } = await postTranslate(fd);
     t.taskId = task_id;
@@ -286,11 +291,14 @@ export function useTranslation() {
       throw new Error(i("error.noKeyShort"));
     }
     const modelSlug = typeof t.model === "string" ? t.model.trim() : "";
-    return postTestConnection({
+    const reff = typeof t.reasoningEffort === "string" ? t.reasoningEffort.trim() : "";
+    const body = {
       api_key: t.apiKey.trim(),
-      model: modelSlug || undefined,
       target_lang: t.targetLang,
-    });
+    };
+    if (modelSlug) body.model = modelSlug;
+    if (reff) body.reasoning_effort = reff;
+    return postTestConnection(body);
   }
 
   function resultDownloadUrl() {

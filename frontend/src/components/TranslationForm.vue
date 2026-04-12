@@ -31,6 +31,16 @@ const genderOptions = computed(() => [
   { value: "female", label: i("form.genderFemale") },
 ]);
 
+const REASONING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "none"];
+
+const reasoningOptions = computed(() => [
+  { value: "", label: i("form.reasoning.off") },
+  ...REASONING_LEVELS.map((v) => ({
+    value: v,
+    label: i(`form.reasoning.${v}`),
+  })),
+]);
+
 async function onTest() {
   testMsg.value = "";
   testing.value = true;
@@ -51,9 +61,16 @@ async function onTest() {
 
 <template>
   <div class="space-y-4">
-    <div>
-      <label class="block text-sm text-nwn-muted mb-1">{{ i("form.model") }}</label>
-      <ModelSelect v-model="t.model" />
+    <div class="grid grid-cols-1 sm:grid-cols-5 gap-4 items-end">
+      <div class="sm:col-span-3">
+        <label class="block text-sm text-nwn-muted mb-1">{{ i("form.model") }}</label>
+        <ModelSelect v-model="t.model" />
+      </div>
+      <div class="sm:col-span-2">
+        <label class="block text-sm text-nwn-muted mb-1">{{ i("form.reasoningEffort") }}</label>
+        <CustomSelect v-model="t.reasoningEffort" :options="reasoningOptions" />
+      </div>
+      <p class="sm:col-span-5 text-xs text-nwn-muted/70 -mt-1">{{ i("form.reasoningEffortHint") }}</p>
     </div>
 
     <div>

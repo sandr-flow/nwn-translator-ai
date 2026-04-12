@@ -134,6 +134,7 @@ class ModuleTranslator:
             config.api_key,
             config.model,
             player_gender=config.player_gender,
+            reasoning_effort=config.reasoning_effort,
         )
 
         # Statistics

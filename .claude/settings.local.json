@@ -9,7 +9,8 @@
       "Bash(grep:*)",
       "WebFetch(domain:github.com)",
       "Bash(.venv/Scripts/python.exe:*)",
-      "Bash(ls D:\\\\Projects\\\\nwn-modules-translator\\\\src\\\\nwn_translator\\\\prompts*)"
+      "Bash(ls D:\\\\Projects\\\\nwn-modules-translator\\\\src\\\\nwn_translator\\\\prompts*)",
+      "Bash(ls D:/Projects/nwn-modules-translator/*.log D:/Projects/nwn-modules-translator/*.txt)"
     ]
   }
 }

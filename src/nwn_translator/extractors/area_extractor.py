@@ -112,22 +112,27 @@ class TriggerExtractor(BaseExtractor):
         """
         tag = parsed_data.get("Tag", file_path.stem)
         items: List[TranslatableItem] = []
-        name_item = self._make_name_item(
-            parsed_data, file_path, "LocalizedName", "Trigger", "trigger_name"
-        )
-        if name_item:
-            items.append(name_item)
-        desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))
-        if desc:
-            items.append(
-                TranslatableItem(
-                    text=desc,
-                    context=f"Trigger description: {tag}",
-                    item_id=f"{tag}_description",
-                    location=str(file_path),
-                    metadata={"type": "trigger_description", "tag": tag},
-                )
+        # Only trap triggers have player-visible names; scripting triggers
+        # (invisible regions that fire scripts) should not be translated.
+        if parsed_data.get("TrapFlag"):
+            name_item = self._make_name_item(
+                parsed_data, file_path, "LocalizedName", "Trigger", "trigger_name"
             )
+            if name_item:
+                items.append(name_item)
+            desc = self._extract_text_from_local_string(
+                parsed_data.get("Description", {})
+            )
+            if desc:
+                items.append(
+                    TranslatableItem(
+                        text=desc,
+                        context=f"Trigger description: {tag}",
+                        item_id=f"{tag}_description",
+                        location=str(file_path),
+                        metadata={"type": "trigger_description", "tag": tag},
+                    )
+                )
         return ExtractedContent(
             content_type="trigger",
             items=items,

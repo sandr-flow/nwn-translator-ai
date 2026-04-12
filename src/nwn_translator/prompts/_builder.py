@@ -195,6 +195,58 @@ def build_dialog_system_prompt(
     )
 
 
+def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
+    """System prompt for extracting proper nouns from game texts.
+
+    Used by :class:`~nwn_translator.context.entity_extractor.EntityExtractor`
+    to find character/location/organization names that are embedded in
+    dialogs, descriptions, and sign text but don't appear as standalone
+    GFF fields (and are therefore missed by WorldScanner).
+
+    Args:
+        source_lang: The language of the texts being analyzed. Names must be
+            returned in this language exactly as they appear in the source.
+    """
+    return (
+        f"You are analyzing {source_lang} texts from a Neverwinter Nights game module.\n"
+        "Extract ALL proper nouns you find: character names, place names, "
+        "organization names, and unique named objects.\n\n"
+        "Return a single JSON object with one key \"entities\" whose value is "
+        "an array of entity objects with \"name\" and \"type\" fields.\n"
+        'Valid types: "character", "location", "organization", "item", "unknown".\n\n'
+        "FEW-SHOT EXAMPLES (note: these illustrate the task; real inputs will be "
+        f"in {source_lang}):\n\n"
+        "Input:\n"
+        '[0] "Leading a coach to Stout Village with farming equipment to deliver."\n'
+        '[1] "Gotta hand-carry some letters to the PassGate from the castle."\n'
+        '[2] "Hello! I can take you back to Penultima City, if you\'d like to leave."\n'
+        '[3] "I saw your ad posted by the Guild of Middlemen. You\'re looking for '
+        'adventurer(s), yes?"\n'
+        '[4] "Hello! I\'m the Magical Plot Fairy. Do you need a recap?"\n'
+        '[5] "Contact R. Freely in Stout Village for details."\n\n'
+        "Output:\n"
+        "{\"entities\": [\n"
+        '  {"name": "Stout Village", "type": "location"},\n'
+        '  {"name": "PassGate", "type": "location"},\n'
+        '  {"name": "Penultima City", "type": "location"},\n'
+        '  {"name": "Guild of Middlemen", "type": "organization"},\n'
+        '  {"name": "Magical Plot Fairy", "type": "character"},\n'
+        '  {"name": "R. Freely", "type": "character"}\n'
+        "]}\n\n"
+        "Rules:\n"
+        "- Include proper nouns that are names of specific characters, places, "
+        "organizations, or unique objects.\n"
+        "- Do NOT include common game terms (sword, goblin, mine, chest, potion, etc.).\n"
+        "- Do NOT include race or class names (dwarf, elf, wizard, halfling, etc.).\n"
+        "- Do NOT include common words, adjectives, or generic phrases.\n"
+        "- If uncertain about the category, use \"unknown\".\n"
+        "- Each name should appear only once in your output (deduplicate across all input lines).\n"
+        "- Preserve original spelling exactly as it appears in the text.\n"
+        "- Return {\"entities\": []} if no proper nouns are found.\n"
+        "Do not use markdown code fences."
+    )
+
+
 def build_glossary_system_prompt(target_lang: str) -> str:
     """System prompt for glossary proper-name translation."""
     ex = get_examples(target_lang)

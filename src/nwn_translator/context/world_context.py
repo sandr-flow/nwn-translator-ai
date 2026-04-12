@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from ..file_handlers import read_gff
 from ..file_handlers.tlk_reader import TLKFile
 from ..extractors.base import extract_local_string
+from ..nwn_constants import race_label, gender_label
 
 if TYPE_CHECKING:
     from ..glossary import Glossary
@@ -40,11 +41,15 @@ class WorldContext:
     areas: Dict[str, str] = field(default_factory=dict)
     quests: Dict[str, str] = field(default_factory=dict)
     items: Dict[str, str] = field(default_factory=dict)
+    #: Proper nouns discovered by :class:`EntityExtractor` in text bodies.
+    #: Populated after Phase A, before glossary build.
+    extracted_names: List[Tuple[str, str]] = field(default_factory=list)
 
     def get_all_names(self) -> List[Tuple[str, str]]:
         """Collect (name, category) pairs for glossary pre-translation.
 
-        Categories: ``character``, ``location``, ``quest``, ``item``.
+        Categories: ``character``, ``location``, ``quest``, ``item``,
+        ``organization``, ``unknown``.
         """
         out: List[Tuple[str, str]] = []
 
@@ -67,6 +72,11 @@ class WorldContext:
         for _tag, name in sorted(self.items.items()):
             if name and str(name).strip():
                 out.append((str(name).strip(), "item"))
+
+        for name, category in self.extracted_names:
+            n = (name or "").strip()
+            if n:
+                out.append((n, category or "unknown"))
 
         return out
 
@@ -271,13 +281,8 @@ class WorldScanner:
         gender_id = data.get("Gender", -1)
         conversation = data.get("Conversation", "")
 
-        race_map = {
-            0: "Dwarf", 1: "Elf", 2: "Gnome", 3: "Halfling", 4: "Half-Elf", 5: "Half-Orc", 6: "Human"
-        }
-        gender_map = {0: "Male", 1: "Female", 2: "Both", 3: "Other", 4: "None"}
-
-        race_str = race_map.get(race_id, "Creature")
-        gender_str = gender_map.get(gender_id, "")
+        race_str = race_label(race_id) or "Creature"
+        gender_str = gender_label(gender_id)
 
         # Only add to context if it has a conversation or a description,
         # otherwise we might fill context window with generic monsters.

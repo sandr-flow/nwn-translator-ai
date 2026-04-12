@@ -7,7 +7,7 @@ strings are translated in Phase A/B and patched in :func:`patch_git_file`.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..injectors.git_injector import (
     INSTANCE_LISTS,
@@ -16,56 +16,151 @@ from ..injectors.git_injector import (
     _iter_nested_item_entries,
     is_internal_tag,
 )
-from .base import BaseExtractor, ExtractedContent, TranslatableItem
+from ..nwn_constants import race_label, gender_label, base_item_label
+from .base import BaseExtractor, ExtractedContent, TranslatableItem, extract_local_string
 
 
-def _meta_for_instance_field(list_key: str, field_name: str) -> Tuple[str, str]:
-    """Return (metadata ``type``, short context label) for batching / prompts."""
+def _meta_type_for_instance_field(list_key: str, field_name: str) -> str:
+    """Return metadata ``type`` string for batching decisions."""
     if list_key == "Creature List":
         if field_name == "FirstName":
-            return "creature_first_name", "Creature first name (area instance)"
+            return "creature_first_name"
         if field_name == "LastName":
-            return "creature_last_name", "Creature last name (area instance)"
+            return "creature_last_name"
         if field_name == "Description":
-            return "creature_description", "Creature description (area instance)"
+            return "creature_description"
     if list_key == "Placeable List":
         if field_name == "LocName":
-            return "placeable_name", "Placeable name (area instance)"
+            return "placeable_name"
         if field_name == "Description":
-            return "placeable_description", "Placeable description (area instance)"
+            return "placeable_description"
     if list_key == "Door List":
         if field_name == "LocalizedName":
-            return "door_name", "Door name (area instance)"
+            return "door_name"
         if field_name == "Description":
-            return "door_description", "Door description (area instance)"
+            return "door_description"
     if list_key == "TriggerList":
         if field_name == "LocalizedName":
-            return "trigger_name", "Trigger name (area instance)"
+            return "trigger_name"
         if field_name == "Description":
-            return "trigger_description", "Trigger description (area instance)"
+            return "trigger_description"
     if list_key == "WaypointList":
         if field_name == "LocalizedName":
-            return "waypoint_name", "Waypoint name (area instance)"
+            return "waypoint_name"
         if field_name == "Description":
-            return "waypoint_description", "Waypoint description (area instance)"
+            return "waypoint_description"
         if field_name == "MapNote":
-            return "waypoint_map_note", "Waypoint map note label (area instance)"
+            return "waypoint_map_note"
     if list_key == "StoreList":
         if field_name in ("LocName", "LocalizedName"):
-            return "store_name", "Store name (area instance)"
+            return "store_name"
         if field_name == "Description":
-            return "store_description", "Store description (area instance)"
-    return "git_instance_string", f"Area instance field ({list_key}.{field_name})"
+            return "store_description"
+    return "git_instance_string"
 
 
-def _meta_for_inventory_field(field_name: str) -> Tuple[str, str]:
+def _meta_type_for_inventory_field(field_name: str) -> str:
+    """Return metadata ``type`` for an inventory/equipped item field."""
     if field_name == "LocalizedName":
-        return "item_name", "Item name (inventory / equipped instance)"
+        return "item_name"
     if field_name == "Description":
-        return "item_description", "Item description (inventory / equipped instance)"
+        return "item_description"
     if field_name == "DescIdentified":
-        return "item_identified_description", "Item identified description (instance)"
-    return "git_instance_string", f"Item field ({field_name})"
+        return "item_identified_description"
+    return "git_instance_string"
+
+
+def _build_instance_context(
+    list_key: str,
+    field_name: str,
+    instance: Dict[str, Any],
+) -> str:
+    """Build an enriched context string using metadata from the instance struct."""
+    if list_key == "Creature List":
+        race = race_label(instance.get("Race", -1))
+        gend = gender_label(instance.get("Gender", -1))
+        traits = ", ".join(filter(None, [race, gend]))
+        if field_name == "FirstName":
+            base = "NPC first name"
+            if traits:
+                return f"{base} ({traits}, area instance). Translate ONLY this name, do not add surname."
+            return f"{base} (area instance). Translate ONLY this name, do not add surname."
+        if field_name == "LastName":
+            base = "NPC last name or title"
+            if traits:
+                return f"{base} ({traits}, area instance). Translate ONLY this, do not prepend first name."
+            return f"{base} (area instance). Translate ONLY this, do not prepend first name."
+        if field_name == "Description":
+            first = extract_local_string(instance.get("FirstName", {})) or ""
+            last = extract_local_string(instance.get("LastName", {})) or ""
+            full_name = " ".join(filter(None, [first, last]))
+            parts = filter(None, [f"name: {full_name}" if full_name else "", traits])
+            detail = ", ".join(parts)
+            if detail:
+                return f"Creature description ({detail}, area instance)"
+            return "Creature description (area instance)"
+
+    if list_key == "Placeable List":
+        if field_name == "LocName":
+            return "Placeable name (area instance)"
+        plc_name = extract_local_string(instance.get("LocName", {})) or ""
+        if plc_name:
+            return f"Description of placeable '{plc_name}'"
+        return "Placeable description (area instance)"
+
+    if list_key == "Door List":
+        if field_name == "LocalizedName":
+            return "Door name (area instance)"
+        return "Door description (area instance)"
+
+    if list_key == "TriggerList":
+        if field_name == "LocalizedName":
+            return "Trigger name (area instance)"
+        return "Trigger description (area instance)"
+
+    if list_key == "WaypointList":
+        if field_name == "LocalizedName":
+            return "Waypoint name (area instance)"
+        if field_name == "MapNote":
+            return "Waypoint map note label (area instance)"
+        return "Waypoint description (area instance)"
+
+    if list_key == "StoreList":
+        if field_name in ("LocName", "LocalizedName"):
+            return "Store name (area instance)"
+        return "Store description (area instance)"
+
+    return f"Area instance field ({list_key}.{field_name})"
+
+
+def _build_inventory_context(
+    field_name: str,
+    inv_item: Dict[str, Any],
+) -> str:
+    """Build an enriched context string for an inventory / equipped item field."""
+    bi = base_item_label(inv_item.get("BaseItem", -1))
+    item_name = extract_local_string(inv_item.get("LocalizedName", {})) or ""
+
+    if field_name == "LocalizedName":
+        if bi:
+            return f"Item name ({bi}, inventory instance)"
+        return "Item name (inventory instance)"
+
+    if field_name == "Description":
+        if bi and item_name:
+            return f"Description of {bi} '{item_name}' (inventory instance)"
+        if item_name:
+            return f"Item description for '{item_name}' (inventory instance)"
+        return "Item description (inventory instance)"
+
+    if field_name == "DescIdentified":
+        if bi and item_name:
+            return f"Identified description of {bi} '{item_name}' (inventory instance)"
+        if item_name:
+            return f"Item identified description for '{item_name}' (inventory instance)"
+        return "Item identified description (inventory instance)"
+
+    return f"Item field ({field_name})"
 
 
 class GitExtractor(BaseExtractor):
@@ -88,16 +183,14 @@ class GitExtractor(BaseExtractor):
         """Recurse store instance: ItemList rows + nested StoreList shelves."""
         for j, inv_item in enumerate(_iter_nested_item_entries(store_node, "ItemList")):
             for inv_field in ITEM_INVENTORY_FIELDS:
-                meta_type, ctx_label = _meta_for_inventory_field(inv_field)
+                meta_type = _meta_type_for_inventory_field(inv_field)
+                ctx_label = _build_inventory_context(inv_field, inv_item)
                 self._append_loc_string_item(
                     inv_item,
                     inv_field,
                     file_path,
                     meta_type=meta_type,
-                    context=(
-                        f"{ctx_label} in {stem}.git "
-                        f"(StoreList[{inst_idx}]{path_suffix}.ItemList[{j}])"
-                    ),
+                    context=ctx_label,
                     item_id=(
                         f"{stem}_StoreList_{inst_idx}_{path_suffix}_il{j}_{inv_field}"
                     ),
@@ -159,14 +252,20 @@ class GitExtractor(BaseExtractor):
             for inst_idx, instance in enumerate(instances):
                 if not isinstance(instance, dict):
                     continue
+                # Non-trap triggers are scripting-only — not player-visible.
+                if list_key == "TriggerList" and not instance.get("TrapFlag"):
+                    continue
                 for field_name in field_names:
-                    meta_type, ctx_label = _meta_for_instance_field(list_key, field_name)
+                    meta_type = _meta_type_for_instance_field(list_key, field_name)
+                    ctx_label = _build_instance_context(
+                        list_key, field_name, instance
+                    )
                     self._append_loc_string_item(
                         instance,
                         field_name,
                         file_path,
                         meta_type=meta_type,
-                        context=f"{ctx_label} in {stem}.git ({list_key}[{inst_idx}])",
+                        context=ctx_label,
                         item_id=f"{stem}_{list_key}_{inst_idx}_{field_name}",
                         items=items,
                     )
@@ -181,18 +280,16 @@ class GitExtractor(BaseExtractor):
                             _iter_nested_item_entries(instance, nested_key)
                         ):
                             for inv_field in ITEM_INVENTORY_FIELDS:
-                                meta_type, ctx_label = _meta_for_inventory_field(
-                                    inv_field
+                                meta_type = _meta_type_for_inventory_field(inv_field)
+                                ctx_label = _build_inventory_context(
+                                    inv_field, inv_item
                                 )
                                 self._append_loc_string_item(
                                     inv_item,
                                     inv_field,
                                     file_path,
                                     meta_type=meta_type,
-                                    context=(
-                                        f"{ctx_label} in {stem}.git "
-                                        f"({list_key}[{inst_idx}].{nested_key}[{j}])"
-                                    ),
+                                    context=ctx_label,
                                     item_id=(
                                         f"{stem}_{list_key}_{inst_idx}_{nested_key}_"
                                         f"{j}_{inv_field}"

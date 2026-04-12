@@ -316,6 +316,8 @@ class TranslationManager:
         "creature_first_name", "creature_last_name",
         "item_name", "area_name",
         "trigger_name", "placeable_name", "door_name", "store_name",
+        "waypoint_name", "waypoint_map_note",
+        "journal_category_name",
     })
 
     @staticmethod

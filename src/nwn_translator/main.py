@@ -35,6 +35,7 @@ from .ai_providers import create_provider
 from .translators.translation_manager import TranslationManager
 from .translators.context_translator import ContextualTranslationManager
 from .context.world_context import WorldScanner, WorldContext
+from .context.entity_extractor import EntityExtractor
 from .glossary import Glossary, GlossaryBuilder
 
 import threading
@@ -188,7 +189,7 @@ class ModuleTranslator:
         # Step 2.5: Load TLK file for resolving StrRef names
         self._load_tlk(extract_dir)
 
-        # Step 2.6: Build World Context (if enabled)
+        # Step 2.6: World scan (glossary build deferred until after Phase A)
         self.glossary = None
         if self.config.use_context:
             if self.config.progress_callback:
@@ -198,47 +199,15 @@ class ModuleTranslator:
                 extract_dir, tlk=self.tlk, gff_cache=self._gff_cache,
                 progress_callback=self.config.progress_callback,
             )
-            if self.world_context:
-                if self.config.progress_callback:
-                    self.config.progress_callback("scanning", 0, 1, "Building glossary...")
-                try:
-                    self.glossary = GlossaryBuilder().build(
-                        self.world_context, self.provider, self.config,
-                        progress_callback=self.config.progress_callback,
-                    )
-                except RuntimeError as e:
-                    logger.warning("Glossary build failed, continuing without it: %s", e)
-                    self.glossary = Glossary()
-            if self.config.progress_callback:
-                self.config.progress_callback("scanning", 1, 1, "done")
-
-        # Initialize single translation managers for the whole session
-        manager = TranslationManager(
-            self.config, self.provider, glossary=self.glossary
-        )
-        # Delta-tracking cursors for cumulative manager stats
-        self._prev_items = 0
-        self._prev_errors = 0
-        context_manager = (
-            ContextualTranslationManager(
-                self.config,
-                self.provider,
-                self.world_context,
-                translation_cache=manager.translation_cache,
-                glossary=self.glossary,
-            )
-            if self.config.use_context and self.world_context
-            else None
-        )
 
         # ── Phase A: parallel extract ──────────────────────────────────
+        # Phase A runs before glossary build so entity extraction can feed
+        # text-embedded proper nouns into the glossary.
         logger.info("Phase A: extracting translatable content...")
         total_files = len(translatable_files)
 
         # file_path -> (parsed_data, ExtractedContent, file_ext)
         extracted_map: Dict[Path, Tuple[Dict[str, Any], ExtractedContent, str]] = {}
-        # .dlg files that need contextual translation (handled separately)
-        dialog_files: List[Path] = []
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
         max_workers = max(1, getattr(self.config, 'max_concurrent_requests', 4))
@@ -261,13 +230,18 @@ class ModuleTranslator:
                     if result is not None:
                         parsed_data, extracted, file_ext = result
                         extracted_map[file_path] = (parsed_data, extracted, file_ext)
-                        if file_ext == ".dlg" and self.config.use_context and context_manager:
-                            dialog_files.append(file_path)
                 except Exception as e:
                     error_msg = f"Error extracting {file_path.name}: {e}"
                     with self._stats_lock:
                         self.stats["errors"].append(error_msg)
                     logger.error(error_msg)
+
+        # Decide which files go to the contextual dialog path.
+        use_context_manager = bool(self.config.use_context and self.world_context)
+        dialog_files: List[Path] = [
+            fp for fp, (_pd, _ex, ext) in extracted_map.items()
+            if ext == ".dlg" and use_context_manager
+        ]
 
         # Collect all unique non-dialog items into a single ExtractedContent
         non_dialog_items: List[TranslatableItem] = []
@@ -278,6 +252,65 @@ class ModuleTranslator:
         logger.info(
             "Phase A complete: %d files extracted, %d non-dialog items, %d dialog files",
             len(extracted_map), len(non_dialog_items), len(dialog_files),
+        )
+
+        # Step 2.7: Entity extraction from text bodies (feeds glossary).
+        if self.world_context is not None and extracted_map:
+            if self.config.progress_callback:
+                self.config.progress_callback("scanning", 0, 1, "Extracting entities from text…")
+            all_items: List[TranslatableItem] = []
+            for _fp, (_pd, extracted, _ext) in extracted_map.items():
+                all_items.extend(extracted.items)
+
+            known_names = {
+                name for name, _cat in self.world_context.get_all_names()
+            }
+            extracted_entities = EntityExtractor().extract(
+                all_items,
+                self.provider,
+                self.config,
+                known_names,
+                progress_callback=self.config.progress_callback,
+            )
+            if extracted_entities:
+                self.world_context.extracted_names = extracted_entities
+                logger.info(
+                    "Entity extraction added %d proper noun(s) to glossary input",
+                    len(extracted_entities),
+                )
+
+        # Step 2.8: Build glossary (now includes text-extracted names).
+        if self.config.use_context and self.world_context is not None:
+            if self.config.progress_callback:
+                self.config.progress_callback("scanning", 0, 1, "Building glossary...")
+            try:
+                self.glossary = GlossaryBuilder().build(
+                    self.world_context, self.provider, self.config,
+                    progress_callback=self.config.progress_callback,
+                )
+            except RuntimeError as e:
+                logger.warning("Glossary build failed, continuing without it: %s", e)
+                self.glossary = Glossary()
+            if self.config.progress_callback:
+                self.config.progress_callback("scanning", 1, 1, "done")
+
+        # Initialize translation managers for Phase B (need glossary).
+        manager = TranslationManager(
+            self.config, self.provider, glossary=self.glossary
+        )
+        # Delta-tracking cursors for cumulative manager stats
+        self._prev_items = 0
+        self._prev_errors = 0
+        context_manager = (
+            ContextualTranslationManager(
+                self.config,
+                self.provider,
+                self.world_context,
+                translation_cache=manager.translation_cache,
+                glossary=self.glossary,
+            )
+            if use_context_manager
+            else None
         )
 
         # ── Phase B: deduplicated translate ────────────────────────────

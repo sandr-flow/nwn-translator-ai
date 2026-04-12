@@ -247,6 +247,7 @@ class TestTriggerExtractorDescriptions:
         file_path = Path("trap.utt")
         parsed_data = {
             "Tag": "trap1",
+            "TrapFlag": 1,
             "LocalizedName": {"StrRef": -1, "Value": "Spike Trap"},
             "Description": {"StrRef": -1, "Value": "Dangerous when armed."},
         }
@@ -254,6 +255,17 @@ class TestTriggerExtractorDescriptions:
         texts = {item.text for item in result.items}
         assert "Spike Trap" in texts
         assert "Dangerous when armed." in texts
+
+    def test_scripting_trigger_skipped(self):
+        """Non-trap triggers (scripting only) produce no items."""
+        extractor = TriggerExtractor()
+        file_path = Path("scripting.utt")
+        parsed_data = {
+            "Tag": "SummonDawn",
+            "LocalizedName": {"StrRef": -1, "Value": "Summon Dawn"},
+        }
+        result = extractor.extract(file_path, parsed_data)
+        assert len(result.items) == 0
 
 
 class TestStoreExtractorDescriptions:

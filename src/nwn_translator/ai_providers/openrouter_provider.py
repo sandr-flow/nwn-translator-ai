@@ -167,7 +167,11 @@ class OpenRouterProvider(BaseAIProvider):
 
     @staticmethod
     def _parse_model_json_response(raw_response: str) -> str:
-        """Extract translated string from model JSON (``translation`` key)."""
+        """Extract translated string from model JSON (``translation`` key).
+
+        Returns the translated text, or ``""`` when the response is
+        truncated / unparseable JSON (caller should treat as failure).
+        """
         try:
             # Strip markdown code fences that some models wrap around JSON
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw_response.strip())
@@ -184,11 +188,16 @@ class OpenRouterProvider(BaseAIProvider):
             translated_text = parsed.get("translation", "")
             if not isinstance(translated_text, str) or not translated_text:
                 logger.warning("JSON parsed but 'translation' key missing or empty")
-                return str(raw_response)
+                return ""
             return translated_text
         except json.JSONDecodeError:
-            logger.warning("Failed to parse JSON from model response, using raw text")
-            return raw_response
+            # Response looks like truncated JSON — return empty to trigger retry
+            logger.warning(
+                "Truncated/invalid JSON in model response, will retry. "
+                "Raw (first 200 chars): %s",
+                (raw_response or "")[:200],
+            )
+            return ""
 
     def _map_openrouter_exception(self, e: Exception) -> None:
         """Raise RateLimitError or OpenRouterError from a caught API exception."""
@@ -252,6 +261,15 @@ class OpenRouterProvider(BaseAIProvider):
             raw_response = (response.choices[0].message.content or "").strip()
             translated_text = self._parse_model_json_response(raw_response)
 
+            if not translated_text:
+                return TranslationResult(
+                    translated="",
+                    original=text,
+                    success=False,
+                    error="Model returned empty or unparseable JSON",
+                    metadata={"model": self.model},
+                )
+
             return TranslationResult(
                 translated=translated_text,
                 original=text,
@@ -302,6 +320,15 @@ class OpenRouterProvider(BaseAIProvider):
 
             raw_response = (response.choices[0].message.content or "").strip()
             translated_text = self._parse_model_json_response(raw_response)
+
+            if not translated_text:
+                return TranslationResult(
+                    translated="",
+                    original=text,
+                    success=False,
+                    error="Model returned empty or unparseable JSON",
+                    metadata={"model": self.model},
+                )
 
             return TranslationResult(
                 translated=translated_text,
@@ -434,16 +461,25 @@ class OpenRouterProvider(BaseAIProvider):
         # Override the JSON output instruction for batch mode
         system_prompt += (
             "\nBATCH MODE: You will receive a JSON object mapping numeric IDs "
-            "(\"0\", \"1\", \"2\", ...) to short strings. "
+            "to items. Each item is either a plain string or an object "
+            '{"text": "...", "hint": "..."}. '
+            "The hint (e.g. \"item_name\", \"creature_first_name\", \"store_name\") "
+            "tells you what kind of game entity this is — use it to decide "
+            "whether to translate the meaning or transliterate. "
             "Return a JSON object with the EXACT SAME numeric keys, where each "
-            "value is the translated string. Do NOT rename, add, or remove keys. "
+            "value is the translated string (NOT an object). "
+            "Do NOT rename, add, or remove keys. "
             "Do NOT wrap in markdown. Output ONLY the JSON object.\n"
         )
 
-        # Build the batch payload: {"0": "text", "1": "text", ...}
-        batch_input = {}
+        # Build the batch payload with optional type hints from metadata
+        batch_input: dict = {}
         for i, item in enumerate(items):
-            batch_input[str(i)] = item.original
+            hint = (item.metadata or {}).get("type", "")
+            if hint:
+                batch_input[str(i)] = {"text": item.original, "hint": hint}
+            else:
+                batch_input[str(i)] = item.original
 
         user_prompt = (
             f"Translate each value from {source_lang}.\n\n"

@@ -36,8 +36,9 @@ INSTANCE_LISTS = {
     "Door List": ["LocalizedName", "Description"],
     # GFF label is ``TriggerList`` (no space); ``Trigger List`` would never match.
     "TriggerList": ["LocalizedName", "Description"],
-    # Waypoint map labels shown on minimap/automap are stored in MapNote.
-    "WaypointList": ["LocalizedName", "Description", "MapNote"],
+    # Only MapNote is player-visible (minimap/automap label).
+    # LocalizedName and Description are toolset-only — not translated.
+    "WaypointList": ["MapNote"],
     "StoreList": ["LocName", "LocalizedName", "Description"],
 }
 
@@ -187,6 +188,9 @@ def collect_git_strings_missing_from_translations(
             continue
         for instance in instances:
             if not isinstance(instance, dict):
+                continue
+            # Non-trap triggers are scripting-only — not player-visible.
+            if list_key == "TriggerList" and not instance.get("TrapFlag"):
                 continue
             _add_string_values_from_fields(
                 instance, field_names, found, existing_translations
@@ -351,6 +355,9 @@ def patch_git_file(
 
         for instance in instances:
             if not isinstance(instance, dict):
+                continue
+            # Non-trap triggers are scripting-only — not player-visible.
+            if list_key == "TriggerList" and not instance.get("TrapFlag"):
                 continue
 
             items_patched += _collect_locale_patches_on_struct(

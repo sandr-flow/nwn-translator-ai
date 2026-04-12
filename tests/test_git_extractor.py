@@ -91,6 +91,7 @@ def test_git_extractor_collects_trigger_list_map_note_names():
     gff = {
         "TriggerList": [
             {
+                "TrapFlag": 1,
                 "LocalizedName": {"StrRef": -1, "Value": "Market Square"},
                 "Description": {"StrRef": -1, "Value": ""},
             }

@@ -144,7 +144,7 @@ class ContextualTranslationManager:
         if not script:
             return translations
 
-        system_prompt = self._build_system_prompt()
+        system_prompt = self._build_system_prompt(source_text=script)
         user_prompt = self._build_user_prompt(file_path.name, script)
 
         logger.info(
@@ -373,9 +373,10 @@ class ContextualTranslationManager:
                 logger.debug("Failed to write to translation log: %s", log_e)
         return translations
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, source_text: str = "") -> str:
         """Build the system prompt containing world context and instructions."""
         from ..prompts import build_dialog_system_prompt
+        from ..race_dictionary import match_race_terms
 
         world_block = self.world_context.to_prompt_block(
             glossary=self.glossary,
@@ -384,6 +385,12 @@ class ContextualTranslationManager:
         glossary_block = ""
         if self.glossary and self.glossary.entries:
             glossary_block = self.glossary.to_prompt_block()
+
+        race_block = match_race_terms(source_text, self.config.target_lang)
+        if race_block:
+            glossary_block = (
+                glossary_block + "\n\n" + race_block if glossary_block else race_block
+            )
 
         return build_dialog_system_prompt(
             self.config.target_lang,

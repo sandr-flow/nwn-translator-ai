@@ -40,6 +40,7 @@ from ..config import (
     GLOSSARY_TEMPERATURE,
     GLOSSARY_MAX_TOKENS,
 )
+from ..race_dictionary import match_race_terms
 
 #: Exception types that should trigger automatic retry with exponential backoff.
 _RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError)
@@ -245,6 +246,9 @@ class OpenRouterProvider(BaseAIProvider):
 
         try:
             gb = glossary_block or ""
+            race_block = match_race_terms(text, target_lang)
+            if race_block:
+                gb = gb + "\n\n" + race_block if gb else race_block
             system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
@@ -305,6 +309,9 @@ class OpenRouterProvider(BaseAIProvider):
 
         try:
             gb = glossary_block or ""
+            race_block = match_race_terms(text, target_lang)
+            if race_block:
+                gb = gb + "\n\n" + race_block if gb else race_block
             system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
@@ -457,6 +464,12 @@ class OpenRouterProvider(BaseAIProvider):
             return []
 
         gb = glossary_block or ""
+        combined_text = " ".join(
+            item.original for item in items if item.original
+        )
+        race_block = match_race_terms(combined_text, target_lang)
+        if race_block:
+            gb = gb + "\n\n" + race_block if gb else race_block
         system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
         # Override the JSON output instruction for batch mode
         system_prompt += (

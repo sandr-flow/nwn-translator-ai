@@ -5,10 +5,9 @@ import { useI18n } from "../composables/useI18n.js";
 const { t: i } = useI18n();
 
 const presetDefs = [
+  { value: "openai/gpt-4.1", label: "GPT-4.1", descKey: "model.gpt41.desc" },
   { value: "google/gemini-3-flash-preview", label: "Gemini Flash", descKey: "model.geminiFlash.desc" },
   { value: "google/gemini-3.1-flash-lite-preview", label: "Gemini Flash Lite", descKey: "model.geminiFlashLite.desc" },
-  { value: "deepseek/deepseek-v3.2", label: "DeepSeek V3", descKey: "model.deepseek.desc" },
-  { value: "openai/gpt-5.4-nano", label: "GPT-5.4 Nano", descKey: "model.gptNano.desc" },
 ];
 
 const CUSTOM_KEY = "__custom__";

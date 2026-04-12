@@ -42,10 +42,9 @@ export default {
     "model.choose": "Выбрать модель…",
     "model.chooseFromList": "Выбрать из списка",
     "model.custom": "Другая модель…",
-    "model.geminiFlash.desc": "Отличное качество, дороже",
-    "model.geminiFlashLite.desc": "Высокое качество, быстрый перевод",
-    "model.deepseek.desc": "Хорошее качество, слабые идиомы, медленный",
-    "model.gptNano.desc": "Дёшево, нестабильное качество",
+    "model.gpt41.desc": "Отличное качество, дороже",
+    "model.geminiFlash.desc": "Лучший баланс цены и качества",
+    "model.geminiFlashLite.desc": "Дешевле, больше ошибок",
 
     // Languages
     "lang.auto": "Авто",
@@ -193,10 +192,9 @@ export default {
     "model.choose": "Choose model…",
     "model.chooseFromList": "Choose from list",
     "model.custom": "Other model…",
-    "model.geminiFlash.desc": "Excellent quality, higher cost",
-    "model.geminiFlashLite.desc": "High quality, fast translation",
-    "model.deepseek.desc": "Good quality, weak idioms, slow",
-    "model.gptNano.desc": "Cheap, inconsistent quality",
+    "model.gpt41.desc": "Excellent quality, higher cost",
+    "model.geminiFlash.desc": "Best balance of price and quality",
+    "model.geminiFlashLite.desc": "Cheaper, more errors",
 
     // Languages
     "lang.auto": "Auto",

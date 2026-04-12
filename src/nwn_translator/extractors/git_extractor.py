@@ -70,10 +70,53 @@ def _meta_type_for_inventory_field(field_name: str) -> str:
     return "git_instance_string"
 
 
+def _build_npc_name_index(
+    parsed_data: Dict[str, Any],
+) -> Dict[str, str]:
+    """Build a mapping of NPC first names to their gender from Creature List.
+
+    Returns ``{first_name_lower: gender_label}`` for all creatures with
+    a non-empty first name and a recognised gender.  Used to enrich context
+    for placeables/descriptions that mention an NPC possessively (``X's …``).
+    """
+    index: Dict[str, str] = {}
+    creatures = parsed_data.get("Creature List", [])
+    if not isinstance(creatures, list):
+        return index
+    for creature in creatures:
+        if not isinstance(creature, dict):
+            continue
+        first = extract_local_string(creature.get("FirstName", {})) or ""
+        first = first.strip()
+        if not first:
+            continue
+        gend = gender_label(creature.get("Gender", -1))
+        if gend:
+            index[first.lower()] = gend
+    return index
+
+
+def _npc_possessive_hint(
+    text: str,
+    npc_index: Dict[str, str],
+) -> str:
+    """If *text* contains ``<Name>'s``, return a context hint about that NPC's gender."""
+    if not npc_index or "'s" not in text:
+        return ""
+    for name_lower, gend in npc_index.items():
+        needle = name_lower + "'s"
+        if needle in text.lower():
+            original_name = text[text.lower().index(name_lower):
+                                 text.lower().index(name_lower) + len(name_lower)]
+            return f" (contains possessive of NPC '{original_name}', gender: {gend})"
+    return ""
+
+
 def _build_instance_context(
     list_key: str,
     field_name: str,
     instance: Dict[str, Any],
+    npc_index: Optional[Dict[str, str]] = None,
 ) -> str:
     """Build an enriched context string using metadata from the instance struct."""
     if list_key == "Creature List":
@@ -101,11 +144,15 @@ def _build_instance_context(
             return "Creature description (area instance)"
 
     if list_key == "Placeable List":
+        text = extract_local_string(instance.get("LocName", {})) or ""
         if field_name == "LocName":
-            return "Placeable name (area instance)"
-        plc_name = extract_local_string(instance.get("LocName", {})) or ""
-        if plc_name:
-            return f"Description of placeable '{plc_name}'"
+            hint = _npc_possessive_hint(text, npc_index) if npc_index else ""
+            return f"Placeable name (area instance){hint}"
+        plc_name = text
+        if field_name == "Description" and plc_name:
+            desc_text = extract_local_string(instance.get("Description", {})) or ""
+            hint = _npc_possessive_hint(desc_text, npc_index) if npc_index else ""
+            return f"Description of placeable '{plc_name}'{hint}"
         return "Placeable description (area instance)"
 
     if list_key == "Door List":
@@ -245,6 +292,8 @@ class GitExtractor(BaseExtractor):
         items: List[TranslatableItem] = []
         stem = file_path.stem
 
+        npc_index = _build_npc_name_index(parsed_data)
+
         for list_key, field_names in INSTANCE_LISTS.items():
             instances = parsed_data.get(list_key, [])
             if not isinstance(instances, list):
@@ -258,7 +307,7 @@ class GitExtractor(BaseExtractor):
                 for field_name in field_names:
                     meta_type = _meta_type_for_instance_field(list_key, field_name)
                     ctx_label = _build_instance_context(
-                        list_key, field_name, instance
+                        list_key, field_name, instance, npc_index
                     )
                     self._append_loc_string_item(
                         instance,

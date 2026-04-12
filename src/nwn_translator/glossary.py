@@ -56,7 +56,9 @@ class Glossary:
             return ""
         lines = [
             "GLOSSARY (canonical proper names — use these consistently in every line; "
-            "decline or conjugate as required by grammar in the target language):",
+            "decline or conjugate as required by grammar in the target language, "
+            "but only if the name is declinable; each entry is a DISTINCT entity — "
+            "never substitute one name for another):",
         ]
         for en in sorted(self.entries.keys(), key=str.lower):
             lines.append(f'  * "{en}" → {self.entries[en]}')

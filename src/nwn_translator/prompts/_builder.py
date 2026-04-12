@@ -35,6 +35,9 @@ def _proper_names_rules(target_lang: str, *, glossary_rule: str = "") -> str:
         for eng, tr in personal
     )
 
+    declension_note = ex.get("declension_note", "")
+    declension_block = f"   {declension_note}" if declension_note else ""
+
     return (
         "PROPER NAMES \u2014 translating vs. transliterating:\n"
         "   a) Descriptive/meaningful names: TRANSLATE the meaning. "
@@ -45,6 +48,7 @@ def _proper_names_rules(target_lang: str, *, glossary_rule: str = "") -> str:
         "   When in doubt whether a name is descriptive or personal, check: does the name "
         "consist of ordinary English words with clear meaning? Then translate the meaning. "
         "Is it a made-up fantasy name? Then transliterate.\n"
+        f"{declension_block}"
         f"{glossary_rule}"
     )
 
@@ -54,6 +58,7 @@ def _speech_style_rules(target_lang: str) -> str:
     ex = get_examples(target_lang)
     lines = ex["speech_low_int"]
     pattern = ex["speech_low_int_pattern"]
+    counterexample = ex.get("speech_normal_counterexample", "")
 
     example_block = "\n".join(
         f'    - "{eng}" -> "{good}" '
@@ -61,16 +66,25 @@ def _speech_style_rules(target_lang: str) -> str:
         for eng, good, bad in lines
     )
 
+    counter_block = f"\n    {counterexample}" if counterexample else ""
+
     return (
         "PRESERVE SPEECH STYLE AND REGISTER. This is a role-playing game with characters "
-        "of different intelligence and background. If the original text has broken grammar, "
-        "primitive syntax, or childlike speech (low-INT characters, barbarians, goblins, etc.), "
-        "you MUST reproduce an equally broken, primitive style in the translation. "
-        'DO NOT "fix" or "correct" their speech \u2014 that would destroy the character.\n'
+        "of different intelligence and background.\n"
+        "    CRITICAL: broken/primitive style MUST be applied ONLY when the ORIGINAL "
+        "English text itself has broken grammar, misspellings, or primitive syntax "
+        "(low-INT characters, barbarians, goblins, etc.). "
+        "If the original English text is grammatically correct — even if the speaker is "
+        "a dwarf, goblin, or monster — the translation MUST be grammatically correct too. "
+        "Notices, letters, signs, memos, and any other written text with proper English "
+        "grammar must be translated with proper target-language grammar.\n"
+        "    When broken style IS appropriate, reproduce an equally broken, primitive style. "
+        'DO NOT "fix" or "correct" intentionally broken speech — that would destroy the character.\n'
         f"    Examples (English low-INT -> {target_lang} low-INT equivalent):\n"
         f"{example_block}\n\n"
         "    Key pattern: in English, low-INT speech uses \"me\" instead of \"I\", drops articles/verbs, "
         f"simplifies grammar. {pattern}\n"
+        f"{counter_block}"
     )
 
 
@@ -108,12 +122,19 @@ def build_translation_system_prompt(
             "   a) Apply a glossary entry ONLY when the EXACT full proper name from the glossary "
             "appears in the source text as a capitalized name. Do NOT match partial or coincidental "
             "overlaps (e.g. 'dead Goblin Hunter' in narrative \u2260 quest name 'Dead Hunter' in glossary).\n"
-            "   b) ALWAYS decline/conjugate the glossary translation to fit the grammatical context "
-            "(case, number, gender). Never paste the nominative form into oblique positions.\n"
+            "   b) Decline/conjugate the glossary translation to fit the grammatical context "
+            "(case, number, gender) ONLY if the target language grammar allows it for that "
+            "particular name. If a foreign name is grammatically indeclinable in the target "
+            "language, keep it in its dictionary form or rephrase the sentence.\n"
             "   c) Translate ONLY what is present in the source text. If the source says 'Danda', "
             "output only the transliteration of 'Danda' \u2014 do NOT append a surname or title from "
             "the glossary entry 'Danda Mudgrabber'.\n"
-            "   d) If a proper name is not listed in the glossary, follow rules 7-9.\n"
+            "   d) Each glossary entry is a DISTINCT entity. NEVER replace one glossary name "
+            "with another, even if they seem related or co-located in the game world. "
+            "Translate ONLY the name that literally appears in the source line.\n"
+            "   e) If a proper name is not listed in the glossary, follow rules 7-9.\n"
+            "   f) Recurring epithets, nicknames, and hyphenated compound terms used as forms "
+            "of address MUST be translated consistently across all lines.\n"
         )
 
     return (
@@ -179,9 +200,15 @@ def build_dialog_system_prompt(
         f"substitution table:\n"
         f"   - Apply ONLY when the EXACT full proper name appears in the source as a capitalized "
         f"name. Do NOT match partial or coincidental overlaps.\n"
-        f"   - ALWAYS decline/conjugate to fit grammatical context (case, number, gender).\n"
+        f"   - Decline/conjugate to fit grammatical context (case, number, gender) ONLY if "
+        f"the target language grammar allows it for that name. If a foreign name is "
+        f"indeclinable, keep its dictionary form or rephrase.\n"
         f"   - Translate ONLY what is in the source. If source says 'Danda', output only the "
         f"transliteration of 'Danda' \u2014 do NOT add surname/title from a longer glossary entry.\n"
+        f"   - Each glossary entry is a DISTINCT entity. NEVER replace one name with another, "
+        f"even if they seem related. Translate ONLY the name literally present in the source.\n"
+        f"   - Recurring epithets, nicknames, and hyphenated terms used as forms of address "
+        f"must be translated consistently across all dialog lines.\n"
         f"6. Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
         f"7. Maintain natural phrasing, emotion, and tone.\n"
         f"8. {_proper_names_rules(target_lang)}"
@@ -209,11 +236,14 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
     """
     return (
         f"You are analyzing {source_lang} texts from a Neverwinter Nights game module.\n"
-        "Extract ALL proper nouns you find: character names, place names, "
-        "organization names, and unique named objects.\n\n"
+        "Extract ALL proper nouns and recurring nicknames you find: character names, "
+        "place names, organization names, unique named objects, and recurring epithets "
+        "or hyphenated terms used as forms of address (e.g. compound nicknames that "
+        "characters use to refer to someone).\n\n"
         "Return a single JSON object with one key \"entities\" whose value is "
         "an array of entity objects with \"name\" and \"type\" fields.\n"
-        'Valid types: "character", "location", "organization", "item", "unknown".\n\n'
+        'Valid types: "character", "location", "organization", "item", '
+        '"nickname", "unknown".\n\n'
         "FEW-SHOT EXAMPLES (note: these illustrate the task; real inputs will be "
         f"in {source_lang}):\n\n"
         "Input:\n"
@@ -223,7 +253,9 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
         '[3] "I saw your ad posted by the Guild of Middlemen. You\'re looking for '
         'adventurer(s), yes?"\n'
         '[4] "Hello! I\'m the Magical Plot Fairy. Do you need a recap?"\n'
-        '[5] "Contact R. Freely in Stout Village for details."\n\n'
+        '[5] "Contact R. Freely in Stout Village for details."\n'
+        '[6] "Stay back, staff-one!"\n'
+        '[7] "Must.. protect... staff-one... ghh"\n\n'
         "Output:\n"
         "{\"entities\": [\n"
         '  {"name": "Stout Village", "type": "location"},\n'
@@ -231,11 +263,14 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
         '  {"name": "Penultima City", "type": "location"},\n'
         '  {"name": "Guild of Middlemen", "type": "organization"},\n'
         '  {"name": "Magical Plot Fairy", "type": "character"},\n'
-        '  {"name": "R. Freely", "type": "character"}\n'
+        '  {"name": "R. Freely", "type": "character"},\n'
+        '  {"name": "staff-one", "type": "nickname"}\n'
         "]}\n\n"
         "Rules:\n"
         "- Include proper nouns that are names of specific characters, places, "
         "organizations, or unique objects.\n"
+        "- Include recurring compound nicknames or hyphenated terms used as forms "
+        'of address (type: "nickname"). These must be translated consistently.\n'
         "- Do NOT include common game terms (sword, goblin, mine, chest, potion, etc.).\n"
         "- Do NOT include race or class names (dwarf, elf, wizard, halfling, etc.).\n"
         "- Do NOT include common words, adjectives, or generic phrases.\n"

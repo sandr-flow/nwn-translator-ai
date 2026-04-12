@@ -100,7 +100,15 @@ def _player_gender_rule(gender: str) -> str:
 
 def _token_preservation_rule() -> str:
     """One-liner for preserving game tokens."""
-    return "Do NOT translate or alter placeholders like <<TOKEN_0>>, <<TOKEN_1>>, etc.\n"
+    return (
+        "MANDATORY TAG/TOKEN PRESERVATION:\n"
+        "- Do NOT translate, reorder, duplicate, invent, or delete placeholders like "
+        "<<TOKEN_0>>, <<TOKEN_1>>, etc.\n"
+        "- Preserve inline NWN markup tags exactly as in source (e.g. <StartAction>, </Start>) "
+        "without renaming, rebalancing, or moving them.\n"
+        "- Never output internal helper placeholders such as [[NWN_TAG_*]].\n"
+        "- If uncertain, leave tags/placeholders exactly unchanged.\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +217,11 @@ def build_dialog_system_prompt(
         f"even if they seem related. Translate ONLY the name literally present in the source.\n"
         f"   - Recurring epithets, nicknames, and hyphenated terms used as forms of address "
         f"must be translated consistently across all dialog lines.\n"
-        f"6. Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
+        f"6. MANDATORY TAG/TOKEN PRESERVATION:\n"
+        f"   - Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
+        f"   - Preserve inline NWN tags exactly as in source (e.g. <StartAction>, </Start>).\n"
+        f"   - Never output helper placeholders like [[NWN_TAG_*]].\n"
+        f"   - Do not reorder, duplicate, or delete any tag/token.\n"
         f"7. Maintain natural phrasing, emotion, and tone.\n"
         f"8. {_proper_names_rules(target_lang)}"
         f"9. {_speech_style_rules(target_lang)}"

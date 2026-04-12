@@ -1,5 +1,7 @@
 """Tests for token handling functionality."""
 
+import re
+
 import pytest
 
 from src.nwn_translator.translators.token_handler import (
@@ -149,6 +151,54 @@ class TestEdgeCases:
         handler = TokenHandler()
         result = handler.sanitize("<FirstName><LastName>")
         assert result.sanitized_text == "<<TOKEN_0>><<TOKEN_1>>"
+
+    def test_sanitize_preserves_nwn_action_tags(self):
+        """NWN action tags should be protected from model rewrites."""
+        handler = TokenHandler()
+        result = handler.sanitize("<StartAction>[Wave]</Start> Hello <FirstName>.")
+        assert result.sanitized_text.endswith(" Hello <<TOKEN_0>>.")
+        placeholders = re.findall(r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]", result.sanitized_text)
+        assert len(placeholders) == 2
+
+    def test_restore_preserves_nwn_action_tags(self):
+        """Roundtrip should restore original Start/StartAction tags."""
+        handler = TokenHandler()
+        source = "<StartAction>[Wave]</Start> Hello <FirstName>."
+        sanitized = handler.sanitize(source)
+        placeholders = re.findall(
+            r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]", sanitized.sanitized_text
+        )
+        assert len(placeholders) == 2
+        translated = f"Привет {placeholders[0]}[машет]{placeholders[1]}, <<TOKEN_0>>."
+        restored = handler.restore(translated)
+        assert restored == "Привет <StartAction>[машет]</Start>, <FirstName>."
+
+    def test_sanitize_preserves_closing_start_tag(self):
+        """Even closing-only malformed tag fragments must remain unchanged."""
+        handler = TokenHandler()
+        result = handler.sanitize("[Felkram begins to scream.]</Start>")
+        assert result.sanitized_text.startswith("[Felkram begins to scream.]")
+        placeholders = re.findall(r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]", result.sanitized_text)
+        assert len(placeholders) == 1
+
+    def test_restore_drops_unknown_nwn_placeholders(self):
+        """Unknown placeholder artifacts from the model must be removed."""
+        handler = TokenHandler()
+        source = "<StartAction>[Wave]</Start>"
+        sanitized = handler.sanitize(source)
+        placeholders = re.findall(
+            r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]", sanitized.sanitized_text
+        )
+        translated = f"{placeholders[0]}[машет]{placeholders[1]}[[NWN_TAG_999999]]"
+        restored = handler.restore(translated)
+        assert restored == "<StartAction>[машет]</Start>"
+
+    def test_restore_strips_unbalanced_action_tags(self):
+        """Malformed Start-tags should be stripped to avoid broken game markup."""
+        handler = TokenHandler()
+        handler.sanitize("<StartAction>[Wave]</Start>")
+        restored = handler.restore("<StartAction>[машет]")
+        assert restored == "[машет]"
 
     def test_clear(self):
         """Test clearing handler state."""

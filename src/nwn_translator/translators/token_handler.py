@@ -5,6 +5,7 @@ This module handles the replacement and restoration of game tokens like <FirstNa
 """
 
 import re
+import secrets
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
@@ -38,8 +39,14 @@ class TokenHandler:
     # Pattern to match NWN tokens: <word>, <word:number>, or <word/word> (gender tags)
     TOKEN_PATTERN = re.compile(r"<(\w+(?:/\w+)?(?::\d+)?)>")
 
+    # Pattern to match NWN inline action tags used in dialog text.
+    # Examples: <StartAction>, </Start>, <StartSomething>
+    ACTION_TAG_PATTERN = re.compile(r"</?Start[A-Za-z]*>")
+
     # Pattern for our placeholders: <<TOKEN_0>>, <<TOKEN_1>>, etc.
     PLACEHOLDER_PATTERN = re.compile(r"<<TOKEN_(\d+)>>")
+    ACTION_PLACEHOLDER_PATTERN = re.compile(r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]")
+    RESTORED_ACTION_TAG_PATTERN = re.compile(r"</?Start[A-Za-z]*>")
 
     def __init__(self, preserve_standard_tokens: bool = True):
         """Initialize token handler.
@@ -49,7 +56,10 @@ class TokenHandler:
         """
         self.preserve_standard_tokens = preserve_standard_tokens
         self.token_map: Dict[str, str] = {}  # Maps placeholder to original token
+        self.action_tag_map: Dict[str, str] = {}  # Maps action-tag placeholders to tags
+        self._action_nonce = secrets.token_hex(4)
         self.placeholder_counter = 0
+        self.action_placeholder_counter = 0
 
     def sanitize(self, text: str) -> SanitizedText:
         """Replace tokens in text with placeholders.
@@ -92,8 +102,22 @@ class TokenHandler:
 
             return placeholder
 
-        # Replace all tokens
-        result.sanitized_text = self.TOKEN_PATTERN.sub(replace_token, text)
+        def replace_action_tag(match: re.Match) -> str:
+            """Replacement function for NWN action tags."""
+            original_tag = match.group(0)
+            placeholder = (
+                f"[[NWN_TAG_{self._action_nonce}_{self.action_placeholder_counter}]]"
+            )
+            self.action_tag_map[placeholder] = original_tag
+            self.action_placeholder_counter += 1
+            return placeholder
+
+        # Preserve NWN inline action tags (e.g. <StartAction>...</Start>)
+        # so the model cannot rewrite tag names or closing forms.
+        with_action_placeholders = self.ACTION_TAG_PATTERN.sub(replace_action_tag, text)
+
+        # Replace all configured standard game tokens
+        result.sanitized_text = self.TOKEN_PATTERN.sub(replace_token, with_action_placeholders)
 
         return result
 
@@ -114,7 +138,38 @@ class TokenHandler:
             placeholder = match.group(0)
             return self.token_map.get(placeholder, placeholder)
 
-        return self.PLACEHOLDER_PATTERN.sub(restore_placeholder, text)
+        def restore_action_placeholder(match: re.Match) -> str:
+            """Restore NWN action tags from placeholders."""
+            placeholder = match.group(0)
+            return self.action_tag_map.get(placeholder, placeholder)
+
+        restored_tokens = self.PLACEHOLDER_PATTERN.sub(restore_placeholder, text)
+        restored_actions = self.ACTION_PLACEHOLDER_PATTERN.sub(
+            restore_action_placeholder, restored_tokens
+        )
+        # Guard against model-invented NWN placeholders (e.g. [[NWN_TAG_1]]).
+        # Unknown placeholders are not valid game text and must not leak to output.
+        restored_actions = self.ACTION_PLACEHOLDER_PATTERN.sub("", restored_actions)
+
+        # Final safety net: if action tags became structurally broken,
+        # strip them instead of shipping malformed markup that can break game parsing.
+        if self._has_unbalanced_action_tags(restored_actions):
+            return self.RESTORED_ACTION_TAG_PATTERN.sub("", restored_actions)
+
+        return restored_actions
+
+    @classmethod
+    def _has_unbalanced_action_tags(cls, text: str) -> bool:
+        """Return True when <Start...>/</Start> tags are malformed."""
+        depth = 0
+        for tag in cls.RESTORED_ACTION_TAG_PATTERN.findall(text):
+            if tag.startswith("</"):
+                depth -= 1
+            else:
+                depth += 1
+            if depth < 0:
+                return True
+        return depth != 0
 
     def _should_preserve_token(self, token_name: str) -> bool:
         """Determine if a token should be preserved.
@@ -150,7 +205,9 @@ class TokenHandler:
     def clear(self) -> None:
         """Clear all token mappings and reset counter."""
         self.token_map.clear()
+        self.action_tag_map.clear()
         self.placeholder_counter = 0
+        self.action_placeholder_counter = 0
 
     def get_token_count(self) -> int:
         """Get the number of tokens currently tracked.
@@ -158,7 +215,7 @@ class TokenHandler:
         Returns:
             Number of unique token placeholders
         """
-        return len(self.token_map)
+        return len(self.token_map) + len(self.action_tag_map)
 
 
 class TokenValidator:

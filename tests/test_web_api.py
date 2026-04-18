@@ -71,6 +71,9 @@ def test_test_connection_mocked(client: TestClient, monkeypatch: pytest.MonkeyPa
                 success=True,
             )
 
+        def get_provider_name(self):
+            return "openrouter"
+
     monkeypatch.setattr(
         "nwn_translator.web.routes.create_provider",
         lambda api_key, model=None, **kw: FakeProvider(),

@@ -16,8 +16,12 @@ export default {
 
     // TranslationForm
     "form.model": "Модель перевода",
-    "form.apiKey": "API-ключ OpenRouter",
-    "form.apiKeyPlaceholder": "sk-or-…",
+    "form.apiKey": "API-ключ (OpenRouter или POLZA.AI)",
+    "form.apiKeyPlaceholder": "sk-or-… или pza…",
+    "form.providerActive": "Активный провайдер:",
+    "form.providerOpenrouter": "OpenRouter",
+    "form.providerPolza": "POLZA.AI",
+    "form.providerUnknown": "не распознан (будет использован OpenRouter)",
     "form.checkKey": "Проверить ключ и модель",
     "form.checking": "Проверка…",
     "form.testOk": "Ок",
@@ -143,7 +147,7 @@ export default {
 
     // Errors
     "error.noFile": "Выберите файл .mod",
-    "error.noKey": "Укажите API-ключ OpenRouter",
+    "error.noKey": "Укажите API-ключ OpenRouter или POLZA.AI",
     "error.noKeyShort": "Укажите API-ключ",
     "error.default": "Ошибка",
     "error.taskNotFound": "Задача не найдена — сервер был перезапущен",
@@ -166,8 +170,12 @@ export default {
 
     // TranslationForm
     "form.model": "Translation model",
-    "form.apiKey": "OpenRouter API key",
-    "form.apiKeyPlaceholder": "sk-or-…",
+    "form.apiKey": "API key (OpenRouter or POLZA.AI)",
+    "form.apiKeyPlaceholder": "sk-or-… or pza…",
+    "form.providerActive": "Active provider:",
+    "form.providerOpenrouter": "OpenRouter",
+    "form.providerPolza": "POLZA.AI",
+    "form.providerUnknown": "not recognized (OpenRouter will be used)",
     "form.checkKey": "Test key & model",
     "form.checking": "Testing…",
     "form.testOk": "OK",
@@ -293,7 +301,7 @@ export default {
 
     // Errors
     "error.noFile": "Please select a .mod file",
-    "error.noKey": "Please provide an OpenRouter API key",
+    "error.noKey": "Please provide an OpenRouter or POLZA.AI API key",
     "error.noKeyShort": "Please provide an API key",
     "error.default": "Error",
     "error.taskNotFound": "Task not found — server was restarted",

@@ -41,6 +41,20 @@ class TestConnectionResponse(BaseModel):
     translated: Optional[str] = None
     error: Optional[str] = None
     model: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class DetectProviderRequest(BaseModel):
+    """Body for provider detection by API key."""
+
+    api_key: str = Field(..., min_length=1)
+
+
+class DetectProviderResponse(BaseModel):
+    """Provider inferred from an API key."""
+
+    provider: str
+    label: str
 
 
 class ModelsResponse(BaseModel):

@@ -9,8 +9,9 @@ from src.nwn_translator.ai_providers.base import (
     TranslationResult,
     ProviderError,
 )
-from src.nwn_translator.ai_providers import create_provider
+from src.nwn_translator.ai_providers import create_provider, detect_provider_from_key
 from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from src.nwn_translator.ai_providers.polza_provider import PolzaProvider
 
 
 class MockAIProvider(BaseAIProvider):
@@ -75,6 +76,42 @@ class TestCreateProvider:
             p = create_provider("sk-or-test", model="openai/gpt-4o")
         assert isinstance(p, OpenRouterProvider)
         assert p.model == "openai/gpt-4o"
+
+    def test_create_returns_polza_for_pza_prefix(self):
+        """``pza…`` keys route to PolzaProvider with the Polza base URL."""
+        with patch(
+            "src.nwn_translator.ai_providers.openrouter_provider.OpenAI"
+        ) as mock_openai_cls:
+            p = create_provider("pza-abcdef1234567890", model="openai/gpt-4o")
+        assert isinstance(p, PolzaProvider)
+        assert p.get_provider_name() == "polza"
+        assert mock_openai_cls.call_args.kwargs["base_url"] == "https://polza.ai/api/v1"
+
+    def test_create_falls_back_to_openrouter_for_unknown_prefix(self):
+        """Unrecognised keys default to OpenRouter (safe fallback)."""
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = create_provider("just-random-chars", model="openai/gpt-4o")
+        assert isinstance(p, OpenRouterProvider)
+        assert not isinstance(p, PolzaProvider)
+
+
+class TestDetectProviderFromKey:
+    """Tests for detect_provider_from_key."""
+
+    def test_empty_key_returns_empty(self):
+        assert detect_provider_from_key("") == ""
+        assert detect_provider_from_key(None) == ""
+        assert detect_provider_from_key("   ") == ""
+
+    def test_openrouter_prefix(self):
+        assert detect_provider_from_key("sk-or-v1-abc") == "openrouter"
+
+    def test_polza_prefix(self):
+        assert detect_provider_from_key("pza-abcdef1234567890") == "polza"
+        assert detect_provider_from_key("pza_abcdef1234567890") == "polza"
+
+    def test_unknown_prefix_falls_back_to_default(self):
+        assert detect_provider_from_key("sk-abc-123") == "openrouter"
 
 
 class TestTranslationItem:

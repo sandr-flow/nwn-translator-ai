@@ -41,6 +41,33 @@ const reasoningOptions = computed(() => [
   })),
 ]);
 
+// Provider auto-detection from the API key prefix.
+// Must match the server-side rules in ai_providers/__init__.py.
+const PROVIDER_PREFIXES = [
+  { prefix: "sk-or-", provider: "openrouter" },
+  { prefix: "pza",    provider: "polza" },
+];
+
+function detectProvider(key) {
+  const k = (key ?? "").trim();
+  if (!k) return "";
+  for (const { prefix, provider } of PROVIDER_PREFIXES) {
+    if (k.startsWith(prefix)) return provider;
+  }
+  return "unknown";
+}
+
+const activeProvider = computed(() => detectProvider(t.apiKey));
+
+const activeProviderLabel = computed(() => {
+  switch (activeProvider.value) {
+    case "openrouter": return i("form.providerOpenrouter");
+    case "polza":      return i("form.providerPolza");
+    case "unknown":    return i("form.providerUnknown");
+    default:           return "";
+  }
+});
+
 async function onTest() {
   testMsg.value = "";
   testing.value = true;
@@ -92,6 +119,13 @@ async function onTest() {
           {{ testing ? i("form.checking") : i("form.checkKey") }}
         </button>
       </div>
+      <p v-if="activeProvider" class="text-xs mt-1">
+        <span class="text-nwn-muted">{{ i("form.providerActive") }}</span>
+        <span
+          class="ml-1 font-medium"
+          :class="activeProvider === 'unknown' ? 'text-nwn-muted/80' : 'text-nwn-accent'"
+        >{{ activeProviderLabel }}</span>
+      </p>
       <p v-if="testMsg" class="text-xs text-nwn-muted mt-1">{{ testMsg }}</p>
     </div>
 

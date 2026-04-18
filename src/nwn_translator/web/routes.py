@@ -22,7 +22,12 @@ from ..config import (
 )
 from fastapi.responses import FileResponse, StreamingResponse
 
-from ..ai_providers import OpenRouterProvider, create_provider
+from ..ai_providers import (
+    OpenRouterProvider,
+    PolzaProvider,
+    create_provider,
+    detect_provider_from_key,
+)
 from .deps import web_task_manager
 from .database import (
     delete_task_row,
@@ -35,6 +40,8 @@ from .database import (
 )
 from .schemas import (
     ConfigResponse,
+    DetectProviderRequest,
+    DetectProviderResponse,
     ModelsResponse,
     RebuildRequest,
     RebuildResponse,
@@ -48,6 +55,13 @@ from .schemas import (
     TranslationItem,
     TranslationsResponse,
 )
+
+
+#: Friendly labels for the providers exposed to the UI.
+_PROVIDER_LABELS: dict[str, str] = {
+    OpenRouterProvider.PROVIDER_NAME: OpenRouterProvider.PROVIDER_LABEL,
+    PolzaProvider.PROVIDER_NAME: PolzaProvider.PROVIDER_LABEL,
+}
 from .task_manager import MAX_UPLOAD_BYTES, TaskManager, TranslationTask
 
 logger = logging.getLogger(__name__)
@@ -565,13 +579,14 @@ async def delete_task(
 
 @router.post("/test-connection", response_model=TestConnectionResponse)
 async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse:
-    """Verify OpenRouter API key and model with a tiny translation."""
+    """Verify an API key and model with a tiny translation."""
     text = "Hello, welcome to my module!"
+    provider_name = detect_provider_from_key(body.api_key)
     try:
         try:
             reff = parse_reasoning_effort(body.reasoning_effort)
         except ValueError as e:
-            return TestConnectionResponse(ok=False, error=str(e))
+            return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
         provider = create_provider(
             body.api_key.strip(), body.model, reasoning_effort=reff
         )
@@ -584,11 +599,25 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
                 ok=True,
                 translated=result.translated,
                 model=model,
+                provider=provider.get_provider_name(),
             )
-        return TestConnectionResponse(ok=False, error=result.error or "Unknown error", model=model)
+        return TestConnectionResponse(
+            ok=False,
+            error=result.error or "Unknown error",
+            model=model,
+            provider=provider.get_provider_name(),
+        )
     except Exception as e:
         logger.warning("test-connection failed: %s", e)
-        return TestConnectionResponse(ok=False, error=str(e))
+        return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
+
+
+@router.post("/detect-provider", response_model=DetectProviderResponse)
+async def detect_provider(body: DetectProviderRequest) -> DetectProviderResponse:
+    """Infer the active provider from an API key prefix (no network calls)."""
+    name = detect_provider_from_key(body.api_key)
+    label = _PROVIDER_LABELS.get(name, "")
+    return DetectProviderResponse(provider=name, label=label)
 
 
 @router.get("/models", response_model=ModelsResponse)

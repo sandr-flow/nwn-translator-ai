@@ -68,7 +68,14 @@ class OpenRouterProvider(BaseAIProvider):
     slug (e.g. ``anthropic/claude-3.5-sonnet``) as the ``model`` argument.
     """
 
-    OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+    #: API base URL. Subclasses override to target an OpenAI-compatible gateway.
+    BASE_URL = "https://openrouter.ai/api/v1"
+    #: Backwards-compat alias; external code may reference ``OPENROUTER_BASE_URL``.
+    OPENROUTER_BASE_URL = BASE_URL
+    #: Human-readable provider label used in error messages.
+    PROVIDER_LABEL = "OpenRouter"
+    #: Short identifier returned from :meth:`get_provider_name`.
+    PROVIDER_NAME = "openrouter"
 
     #: Default model — change via config or ``--model`` CLI flag.
     DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
@@ -109,21 +116,24 @@ class OpenRouterProvider(BaseAIProvider):
         self.site_name = site_name
         super().__init__(api_key, model, **kwargs)
         self._reasoning_effort = parse_reasoning_effort(reasoning_raw)
-        _headers = {
-            "HTTP-Referer": self.site_url,
-            "X-Title": self.site_name,
-        }
         _timeout = httpx.Timeout(connect=10, read=180, write=10, pool=10)
-        self._headers = dict(_headers)
+        self._headers = self._build_default_headers()
         self._timeout = _timeout
         self.client = OpenAI(
             api_key=api_key,
-            base_url=self.OPENROUTER_BASE_URL,
+            base_url=self.BASE_URL,
             default_headers=self._headers,
             timeout=self._timeout,
             max_retries=0,
         )
         self._thread_local = threading.local()
+
+    def _build_default_headers(self) -> Dict[str, str]:
+        """Extra headers appended to every request. Subclasses may override."""
+        return {
+            "HTTP-Referer": self.site_url,
+            "X-Title": self.site_name,
+        }
 
     @property
     def async_client(self) -> AsyncOpenAI:
@@ -141,7 +151,7 @@ class OpenRouterProvider(BaseAIProvider):
             self._thread_local.last_loop_id = loop_id
             self._thread_local.async_client = AsyncOpenAI(
                 api_key=self.api_key,
-                base_url=self.OPENROUTER_BASE_URL,
+                base_url=self.BASE_URL,
                 default_headers=self._headers,
                 timeout=self._timeout,
                 max_retries=0,
@@ -173,7 +183,7 @@ class OpenRouterProvider(BaseAIProvider):
         Returns:
             Provider identifier string.
         """
-        return "openrouter"
+        return self.PROVIDER_NAME
 
     def _reasoning_extra_body(self) -> Optional[Dict[str, Any]]:
         """OpenRouter ``extra_body`` fragment for ``reasoning``, or ``None``."""
@@ -253,10 +263,10 @@ class OpenRouterProvider(BaseAIProvider):
         error_msg = str(e)
         if "rate_limit" in error_msg.lower() or "429" in error_msg:
             raise RateLimitError(
-                f"OpenRouter rate limit exceeded: {error_msg}"
+                f"{self.PROVIDER_LABEL} rate limit exceeded: {error_msg}"
             ) from e
         raise OpenRouterError(
-            f"OpenRouter translation failed: {error_msg}"
+            f"{self.PROVIDER_LABEL} translation failed: {error_msg}"
         ) from e
 
     @retry(

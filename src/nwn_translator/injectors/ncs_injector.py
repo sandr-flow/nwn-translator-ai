@@ -51,23 +51,9 @@ class NcsInjector(BaseInjector):
                 metadata={"type": "ncs_script"},
             )
 
-        replacements = []
-        if ncs_items and ncs_by_item_id:
-            for item in ncs_items:
-                tid = item.item_id
-                if not tid or tid not in ncs_by_item_id:
-                    continue
-                translated = ncs_by_item_id[tid]
-                if translated == item.text:
-                    continue
-                off = (item.metadata or {}).get("offset")
-                if off is None:
-                    continue
-                replacements.append((int(off), item.text, translated))
-        else:
+        if ncs_items is None:
             logger.warning(
-                "NCS inject missing ncs_translations_by_item_id/ncs_extracted_items; "
-                "skipping patch for %s",
+                "NCS inject missing ncs_extracted_items; skipping patch for %s",
                 file_path.name,
             )
             return InjectedContent(
@@ -76,6 +62,19 @@ class NcsInjector(BaseInjector):
                 items_updated=0,
                 metadata={"type": "ncs_script", "error": "missing_ncs_inject_metadata"},
             )
+
+        replacements = []
+        for item in ncs_items:
+            tid = item.item_id
+            if not tid or tid not in ncs_by_item_id:
+                continue
+            translated = ncs_by_item_id[tid]
+            if translated == item.text:
+                continue
+            off = (item.metadata or {}).get("offset")
+            if off is None:
+                continue
+            replacements.append((int(off), item.text, translated))
 
         if not replacements:
             return InjectedContent(

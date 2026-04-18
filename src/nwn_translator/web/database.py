@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS translations (
     context    TEXT,
     model      TEXT,
     file       TEXT,
+    item_id    TEXT,
 
     UNIQUE(task_id, file, original)
 );
@@ -67,6 +68,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col, typedef in [("model", "TEXT"), ("updated_at", "REAL")]:
         if col not in existing:
             conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {typedef}")
+
+    cur_tr = conn.execute("PRAGMA table_info(translations)")
+    tr_cols = {row[1] for row in cur_tr.fetchall()}
+    if "item_id" not in tr_cols:
+        conn.execute("ALTER TABLE translations ADD COLUMN item_id TEXT")
 
 
 def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -190,12 +196,13 @@ def insert_translation(
     context: Optional[str] = None,
     model: Optional[str] = None,
     file: Optional[str] = None,
+    item_id: Optional[str] = None,
 ) -> None:
     db = get_db()
     db.execute(
-        "INSERT OR REPLACE INTO translations (task_id, original, translated, context, model, file) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (task_id, original, translated, context, model, file),
+        "INSERT OR REPLACE INTO translations (task_id, original, translated, context, model, file, item_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (task_id, original, translated, context, model, file, item_id),
     )
     db.commit()
 
@@ -204,10 +211,21 @@ def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
     db = get_db()
     db.row_factory = sqlite3.Row
     cur = db.execute(
-        "SELECT original, translated, context, model, file FROM translations WHERE task_id = ?",
+        "SELECT original, translated, context, model, file, item_id FROM translations WHERE task_id = ?",
         (task_id,),
     )
     return [dict(r) for r in cur.fetchall()]
+
+
+def get_ncs_translation_map_by_task(task_id: str) -> Dict[str, str]:
+    """Return ``{item_id: translated}`` for rows that have a non-empty ``item_id``."""
+    db = get_db()
+    cur = db.execute(
+        "SELECT item_id, translated FROM translations "
+        "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
+        (task_id,),
+    )
+    return {row[0]: row[1] for row in cur.fetchall()}
 
 
 def get_translation_map_by_task(task_id: str) -> Dict[str, str]:
@@ -243,6 +261,7 @@ class SqliteTranslationLogWriter:
                 context=entry.get("context"),
                 model=entry.get("model"),
                 file=entry.get("file"),
+                item_id=entry.get("item_id"),
             )
         except Exception as e:
             logger.debug("Failed to write translation to SQLite: %s", e)

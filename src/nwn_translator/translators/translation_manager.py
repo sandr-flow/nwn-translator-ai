@@ -88,6 +88,7 @@ class TranslationManager:
         translated: str,
         context: Optional[str],
         source_filename: str,
+        item_id: Optional[str] = None,
     ) -> None:
         """Write one translation log row for web per-file grouping (non-dialog paths)."""
         try:
@@ -98,6 +99,7 @@ class TranslationManager:
                     "context": context,
                     "model": self.config.model,
                     "file": source_filename,
+                    "item_id": item_id,
                 }
             )
         except Exception:
@@ -631,6 +633,9 @@ class TranslationManager:
                 "context": item.context,
                 "model": result.metadata.get("model", self.config.model),
                 "file": item_filename,
+                "item_id": item.item_id
+                if (item.metadata or {}).get("type") == "ncs_string"
+                else None,
             }
             try:
                 self._log_writer.write(log_entry)

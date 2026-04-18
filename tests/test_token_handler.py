@@ -157,7 +157,7 @@ class TestEdgeCases:
         handler = TokenHandler()
         result = handler.sanitize("<StartAction>[Wave]</Start> Hello <FirstName>.")
         assert result.sanitized_text.endswith(" Hello <<TOKEN_0>>.")
-        placeholders = re.findall(r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]", result.sanitized_text)
+        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", result.sanitized_text)
         assert len(placeholders) == 2
 
     def test_restore_preserves_nwn_action_tags(self):
@@ -166,7 +166,7 @@ class TestEdgeCases:
         source = "<StartAction>[Wave]</Start> Hello <FirstName>."
         sanitized = handler.sanitize(source)
         placeholders = re.findall(
-            r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]", sanitized.sanitized_text
+            r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text
         )
         assert len(placeholders) == 2
         translated = f"Привет {placeholders[0]}[машет]{placeholders[1]}, <<TOKEN_0>>."
@@ -178,7 +178,7 @@ class TestEdgeCases:
         handler = TokenHandler()
         result = handler.sanitize("[Felkram begins to scream.]</Start>")
         assert result.sanitized_text.startswith("[Felkram begins to scream.]")
-        placeholders = re.findall(r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]", result.sanitized_text)
+        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", result.sanitized_text)
         assert len(placeholders) == 1
 
     def test_restore_drops_unknown_nwn_placeholders(self):
@@ -187,11 +187,40 @@ class TestEdgeCases:
         source = "<StartAction>[Wave]</Start>"
         sanitized = handler.sanitize(source)
         placeholders = re.findall(
-            r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]", sanitized.sanitized_text
+            r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text
         )
         translated = f"{placeholders[0]}[машет]{placeholders[1]}[[NWN_TAG_999999]]"
         restored = handler.restore(translated)
         assert restored == "<StartAction>[машет]</Start>"
+
+    def test_restore_accepts_wrapped_nwn_placeholders(self):
+        """Restore should tolerate model-wrapped helper placeholders."""
+        handler = TokenHandler()
+        source = "<StartAction>[Wave]</Start>"
+        sanitized = handler.sanitize(source)
+        placeholders = re.findall(
+            r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text
+        )
+        # Simulate model mutation seen in logs: __NWN_TAG_x__ -> <<[NWN_TAG_x]>>
+        wrapped = []
+        for p in placeholders:
+            inner = p[len("__") : -len("__")]
+            wrapped.append(f"<<[{inner}]>>")
+        translated = f"{wrapped[0]}[машет]{wrapped[1]}"
+        restored = handler.restore(translated)
+        assert restored == "<StartAction>[машет]</Start>"
+
+    def test_restore_scrubs_generic_nwn_tag_noise(self):
+        """Any leftover NWN_TAG artifacts should be removed as noise."""
+        handler = TokenHandler()
+        source = "<StartAction>[Wave]</Start>"
+        sanitized = handler.sanitize(source)
+        placeholders = re.findall(
+            r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text
+        )
+        translated = f"{placeholders[0]}[машет]{placeholders[1]} «NWN_TAG_garbage_42»"
+        restored = handler.restore(translated)
+        assert restored == "<StartAction>[машет]</Start> "
 
     def test_restore_strips_unbalanced_action_tags(self):
         """Malformed Start-tags should be stripped to avoid broken game markup."""

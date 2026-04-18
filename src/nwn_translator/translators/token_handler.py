@@ -45,7 +45,12 @@ class TokenHandler:
 
     # Pattern for our placeholders: <<TOKEN_0>>, <<TOKEN_1>>, etc.
     PLACEHOLDER_PATTERN = re.compile(r"<<TOKEN_(\d+)>>")
-    ACTION_PLACEHOLDER_PATTERN = re.compile(r"\[\[NWN_TAG_[A-Za-z0-9_]+\]\]")
+    # Accept canonical and common model-mutated helper placeholders:
+    # __NWN_TAG_x__, [[NWN_TAG_x]], <<[NWN_TAG_x]>>, <[NWN_TAG_x]>
+    ACTION_PLACEHOLDER_PATTERN = re.compile(
+        r"(?:__NWN_TAG_([A-Za-z0-9_]+)__|\[\[NWN_TAG_([A-Za-z0-9_]+)\]\]|<<\[NWN_TAG_([A-Za-z0-9_]+)\]>>|<\[NWN_TAG_([A-Za-z0-9_]+)\]>)"
+    )
+    NWN_TAG_NOISE_PATTERN = re.compile(r"[^\w\s]*NWN_TAG_[A-Za-z0-9_]+[^\w\s]*")
     RESTORED_ACTION_TAG_PATTERN = re.compile(r"</?Start[A-Za-z]*>")
 
     def __init__(self, preserve_standard_tokens: bool = True):
@@ -56,7 +61,8 @@ class TokenHandler:
         """
         self.preserve_standard_tokens = preserve_standard_tokens
         self.token_map: Dict[str, str] = {}  # Maps placeholder to original token
-        self.action_tag_map: Dict[str, str] = {}  # Maps action-tag placeholders to tags
+        # Maps action placeholder ids to original NWN tags.
+        self.action_tag_map: Dict[str, str] = {}
         self._action_nonce = secrets.token_hex(4)
         self.placeholder_counter = 0
         self.action_placeholder_counter = 0
@@ -105,10 +111,9 @@ class TokenHandler:
         def replace_action_tag(match: re.Match) -> str:
             """Replacement function for NWN action tags."""
             original_tag = match.group(0)
-            placeholder = (
-                f"[[NWN_TAG_{self._action_nonce}_{self.action_placeholder_counter}]]"
-            )
-            self.action_tag_map[placeholder] = original_tag
+            action_id = f"{self._action_nonce}_{self.action_placeholder_counter}"
+            placeholder = f"__NWN_TAG_{action_id}__"
+            self.action_tag_map[action_id] = original_tag
             self.action_placeholder_counter += 1
             return placeholder
 
@@ -140,16 +145,19 @@ class TokenHandler:
 
         def restore_action_placeholder(match: re.Match) -> str:
             """Restore NWN action tags from placeholders."""
-            placeholder = match.group(0)
-            return self.action_tag_map.get(placeholder, placeholder)
+            action_id = next((g for g in match.groups() if g), None)
+            if not action_id:
+                return ""
+            # Unknown placeholders are model artifacts and should be dropped.
+            return self.action_tag_map.get(action_id, "")
 
         restored_tokens = self.PLACEHOLDER_PATTERN.sub(restore_placeholder, text)
         restored_actions = self.ACTION_PLACEHOLDER_PATTERN.sub(
             restore_action_placeholder, restored_tokens
         )
-        # Guard against model-invented NWN placeholders (e.g. [[NWN_TAG_1]]).
-        # Unknown placeholders are not valid game text and must not leak to output.
-        restored_actions = self.ACTION_PLACEHOLDER_PATTERN.sub("", restored_actions)
+        # Ultra-defensive cleanup for model-mutated helper placeholders that still
+        # contain NWN_TAG ids but no longer match known wrapper forms.
+        restored_actions = self.NWN_TAG_NOISE_PATTERN.sub("", restored_actions)
 
         # Final safety net: if action tags became structurally broken,
         # strip them instead of shipping malformed markup that can break game parsing.

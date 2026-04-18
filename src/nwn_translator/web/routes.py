@@ -26,6 +26,7 @@ from ..ai_providers import OpenRouterProvider, create_provider
 from .deps import web_task_manager
 from .database import (
     delete_task_row,
+    get_ncs_translation_map_by_task,
     get_task_row,
     get_translation_map_by_task,
     get_translations_by_task,
@@ -458,7 +459,18 @@ async def rebuild_task(
 
     # Build full translation map from SQLite, then apply user overrides
     all_translations = get_translation_map_by_task(task_id)
+    ncs_by_item_id = get_ncs_translation_map_by_task(task_id)
     all_translations.update(body.translations)
+
+    if body.translations:
+        for row in get_translations_by_task(task_id):
+            iid = row.get("item_id")
+            file = row.get("file") or ""
+            if not iid or not file.lower().endswith(".ncs"):
+                continue
+            orig = row.get("original")
+            if orig in body.translations:
+                ncs_by_item_id[iid] = body.translations[orig]
 
     extract_dir = Path(task.extract_dir)
     output_path = task.result_path
@@ -478,6 +490,7 @@ async def rebuild_task(
             output_path,
             original_mod_path=original_mod_path,
             target_lang=rebuild_target_lang,
+            ncs_translations_by_item_id=ncs_by_item_id,
         )
     except Exception as e:
         logger.exception("Rebuild failed for task %s", task.task_id)

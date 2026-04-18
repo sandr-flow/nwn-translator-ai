@@ -95,21 +95,18 @@ def inject_translations_into_file(
         target_lang
     )
     if extracted.content_type == "ncs_script":
+        by_id: Dict[str, str] = {}
         if ncs_translations_by_item_id is not None:
-            inject_metadata["ncs_translations_by_item_id"] = dict(
-                ncs_translations_by_item_id
-            )
-        else:
-            by_id: Dict[str, str] = {}
-            for item in extracted.items:
-                tid = item.item_id or ""
-                if not tid:
-                    continue
-                new_t = translations.get(item.text)
-                if new_t is None or new_t == item.text:
-                    continue
-                by_id[tid] = new_t
-            inject_metadata["ncs_translations_by_item_id"] = by_id
+            by_id.update(ncs_translations_by_item_id)
+        for item in extracted.items:
+            tid = item.item_id or ""
+            if not tid or tid in by_id:
+                continue
+            new_t = translations.get(item.text)
+            if new_t is None or new_t == item.text:
+                continue
+            by_id[tid] = new_t
+        inject_metadata["ncs_translations_by_item_id"] = by_id
         inject_metadata["ncs_extracted_items"] = extracted.items
     result = injector.inject(file_path, parsed_data, translations, inject_metadata)
     if log_updates and result.modified:
@@ -564,6 +561,9 @@ class ModuleTranslator:
                     translated=translated,
                     context=item.context,
                     source_filename=file_path.name,
+                    item_id=item.item_id
+                    if (item.metadata or {}).get("type") == "ncs_string"
+                    else None,
                 )
 
     def _patch_git_files(
@@ -672,6 +672,7 @@ def rebuild_module(
     output_path: Path,
     original_mod_path: Path,
     target_lang: Optional[str] = None,
+    ncs_translations_by_item_id: Optional[Dict[str, str]] = None,
 ) -> Path:
     """Re-inject translations and reassemble a .mod without LLM calls.
 
@@ -680,6 +681,9 @@ def rebuild_module(
         translations: Mapping of original text to (possibly edited) translated text.
         output_path: Where to write the rebuilt .mod file.
         original_mod_path: Path to the original .mod (needed for ERF header info).
+        ncs_translations_by_item_id: Optional per-``item_id`` NCS strings (required when
+            bytecode already contains translated text so *translations* cannot be
+            resolved by original substring).
 
     Returns:
         Path to the rebuilt .mod file.
@@ -719,7 +723,7 @@ def rebuild_module(
             parsed_data,
             extracted,
             translations,
-            ncs_translations_by_item_id=None,
+            ncs_translations_by_item_id=ncs_translations_by_item_id,
             log_updates=False,
             target_lang=target_lang,
         )

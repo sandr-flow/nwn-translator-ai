@@ -16,6 +16,7 @@ from src.nwn_translator.extractors.item_extractor import ItemExtractor
 from src.nwn_translator.extractors.area_extractor import (
     PlaceableExtractor,
     DoorExtractor,
+    EncounterExtractor,
     StoreExtractor,
     TriggerExtractor,
 )
@@ -266,6 +267,63 @@ class TestTriggerExtractorDescriptions:
         }
         result = extractor.extract(file_path, parsed_data)
         assert len(result.items) == 0
+
+
+class TestPlaceableExtractorLocName:
+    """Regression: NWN / NWN:EE .utp files store the display name in
+    ``LocName`` (not ``Name``). PlaceableExtractor must pick it up, otherwise
+    placeables like the ``invis_corpse_obj`` template stay untranslated and
+    players see the English label ``corpse`` on hover.
+    """
+
+    def test_extract_placeable_name_from_loc_name(self):
+        extractor = PlaceableExtractor()
+        file_path = Path("invis_corpse_obj.utp")
+        parsed_data = {
+            "StructType": "UTP",
+            "Tag": "invis_corpse_obj",
+            "LocName": {"StrRef": -1, "Value": "corpse"},
+            "Description": {"StrRef": -1, "Value": ""},
+        }
+        result = extractor.extract(file_path, parsed_data)
+        names = [
+            it.text for it in result.items
+            if it.metadata.get("type") == "placeable_name"
+        ]
+        assert names == ["corpse"]
+
+    def test_loc_name_wins_over_name_when_both_present(self):
+        extractor = PlaceableExtractor()
+        parsed_data = {
+            "Tag": "dup",
+            "LocName": {"StrRef": -1, "Value": "Canonical"},
+            "Name": {"StrRef": -1, "Value": "LegacyToolsetExport"},
+        }
+        result = extractor.extract(Path("dup.utp"), parsed_data)
+        names = [
+            it.text for it in result.items
+            if it.metadata.get("type") == "placeable_name"
+        ]
+        assert names == ["Canonical"]
+
+
+class TestEncounterExtractor:
+    def test_can_extract_ute_files(self):
+        assert EncounterExtractor().can_extract(".ute")
+
+    def test_extract_encounter_name_and_description(self):
+        extractor = EncounterExtractor()
+        file_path = Path("darkshadows.ute")
+        parsed_data = {
+            "Tag": "DarkShadows",
+            "LocalizedName": {"StrRef": -1, "Value": "Dark Shadows"},
+            "Description": {"StrRef": -1, "Value": "A group of shadows."},
+        }
+        result = extractor.extract(file_path, parsed_data)
+        assert result.content_type == "encounter"
+        texts = {item.text: item.metadata.get("type") for item in result.items}
+        assert texts.get("Dark Shadows") == "encounter_name"
+        assert texts.get("A group of shadows.") == "encounter_description"
 
 
 class TestStoreExtractorDescriptions:

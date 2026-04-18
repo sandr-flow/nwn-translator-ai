@@ -133,3 +133,87 @@ def test_git_extractor_skips_internal_tags():
     result = extractor.extract(path, gff)
     texts = {item.text for item in result.items}
     assert "WP_Spawn" not in texts
+
+
+def test_git_extractor_translates_non_trap_triggers():
+    """Non-trap triggers carry player-visible text: area-transition tooltips and
+    generic-trigger names used by scripts for SpeakString / FloatingText."""
+    extractor = GitExtractor()
+    path = Path("area.git")
+    gff = {
+        "TriggerList": [
+            {
+                "Tag": "at_CastleToSewers",
+                "Type": 1,
+                "TrapFlag": 0,
+                "LocalizedName": {"StrRef": -1, "Value": "To the Sewers"},
+                "Description": {"StrRef": -1, "Value": ""},
+            },
+            {
+                "Tag": "Telios",
+                "Type": 0,
+                "TrapFlag": 0,
+                "LocalizedName": {
+                    "StrRef": -1,
+                    "Value": '"My lovely boots are getting mud on them!"',
+                },
+                "Description": {"StrRef": -1, "Value": ""},
+            },
+            {
+                "Tag": "tr_vico",
+                "Type": 0,
+                "TrapFlag": 0,
+                "LocalizedName": {"StrRef": -1, "Value": "tr_vico"},
+                "Description": {"StrRef": -1, "Value": ""},
+            },
+        ]
+    }
+    result = extractor.extract(path, gff)
+    texts = {item.text for item in result.items}
+    assert "To the Sewers" in texts
+    assert '"My lovely boots are getting mud on them!"' in texts
+    assert "tr_vico" not in texts
+
+
+def test_git_injector_collects_non_trap_trigger_strings():
+    """Injector string collector must mirror the extractor for non-trap triggers."""
+    from src.nwn_translator.injectors.git_injector import (
+        collect_git_strings_missing_from_translations,
+    )
+
+    gff = {
+        "TriggerList": [
+            {
+                "Tag": "Comment",
+                "Type": 0,
+                "TrapFlag": 0,
+                "LocalizedName": {
+                    "StrRef": -1,
+                    "Value": "[Strange. There was something that looked like an eye reflected in the water.]",
+                },
+                "Description": {"StrRef": -1, "Value": ""},
+            }
+        ]
+    }
+    found = collect_git_strings_missing_from_translations(gff, {})
+    assert any("eye reflected" in s for s in found)
+
+
+def test_git_extractor_collects_encounter_instance_names():
+    """Encounter instances in .git expose LocalizedName retrievable by scripts."""
+    extractor = GitExtractor()
+    path = Path("area.git")
+    gff = {
+        "Encounter List": [
+            {
+                "LocalizedName": {"StrRef": -1, "Value": "Human, Bandit Group"},
+            },
+            {
+                "LocalizedName": {"StrRef": -1, "Value": "enc_internal_tag"},
+            },
+        ]
+    }
+    result = extractor.extract(path, gff)
+    texts = {item.text: item.metadata.get("type") for item in result.items}
+    assert texts.get("Human, Bandit Group") == "encounter_name"
+    assert "enc_internal_tag" not in texts

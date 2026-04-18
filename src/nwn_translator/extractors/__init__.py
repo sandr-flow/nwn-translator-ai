@@ -13,6 +13,7 @@ from .area_extractor import (
     TriggerExtractor,
     PlaceableExtractor,
     DoorExtractor,
+    EncounterExtractor,
     StoreExtractor,
 )
 from .module_extractor import ModuleExtractor
@@ -32,6 +33,7 @@ __all__ = [
     "TriggerExtractor",
     "PlaceableExtractor",
     "DoorExtractor",
+    "EncounterExtractor",
     "StoreExtractor",
     "ModuleExtractor",
     "NcsExtractor",
@@ -49,6 +51,7 @@ for _cls in [
     TriggerExtractor,
     PlaceableExtractor,
     DoorExtractor,
+    EncounterExtractor,
     StoreExtractor,
     ModuleExtractor,
     NcsExtractor,

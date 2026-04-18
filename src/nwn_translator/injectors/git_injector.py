@@ -39,6 +39,8 @@ INSTANCE_LISTS = {
     # Only MapNote is player-visible (minimap/automap label).
     # LocalizedName and Description are toolset-only — not translated.
     "WaypointList": ["MapNote"],
+    # Encounter instance LocalizedName may surface via GetLocalizedName in scripts.
+    "Encounter List": ["LocalizedName"],
     "StoreList": ["LocName", "LocalizedName", "Description"],
 }
 
@@ -188,9 +190,6 @@ def collect_git_strings_missing_from_translations(
             continue
         for instance in instances:
             if not isinstance(instance, dict):
-                continue
-            # Non-trap triggers are scripting-only — not player-visible.
-            if list_key == "TriggerList" and not instance.get("TrapFlag"):
                 continue
             _add_string_values_from_fields(
                 instance, field_names, found, existing_translations
@@ -355,9 +354,6 @@ def patch_git_file(
 
         for instance in instances:
             if not isinstance(instance, dict):
-                continue
-            # Non-trap triggers are scripting-only — not player-visible.
-            if list_key == "TriggerList" and not instance.get("TrapFlag"):
                 continue
 
             items_patched += _collect_locale_patches_on_struct(

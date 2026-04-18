@@ -51,6 +51,9 @@ def _meta_type_for_instance_field(list_key: str, field_name: str) -> str:
             return "waypoint_description"
         if field_name == "MapNote":
             return "waypoint_map_note"
+    if list_key == "Encounter List":
+        if field_name == "LocalizedName":
+            return "encounter_name"
     if list_key == "StoreList":
         if field_name in ("LocName", "LocalizedName"):
             return "store_name"
@@ -161,8 +164,22 @@ def _build_instance_context(
         return "Door description (area instance)"
 
     if list_key == "TriggerList":
+        trig_type = instance.get("Type", 0)
         if field_name == "LocalizedName":
-            return "Trigger name (area instance)"
+            if trig_type == 1:
+                return (
+                    "Area transition tooltip, shown when the player hovers over "
+                    "the transition (area instance)"
+                )
+            if trig_type == 2 or instance.get("TrapFlag"):
+                return "Trap name, shown when the trap is detected (area instance)"
+            return (
+                "Generic trigger name. Often retrieved by scripts via "
+                "GetLocalizedName() and shown to the player as floating text / "
+                "SpeakString when crossing the trigger. Quoted text in \"…\" is an "
+                "NPC one-liner; bracketed text in […] is an internal thought / "
+                "narrator comment — preserve the surrounding punctuation."
+            )
         return "Trigger description (area instance)"
 
     if list_key == "WaypointList":
@@ -171,6 +188,14 @@ def _build_instance_context(
         if field_name == "MapNote":
             return "Waypoint map note label (area instance)"
         return "Waypoint description (area instance)"
+
+    if list_key == "Encounter List":
+        if field_name == "LocalizedName":
+            return (
+                "Encounter group label (area instance). Often a toolset-style "
+                "classifier (e.g. 'Orc, Low Group') — translate as a short "
+                "label, not a sentence."
+            )
 
     if list_key == "StoreList":
         if field_name in ("LocName", "LocalizedName"):
@@ -300,9 +325,6 @@ class GitExtractor(BaseExtractor):
                 continue
             for inst_idx, instance in enumerate(instances):
                 if not isinstance(instance, dict):
-                    continue
-                # Non-trap triggers are scripting-only — not player-visible.
-                if list_key == "TriggerList" and not instance.get("TrapFlag"):
                     continue
                 for field_name in field_names:
                     meta_type = _meta_type_for_instance_field(list_key, field_name)

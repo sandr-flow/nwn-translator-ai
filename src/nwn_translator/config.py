@@ -262,6 +262,7 @@ TRANSLATABLE_TYPES = {
     ".utt": "Trigger",
     ".utp": "Placeable",
     ".utd": "Door",
+    ".ute": "Encounter",
     ".utm": "Store",
     ".git": "Area Instance",
     ".ifo": "Module Info",

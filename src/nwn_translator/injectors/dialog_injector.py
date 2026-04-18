@@ -204,7 +204,7 @@ class GenericInjector(BaseInjector):
     This handles items, creatures, areas, placeables, doors, and stores.
     """
 
-    SUPPORTED_TYPES = ["item", "creature", "area", "trigger", "placeable", "door", "store", "module"]
+    SUPPORTED_TYPES = ["item", "creature", "area", "trigger", "placeable", "door", "encounter", "store", "module"]
 
     # Mapping of content types to GFF field names
     FIELD_MAP = {
@@ -226,12 +226,18 @@ class GenericInjector(BaseInjector):
             "name": "LocalizedName",
             "description": "Description",
         },
+        # Placeable name is handled by the multi-candidate block (LocName /
+        # LocalizedName / Name fallback); only Description + DescIdentified
+        # go through the generic loop.
         "placeable": {
-            "name": "Name",
             "description": "Description",
             "identified": "DescIdentified",
         },
         "door": {
+            "name": "LocalizedName",
+            "description": "Description",
+        },
+        "encounter": {
             "name": "LocalizedName",
             "description": "Description",
         },
@@ -291,8 +297,14 @@ class GenericInjector(BaseInjector):
         patches: List[Tuple[int, str]] = []
 
         # Store templates use LocName; fall back to LocalizedName when absent.
-        if content_type == "store":
-            for name_field in ("LocName", "LocalizedName"):
+        # Placeable templates use LocName in stock NWN/NWN:EE; a few third-party
+        # toolset exports emit LocalizedName or Name instead, so fall back.
+        _NAME_CANDIDATES = {
+            "store": ("LocName", "LocalizedName"),
+            "placeable": ("LocName", "LocalizedName", "Name"),
+        }
+        if content_type in _NAME_CANDIDATES:
+            for name_field in _NAME_CANDIDATES[content_type]:
                 if name_field not in parsed_data:
                     continue
                 field_obj = parsed_data[name_field]

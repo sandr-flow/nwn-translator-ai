@@ -144,8 +144,9 @@ class TriggerExtractor(BaseExtractor):
 class PlaceableExtractor(BaseExtractor):
     """Extractor for placeable (.utp) files.
 
-    In NWN:EE, .utp (Usable Placeable Template) stores placeables with a
-    localized Name field.
+    NWN (and NWN:EE) placeable templates use ``LocName`` for the localized
+    display name; ``Name`` / ``LocalizedName`` are only seen in a few
+    third-party toolset exports, so we fall back to them defensively.
     """
 
     SUPPORTED_TYPES = [".utp"]
@@ -169,11 +170,14 @@ class PlaceableExtractor(BaseExtractor):
             ExtractedContent with placeable data
         """
         tag = parsed_data.get("Tag", file_path.stem)
-        # .utp uses 'Name' (CExoLocString), not 'LocalizedName'
         items: List[TranslatableItem] = []
-        name_item = self._make_name_item(
-            parsed_data, file_path, "Name", "Placeable", "placeable_name"
-        )
+        name_item = None
+        for field in ("LocName", "LocalizedName", "Name"):
+            name_item = self._make_name_item(
+                parsed_data, file_path, field, "Placeable", "placeable_name"
+            )
+            if name_item:
+                break
         if name_item:
             items.append(name_item)
         desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))
@@ -251,6 +255,52 @@ class DoorExtractor(BaseExtractor):
             )
         return ExtractedContent(
             content_type="door",
+            items=items,
+            source_file=file_path,
+            metadata={"tag": tag, "item_count": len(items)},
+        )
+
+
+class EncounterExtractor(BaseExtractor):
+    """Extractor for encounter blueprint (.ute) files.
+
+    Encounter templates hold the localized name/description that scripts may
+    surface to the player via ``GetLocalizedName(oEncounter)`` or UI hooks.
+    ``CreatureList`` entries are resref references and are not translatable.
+    """
+
+    SUPPORTED_TYPES = [".ute"]
+
+    def can_extract(self, file_type: str) -> bool:
+        return file_type.lower() in self.SUPPORTED_TYPES
+
+    def extract(
+        self,
+        file_path: Path,
+        parsed_data: Dict[str, Any]
+    ) -> ExtractedContent:
+        tag = parsed_data.get("Tag", file_path.stem)
+        items: List[TranslatableItem] = []
+        name_item = self._make_name_item(
+            parsed_data, file_path, "LocalizedName", "Encounter", "encounter_name"
+        )
+        if name_item:
+            items.append(name_item)
+        desc = self._extract_text_from_local_string(
+            parsed_data.get("Description", {})
+        )
+        if desc:
+            items.append(
+                TranslatableItem(
+                    text=desc,
+                    context=f"Encounter description: {tag}",
+                    item_id=f"{tag}_description",
+                    location=str(file_path),
+                    metadata={"type": "encounter_description", "tag": tag},
+                )
+            )
+        return ExtractedContent(
+            content_type="encounter",
             items=items,
             source_file=file_path,
             metadata={"tag": tag, "item_count": len(items)},

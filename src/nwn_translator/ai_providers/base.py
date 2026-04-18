@@ -7,18 +7,21 @@ ensuring a consistent API across different AI services.
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from ..config import PROMPT_CACHE_BREAKPOINTS_ENABLED
 
 
 class ProviderError(Exception):
     """Base exception for provider errors."""
+
     pass
 
 
 class RateLimitError(ProviderError):
     """Exception raised when rate limit is exceeded."""
-    pass
 
+    pass
 
 
 @dataclass
@@ -30,6 +33,7 @@ class TranslationItem:
         context: Additional context for the translation (e.g., speaker name, dialog position)
         metadata: Additional information about the item
     """
+
     original: str
     context: Optional[str] = None
     metadata: Dict[str, Any] = None
@@ -50,6 +54,7 @@ class TranslationResult:
         error: Error message if translation failed
         metadata: Additional metadata from the translation
     """
+
     translated: str
     original: str
     success: bool = True
@@ -67,12 +72,7 @@ class BaseAIProvider(ABC):
     All AI providers must implement this interface for translation and batch APIs.
     """
 
-    def __init__(
-        self,
-        api_key: str,
-        model: Optional[str] = None,
-        **kwargs
-    ):
+    def __init__(self, api_key: str, model: Optional[str] = None, **kwargs):
         """Initialize the AI provider.
 
         Args:
@@ -213,7 +213,7 @@ class BaseAIProvider(ABC):
         target_lang: str,
         glossary_block: str = "",
     ) -> str:
-        """Create system prompt for translation.
+        """Create system prompt for translation (stable + variable concatenated).
 
         Args:
             target_lang: Target language for translation
@@ -223,7 +223,59 @@ class BaseAIProvider(ABC):
             System prompt string
         """
         from ..prompts import build_translation_system_prompt
+
         return build_translation_system_prompt(target_lang, self.player_gender, glossary_block)
+
+    def _create_system_prompt_parts(
+        self,
+        target_lang: str,
+        glossary_block: str = "",
+    ) -> Tuple[str, str]:
+        """Return the stable/variable halves of the line-by-line translation prompt."""
+        from ..prompts import build_translation_system_prompt_parts
+
+        return build_translation_system_prompt_parts(
+            target_lang, self.player_gender, glossary_block
+        )
+
+    @staticmethod
+    def make_system_message_content(
+        stable: str,
+        variable: str = "",
+        *,
+        stable_suffix: str = "",
+    ) -> Union[str, List[Dict[str, Any]]]:
+        """Build the ``messages[0].content`` payload for a chat completion call.
+
+        When the variable half is empty the payload is returned as a plain
+        string (maximally compatible with legacy OpenAI-compatible gateways).
+
+        Otherwise, a two-part ``content`` list is returned with a
+        ``cache_control: {"type": "ephemeral"}`` breakpoint on the stable
+        half — this is ignored by providers that do not support prompt
+        caching and honoured by Anthropic/Gemini 2.5/Grok via OpenRouter,
+        while remaining a stable prefix for OpenAI/DeepSeek automatic caching.
+
+        Args:
+            stable: Prompt text that is byte-identical across calls in a run.
+            variable: Prompt text that may change between calls.
+            stable_suffix: Additional text appended to *stable* (e.g. BATCH MODE
+                instructions) — kept inside the cached portion.
+        """
+        full_stable = stable if not stable_suffix else f"{stable}{stable_suffix}"
+        has_variable = bool(variable and variable.strip())
+        if not PROMPT_CACHE_BREAKPOINTS_ENABLED or not has_variable:
+            if has_variable:
+                return f"{full_stable}\n\n{variable.strip()}"
+            return full_stable
+        return [
+            {
+                "type": "text",
+                "text": full_stable,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {"type": "text", "text": variable.strip()},
+        ]
 
     def _create_user_prompt(
         self,

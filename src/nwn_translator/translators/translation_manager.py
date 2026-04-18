@@ -6,9 +6,10 @@ AI providers, and injectors.
 
 import asyncio
 import logging
+import re
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
 from tqdm import tqdm
 
@@ -24,6 +25,31 @@ from .token_handler import TokenHandler, sanitize_text, restore_text
 
 # Minimum length (characters) for a cached key to qualify as a prefix match.
 _MIN_PREFIX_LEN = 20
+
+# Placeholders produced by TokenHandler.sanitize() that carry no translatable
+# content and must be stripped before checking if a sanitized string is empty.
+_NON_TRANSLATABLE_RE = re.compile(
+    r"<<TOKEN_\d+>>"
+    r"|__NWN_TAG_[A-Za-z0-9_]+__"
+    r"|\[\[NWN_TAG_[A-Za-z0-9_]+\]\]"
+    r"|<<\[NWN_TAG_[A-Za-z0-9_]+\]>>"
+    r"|<\[NWN_TAG_[A-Za-z0-9_]+\]>"
+)
+
+
+def _is_empty_after_sanitize(sanitized: str) -> bool:
+    """True when *sanitized* has no letter/digit once placeholders are removed.
+
+    NWN token placeholders (``<<TOKEN_n>>``) and internal NWN-tag helper
+    placeholders are stripped; the remainder is scanned for any Unicode
+    letter or digit.  Whitespace, punctuation, and lone underscores do not
+    count as translatable content.
+    """
+    if not sanitized:
+        return True
+    stripped = _NON_TRANSLATABLE_RE.sub("", sanitized)
+    return not re.search(r"[^\W_]", stripped, flags=re.UNICODE)
+
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +73,10 @@ class TranslationManager:
         self.config = config
         self.provider = provider
         self.glossary = glossary
+        #: Cached full glossary block (unfiltered); kept as a fallback and for
+        #: callers that do not benefit from per-batch filtering.
         self._glossary_prompt_block = (
-            glossary.to_prompt_block()
-            if glossary and getattr(glossary, "entries", None)
-            else ""
+            glossary.to_prompt_block() if glossary and getattr(glossary, "entries", None) else ""
         )
         self._log_writer = translation_log_writer_for_config(
             config.translation_log,
@@ -107,6 +133,18 @@ class TranslationManager:
         except Exception:
             pass
 
+    def _glossary_block_for_texts(self, texts: Iterable[str]) -> Optional[str]:
+        """Return a glossary block narrowed to entries present in *texts*.
+
+        Returns *None* when no glossary is configured or no entries match
+        the batch — callers should omit the field from the prompt in that
+        case so the variable half of the system message stays empty.
+        """
+        if not self.glossary or not getattr(self.glossary, "entries", None):
+            return None
+        block = self.glossary.to_prompt_block(texts=texts)
+        return block or None
+
     def _find_cached_prefix(self, sanitized: str) -> Optional[tuple]:
         """Find the longest cached text that is a prefix of *sanitized*.
 
@@ -142,8 +180,7 @@ class TranslationManager:
             return
 
         batches = [
-            pending[i : i + self._BATCH_SIZE]
-            for i in range(0, len(pending), self._BATCH_SIZE)
+            pending[i : i + self._BATCH_SIZE] for i in range(0, len(pending), self._BATCH_SIZE)
         ]
 
         async def run_batches() -> None:
@@ -156,13 +193,15 @@ class TranslationManager:
                     file_name = Path(loc).name if loc else ""
                     off = meta.get("offset")
                     off_s = hex(off) if isinstance(off, int) else str(off)
-                    entries.append({
-                        "key": str(j),
-                        "text": item.text,
-                        "file": file_name,
-                        "offset": off_s,
-                        "hint": str(meta.get("ncs_hint", "unknown")),
-                    })
+                    entries.append(
+                        {
+                            "key": str(j),
+                            "text": item.text,
+                            "file": file_name,
+                            "offset": off_s,
+                            "hint": str(meta.get("ncs_hint", "unknown")),
+                        }
+                    )
                 partial = await self.provider.classify_ncs_translate_gate_batch_async(
                     entries,
                     source_lang=self.config.source_lang,
@@ -172,6 +211,7 @@ class TranslationManager:
                     self._ncs_gate_approval[iid] = partial.get(str(j), False)
 
         from ..async_utils import run_async
+
         run_async(
             run_batches(),
             cleanup=self.provider.close_async_client,
@@ -209,24 +249,22 @@ class TranslationManager:
         translation_items = []
         for item in items:
             sanitized, handler = sanitize_text(
-                item.text,
-                preserve_tokens=self.config.preserve_tokens
+                item.text, preserve_tokens=self.config.preserve_tokens
             )
-            translation_items.append({
-                "item": item,
-                "sanitized": sanitized,
-                "handler": handler,
-            })
+            translation_items.append(
+                {
+                    "item": item,
+                    "sanitized": sanitized,
+                    "handler": handler,
+                }
+            )
 
         self._run_ncs_llm_gate(translation_items)
 
         # Per-session cache check
         # Avoids duplicate API calls when the same string appears multiple times across files.
 
-        use_tqdm = (
-            not self.config.quiet
-            and self.config.progress_callback is None
-        )
+        use_tqdm = not self.config.quiet and self.config.progress_callback is None
         iterable = (
             tqdm(
                 translation_items,
@@ -279,7 +317,8 @@ class TranslationManager:
                 item_data["_prefix_translation"] = prefix_translation
                 logger.debug(
                     "Prefix cache match (%d chars) for '%s…'",
-                    len(prefix_key), sanitized[:40],
+                    len(prefix_key),
+                    sanitized[:40],
                 )
 
             uncached_items.append(item_data)
@@ -303,7 +342,8 @@ class TranslationManager:
             if len(unique_items) < len(uncached_items):
                 logger.info(
                     "Deduplicated %d items down to %d unique texts",
-                    len(uncached_items), len(unique_items),
+                    len(uncached_items),
+                    len(unique_items),
                 )
 
             # Pre-bump for duplicates that will be resolved transparently via
@@ -312,7 +352,9 @@ class TranslationManager:
             if duplicates > 0 and item_progress is not None:
                 item_progress.bump(by=duplicates, filename=content.content_type)
 
-            self._translate_uncached_concurrent(unique_items, translations, source_filename=source_filename)
+            self._translate_uncached_concurrent(
+                unique_items, translations, source_filename=source_filename
+            )
 
         self._active_item_progress = None
         return translations
@@ -332,13 +374,21 @@ class TranslationManager:
     _RUN_ASYNC_TIMEOUT: float = 660.0
 
     # Item types that are safe for batching (short names/labels only)
-    _BATCHABLE_TYPES = frozenset({
-        "creature_first_name", "creature_last_name",
-        "item_name", "area_name",
-        "trigger_name", "placeable_name", "door_name", "store_name",
-        "waypoint_name", "waypoint_map_note",
-        "journal_category_name",
-    })
+    _BATCHABLE_TYPES = frozenset(
+        {
+            "creature_first_name",
+            "creature_last_name",
+            "item_name",
+            "area_name",
+            "trigger_name",
+            "placeable_name",
+            "door_name",
+            "store_name",
+            "waypoint_name",
+            "waypoint_map_note",
+            "journal_category_name",
+        }
+    )
 
     @staticmethod
     def _is_short_item(item_data: dict) -> bool:
@@ -369,6 +419,7 @@ class TranslationManager:
         """Translate a single item with semaphore and timeout."""
         item = item_data["item"]
         sanitized = item_data["sanitized"]
+        glossary_block = self._glossary_block_for_texts([sanitized])
         async with sem:
             try:
                 result = await asyncio.wait_for(
@@ -377,7 +428,7 @@ class TranslationManager:
                         source_lang=self.config.source_lang,
                         target_lang=self.config.target_lang,
                         context=item.context,
-                        glossary_block=self._glossary_prompt_block or None,
+                        glossary_block=glossary_block,
                     ),
                     timeout=self._ITEM_TIMEOUT,
                 )
@@ -426,10 +477,29 @@ class TranslationManager:
             prefix_key = d.get("_prefix_key")
             if prefix_key is not None:
                 d["_original_sanitized"] = d["sanitized"]
-                d["sanitized"] = d["sanitized"][len(prefix_key):]
+                d["sanitized"] = d["sanitized"][len(prefix_key) :]
 
-        short_items = [d for d in uncached_items if self._is_short_item(d)]
-        long_items = [d for d in uncached_items if not self._is_short_item(d)]
+        # Passthrough: strings reduced to tokens/punctuation/whitespace only
+        # need no API call — the sanitized form IS the "translation".
+        real_items: List[dict] = []
+        passthrough_items: List[dict] = []
+        for d in uncached_items:
+            if _is_empty_after_sanitize(d["sanitized"]):
+                passthrough_items.append(d)
+            else:
+                real_items.append(d)
+
+        if passthrough_items:
+            logger.info(
+                "Skipping API for %d item(s) with no translatable content "
+                "(tokens/punctuation only)",
+                len(passthrough_items),
+            )
+            for d in passthrough_items:
+                self._apply_passthrough(d, translations)
+
+        short_items = [d for d in real_items if self._is_short_item(d)]
+        long_items = [d for d in real_items if not self._is_short_item(d)]
 
         async def run_all() -> tuple:
             limit = max(1, int(self.config.max_concurrent_requests))
@@ -440,27 +510,41 @@ class TranslationManager:
             # --- Batch translation for short items ---
             batch_size = self._BATCH_SIZE
             batches = [
-                short_items[i:i + batch_size]
-                for i in range(0, len(short_items), batch_size)
+                short_items[i : i + batch_size] for i in range(0, len(short_items), batch_size)
             ]
 
             async def batch_one(batch: List[dict]) -> List[TranslationResult]:
+                # Deduplicate by sanitized text within the batch so repeated
+                # short strings (e.g. many identical tag-names in .git files)
+                # cost exactly one slot in the API payload. Results are
+                # replicated back to every duplicate in batch-order.
+                sanitized_to_unique_idx: Dict[str, int] = {}
+                unique_batch: List[dict] = []
+                for d in batch:
+                    san = d["sanitized"]
+                    if san not in sanitized_to_unique_idx:
+                        sanitized_to_unique_idx[san] = len(unique_batch)
+                        unique_batch.append(d)
+
                 batch_items = [
                     TranslationItem(
                         original=d["sanitized"],
                         context=d["item"].context,
                         metadata=d["item"].metadata or {},
                     )
-                    for d in batch
+                    for d in unique_batch
                 ]
+                glossary_block = self._glossary_block_for_texts(
+                    d["sanitized"] for d in unique_batch
+                )
                 async with sem:
                     try:
-                        results = await asyncio.wait_for(
+                        unique_results = await asyncio.wait_for(
                             self.provider.translate_batch_async(
                                 items=batch_items,
                                 source_lang=self.config.source_lang,
                                 target_lang=self.config.target_lang,
-                                glossary_block=self._glossary_prompt_block or None,
+                                glossary_block=glossary_block,
                             ),
                             timeout=self._BATCH_CALL_TIMEOUT,
                         )
@@ -470,7 +554,7 @@ class TranslationManager:
                             self._BATCH_CALL_TIMEOUT,
                             len(batch_items),
                         )
-                        results = [
+                        unique_results = [
                             TranslationResult(
                                 translated="",
                                 original=bi.original,
@@ -481,7 +565,7 @@ class TranslationManager:
                             for bi in batch_items
                         ]
                     except Exception as e:
-                        results = [
+                        unique_results = [
                             TranslationResult(
                                 translated="",
                                 original=bi.original,
@@ -491,6 +575,15 @@ class TranslationManager:
                             )
                             for bi in batch_items
                         ]
+                # Replicate unique results back to every duplicate occurrence
+                # in the original batch order. Callers iterate zip(batch, results).
+                results = [unique_results[sanitized_to_unique_idx[d["sanitized"]]] for d in batch]
+                if len(unique_batch) < len(batch):
+                    logger.debug(
+                        "Batch dedup: %d items → %d unique sanitized",
+                        len(batch),
+                        len(unique_batch),
+                    )
                 # Per-item progress bump — one per batch member, regardless
                 # of success; retry path below must not re-bump.
                 for d in batch:
@@ -516,8 +609,10 @@ class TranslationManager:
                 )
                 long_results = [
                     TranslationResult(
-                        translated="", original=d["sanitized"],
-                        success=False, error="Gather timeout",
+                        translated="",
+                        original=d["sanitized"],
+                        success=False,
+                        error="Gather timeout",
                     )
                     for d in long_items
                 ]
@@ -540,8 +635,10 @@ class TranslationManager:
                 batch_results_nested = [
                     [
                         TranslationResult(
-                            translated="", original=d["sanitized"],
-                            success=False, error="Gather timeout",
+                            translated="",
+                            original=d["sanitized"],
+                            success=False,
+                            error="Gather timeout",
                         )
                         for d in batch
                     ]
@@ -554,6 +651,7 @@ class TranslationManager:
             return long_results, batch_results
 
         from ..async_utils import run_async
+
         long_results, batch_results = run_async(
             run_all(),
             cleanup=self.provider.close_async_client,
@@ -562,8 +660,7 @@ class TranslationManager:
 
         if short_items:
             logger.info(
-                "Batch-translated %d short items in %d batch(es), "
-                "%d long items individually",
+                "Batch-translated %d short items in %d batch(es), " "%d long items individually",
                 len(short_items),
                 (len(short_items) + self._BATCH_SIZE - 1) // self._BATCH_SIZE,
                 len(long_items),
@@ -571,22 +668,29 @@ class TranslationManager:
 
         # Process long results
         for item_data, result in zip(long_items, long_results):
-            self._process_translation_result(item_data, result, translations, source_filename=source_filename)
+            self._process_translation_result(
+                item_data, result, translations, source_filename=source_filename
+            )
 
         # Process batch results; collect failures for individual retry
         retry_items: List[dict] = []
         for item_data, result in zip(short_items, batch_results):
             if result.success:
-                self._process_translation_result(item_data, result, translations, source_filename=source_filename)
+                self._process_translation_result(
+                    item_data, result, translations, source_filename=source_filename
+                )
             else:
                 retry_items.append(item_data)
 
         # Fallback: retry failed batch items individually
         if retry_items:
             logger.info(
-                "Retrying %d failed batch items individually", len(retry_items),
+                "Retrying %d failed batch items individually",
+                len(retry_items),
             )
-            self._translate_individual_fallback(retry_items, translations, source_filename=source_filename)
+            self._translate_individual_fallback(
+                retry_items, translations, source_filename=source_filename
+            )
 
     def _translate_individual_fallback(
         self,
@@ -602,9 +706,7 @@ class TranslationManager:
 
             try:
                 return await asyncio.wait_for(
-                    asyncio.gather(
-                        *[self._translate_one_async(sem, d, bump=False) for d in items]
-                    ),
+                    asyncio.gather(*[self._translate_one_async(sem, d, bump=False) for d in items]),
                     timeout=self._GATHER_TIMEOUT / 2,
                 )
             except asyncio.TimeoutError:
@@ -615,13 +717,16 @@ class TranslationManager:
                 )
                 return [
                     TranslationResult(
-                        translated="", original=d["sanitized"],
-                        success=False, error="Fallback gather timeout",
+                        translated="",
+                        original=d["sanitized"],
+                        success=False,
+                        error="Fallback gather timeout",
                     )
                     for d in items
                 ]
 
         from ..async_utils import run_async
+
         results = run_async(
             run_fallback(),
             cleanup=self.provider.close_async_client,
@@ -629,7 +734,42 @@ class TranslationManager:
         )
 
         for item_data, result in zip(items, results):
-            self._process_translation_result(item_data, result, translations, source_filename=source_filename)
+            self._process_translation_result(
+                item_data, result, translations, source_filename=source_filename
+            )
+
+    def _apply_passthrough(
+        self,
+        item_data: dict,
+        translations: Dict[str, str],
+    ) -> None:
+        """Record a no-API translation for items that carry no text to translate.
+
+        After :func:`sanitize_text` the string holds only token placeholders,
+        NWN-tag helpers, whitespace, and punctuation; the round-trip back to
+        the original text is the identity, so we reuse the sanitized form as
+        the "translated" value and restore tokens via the handler.
+        """
+        item = item_data["item"]
+        handler = item_data["handler"]
+        sanitized = item_data["sanitized"]
+        original_sanitized = item_data.get("_original_sanitized") or sanitized
+
+        translated_sanitized = sanitized
+        prefix_translation = item_data.get("_prefix_translation")
+        if prefix_translation is not None:
+            translated_sanitized = prefix_translation + translated_sanitized
+
+        with self._stats_lock:
+            self.translation_cache[original_sanitized] = translated_sanitized
+            translated = restore_text(translated_sanitized, handler)
+            translations[item.text] = translated
+            self.stats["items_translated"] = self.stats.get("items_translated", 0) + 1
+
+        if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
+            self.ncs_translations_by_item_id[item.item_id] = translated
+
+        self._async_bump(item_data)
 
     def _process_translation_result(
         self,
@@ -663,18 +803,16 @@ class TranslationManager:
                 self.ncs_translations_by_item_id[item.item_id] = translated
 
             # Prefer per-item location for file attribution (handles merged batches)
-            item_filename = (
-                Path(item.location).name if item.location else source_filename
-            )
+            item_filename = Path(item.location).name if item.location else source_filename
             log_entry = {
                 "original": item.text,
                 "translated": translated,
                 "context": item.context,
                 "model": result.metadata.get("model", self.config.model),
                 "file": item_filename,
-                "item_id": item.item_id
-                if (item.metadata or {}).get("type") == "ncs_string"
-                else None,
+                "item_id": (
+                    item.item_id if (item.metadata or {}).get("type") == "ncs_string" else None
+                ),
             }
             try:
                 self._log_writer.write(log_entry)
@@ -696,5 +834,3 @@ class TranslationManager:
             **self.stats,
             "total_errors": len(self.stats["errors"]),
         }
-
-

@@ -55,8 +55,8 @@ _RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError)
 
 class OpenRouterError(ProviderError):
     """OpenRouter-specific error."""
-    pass
 
+    pass
 
 
 class OpenRouterProvider(BaseAIProvider):
@@ -262,12 +262,8 @@ class OpenRouterProvider(BaseAIProvider):
         """Raise RateLimitError or OpenRouterError from a caught API exception."""
         error_msg = str(e)
         if "rate_limit" in error_msg.lower() or "429" in error_msg:
-            raise RateLimitError(
-                f"{self.PROVIDER_LABEL} rate limit exceeded: {error_msg}"
-            ) from e
-        raise OpenRouterError(
-            f"{self.PROVIDER_LABEL} translation failed: {error_msg}"
-        ) from e
+            raise RateLimitError(f"{self.PROVIDER_LABEL} rate limit exceeded: {error_msg}") from e
+        raise OpenRouterError(f"{self.PROVIDER_LABEL} translation failed: {error_msg}") from e
 
     @retry(
         stop=stop_after_attempt(3),
@@ -307,13 +303,14 @@ class OpenRouterProvider(BaseAIProvider):
             race_block = match_race_terms(text, target_lang)
             if race_block:
                 gb = gb + "\n\n" + race_block if gb else race_block
-            system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
+            stable, variable = self._create_system_prompt_parts(target_lang, glossary_block=gb)
+            system_content = self.make_system_message_content(stable, variable)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
             response = self._chat_completions_create_sync(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": system_content},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=TRANSLATION_TEMPERATURE,
@@ -370,13 +367,14 @@ class OpenRouterProvider(BaseAIProvider):
             race_block = match_race_terms(text, target_lang)
             if race_block:
                 gb = gb + "\n\n" + race_block if gb else race_block
-            system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
+            stable, variable = self._create_system_prompt_parts(target_lang, glossary_block=gb)
+            system_content = self.make_system_message_content(stable, variable)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
             response = await self._chat_completions_create_async(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": system_content},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=TRANSLATION_TEMPERATURE,
@@ -411,7 +409,7 @@ class OpenRouterProvider(BaseAIProvider):
 
     async def _chat_completion_json_async(
         self,
-        system_prompt: str,
+        system_prompt: Any,
         user_prompt: str,
         *,
         max_tokens: int,
@@ -419,7 +417,12 @@ class OpenRouterProvider(BaseAIProvider):
         response_format: dict,
         use_reasoning: bool = True,
     ) -> str:
-        """One chat completion with forced JSON-style ``response_format`` (no retries)."""
+        """One chat completion with forced JSON-style ``response_format`` (no retries).
+
+        ``system_prompt`` may be a plain string or a list of content parts
+        (the latter produced by :meth:`BaseAIProvider.make_system_message_content`
+        when prompt caching is in effect).
+        """
         try:
             response = await self._chat_completions_create_async(
                 model=self.model,
@@ -450,14 +453,18 @@ class OpenRouterProvider(BaseAIProvider):
     )
     async def complete_json_chat_async(
         self,
-        system_prompt: str,
+        system_prompt: Any,
         user_prompt: str,
         *,
         max_tokens: int = TRANSLATION_MAX_TOKENS,
         temperature: float = TRANSLATION_TEMPERATURE,
         use_reasoning: bool = True,
     ) -> str:
-        """Single chat completion with OpenAI/OpenRouter ``json_object`` mode."""
+        """Single chat completion with OpenAI/OpenRouter ``json_object`` mode.
+
+        ``system_prompt`` accepts either a plain string or a content-parts
+        list (see :meth:`BaseAIProvider.make_system_message_content`).
+        """
         return await self._chat_completion_json_async(
             system_prompt,
             user_prompt,
@@ -527,25 +534,27 @@ class OpenRouterProvider(BaseAIProvider):
             return []
 
         gb = glossary_block or ""
-        combined_text = " ".join(
-            item.original for item in items if item.original
-        )
+        combined_text = " ".join(item.original for item in items if item.original)
         race_block = match_race_terms(combined_text, target_lang)
         if race_block:
             gb = gb + "\n\n" + race_block if gb else race_block
-        system_prompt = self._create_system_prompt(target_lang, glossary_block=gb)
-        # Override the JSON output instruction for batch mode
-        system_prompt += (
+        stable, variable = self._create_system_prompt_parts(target_lang, glossary_block=gb)
+        # BATCH MODE instructions are identical for every batch call — keep
+        # them inside the cached stable half so the prompt prefix is stable.
+        batch_mode_suffix = (
             "\nBATCH MODE: You will receive a JSON object mapping numeric IDs "
             "to items. Each item is either a plain string or an object "
             '{"text": "...", "hint": "..."}. '
-            "The hint (e.g. \"item_name\", \"creature_first_name\", \"store_name\") "
+            'The hint (e.g. "item_name", "creature_first_name", "store_name") '
             "tells you what kind of game entity this is — use it to decide "
             "whether to translate the meaning or transliterate. "
             "Return a JSON object with the EXACT SAME numeric keys, where each "
             "value is the translated string (NOT an object). "
             "Do NOT rename, add, or remove keys. "
             "Do NOT wrap in markdown. Output ONLY the JSON object.\n"
+        )
+        system_content = self.make_system_message_content(
+            stable, variable, stable_suffix=batch_mode_suffix
         )
 
         # Build the batch payload with optional type hints from metadata
@@ -557,14 +566,13 @@ class OpenRouterProvider(BaseAIProvider):
             else:
                 batch_input[str(i)] = item.original
 
-        user_prompt = (
-            f"Translate each value from {source_lang}.\n\n"
-            + json.dumps(batch_input, ensure_ascii=False)
+        user_prompt = f"Translate each value from {source_lang}.\n\n" + json.dumps(
+            batch_input, ensure_ascii=False
         )
 
         try:
             raw = await self._chat_completion_json_async(
-                system_prompt,
+                system_content,
                 user_prompt,
                 max_tokens=TRANSLATION_MAX_TOKENS,
                 temperature=TRANSLATION_TEMPERATURE,
@@ -587,28 +595,34 @@ class OpenRouterProvider(BaseAIProvider):
                 key = str(i)
                 translated = parsed.get(key, "")
                 if isinstance(translated, str) and translated:
-                    results.append(TranslationResult(
-                        translated=translated,
-                        original=item.original,
-                        success=True,
-                        metadata={"model": self.model, "batch": True},
-                    ))
+                    results.append(
+                        TranslationResult(
+                            translated=translated,
+                            original=item.original,
+                            success=True,
+                            metadata={"model": self.model, "batch": True},
+                        )
+                    )
                 else:
-                    results.append(TranslationResult(
-                        translated="",
-                        original=item.original,
-                        success=False,
-                        error="Missing or empty translation in batch response",
-                        metadata={"model": self.model, "batch": True},
-                    ))
+                    results.append(
+                        TranslationResult(
+                            translated="",
+                            original=item.original,
+                            success=False,
+                            error="Missing or empty translation in batch response",
+                            metadata={"model": self.model, "batch": True},
+                        )
+                    )
             return results
 
         except json.JSONDecodeError as e:
             logger.warning("Batch JSON parse failed: %s", e)
             return [
                 TranslationResult(
-                    translated="", original=item.original,
-                    success=False, error=f"Batch JSON parse error: {e}",
+                    translated="",
+                    original=item.original,
+                    success=False,
+                    error=f"Batch JSON parse error: {e}",
                 )
                 for item in items
             ]
@@ -623,11 +637,11 @@ class OpenRouterProvider(BaseAIProvider):
             "You classify strings from Neverwinter Nights (NWN) compiled NWScript. "
             "For each item, decide if it should be translated for players — text "
             "shown as dialog, floating text, SendMessageToPC, SpeakString, etc.\n"
-            "Return ONLY a JSON object. Keys are \"0\", \"1\", … matching the input. "
-            "Each value must be an object: {\"translate\": true} or {\"translate\": false}. "
+            'Return ONLY a JSON object. Keys are "0", "1", … matching the input. '
+            'Each value must be an object: {"translate": true} or {"translate": false}. '
             "Use false for script names, tags, resrefs, variable names, debug logs, "
             "identifiers, and code-like fragments. "
-            "Short NPC lines (e.g. \"Mommy.\", \"I'm okay, sir. I think.\", \"Help!\") "
+            'Short NPC lines (e.g. "Mommy.", "I\'m okay, sir. I think.", "Help!") '
             "are usually real dialogue — use translate: true unless it is obviously a token. "
             "Informal or broken English in-character lines still count as dialogue. "
             "Use true for natural language the player reads.\n"
@@ -647,9 +661,8 @@ class OpenRouterProvider(BaseAIProvider):
                 "offset": str(e.get("offset", "")),
                 "hint": str(e.get("hint", "")),
             }
-        return (
-            f"Source language label: {source_lang}. Classify each entry.\n\n"
-            + json.dumps(user_payload, ensure_ascii=False)
+        return f"Source language label: {source_lang}. Classify each entry.\n\n" + json.dumps(
+            user_payload, ensure_ascii=False
         )
 
     def _parse_ncs_gate_raw(
@@ -693,9 +706,7 @@ class OpenRouterProvider(BaseAIProvider):
             try:
                 raw = await self._chat_completion_json_async(
                     self._ncs_gate_system_prompt(),
-                    self._ncs_gate_build_user_prompt(
-                        source_lang=source_lang, entries=entries
-                    ),
+                    self._ncs_gate_build_user_prompt(source_lang=source_lang, entries=entries),
                     max_tokens=max_tok,
                     temperature=0.15,
                     response_format={"type": "json_object"},
@@ -723,12 +734,8 @@ class OpenRouterProvider(BaseAIProvider):
         right = entries[mid:]
         left_rekeyed = [{**e, "key": str(i)} for i, e in enumerate(left)]
         right_rekeyed = [{**e, "key": str(i)} for i, e in enumerate(right)]
-        left_out = await self._ncs_gate_batch_with_recovery(
-            left_rekeyed, source_lang=source_lang
-        )
-        right_out = await self._ncs_gate_batch_with_recovery(
-            right_rekeyed, source_lang=source_lang
-        )
+        left_out = await self._ncs_gate_batch_with_recovery(left_rekeyed, source_lang=source_lang)
+        right_out = await self._ncs_gate_batch_with_recovery(right_rekeyed, source_lang=source_lang)
         merged: Dict[str, bool] = {}
         for i, e in enumerate(left):
             merged[str(e["key"])] = left_out[str(i)]
@@ -751,4 +758,3 @@ class OpenRouterProvider(BaseAIProvider):
     ) -> Dict[str, bool]:
         """LLM gate: whether each NCS string occurrence is player-facing."""
         return await self._ncs_gate_batch_with_recovery(entries, source_lang=source_lang)
-

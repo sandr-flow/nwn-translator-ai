@@ -7,7 +7,6 @@ from typing import Callable, Optional
 
 from .translation_logging import TranslationLogWriter
 
-
 # Callback: phase, current index (0-based), total count, optional message (e.g. filename).
 ProgressCallback = Callable[[str, int, int, Optional[str]], None]
 
@@ -71,6 +70,22 @@ def parse_reasoning_effort(raw: Optional[str]) -> Optional[str]:
     return s
 
 
+def _prompt_cache_enabled_from_environment() -> bool:
+    """Whether to emit a ``cache_control: ephemeral`` breakpoint between the stable
+    and variable halves of the system prompt.
+
+    The breakpoint is ignored by providers that do not support prompt caching
+    (OpenAI, DeepSeek rely on automatic prefix caching; Anthropic, Gemini 2.5 and
+    Grok use the explicit breakpoint). Disable via ``NWN_TRANSLATE_PROMPT_CACHE=0``
+    if a gateway rejects the extra field.
+    """
+    raw = os.getenv("NWN_TRANSLATE_PROMPT_CACHE", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+PROMPT_CACHE_BREAKPOINTS_ENABLED: bool = _prompt_cache_enabled_from_environment()
+
+
 def max_concurrent_from_environment() -> int:
     """Max parallel OpenRouter HTTP requests (asyncio + semaphore, not OS threads).
 
@@ -132,7 +147,9 @@ class TranslationConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization."""
-        self.input_file = Path(self.input_file) if isinstance(self.input_file, str) else self.input_file
+        self.input_file = (
+            Path(self.input_file) if isinstance(self.input_file, str) else self.input_file
+        )
         if self.output_file and isinstance(self.output_file, str):
             self.output_file = Path(self.output_file)
         if self.translation_log and isinstance(self.translation_log, str):

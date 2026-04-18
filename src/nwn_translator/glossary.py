@@ -12,7 +12,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set
 
 from .config import (
     GLOSSARY_LLM_TIMEOUT,
@@ -50,19 +50,51 @@ class Glossary:
 
     entries: Dict[str, str] = field(default_factory=dict)
 
-    def to_prompt_block(self) -> str:
-        """Format glossary for system prompt injection."""
+    def to_prompt_block(self, texts: Optional[Iterable[str]] = None) -> str:
+        """Format glossary for system prompt injection.
+
+        When *texts* is provided, only entries whose English name occurs
+        (case-insensitive, whole-word) in at least one of the texts are
+        included.  This keeps the variable half of the prompt small for
+        short batches (Phase 2 — glossary-by-batch filtering).  Dialog
+        translation should pass *texts=None* to get the full block.
+        """
         if not self.entries:
             return ""
+        if texts is None:
+            entries = self.entries
+        else:
+            entries = self._filter_entries_by_texts(texts)
+            if not entries:
+                return ""
         lines = [
             "GLOSSARY (canonical proper names — use these consistently in every line; "
             "decline or conjugate as required by grammar in the target language, "
             "but only if the name is declinable; each entry is a DISTINCT entity — "
             "never substitute one name for another):",
         ]
-        for en in sorted(self.entries.keys(), key=str.lower):
-            lines.append(f'  * "{en}" → {self.entries[en]}')
+        for en in sorted(entries.keys(), key=str.lower):
+            lines.append(f'  * "{en}" → {entries[en]}')
         return "\n".join(lines)
+
+    def _filter_entries_by_texts(self, texts: Iterable[str]) -> Dict[str, str]:
+        """Return glossary entries whose keys appear in *texts* (whole-word, ci)."""
+        blob_parts: List[str] = []
+        for t in texts:
+            if t:
+                blob_parts.append(str(t))
+        if not blob_parts:
+            return {}
+        blob = "\n".join(blob_parts).lower()
+        out: Dict[str, str] = {}
+        for en, tr in self.entries.items():
+            name = en.strip().lower()
+            if not name:
+                continue
+            pattern = r"\b" + re.escape(name) + r"\b"
+            if re.search(pattern, blob):
+                out[en] = tr
+        return out
 
     def seed_cache(self, cache: Dict[str, str], *, preserve_tokens: bool) -> None:
         """Populate session translation cache so exact-match strings skip the API.
@@ -103,9 +135,7 @@ class GlossaryBuilder:
         if not hasattr(provider, "complete_glossary_chat_async") and not hasattr(
             provider, "complete_json_chat_async"
         ):
-            logger.warning(
-                "Glossary building skipped: provider has no glossary/JSON chat API"
-            )
+            logger.warning("Glossary building skipped: provider has no glossary/JSON chat API")
             return Glossary()
 
         pairs = world_context.get_all_names()
@@ -145,7 +175,11 @@ class GlossaryBuilder:
 
         results = run_async(
             self._build_all_batches_async(
-                batches, seen, provider, config, progress_callback,
+                batches,
+                seen,
+                provider,
+                config,
+                progress_callback,
             ),
             cleanup=provider.close_async_client,
             timeout=overall_timeout,
@@ -159,7 +193,9 @@ class GlossaryBuilder:
                 failed_batches += 1
                 logger.warning(
                     "Glossary batch %d/%d failed with exception: %s",
-                    batch_idx, len(batches), result,
+                    batch_idx,
+                    len(batches),
+                    result,
                 )
             elif result:
                 all_entries.update(result)
@@ -204,8 +240,13 @@ class GlossaryBuilder:
         async def process_batch(batch_idx: int, batch_names: List[str]):
             batch_seen = {n: seen[n] for n in batch_names}
             return await self._translate_batch_async(
-                sem, batch_seen, provider, config,
-                batch_idx, total, progress_callback,
+                sem,
+                batch_seen,
+                provider,
+                config,
+                batch_idx,
+                total,
+                progress_callback,
             )
 
         results = await asyncio.gather(
@@ -232,9 +273,7 @@ class GlossaryBuilder:
         Returns:
             Dict of name -> translation for successfully parsed entries.
         """
-        batch_label = (
-            f"batch {batch_idx}/{total_batches}" if total_batches > 1 else "glossary"
-        )
+        batch_label = f"batch {batch_idx}/{total_batches}" if total_batches > 1 else "glossary"
         system_prompt = self._build_system_prompt(config.target_lang)
 
         all_batch_entries: Dict[str, str] = {}
@@ -243,7 +282,8 @@ class GlossaryBuilder:
 
         logger.info(
             "Glossary %s: translating %d names…",
-            batch_label, len(remaining_keys),
+            batch_label,
+            len(remaining_keys),
         )
 
         for attempt in range(1, _MAX_RETRIES + 2):  # +2 because range is exclusive
@@ -254,14 +294,19 @@ class GlossaryBuilder:
 
             if progress_callback:
                 progress_callback(
-                    "scanning", batch_idx - 1, total_batches,
+                    "scanning",
+                    batch_idx - 1,
+                    total_batches,
                     f"Glossary {batch_label} (attempt {attempt}/{_MAX_RETRIES + 1})…",
                 )
 
             if attempt > 1:
                 logger.info(
                     "Retrying %s (attempt %d/%d, %d keys remaining)…",
-                    batch_label, attempt, _MAX_RETRIES + 1, len(remaining_keys),
+                    batch_label,
+                    attempt,
+                    _MAX_RETRIES + 1,
+                    len(remaining_keys),
                 )
 
             names_lines = [
@@ -271,8 +316,7 @@ class GlossaryBuilder:
             user_prompt = (
                 "Translate every name below. "
                 "Keys in your JSON must be the English name only, "
-                "without the parenthesized category hint:\n\n"
-                + "\n".join(names_lines)
+                "without the parenthesized category hint:\n\n" + "\n".join(names_lines)
             )
             keys_for_schema = sorted(attempt_seen.keys(), key=str.lower)
 
@@ -280,18 +324,26 @@ class GlossaryBuilder:
             try:
                 async with sem:
                     raw = await self._call_llm_async(
-                        provider, system_prompt, user_prompt, keys_for_schema,
+                        provider,
+                        system_prompt,
+                        user_prompt,
+                        keys_for_schema,
                     )
             except (TimeoutError, asyncio.TimeoutError, Exception) as exc:
                 elapsed = time.monotonic() - t0
                 logger.warning(
                     "Glossary %s attempt %d: LLM timed out after %.1fs: %s",
-                    batch_label, attempt, elapsed, exc,
+                    batch_label,
+                    attempt,
+                    elapsed,
+                    exc,
                 )
                 last_raw = f"[LLM error: {exc}]"
                 if progress_callback:
                     progress_callback(
-                        "scanning", batch_idx - 1, total_batches,
+                        "scanning",
+                        batch_idx - 1,
+                        total_batches,
                         f"Glossary {batch_label}: attempt {attempt} failed, retrying…",
                     )
                 continue
@@ -307,7 +359,9 @@ class GlossaryBuilder:
                 if echobacks:
                     logger.warning(
                         "Glossary %s attempt %d: %d echo-back(s) (value == key), will retry: %s",
-                        batch_label, attempt, len(echobacks),
+                        batch_label,
+                        attempt,
+                        len(echobacks),
                         ", ".join(sorted(echobacks)[:10]),
                     )
                     for k in echobacks:
@@ -318,39 +372,50 @@ class GlossaryBuilder:
                 coverage = len(all_batch_entries) / len(seen) * 100
                 logger.info(
                     "Glossary %s attempt %d: %d entries in %.1fs (%.0f%% cumulative coverage, %d remaining)",
-                    batch_label, attempt, len(entries), elapsed, coverage,
+                    batch_label,
+                    attempt,
+                    len(entries),
+                    elapsed,
+                    coverage,
                     len(remaining_keys),
                 )
                 if progress_callback:
                     progress_callback(
-                        "scanning", batch_idx - 1, total_batches,
+                        "scanning",
+                        batch_idx - 1,
+                        total_batches,
                         f"Glossary {batch_label}: {len(all_batch_entries)}/{len(seen)} names done",
                     )
             else:
                 logger.warning(
                     "%s attempt %d: no usable entries parsed in %.1fs. Raw (truncated): %s",
-                    batch_label.capitalize(), attempt, elapsed,
+                    batch_label.capitalize(),
+                    attempt,
+                    elapsed,
                     (last_raw[:600] + "…") if len(last_raw) > 600 else last_raw,
                 )
                 if progress_callback:
                     progress_callback(
-                        "scanning", batch_idx - 1, total_batches,
+                        "scanning",
+                        batch_idx - 1,
+                        total_batches,
                         f"Glossary {batch_label}: attempt {attempt} failed, retrying…",
                     )
 
         if remaining_keys:
             logger.warning(
                 "Glossary %s: %d/%d keys still missing after all attempts: %s",
-                batch_label, len(remaining_keys), len(seen),
-                ", ".join(sorted(remaining_keys)[:15])
-                + ("…" if len(remaining_keys) > 15 else ""),
+                batch_label,
+                len(remaining_keys),
+                len(seen),
+                ", ".join(sorted(remaining_keys)[:15]) + ("…" if len(remaining_keys) > 15 else ""),
             )
 
         if not all_batch_entries:
             logger.error(
-                "Glossary %s returned no usable entries after %d attempts. "
-                "Raw (truncated): %s",
-                batch_label, _MAX_RETRIES + 1,
+                "Glossary %s returned no usable entries after %d attempts. " "Raw (truncated): %s",
+                batch_label,
+                _MAX_RETRIES + 1,
                 (last_raw[:400] + "…") if len(last_raw) > 400 else last_raw,
             )
 
@@ -393,6 +458,7 @@ class GlossaryBuilder:
     def _build_system_prompt(target_lang: str) -> str:
         """Build the system prompt for glossary translation."""
         from .prompts import build_glossary_system_prompt
+
         return build_glossary_system_prompt(target_lang)
 
     @staticmethod

@@ -50,6 +50,16 @@ class ContextualTranslationManager:
             config.translation_log_writer,
         )
         self.formatter = DialogFormatter()
+        # The world-context block and the glossary block are both stable for
+        # the duration of a translation run. Compute once and reuse to keep
+        # the cached prefix byte-identical between dialog calls.
+        self._world_block: str = world_context.to_prompt_block(
+            glossary=glossary,
+            target_lang=config.target_lang,
+        )
+        self._glossary_block_base: str = (
+            glossary.to_prompt_block() if glossary and getattr(glossary, "entries", None) else ""
+        )
 
     def translate_dialog(
         self,
@@ -158,12 +168,12 @@ class ContextualTranslationManager:
             return translations
 
         if set(keys_for_api) == set(all_keys):
-            script = self.formatter.format_dialog_tree(
-                tree, text_overrides=sanitized_by_key
-            )
+            script = self.formatter.format_dialog_tree(tree, text_overrides=sanitized_by_key)
         else:
             script = self.formatter.format_nodes(
-                keys_for_api, node_map, original_text_map,
+                keys_for_api,
+                node_map,
+                original_text_map,
                 text_overrides=sanitized_by_key,
             )
 
@@ -262,7 +272,9 @@ class ContextualTranslationManager:
                     len(keys_for_api),
                 )
                 retry_script = self.formatter.format_nodes(
-                    missing_keys, node_map, original_text_map,
+                    missing_keys,
+                    node_map,
+                    original_text_map,
                     text_overrides=sanitized_by_key,
                 )
 
@@ -276,9 +288,7 @@ class ContextualTranslationManager:
                 retry_raw = run_async(run_retry(), cleanup=self.provider.close_async_client)
 
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
-                if retry_json is None and self._dialog_response_likely_truncated(
-                    retry_raw
-                ):
+                if retry_json is None and self._dialog_response_likely_truncated(retry_raw):
                     repair = self._build_repair_user_prompt(
                         file_path.name,
                         retry_script,
@@ -405,31 +415,28 @@ class ContextualTranslationManager:
                 logger.debug("Failed to write to translation log: %s", log_e)
         return translations
 
-    def _build_system_prompt(self, source_text: str = "") -> str:
-        """Build the system prompt containing world context and instructions."""
-        from ..prompts import build_dialog_system_prompt
+    def _build_system_prompt(self, source_text: str = "") -> Any:
+        """Build the system ``content`` payload for a dialog translation call.
+
+        Stable portion (world context + rules + output format) is cached
+        across all dialogs in the run; variable portion holds the glossary
+        entries and per-dialog race-term hints.
+        """
+        from ..prompts import build_dialog_system_prompt_parts
         from ..race_dictionary import match_race_terms
 
-        world_block = self.world_context.to_prompt_block(
-            glossary=self.glossary,
-            target_lang=self.config.target_lang,
-        )
-        glossary_block = ""
-        if self.glossary and self.glossary.entries:
-            glossary_block = self.glossary.to_prompt_block()
-
+        glossary_block = self._glossary_block_base
         race_block = match_race_terms(source_text, self.config.target_lang)
         if race_block:
-            glossary_block = (
-                glossary_block + "\n\n" + race_block if glossary_block else race_block
-            )
+            glossary_block = glossary_block + "\n\n" + race_block if glossary_block else race_block
 
-        return build_dialog_system_prompt(
+        stable, variable = build_dialog_system_prompt_parts(
             self.config.target_lang,
             self.config.player_gender,
-            world_block,
+            self._world_block,
             glossary_block,
         )
+        return self.provider.make_system_message_content(stable, variable)
 
     def _build_user_prompt(self, filename: str, script: str) -> str:
         """Build the user prompt containing the dialog script."""

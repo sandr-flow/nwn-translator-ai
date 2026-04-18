@@ -80,6 +80,8 @@ class TranslationManager:
         self.ncs_translations_by_item_id: Dict[str, str] = {}
         #: LLM gate (or deterministic bypass) approval per ``item_id`` for ``ncs_string`` items.
         self._ncs_gate_approval: Dict[str, bool] = {}
+        #: Shared per-item progress counter (set during ``translate_content``).
+        self._active_item_progress: Optional[Any] = None
 
     def log_per_file_item(
         self,
@@ -176,7 +178,11 @@ class TranslationManager:
             timeout=self._RUN_ASYNC_TIMEOUT,
         )
 
-    def translate_content(self, content: ExtractedContent) -> Dict[str, str]:
+    def translate_content(
+        self,
+        content: ExtractedContent,
+        item_progress: Optional[Any] = None,
+    ) -> Dict[str, str]:
         """Translate multiple items individually, skipping duplicates.
 
         Items with the same text are translated only once; subsequent
@@ -194,6 +200,7 @@ class TranslationManager:
         if not items:
             return translations
 
+        self._active_item_progress = item_progress
         self.ncs_translations_by_item_id.clear()
 
         source_filename = Path(content.source_file).name if content.source_file else None
@@ -234,7 +241,7 @@ class TranslationManager:
         uncached_items: List[dict] = []
 
         for idx, item_data in enumerate(iterable):
-            if self.config.progress_callback is not None:
+            if self.config.progress_callback is not None and item_progress is None:
                 self.config.progress_callback(
                     "translating_item",
                     idx,
@@ -246,6 +253,8 @@ class TranslationManager:
             handler = item_data["handler"]
 
             if not self._ncs_item_passes_gate(item):
+                if item_progress is not None:
+                    item_progress.bump(filename=content.content_type)
                 continue
 
             # Cache hit?
@@ -257,6 +266,8 @@ class TranslationManager:
                 with self._stats_lock:
                     self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
                 logger.debug("Cache hit for '%s…'", sanitized[:40])
+                if item_progress is not None:
+                    item_progress.bump(filename=content.content_type)
                 continue
 
             # Prefix-cache hit (journal entries that extend earlier text)
@@ -295,8 +306,15 @@ class TranslationManager:
                     len(uncached_items), len(unique_items),
                 )
 
+            # Pre-bump for duplicates that will be resolved transparently via
+            # the session cache once the canonical unique item completes.
+            duplicates = len(uncached_items) - len(unique_items)
+            if duplicates > 0 and item_progress is not None:
+                item_progress.bump(by=duplicates, filename=content.content_type)
+
             self._translate_uncached_concurrent(unique_items, translations, source_filename=source_filename)
 
+        self._active_item_progress = None
         return translations
 
     # Maximum characters for a string to be considered "short" (eligible for batching)
@@ -332,17 +350,28 @@ class TranslationManager:
         item_type = (item.metadata or {}).get("type", "")
         return item_type in TranslationManager._BATCHABLE_TYPES
 
+    def _async_bump(self, item_data: dict) -> None:
+        """Per-item progress bump fired inside asyncio worker on completion."""
+        progress = self._active_item_progress
+        if progress is None:
+            return
+        item = item_data["item"]
+        loc = item.location or ""
+        fn = Path(loc).name if loc else ""
+        progress.bump(filename=fn)
+
     async def _translate_one_async(
         self,
         sem: asyncio.Semaphore,
         item_data: dict,
+        bump: bool = True,
     ) -> TranslationResult:
         """Translate a single item with semaphore and timeout."""
         item = item_data["item"]
         sanitized = item_data["sanitized"]
         async with sem:
             try:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     self.provider.translate_async(
                         text=sanitized,
                         source_lang=self.config.source_lang,
@@ -358,7 +387,7 @@ class TranslationManager:
                     self._ITEM_TIMEOUT,
                     sanitized[:40],
                 )
-                return TranslationResult(
+                result = TranslationResult(
                     translated="",
                     original=sanitized,
                     success=False,
@@ -366,13 +395,16 @@ class TranslationManager:
                     metadata={},
                 )
             except Exception as e:
-                return TranslationResult(
+                result = TranslationResult(
                     translated="",
                     original=sanitized,
                     success=False,
                     error=str(e),
                     metadata={},
                 )
+        if bump:
+            self._async_bump(item_data)
+        return result
 
     def _translate_uncached_concurrent(
         self,
@@ -423,7 +455,7 @@ class TranslationManager:
                 ]
                 async with sem:
                     try:
-                        return await asyncio.wait_for(
+                        results = await asyncio.wait_for(
                             self.provider.translate_batch_async(
                                 items=batch_items,
                                 source_lang=self.config.source_lang,
@@ -438,7 +470,7 @@ class TranslationManager:
                             self._BATCH_CALL_TIMEOUT,
                             len(batch_items),
                         )
-                        return [
+                        results = [
                             TranslationResult(
                                 translated="",
                                 original=bi.original,
@@ -449,7 +481,7 @@ class TranslationManager:
                             for bi in batch_items
                         ]
                     except Exception as e:
-                        return [
+                        results = [
                             TranslationResult(
                                 translated="",
                                 original=bi.original,
@@ -459,6 +491,11 @@ class TranslationManager:
                             )
                             for bi in batch_items
                         ]
+                # Per-item progress bump — one per batch member, regardless
+                # of success; retry path below must not re-bump.
+                for d in batch:
+                    self._async_bump(d)
+                return results
 
             batch_coros = [batch_one(b) for b in batches]
 
@@ -565,7 +602,9 @@ class TranslationManager:
 
             try:
                 return await asyncio.wait_for(
-                    asyncio.gather(*[self._translate_one_async(sem, d) for d in items]),
+                    asyncio.gather(
+                        *[self._translate_one_async(sem, d, bump=False) for d in items]
+                    ),
                     timeout=self._GATHER_TIMEOUT / 2,
                 )
             except asyncio.TimeoutError:

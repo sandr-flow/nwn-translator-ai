@@ -44,6 +44,31 @@ import concurrent.futures
 logger = logging.getLogger(__name__)
 
 
+class _ItemProgress:
+    """Shared counter that turns per-item bumps into ``translating_item`` callbacks.
+
+    Thread-safe (translation manager runs asyncio tasks inside ``run_async`` on
+    a worker thread; dialog loop is sequential). ``total`` is an estimate;
+    the counter is clamped so it never reports > total.
+    """
+
+    def __init__(self, total: int, callback) -> None:
+        self.total = max(1, int(total))
+        self.done = 0
+        self.callback = callback
+        self._lock = threading.Lock()
+
+    def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
+        if by <= 0:
+            return
+        with self._lock:
+            self.done = min(self.total, self.done + by)
+            done_snapshot = self.done
+            total_snapshot = self.total
+        if self.callback is not None:
+            self.callback("translating_item", done_snapshot, total_snapshot, filename or "")
+
+
 def load_parsed_and_extracted(
     file_path: Path,
     file_ext: str,
@@ -218,11 +243,11 @@ class ModuleTranslator:
             completed_count = 0
             for future in as_completed(future_to_file):
                 file_path = future_to_file[future]
+                completed_count += 1
                 if self.config.progress_callback is not None:
                     self.config.progress_callback(
                         "extracting_content", completed_count, total_files, file_path.name
                     )
-                completed_count += 1
                 try:
                     result = future.result()
                     if result is not None:
@@ -315,33 +340,50 @@ class ModuleTranslator:
         logger.info("Phase B: translating content...")
         all_translations: Dict[str, str] = {}
 
+        # Shared item-level progress counter (used by both non-dialog and
+        # dialog translation paths). Total is the sum of translatable items
+        # across every file that enters Phase B — this is what lets the
+        # progress bar move smoothly instead of jumping per file.
+        dialog_item_total = sum(
+            len(extracted_map[fp][1].items) for fp in dialog_files
+        )
+        total_items_b = len(non_dialog_items) + dialog_item_total
+        item_progress = _ItemProgress(
+            total=total_items_b,
+            callback=self.config.progress_callback,
+        )
+        if self.config.progress_callback and total_items_b:
+            # Brief sentinel so the UI switches to the translating phase label.
+            self.config.progress_callback(
+                "translating", 0, total_items_b, "starting"
+            )
+
         # B-1: Translate all non-dialog items in one deduplicated batch
         if non_dialog_items:
-            if self.config.progress_callback:
-                self.config.progress_callback(
-                    "translating", 0, total_files, "non-dialog items"
-                )
             combined = ExtractedContent(
                 content_type="combined",
                 items=non_dialog_items,
                 source_file=extract_dir,
                 metadata={"type": "combined"},
             )
-            non_dialog_translations = manager.translate_content(combined)
+            non_dialog_translations = manager.translate_content(
+                combined, item_progress=item_progress
+            )
             if non_dialog_translations:
                 all_translations.update(non_dialog_translations)
             self._ncs_translations_by_item_id = manager.ncs_translations_by_item_id
             self._sync_manager_stats(manager)
 
         # B-2: Translate dialog files (contextual, sequential to benefit from cache)
-        for idx, file_path in enumerate(dialog_files):
-            if self.config.progress_callback:
-                self.config.progress_callback(
-                    "translating", idx, len(dialog_files), file_path.name
-                )
+        for file_path in dialog_files:
             parsed_data, extracted, file_ext = extracted_map[file_path]
+            file_item_budget = len(extracted.items)
             try:
-                translations = context_manager.translate_dialog(file_path, parsed_data)
+                translations = context_manager.translate_dialog(
+                    file_path, parsed_data,
+                    item_progress=item_progress,
+                    item_budget=file_item_budget,
+                )
                 if translations:
                     all_translations.update(translations)
             except Exception as e:
@@ -374,11 +416,11 @@ class ModuleTranslator:
             completed_count = 0
             for future in as_completed(future_to_file):
                 file_path = future_to_file[future]
+                completed_count += 1
                 if self.config.progress_callback is not None:
                     self.config.progress_callback(
                         "injecting", completed_count, len(extracted_map), file_path.name
                     )
-                completed_count += 1
                 try:
                     future.result()
                     with self._stats_lock:

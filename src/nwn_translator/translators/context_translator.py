@@ -54,7 +54,9 @@ class ContextualTranslationManager:
     def translate_dialog(
         self,
         file_path: Path,
-        parsed_data: Dict[str, Any]
+        parsed_data: Dict[str, Any],
+        item_progress: Optional[Any] = None,
+        item_budget: Optional[int] = None,
     ) -> Dict[str, str]:
         """Translate a complete dialog tree.
 
@@ -65,11 +67,30 @@ class ContextualTranslationManager:
         Returns:
             Dictionary mapping original text to translated text
         """
+        budget = int(item_budget) if item_budget else 0
+        bumped = 0
+
+        def _bump(by: int) -> None:
+            nonlocal bumped
+            if item_progress is None or by <= 0:
+                return
+            remaining = max(0, budget - bumped)
+            delta = min(by, remaining) if budget else by
+            if delta <= 0:
+                return
+            item_progress.bump(by=delta, filename=file_path.name)
+            bumped += delta
+
+        def _finish() -> None:
+            if item_progress is not None and budget:
+                _bump(budget - bumped)
+
         if not isinstance(self.provider, OpenRouterProvider):
             logger.error(
                 "Contextual dialog translation requires OpenRouterProvider (got %s)",
                 type(self.provider).__name__,
             )
+            _finish()
             return {}
 
         extractor = DialogExtractor()
@@ -77,6 +98,7 @@ class ContextualTranslationManager:
         # Build hierarchical tree for context
         tree = extractor.build_dialog_tree(parsed_data)
         if not tree:
+            _finish()
             return {}
 
         # We also need a flat list of nodes to map back to original text
@@ -123,12 +145,16 @@ class ContextualTranslationManager:
                 keys_for_api.append(key)
 
         all_keys = list(original_text_map.keys())
+        cached_served = len(all_keys) - len(keys_for_api)
+        if cached_served > 0:
+            _bump(cached_served)
         if not keys_for_api:
             logger.debug(
                 "All %d dialog lines for %s served from translation cache",
                 len(all_keys),
                 file_path.name,
             )
+            _finish()
             return translations
 
         if set(keys_for_api) == set(all_keys):
@@ -142,6 +168,7 @@ class ContextualTranslationManager:
             )
 
         if not script:
+            _finish()
             return translations
 
         system_prompt = self._build_system_prompt(source_text=script)
@@ -211,6 +238,7 @@ class ContextualTranslationManager:
                     "%s: dialog translation failed after retries (invalid JSON).",
                     file_path.name,
                 )
+                _finish()
                 return translations
 
             api_translations = self._apply_translations(
@@ -222,6 +250,7 @@ class ContextualTranslationManager:
                 session_cache=self.translation_cache,
             )
             translations.update(api_translations)
+            _bump(len(api_translations))
 
             # Retry for any nodes the model missed (among keys we asked to translate)
             missing_keys = [k for k in keys_for_api if k not in parsed_json]
@@ -275,16 +304,19 @@ class ContextualTranslationManager:
                         session_cache=self.translation_cache,
                     )
                     translations.update(retry_translations)
+                    _bump(len(retry_translations))
                     logger.info(
                         "%s: retry recovered %d additional translations.",
                         file_path.name,
                         len(retry_translations),
                     )
 
+            _finish()
             return translations
 
         except Exception as e:
             logger.error("Contextual translation failed for %s: %s", file_path.name, e)
+            _finish()
             return translations
 
     def _parse_json_response(self, raw: str, filename: str) -> Optional[dict]:

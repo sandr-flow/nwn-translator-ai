@@ -203,14 +203,17 @@ class TaskManager:
         task.event_queue.put(payload)
 
     # Phase -> (start_pct, end_pct) for weighted global progress.
+    # ``translating_item`` is the workhorse band (per-item granularity across
+    # non-dialog and dialog translations); ``translating`` is kept as a brief
+    # sentinel that marks entry into Phase B.
     _PHASE_WEIGHTS = {
-        "extracting":        (0.0,  0.02),
-        "scanning":          (0.02, 0.05),
-        "extracting_content":(0.05, 0.15),
-        "translating":       (0.15, 0.85),
-        "translating_item":  (0.15, 0.85),
-        "injecting":         (0.85, 0.95),
-        "building":          (0.95, 1.0),
+        "extracting":        (0.0,  0.03),
+        "scanning":          (0.03, 0.08),
+        "extracting_content":(0.08, 0.12),
+        "translating":       (0.12, 0.14),
+        "translating_item":  (0.14, 0.88),
+        "injecting":         (0.88, 0.96),
+        "building":          (0.96, 1.0),
     }
 
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:

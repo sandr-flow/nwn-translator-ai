@@ -199,6 +199,62 @@ def test_git_injector_collects_non_trap_trigger_strings():
     assert any("eye reflected" in s for s in found)
 
 
+def test_git_extractor_collects_area_floor_items():
+    """Top-level ``List`` in .git holds items dropped on the ground in the toolset."""
+    extractor = GitExtractor()
+    path = Path("forestcave.git")
+    gff = {
+        "List": [
+            {
+                "TemplateResRef": "dragonbones",
+                "BaseItem": 79,
+                "LocalizedName": {"StrRef": -1, "Value": "Dragon Bones"},
+                "Description": {
+                    "StrRef": -1,
+                    "Value": "Yellowed with age, these are the bones of a Dragon.",
+                },
+                "DescIdentified": {"StrRef": -1, "Value": ""},
+            },
+            {
+                "TemplateResRef": "nw_it_thnmisc001",
+                "BaseItem": 24,
+                "LocalizedName": {"StrRef": -1, "Value": ""},
+                "Description": {"StrRef": -1, "Value": ""},
+                "DescIdentified": {"StrRef": -1, "Value": ""},
+            },
+        ]
+    }
+    result = extractor.extract(path, gff)
+    by_text = {item.text: item.metadata.get("type") for item in result.items}
+    assert by_text.get("Dragon Bones") == "item_name"
+    assert any(
+        item.text.startswith("Yellowed with age") and item.metadata.get("type") == "item_description"
+        for item in result.items
+    )
+    # Empty values on the engine-default entry must not emit TranslatableItems.
+    assert "" not in by_text
+
+
+def test_git_injector_collects_area_floor_item_strings():
+    """Injector string collector must mirror the extractor for area floor items."""
+    from src.nwn_translator.injectors.git_injector import (
+        collect_git_strings_missing_from_translations,
+    )
+
+    gff = {
+        "List": [
+            {
+                "LocalizedName": {"StrRef": -1, "Value": "Silver Nuggets"},
+                "Description": {"StrRef": -1, "Value": "Raw silver ore."},
+                "DescIdentified": {"StrRef": -1, "Value": ""},
+            }
+        ]
+    }
+    found = collect_git_strings_missing_from_translations(gff, {})
+    assert "Silver Nuggets" in found
+    assert "Raw silver ore." in found
+
+
 def test_git_extractor_collects_encounter_instance_names():
     """Encounter instances in .git expose LocalizedName retrievable by scripts."""
     extractor = GitExtractor()

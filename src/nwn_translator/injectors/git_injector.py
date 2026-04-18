@@ -56,6 +56,13 @@ INSTANCE_NESTED_ITEM_LISTS: Dict[str, List[str]] = {
 # CExoLocString fields on each entry inside ItemList / Equip_ItemList
 ITEM_INVENTORY_FIELDS = ["LocalizedName", "Description", "DescIdentified"]
 
+# Top-level list of items dropped directly onto the area floor in the toolset.
+# Unlike named instance lists, its GFF label is the bare word "List"; each entry
+# carries the same CExoLocString fields as an inventory row. Visited areas bake
+# these into the save, so only unvisited areas will pick up retranslations.
+AREA_ITEM_LIST_KEY = "List"
+AREA_ITEM_FIELDS = ITEM_INVENTORY_FIELDS
+
 
 def _collect_strings_from_store_tree(
     store_node: Dict[str, Any],
@@ -208,7 +215,20 @@ def collect_git_strings_missing_from_translations(
                             existing_translations,
                         )
 
+    for area_item in _iter_area_item_entries(parsed_data):
+        _add_string_values_from_fields(
+            area_item, AREA_ITEM_FIELDS, found, existing_translations
+        )
+
     return found
+
+
+def _iter_area_item_entries(parsed_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return dict entries from the top-level ``List`` (area floor items)."""
+    raw = parsed_data.get(AREA_ITEM_LIST_KEY, [])
+    if not isinstance(raw, list):
+        return []
+    return [e for e in raw if isinstance(e, dict)]
 
 
 def _collect_locale_patches_on_struct(
@@ -381,6 +401,16 @@ def patch_git_file(
                         git_path.name,
                         patches,
                     )
+
+    for area_item in _iter_area_item_entries(parsed_data):
+        items_patched += _collect_locale_patches_on_struct(
+            area_item,
+            AREA_ITEM_LIST_KEY,
+            AREA_ITEM_FIELDS,
+            translations,
+            git_path.name,
+            patches,
+        )
 
     if patches:
         try:

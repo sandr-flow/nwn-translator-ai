@@ -30,7 +30,7 @@ class _FakeProvider:
         self.calls: List[tuple] = []
 
     async def complete_json_chat_async(
-        self, system_prompt, user_prompt, *, max_tokens=0, temperature=0.0
+        self, system_prompt, user_prompt, *, max_tokens=0, temperature=0.0, **_kw
     ):
         self.calls.append((system_prompt, user_prompt))
         if not self._payloads:

@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..injectors.git_injector import (
+    AREA_ITEM_FIELDS,
+    AREA_ITEM_LIST_KEY,
     INSTANCE_LISTS,
     INSTANCE_NESTED_ITEM_LISTS,
     ITEM_INVENTORY_FIELDS,
+    _iter_area_item_entries,
     _iter_nested_item_entries,
     is_internal_tag,
 )
@@ -205,6 +208,42 @@ def _build_instance_context(
     return f"Area instance field ({list_key}.{field_name})"
 
 
+def _build_area_item_context(
+    field_name: str,
+    area_item: Dict[str, Any],
+) -> str:
+    """Context for a loose item dropped on the area floor (top-level ``List``)."""
+    bi = base_item_label(area_item.get("BaseItem", -1))
+    item_name = extract_local_string(area_item.get("LocalizedName", {})) or ""
+
+    if field_name == "LocalizedName":
+        if bi:
+            return f"Item name ({bi}, placed on the area floor)"
+        return "Item name (placed on the area floor)"
+
+    if field_name == "Description":
+        if bi and item_name:
+            return f"Description of {bi} '{item_name}' (placed on the area floor)"
+        if item_name:
+            return f"Item description for '{item_name}' (placed on the area floor)"
+        return "Item description (placed on the area floor)"
+
+    if field_name == "DescIdentified":
+        if bi and item_name:
+            return (
+                f"Identified description of {bi} '{item_name}' "
+                "(placed on the area floor)"
+            )
+        if item_name:
+            return (
+                f"Item identified description for '{item_name}' "
+                "(placed on the area floor)"
+            )
+        return "Item identified description (placed on the area floor)"
+
+    return f"Area floor item field ({field_name})"
+
+
 def _build_inventory_context(
     field_name: str,
     inv_item: Dict[str, Any],
@@ -367,6 +406,22 @@ class GitExtractor(BaseExtractor):
                                     ),
                                     items=items,
                                 )
+
+        for area_idx, area_item in enumerate(_iter_area_item_entries(parsed_data)):
+            for area_field in AREA_ITEM_FIELDS:
+                meta_type = _meta_type_for_inventory_field(area_field)
+                ctx_label = _build_area_item_context(area_field, area_item)
+                self._append_loc_string_item(
+                    area_item,
+                    area_field,
+                    file_path,
+                    meta_type=meta_type,
+                    context=ctx_label,
+                    item_id=(
+                        f"{stem}_{AREA_ITEM_LIST_KEY}_{area_idx}_{area_field}"
+                    ),
+                    items=items,
+                )
 
         return ExtractedContent(
             content_type="git_instance",

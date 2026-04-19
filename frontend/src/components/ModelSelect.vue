@@ -128,33 +128,33 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onClickOutside))
     <Transition name="dropdown">
       <ul
         v-show="open"
-        class="absolute z-50 w-full rounded-lg bg-nwn-panel border border-nwn-muted/30 py-1 shadow-lg overflow-y-auto model-select-list"
+        class="absolute z-50 w-full rounded-lg bg-nwn-panel border border-nwn-muted/30 py-1 shadow-lg max-h-52 overflow-y-auto model-select-list"
         :class="dropUp ? 'bottom-full mb-1' : 'top-full mt-1'"
       >
         <li
           v-for="opt in presetDefs"
           :key="opt.value"
-          class="px-3 py-2 cursor-pointer transition-colors"
+          class="px-3 py-1.5 text-sm cursor-pointer truncate transition-colors"
           :class="
             opt.value === modelValue
-              ? 'bg-nwn-accent/20'
-              : 'hover:bg-nwn-accent/10'
+              ? 'bg-nwn-accent/20 text-nwn-accent'
+              : 'text-gray-300 hover:bg-nwn-accent/10 hover:text-gray-200'
           "
+          :title="i(opt.descKey)"
           @mousedown.prevent="pick(opt)"
         >
-          <div class="text-sm" :class="opt.value === modelValue ? 'text-nwn-accent' : 'text-gray-200'">
-            {{ opt.label }}
-          </div>
-          <div class="text-xs text-nwn-muted">{{ i(opt.descKey) }}</div>
+          {{ opt.label }}
         </li>
-        <li class="border-t border-nwn-muted/20 mt-1 pt-1">
-          <div
-            class="px-3 py-2 cursor-pointer transition-colors text-sm text-nwn-muted hover:bg-nwn-accent/10 hover:text-gray-200"
-            :class="isCustom ? 'bg-nwn-accent/20 text-nwn-accent' : ''"
-            @mousedown.prevent="pick(CUSTOM_KEY)"
-          >
-            {{ i("model.custom") }}
-          </div>
+        <li
+          class="px-3 py-1.5 text-sm cursor-pointer truncate transition-colors border-t border-nwn-muted/20 mt-1 pt-2"
+          :class="
+            isCustom
+              ? 'bg-nwn-accent/20 text-nwn-accent'
+              : 'text-gray-300 hover:bg-nwn-accent/10 hover:text-gray-200'
+          "
+          @mousedown.prevent="pick(CUSTOM_KEY)"
+        >
+          {{ i("model.custom") }}
         </li>
       </ul>
     </Transition>

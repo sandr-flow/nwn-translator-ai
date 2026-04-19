@@ -21,6 +21,15 @@ onMounted(async () => {
       filename: f.filename,
       items: f.items.map((item) => ({ ...item })),
     }));
+    const groups = fileGroups.value;
+    const init = {};
+    groups.forEach(([label], gi) => {
+      init[label] = gi !== 0;
+    });
+    collapsedGroups.value = init;
+    if (groups.length && groups[0][1].length) {
+      selectedFileIdx.value = groups[0][1][0].idx;
+    }
     loading.value = false;
     resizeAllTextareas();
   } catch (e) {
@@ -62,6 +71,25 @@ const fileGroups = computed(() => {
   });
 });
 
+const visibleFileGroups = computed(() => {
+  const q = searchQuery.value.toLowerCase().trim();
+  if (!q) return fileGroups.value;
+  const fileMatches = (file) =>
+    file.items.some(
+      (item) =>
+        item.original.toLowerCase().includes(q) ||
+        item.translated.toLowerCase().includes(q),
+    );
+  return fileGroups.value
+    .map(([label, entries]) => [label, entries.filter(({ file }) => fileMatches(file))])
+    .filter(([, entries]) => entries.length > 0);
+});
+
+function isGroupCollapsed(label) {
+  if (searchQuery.value.trim()) return false;
+  return !!collapsedGroups.value[label];
+}
+
 const collapsedGroups = ref({});
 const syncShared = ref(true);
 
@@ -99,7 +127,7 @@ function navigateToFile(filename) {
   const ext = dot !== -1 ? filename.substring(dot).toLowerCase() : "";
   const otherLabel = i("type.other");
   const label = EXT_KEYS[ext] ? i(EXT_KEYS[ext]) : ext || otherLabel;
-  if (collapsedGroups.value[label]) collapsedGroups.value[label] = false;
+  collapsedGroups.value[label] = false;
   selectedFileIdx.value = idx;
   nextTick(() => {
     const sidebar = document.querySelector(".editor-sidebar");
@@ -210,17 +238,17 @@ function goBack() {
           <p class="text-xs text-nwn-muted mb-2">
             {{ i("editor.files") }} ({{ editableFiles.length }})
           </p>
-          <div v-for="[label, entries] in fileGroups" :key="label" class="mb-1.5">
+          <div v-for="[label, entries] in visibleFileGroups" :key="label" class="mb-1.5">
             <button
               type="button"
               class="flex items-center gap-1 w-full text-left px-1 py-1 text-xs font-semibold text-nwn-muted uppercase tracking-wide hover:text-gray-300"
               @click="collapsedGroups[label] = !collapsedGroups[label]"
             >
-              <span class="transition-transform" :class="collapsedGroups[label] ? '-rotate-90' : ''">&#9662;</span>
+              <span class="transition-transform" :class="isGroupCollapsed(label) ? '-rotate-90' : ''">&#9662;</span>
               {{ label }}
               <span class="font-normal normal-case">({{ entries.length }})</span>
             </button>
-            <div v-show="!collapsedGroups[label]">
+            <div v-show="!isGroupCollapsed(label)">
               <button
                 v-for="{ file, idx } in entries"
                 :key="file.filename"

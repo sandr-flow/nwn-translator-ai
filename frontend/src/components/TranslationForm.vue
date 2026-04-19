@@ -97,7 +97,6 @@ async function onTest() {
         <label class="block text-sm text-nwn-muted mb-1">{{ i("form.reasoningEffort") }}</label>
         <CustomSelect v-model="t.reasoningEffort" :options="reasoningOptions" />
       </div>
-      <p class="sm:col-span-5 text-xs text-nwn-muted/70 -mt-1">{{ i("form.reasoningEffortHint") }}</p>
     </div>
 
     <div>

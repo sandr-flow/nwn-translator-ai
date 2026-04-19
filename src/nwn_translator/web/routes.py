@@ -335,6 +335,8 @@ async def task_progress(
                 yield f"data: {json.dumps({'type': 'completed', 'result_filename': task.result_path.name, 'stats': task.stats}, ensure_ascii=False)}\n\n"
             elif task.status == "failed":
                 yield f"data: {json.dumps({'type': 'failed', 'error': task.error}, ensure_ascii=False)}\n\n"
+            elif task.status == "cancelled":
+                yield f"data: {json.dumps({'type': 'cancelled'}, ensure_ascii=False)}\n\n"
             return
 
         idle_ticks = 0
@@ -347,6 +349,8 @@ async def task_progress(
                         yield f"data: {json.dumps({'type': 'completed', 'result_filename': task.result_path.name, 'stats': task.stats}, ensure_ascii=False)}\n\n"
                     elif task.status == "failed":
                         yield f"data: {json.dumps({'type': 'failed', 'error': task.error}, ensure_ascii=False)}\n\n"
+                    elif task.status == "cancelled":
+                        yield f"data: {json.dumps({'type': 'cancelled'}, ensure_ascii=False)}\n\n"
                     else:
                         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0.2)
@@ -359,7 +363,7 @@ async def task_progress(
                 continue
             idle_ticks = 0
             yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-            if msg.get("type") in ("completed", "failed"):
+            if msg.get("type") in ("completed", "failed", "cancelled"):
                 await asyncio.sleep(0.2)
                 break
 
@@ -543,6 +547,34 @@ async def task_history(request: Request) -> TaskHistoryResponse:
             )
         )
     return TaskHistoryResponse(items=items)
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task(
+    task_id: str,
+    request: Request,
+    tm: TaskManager = Depends(web_task_manager),
+) -> dict:
+    """Signal a running task to stop at the next safe checkpoint.
+
+    Progress is lost — already-paid-for in-flight API calls finish but their
+    results are discarded. Only the owning client can cancel.
+    """
+    if not _UUID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Неверный формат task_id")
+    token = _client_token(request)
+    row = get_task_row(task_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if token and row.get("client_token") != token:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
+
+    task = tm.get(task_id)
+    if task is None or task.is_finished():
+        return {"ok": True, "status": row.get("status")}
+
+    task.request_cancel()
+    return {"ok": True, "status": "cancelling"}
 
 
 @router.delete("/tasks/{task_id}")

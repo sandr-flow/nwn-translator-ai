@@ -76,6 +76,10 @@ export default {
     "progress.files": "файлов",
     "progress.file": "Файл:",
     "progress.dontClose": "Не закрывайте вкладку до завершения.",
+    "progress.cancel": "Остановить перевод",
+    "progress.cancelling": "Останавливается…",
+    "progress.cancelHint": "Прогресс будет потерян — продолжить перевод потом не получится. Уже отправленные запросы к API всё равно будут оплачены.",
+    "progress.cancelConfirm": "Прервать перевод? Прогресс будет потерян.",
 
     // Phase labels
     "phase.extracting": "Распаковка модуля",
@@ -240,6 +244,10 @@ export default {
     "progress.files": "files",
     "progress.file": "File:",
     "progress.dontClose": "Do not close this tab until finished.",
+    "progress.cancel": "Stop translation",
+    "progress.cancelling": "Stopping…",
+    "progress.cancelHint": "Progress will be lost — you won't be able to resume later. API calls already in flight will still be billed.",
+    "progress.cancelConfirm": "Stop the translation? Progress will be lost.",
 
     // Phase labels
     "phase.extracting": "Unpacking module",

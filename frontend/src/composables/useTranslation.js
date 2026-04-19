@@ -10,6 +10,7 @@ import {
   fetchHistory,
   deleteTask,
   fetchJson,
+  postCancelTask,
 } from "../api/client.js";
 import { useI18n } from "./useI18n.js";
 
@@ -42,6 +43,7 @@ export function useTranslation() {
     reasoningEffort: "",
     taskId: "",
     status: "",
+    cancelling: false,
     progress: 0,
     phase: "",
     currentFile: "",
@@ -69,6 +71,7 @@ export function useTranslation() {
     t.step = "setup";
     t.taskId = "";
     t.status = "";
+    t.cancelling = false;
     t.progress = 0;
     t.phase = "";
     t.currentFile = "";
@@ -113,6 +116,8 @@ export function useTranslation() {
         t.status = "failed";
         t.error = status.error ?? i("error.default");
         t.step = "done";
+      } else if (status.status === "cancelled") {
+        reset();
       }
     } catch {
       /* backend unreachable — nothing to do */
@@ -160,6 +165,12 @@ export function useTranslation() {
           closeSse();
           return;
         }
+        if (msg.type === "cancelled") {
+          t.status = "cancelled";
+          closeSse();
+          reset();
+          return;
+        }
         if (msg.type === "done") {
           closeSse();
           if (t.status !== "completed" && t.status !== "failed") {
@@ -177,6 +188,7 @@ export function useTranslation() {
       if (
         t.status !== "completed" &&
         t.status !== "failed" &&
+        t.status !== "cancelled" &&
         sseRetryCount < SSE_MAX_RETRIES
       ) {
         const delay = Math.min(1000 * 2 ** sseRetryCount, 16000);
@@ -212,7 +224,11 @@ export function useTranslation() {
           }
           openSse(id);
         }, delay);
-      } else if (t.status !== "completed" && t.status !== "failed") {
+      } else if (
+        t.status !== "completed" &&
+        t.status !== "failed" &&
+        t.status !== "cancelled"
+      ) {
         pollTaskStatus(id);
       }
     };
@@ -364,6 +380,17 @@ export function useTranslation() {
     }
   }
 
+  async function cancelTranslation() {
+    if (!t.taskId || t.cancelling) return;
+    t.cancelling = true;
+    try {
+      await postCancelTask(t.taskId);
+    } catch (e) {
+      t.cancelling = false;
+      throw e;
+    }
+  }
+
   async function deleteHistoryTask(taskId) {
     await deleteTask(taskId);
     t.historyItems = t.historyItems.filter((x) => x.task_id !== taskId);
@@ -387,5 +414,6 @@ export function useTranslation() {
     loadHistory,
     openHistoryTask,
     deleteHistoryTask,
+    cancelTranslation,
   };
 }

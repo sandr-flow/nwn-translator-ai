@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from tqdm import tqdm
 
 from .config import (
+    TranslationCancelled,
     TranslationConfig,
     TRANSLATABLE_TYPES,
     module_string_encoding_for_target_lang,
@@ -176,6 +177,12 @@ class ModuleTranslator:
         #: Latest NCS per-``item_id`` translations from :class:`TranslationManager` (Phase B).
         self._ncs_translations_by_item_id: Dict[str, str] = {}
 
+    def _check_cancel(self) -> None:
+        """Raise :class:`TranslationCancelled` if the config's cancel check fires."""
+        cb = self.config.cancel_check
+        if cb is not None and cb():
+            raise TranslationCancelled("Translation cancelled by user")
+
     def translate(self) -> Path:
         """Translate the module.
 
@@ -194,6 +201,7 @@ class ModuleTranslator:
         extract_dir = self._extract_module()
         if self.config.progress_callback:
             self.config.progress_callback("extracting", 1, 1, "done")
+        self._check_cancel()
 
         # Step 2: Find translatable files
         logger.info("Finding translatable files...")
@@ -249,6 +257,7 @@ class ModuleTranslator:
                     self.config.progress_callback(
                         "extracting_content", completed_count, total_files, file_path.name
                     )
+                self._check_cancel()
                 try:
                     result = future.result()
                     if result is not None:
@@ -374,6 +383,7 @@ class ModuleTranslator:
 
         # B-2: Translate dialog files (contextual, sequential to benefit from cache)
         for file_path in dialog_files:
+            self._check_cancel()
             assert context_manager is not None
             parsed_data, extracted, file_ext = extracted_map[file_path]
             file_item_budget = len(extracted.items)
@@ -386,6 +396,8 @@ class ModuleTranslator:
                 )
                 if translations:
                     all_translations.update(translations)
+            except TranslationCancelled:
+                raise
             except Exception as e:
                 error_msg = f"Error translating dialog {file_path.name}: {e}"
                 with self._stats_lock:

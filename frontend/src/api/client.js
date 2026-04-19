@@ -113,3 +113,7 @@ export async function fetchHistory() {
 export async function deleteTask(taskId) {
   return fetchJson(`/api/tasks/${taskId}`, { method: "DELETE" });
 }
+
+export async function postCancelTask(taskId) {
+  return fetchJson(`/api/tasks/${taskId}/cancel`, { method: "POST" });
+}

@@ -99,6 +99,10 @@ def max_concurrent_from_environment() -> int:
         return 12
 
 
+class TranslationCancelled(Exception):
+    """Raised when ``TranslationConfig.cancel_check`` signals cancellation."""
+
+
 @dataclass
 class TranslationConfig:
     """Configuration for translation operations."""
@@ -144,6 +148,12 @@ class TranslationConfig:
     quiet: bool = False
     #: If set, tqdm is not used; caller receives progress (for SSE/WebSocket, etc.).
     progress_callback: Optional[ProgressCallback] = None
+
+    #: Optional callable polled at safe points. When it returns ``True``, the
+    #: pipeline raises :class:`TranslationCancelled` and stops as soon as
+    #: possible (between batches, phases, and dialog files). In-flight API
+    #: calls are not aborted — they complete and their results are discarded.
+    cancel_check: Optional[Callable[[], bool]] = None
 
     def __post_init__(self):
         """Validate configuration after initialization."""

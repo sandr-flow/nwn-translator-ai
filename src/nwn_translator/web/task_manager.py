@@ -15,6 +15,7 @@ from queue import Empty, Queue
 from typing import Any, Callable, Dict, List, Optional
 
 from ..config import (
+    TranslationCancelled,
     TranslationConfig,
     lang_suffix,
     module_string_encoding_for_target_lang,
@@ -55,14 +56,22 @@ class TranslationTask:
     #: Thread-safe queue for SSE (worker thread -> async reader)
     event_queue: "Queue[Dict[str, Any]]" = field(default_factory=Queue)
     _done: threading.Event = field(default_factory=threading.Event)
+    _cancel: threading.Event = field(default_factory=threading.Event)
 
     def mark_done(self) -> None:
         """Signal that the worker thread has finished processing."""
         self._done.set()
 
+    def request_cancel(self) -> None:
+        """Signal the worker thread to stop at the next safe point."""
+        self._cancel.set()
+
+    def is_cancel_requested(self) -> bool:
+        return self._cancel.is_set()
+
     def is_finished(self) -> bool:
         """Return ``True`` if the task has reached a terminal status."""
-        return self.status in ("completed", "failed")
+        return self.status in ("completed", "failed", "cancelled")
 
 
 class TaskManager:
@@ -319,6 +328,7 @@ class TaskManager:
                 verbose=False,
                 quiet=True,
                 progress_callback=progress_cb,
+                cancel_check=task.is_cancel_requested,
             )
 
             if not config.input_file.exists():
@@ -362,6 +372,12 @@ class TaskManager:
                 extract_dir=str(task.extract_dir),
                 stats=task.stats,
             )
+        except TranslationCancelled:
+            logger.info("Translation cancelled for task %s", task.task_id)
+            task.status = "cancelled"
+            task.error = None
+            self._push_event(task, {"type": "cancelled"})
+            update_task_row(task.task_id, status="cancelled")
         except Exception as e:
             logger.exception("Translation failed for task %s", task.task_id)
             task.error = str(e)

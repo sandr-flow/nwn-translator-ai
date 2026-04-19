@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
 from tqdm import tqdm
 
-from ..config import TranslationConfig
+from ..config import TranslationCancelled, TranslationConfig
 from ..prompts._builder import (
     CONTENT_PROFILE_DEFAULT,
     CONTENT_PROFILE_SHORT_LABEL,
@@ -449,6 +449,11 @@ class TranslationManager:
         fn = Path(loc).name if loc else ""
         progress.bump(filename=fn)
 
+    def _raise_if_cancelled(self) -> None:
+        cb = self.config.cancel_check
+        if cb is not None and cb():
+            raise TranslationCancelled("Translation cancelled by user")
+
     async def _translate_one_async(
         self,
         sem: asyncio.Semaphore,
@@ -461,6 +466,7 @@ class TranslationManager:
         glossary_block = self._glossary_block_for_texts([sanitized])
         content_profile = self._content_profile_for_item(item_data)
         async with sem:
+            self._raise_if_cancelled()
             try:
                 result = await asyncio.wait_for(
                     self.provider.translate_async(
@@ -592,6 +598,7 @@ class TranslationManager:
                 )
                 content_profile = self._content_profile_for_batch(unique_batch)
                 async with sem:
+                    self._raise_if_cancelled()
                     try:
                         unique_results = await asyncio.wait_for(
                             self.provider.translate_batch_async(

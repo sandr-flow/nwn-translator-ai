@@ -3,7 +3,7 @@ import { inject, computed } from "vue";
 import { TranslationStateKey } from "../composables/useTranslation.js";
 import { useI18n } from "../composables/useI18n.js";
 
-const { t, reset, resultDownloadUrl, logDownloadUrl, enterEditor } = inject(TranslationStateKey);
+const { t, reset, resultDownloadUrl, logDownloadUrl, enterEditor, openHistory } = inject(TranslationStateKey);
 const { t: i } = useI18n();
 
 const ok = computed(() => t.status === "completed");
@@ -56,6 +56,13 @@ const errCount = computed(() => t.stats?.total_errors ?? t.stats?.errors?.length
           {{ i("result.newTranslation") }}
         </button>
       </div>
+      <button
+        type="button"
+        class="w-full mt-4 py-2.5 rounded-xl border border-nwn-muted/30 text-sm text-nwn-muted hover:text-gray-300 hover:border-nwn-muted/50 transition-colors"
+        @click="openHistory"
+      >
+        {{ i("history.title") }}
+      </button>
     </template>
     <template v-else>
       <h2 class="text-lg font-semibold text-red-400 mb-4">{{ i("result.error") }}</h2>

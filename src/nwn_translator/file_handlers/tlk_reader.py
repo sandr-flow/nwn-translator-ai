@@ -78,6 +78,7 @@ class TLKFile:
 
 class TLKParseError(Exception):
     """Exception raised for TLK parsing errors."""
+
     pass
 
 
@@ -134,7 +135,9 @@ class TLKReader:
         tlk.entry_count = struct.unpack("<I", data[12:16])[0]
         string_data_offset = struct.unpack("<I", data[16:20])[0]
 
-        logger.info(f"TLK: {tlk.entry_count} entries, language={self.LANGUAGES.get(tlk.language, tlk.language)}")
+        logger.info(
+            f"TLK: {tlk.entry_count} entries, language={self.LANGUAGES.get(tlk.language, tlk.language)}"
+        )
 
         # Parse entry data table (TLK V3.0 format)
         # Each entry is 40 bytes:
@@ -151,16 +154,16 @@ class TLKReader:
                 logger.warning(f"Entry {i} exceeds file size")
                 break
 
-            flags = struct.unpack("<I", data[offset:offset+4])[0]
+            flags = struct.unpack("<I", data[offset : offset + 4])[0]
 
             # SoundResRef (16 chars, null-terminated)
-            sound_data = data[offset+4:offset+20]
-            sound_resref = sound_data.split(b'\x00')[0].decode('ascii', errors='ignore').strip()
+            sound_data = data[offset + 4 : offset + 20]
+            sound_resref = sound_data.split(b"\x00")[0].decode("ascii", errors="ignore").strip()
 
-            volume = struct.unpack("<I", data[offset+20:offset+24])[0]
+            volume = struct.unpack("<I", data[offset + 20 : offset + 24])[0]
             # pitch_variance = struct.unpack("<I", data[offset+24:offset+28])[0]
-            string_offset = struct.unpack("<I", data[offset+28:offset+32])[0]
-            string_size = struct.unpack("<I", data[offset+32:offset+36])[0]
+            string_offset = struct.unpack("<I", data[offset + 28 : offset + 32])[0]
+            string_size = struct.unpack("<I", data[offset + 32 : offset + 36])[0]
             # sound_length = struct.unpack("<f", data[offset+36:offset+40])[0]
 
             # Extract string text (only if TEXT_PRESENT flag is set, bit 0)
@@ -170,13 +173,13 @@ class TLKReader:
                 abs_offset = string_data_offset + string_offset
                 if abs_offset + string_size <= len(data):
                     try:
-                        text_data = data[abs_offset:abs_offset+string_size]
-                        text = text_data.decode('utf-8')
+                        text_data = data[abs_offset : abs_offset + string_size]
+                        text = text_data.decode("utf-8")
                     except Exception:
                         try:
-                            text = text_data.decode('latin-1')
+                            text = text_data.decode("latin-1")
                         except Exception:
-                            text = text_data.decode('utf-8', errors='ignore')
+                            text = text_data.decode("utf-8", errors="ignore")
 
             entry = TLKEntry(text, sound_resref, volume)
             entries.append(entry)

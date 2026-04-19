@@ -12,8 +12,7 @@ def main() -> None:
         import uvicorn
     except ImportError as e:
         print(
-            "Uvicorn не установлен. Установите зависимости веб-слоя:\n"
-            "  pip install -e \".[web]\"",
+            "Uvicorn не установлен. Установите зависимости веб-слоя:\n" '  pip install -e ".[web]"',
             file=sys.stderr,
         )
         raise SystemExit(1) from e

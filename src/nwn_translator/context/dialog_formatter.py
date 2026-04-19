@@ -7,6 +7,7 @@ suitable for LLM contextual translation.
 from typing import List, Set, Dict, Any, Optional
 from ..extractors.base import DialogNode
 
+
 class DialogFormatter:
     """Formats dialog trees into script representations for LLMs."""
 
@@ -32,12 +33,12 @@ class DialogFormatter:
         """
         lines = []
         visited = set()
-        
-        # We process roots first, then all nodes discovered through BFS/DFS to 
+
+        # We process roots first, then all nodes discovered through BFS/DFS to
         # ensure all referenced "Go to [E...]" blocks are eventually printed.
         queue = list(tree)
         nodes_to_process = []
-        
+
         # Flatten tree to maintain a stable order of processing (Entries first)
         def collect_nodes(nodes: List[DialogNode]):
             for node in nodes:
@@ -46,9 +47,9 @@ class DialogFormatter:
                     visited.add(node_id)
                     nodes_to_process.append(node)
                     collect_nodes(node.replies)
-                    
+
         collect_nodes(queue)
-        
+
         if not nodes_to_process:
             return ""
 
@@ -62,25 +63,25 @@ class DialogFormatter:
             # Format current node with EXACT text for translation
             lines.append(f"[{node_key}] [{speaker}]:")
             lines.append(f"<<<{node_text}>>>")
-            
+
             # Identify where the replies lead (or if it's an end node)
             if not node.replies:
                 lines.append(f"   -> [END DIALOGUE]")
             else:
                 for reply in node.replies:
                     reply_key = f"{'E' if reply.is_entry else 'R'}{reply.node_id}"
-                    
+
                     # For flow context, we only need a short preview
                     reply_raw = overrides.get(reply_key, reply.text or "")
                     reply_text = reply_raw.replace("\n", " ").strip()
                     preview = reply_text[:60] + "..." if len(reply_text) > 60 else reply_text
-                    
+
                     if node.is_entry:
-                        lines.append(f"   -> Player Reply [{reply_key}]: \"{preview}\"")
+                        lines.append(f'   -> Player Reply [{reply_key}]: "{preview}"')
                     else:
                         lines.append(f"   -> NPC Response [{reply_key}]")
-                        
-            lines.append("") # Empty line between blocks
+
+            lines.append("")  # Empty line between blocks
 
         return "\n".join(lines).strip()
 

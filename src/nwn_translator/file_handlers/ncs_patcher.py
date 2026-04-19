@@ -52,14 +52,9 @@ def _build_consts_bytes(encoded_string: bytes) -> bytes:
     str_len = len(encoded_string)
     if str_len > 0xFFFF:
         raise NCSPatchError(
-            f"Translated string too long ({str_len} bytes): "
-            f"NCS CONSTS supports max 65535 bytes"
+            f"Translated string too long ({str_len} bytes): " f"NCS CONSTS supports max 65535 bytes"
         )
-    return (
-        struct.pack(">BB", OP_CONST, TYPE_STRING)
-        + struct.pack(">H", str_len)
-        + encoded_string
-    )
+    return struct.pack(">BB", OP_CONST, TYPE_STRING) + struct.pack(">H", str_len) + encoded_string
 
 
 def _adjust_jumps(
@@ -108,8 +103,7 @@ def _validate_jumps(ncs: NCSFile) -> bool:
         target = instr.offset + instr.jump_offset
         if target not in valid_offsets:
             logger.error(
-                "Jump at offset %#x targets %#x which is not a valid "
-                "instruction boundary",
+                "Jump at offset %#x targets %#x which is not a valid " "instruction boundary",
                 instr.offset,
                 target,
             )
@@ -176,9 +170,7 @@ def _apply_instruction_patches(
                 file_path.name,
             )
             file_path.write_bytes(original_bytes)
-            raise NCSPatchError(
-                f"Jump validation failed after patching {file_path.name}"
-            )
+            raise NCSPatchError(f"Jump validation failed after patching {file_path.name}")
     except NCSParseError as e:
         logger.error(
             "Re-parse failed for %s — reverting to original: %s",
@@ -186,9 +178,7 @@ def _apply_instruction_patches(
             e,
         )
         file_path.write_bytes(original_bytes)
-        raise NCSPatchError(
-            f"Patched file failed re-parse: {file_path.name}: {e}"
-        ) from e
+        raise NCSPatchError(f"Patched file failed re-parse: {file_path.name}: {e}") from e
 
     file_path.write_bytes(data)
     logger.info(
@@ -234,13 +224,9 @@ def patch_ncs_string_replacements(
             continue
         instr = _instruction_at_offset(ncs, offset)
         if instr is None:
-            raise NCSPatchError(
-                f"No instruction at offset {offset:#x} in {file_path.name}"
-            )
+            raise NCSPatchError(f"No instruction at offset {offset:#x} in {file_path.name}")
         if not instr.is_string_const or instr.string_value is None:
-            raise NCSPatchError(
-                f"Instruction at offset {offset:#x} is not a string constant"
-            )
+            raise NCSPatchError(f"Instruction at offset {offset:#x} is not a string constant")
         if instr.string_value != original_text:
             raise NCSPatchError(
                 f"String mismatch at offset {offset:#x} in {file_path.name}: "

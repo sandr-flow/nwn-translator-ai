@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 from tqdm import tqdm
 
 from ..config import TranslationConfig
+from ..prompts._builder import (
+    CONTENT_PROFILE_DEFAULT,
+    CONTENT_PROFILE_SHORT_LABEL,
+)
 from ..translation_logging import translation_log_writer_for_config
 
 if TYPE_CHECKING:
@@ -361,8 +365,13 @@ class TranslationManager:
 
     # Maximum characters for a string to be considered "short" (eligible for batching)
     _BATCH_SHORT_THRESHOLD = 50
-    # Maximum items per batch API call
+    # Items at or below this length use the larger batch size (Phase 3.5).
+    _BATCH_VERY_SHORT_THRESHOLD = 20
+    # Maximum items per batch API call (regular short items, 20 < len <= 50).
     _BATCH_SIZE = 15
+    # Larger batch size for very short items (<= 20 chars) — mostly tag names
+    # and one-word labels where per-item prompt overhead dominates cost.
+    _BATCH_SIZE_VERY_SHORT = 30
 
     # Timeout (seconds) for a single async translation call.
     _ITEM_TIMEOUT: float = 120.0
@@ -400,6 +409,36 @@ class TranslationManager:
         item_type = (item.metadata or {}).get("type", "")
         return item_type in TranslationManager._BATCHABLE_TYPES
 
+    @staticmethod
+    def _content_profile_for_item(item_data: dict) -> str:
+        """Deterministic profile for a single item (Phase 3.4).
+
+        Items whose metadata type is in :data:`_BATCHABLE_TYPES` are
+        labels/names — they use the compact ``short_label`` profile.
+        Everything else falls back to the full ``default`` profile.
+        """
+        item = item_data["item"]
+        item_type = (item.metadata or {}).get("type", "")
+        if item_type in TranslationManager._BATCHABLE_TYPES:
+            return CONTENT_PROFILE_SHORT_LABEL
+        return CONTENT_PROFILE_DEFAULT
+
+    @staticmethod
+    def _content_profile_for_batch(batch: List[dict]) -> str:
+        """Profile for a batch; uses ``short_label`` only if EVERY item qualifies.
+
+        The selection is a pure function of the content-type mix of the batch
+        (Phase 3.4 determinism rule) so each profile hits its own stable
+        prefix in provider caches.
+        """
+        if not batch:
+            return CONTENT_PROFILE_DEFAULT
+        for d in batch:
+            item_type = (d["item"].metadata or {}).get("type", "")
+            if item_type not in TranslationManager._BATCHABLE_TYPES:
+                return CONTENT_PROFILE_DEFAULT
+        return CONTENT_PROFILE_SHORT_LABEL
+
     def _async_bump(self, item_data: dict) -> None:
         """Per-item progress bump fired inside asyncio worker on completion."""
         progress = self._active_item_progress
@@ -420,6 +459,7 @@ class TranslationManager:
         item = item_data["item"]
         sanitized = item_data["sanitized"]
         glossary_block = self._glossary_block_for_texts([sanitized])
+        content_profile = self._content_profile_for_item(item_data)
         async with sem:
             try:
                 result = await asyncio.wait_for(
@@ -429,6 +469,7 @@ class TranslationManager:
                         target_lang=self.config.target_lang,
                         context=item.context,
                         glossary_block=glossary_block,
+                        content_profile=content_profile,
                     ),
                     timeout=self._ITEM_TIMEOUT,
                 )
@@ -501,6 +542,17 @@ class TranslationManager:
         short_items = [d for d in real_items if self._is_short_item(d)]
         long_items = [d for d in real_items if not self._is_short_item(d)]
 
+        # Phase 3.5 — adaptive batch size: very short (<=20 chars) items carry
+        # so little payload that per-batch prompt overhead dominates; group
+        # them into larger batches to raise payload/overhead ratio.
+        very_short_items: List[dict] = []
+        regular_short_items: List[dict] = []
+        for d in short_items:
+            if len(d["sanitized"]) <= self._BATCH_VERY_SHORT_THRESHOLD:
+                very_short_items.append(d)
+            else:
+                regular_short_items.append(d)
+
         async def run_all() -> tuple:
             limit = max(1, int(self.config.max_concurrent_requests))
             sem = asyncio.Semaphore(limit)
@@ -508,10 +560,11 @@ class TranslationManager:
             long_coros = [self._translate_one_async(sem, d) for d in long_items]
 
             # --- Batch translation for short items ---
-            batch_size = self._BATCH_SIZE
-            batches = [
-                short_items[i : i + batch_size] for i in range(0, len(short_items), batch_size)
-            ]
+            batches: List[List[dict]] = []
+            for i in range(0, len(very_short_items), self._BATCH_SIZE_VERY_SHORT):
+                batches.append(very_short_items[i : i + self._BATCH_SIZE_VERY_SHORT])
+            for i in range(0, len(regular_short_items), self._BATCH_SIZE):
+                batches.append(regular_short_items[i : i + self._BATCH_SIZE])
 
             async def batch_one(batch: List[dict]) -> List[TranslationResult]:
                 # Deduplicate by sanitized text within the batch so repeated
@@ -537,6 +590,7 @@ class TranslationManager:
                 glossary_block = self._glossary_block_for_texts(
                     d["sanitized"] for d in unique_batch
                 )
+                content_profile = self._content_profile_for_batch(unique_batch)
                 async with sem:
                     try:
                         unique_results = await asyncio.wait_for(
@@ -545,6 +599,7 @@ class TranslationManager:
                                 source_lang=self.config.source_lang,
                                 target_lang=self.config.target_lang,
                                 glossary_block=glossary_block,
+                                content_profile=content_profile,
                             ),
                             timeout=self._BATCH_CALL_TIMEOUT,
                         )
@@ -659,12 +714,23 @@ class TranslationManager:
         )
 
         if short_items:
+            n_batches = (
+                (len(very_short_items) + self._BATCH_SIZE_VERY_SHORT - 1)
+                // self._BATCH_SIZE_VERY_SHORT
+            ) + ((len(regular_short_items) + self._BATCH_SIZE - 1) // self._BATCH_SIZE)
             logger.info(
-                "Batch-translated %d short items in %d batch(es), " "%d long items individually",
+                "Batch-translated %d short items (%d very-short + %d regular) "
+                "in %d batch(es), %d long items individually",
                 len(short_items),
-                (len(short_items) + self._BATCH_SIZE - 1) // self._BATCH_SIZE,
+                len(very_short_items),
+                len(regular_short_items),
+                n_batches,
                 len(long_items),
             )
+
+        # Reorder the item list to match the flattened batch_results ordering
+        # (very-short batches first, then regular-short batches).
+        ordered_short_items = very_short_items + regular_short_items
 
         # Process long results
         for item_data, result in zip(long_items, long_results):
@@ -674,7 +740,7 @@ class TranslationManager:
 
         # Process batch results; collect failures for individual retry
         retry_items: List[dict] = []
-        for item_data, result in zip(short_items, batch_results):
+        for item_data, result in zip(ordered_short_items, batch_results):
             if result.success:
                 self._process_translation_result(
                     item_data, result, translations, source_filename=source_filename

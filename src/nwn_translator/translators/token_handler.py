@@ -247,9 +247,7 @@ class TokenValidator:
         return original_tokens == restored_tokens
 
     @staticmethod
-    def find_token_mismatches(
-        original: str, restored: str
-    ) -> Tuple[List[str], List[str]]:
+    def find_token_mismatches(original: str, restored: str) -> Tuple[List[str], List[str]]:
         """Find tokens that don't match between original and restored.
 
         Args:

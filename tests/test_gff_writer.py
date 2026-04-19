@@ -14,10 +14,10 @@ from src.nwn_translator.file_handlers.gff_writer import GFFWriter, GFFWriteError
 from src.nwn_translator.file_handlers.gff_handler import GFFHandler, GFFHandlerError
 from src.nwn_translator.file_handlers.gff_parser import GFFParser, gff_to_dict
 
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def _roundtrip(data: dict) -> dict:
     """Write *data* to a temp file, re-read it, and return the parsed dict."""
@@ -33,6 +33,7 @@ def _roundtrip(data: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Basic smoke tests
 # ---------------------------------------------------------------------------
+
 
 class TestGFFWriterSmoke:
     """Basic smoke tests for GFFWriter."""
@@ -75,6 +76,7 @@ class TestGFFWriterSmoke:
 # ---------------------------------------------------------------------------
 # Round-trip tests
 # ---------------------------------------------------------------------------
+
 
 class TestGFFRoundTrip:
     """Verify that write → read produces equivalent data."""
@@ -197,6 +199,7 @@ class TestGFFRoundTrip:
 # ---------------------------------------------------------------------------
 # GFFHandler.write integration
 # ---------------------------------------------------------------------------
+
 
 class TestGFFHandlerWrite:
     """Integration tests using GFFHandler.write()."""

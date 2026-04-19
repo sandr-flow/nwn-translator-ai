@@ -61,6 +61,7 @@ class GFFType(IntEnum):
 
 class GFFParseError(Exception):
     """Exception raised for GFF parsing errors."""
+
     pass
 
 
@@ -88,6 +89,7 @@ class GFFField:
 @dataclass
 class GFFValue:
     """Wrapper for parsed GFF field values to retain their original type."""
+
     type: GFFType
     value: Any
     record_offset: int = 0
@@ -200,7 +202,7 @@ class GFFParser:
 
         # Derive the struct type from the 4-char file type header (strip trailing spaces)
         try:
-            gff.struct_type = gff.file_type.rstrip(b" ").decode('ascii')
+            gff.struct_type = gff.file_type.rstrip(b" ").decode("ascii")
         except Exception:
             gff.struct_type = None
 
@@ -211,21 +213,21 @@ class GFFParser:
         # 32: FieldDataOffset   36: FieldDataByteSize
         # 40: FieldIndicesOffset 44: FieldIndicesByteSize
         # 48: ListIndicesOffset  52: ListIndicesByteSize
-        struct_offset      = struct.unpack("<I", self.data[8:12])[0]
-        struct_count       = struct.unpack("<I", self.data[12:16])[0]
-        field_offset       = struct.unpack("<I", self.data[16:20])[0]
-        field_count        = struct.unpack("<I", self.data[20:24])[0]
-        label_offset       = struct.unpack("<I", self.data[24:28])[0]
-        label_count        = struct.unpack("<I", self.data[28:32])[0]
-        field_data_offset  = struct.unpack("<I", self.data[32:36])[0]  # base for complex fields
+        struct_offset = struct.unpack("<I", self.data[8:12])[0]
+        struct_count = struct.unpack("<I", self.data[12:16])[0]
+        field_offset = struct.unpack("<I", self.data[16:20])[0]
+        field_count = struct.unpack("<I", self.data[20:24])[0]
+        label_offset = struct.unpack("<I", self.data[24:28])[0]
+        label_count = struct.unpack("<I", self.data[28:32])[0]
+        field_data_offset = struct.unpack("<I", self.data[32:36])[0]  # base for complex fields
         # field_data_byte_size = 36:40 (not needed for parsing)
-        field_indices_offset    = struct.unpack("<I", self.data[40:44])[0]
+        field_indices_offset = struct.unpack("<I", self.data[40:44])[0]
         field_indices_byte_size = struct.unpack("<I", self.data[44:48])[0]
-        list_indices_offset     = struct.unpack("<I", self.data[48:52])[0]
+        list_indices_offset = struct.unpack("<I", self.data[48:52])[0]
         # list_indices_byte_size = 52:56 (not needed; we read on-demand)
 
         # Store for use in _parse_field_value
-        self.field_data_offset  = field_data_offset
+        self.field_data_offset = field_data_offset
         self.list_indices_offset = list_indices_offset
 
         # Number of DWORD elements in the field-indices block
@@ -238,8 +240,8 @@ class GFFParser:
             if offset + 16 > len(self.data):
                 gff.labels.append("")
                 continue
-            label_data = self.data[offset:offset+16]
-            label = label_data.split(b'\x00')[0].decode('ascii', errors='ignore')
+            label_data = self.data[offset : offset + 16]
+            label = label_data.split(b"\x00")[0].decode("ascii", errors="ignore")
             gff.labels.append(label)
 
         # Parse field definitions.
@@ -249,9 +251,9 @@ class GFFParser:
             offset = field_offset + i * 12
             if offset + 12 > len(self.data):
                 continue
-            type_idx = struct.unpack("<I", self.data[offset:offset+4])[0]
-            label_idx = struct.unpack("<I", self.data[offset+4:offset+8])[0]
-            data_or_offset = struct.unpack("<I", self.data[offset+8:offset+12])[0]
+            type_idx = struct.unpack("<I", self.data[offset : offset + 4])[0]
+            label_idx = struct.unpack("<I", self.data[offset + 4 : offset + 8])[0]
+            data_or_offset = struct.unpack("<I", self.data[offset + 8 : offset + 12])[0]
 
             label = gff.labels[label_idx] if label_idx < len(gff.labels) else f"field_{label_idx}"
             gff_type = GFFType(type_idx)
@@ -264,7 +266,7 @@ class GFFParser:
             off = field_indices_offset + i * 4
             if off + 4 > len(self.data):
                 break
-            gff.field_indices.append(struct.unpack("<I", self.data[off:off+4])[0])
+            gff.field_indices.append(struct.unpack("<I", self.data[off : off + 4])[0])
 
         # list_indices are not pre-parsed; List fields read directly from self.data
         # using self.list_indices_offset + field.data_or_offset.
@@ -274,11 +276,11 @@ class GFFParser:
         for i in range(struct_count):
             offset = struct_offset + i * 12
             if offset + 12 > len(self.data):
-                 # Stop processing structs if we ran out of data
-                 break
-            struct_id = struct.unpack("<I", self.data[offset:offset+4])[0]
-            data_offset = struct.unpack("<I", self.data[offset+4:offset+8])[0]
-            field_count = struct.unpack("<I", self.data[offset+8:offset+12])[0]
+                # Stop processing structs if we ran out of data
+                break
+            struct_id = struct.unpack("<I", self.data[offset : offset + 4])[0]
+            data_offset = struct.unpack("<I", self.data[offset + 4 : offset + 8])[0]
+            field_count = struct.unpack("<I", self.data[offset + 8 : offset + 12])[0]
 
             struct_obj = GFFStruct(struct_id, data_offset, field_count)
 
@@ -289,7 +291,9 @@ class GFFParser:
                 if field_idx < len(fields):
                     field = fields[field_idx]
                     value = self._parse_field_value(field, gff)
-                    struct_obj.fields[field.label] = GFFValue(field.type, value, field.record_offset)
+                    struct_obj.fields[field.label] = GFFValue(
+                        field.type, value, field.record_offset
+                    )
             elif field_count > 1:
                 # If count > 1, DataOffset is a BYTE offset into the FieldIndices block.
                 # Divide by 4 (DWORD size) to get the element index.
@@ -306,7 +310,9 @@ class GFFParser:
 
                     field = fields[field_idx]
                     value = self._parse_field_value(field, gff)
-                    struct_obj.fields[field.label] = GFFValue(field.type, value, field.record_offset)
+                    struct_obj.fields[field.label] = GFFValue(
+                        field.type, value, field.record_offset
+                    )
 
             gff.structs.append(struct_obj)
 
@@ -332,7 +338,7 @@ class GFFParser:
             offset = self.field_data_offset + field.data_or_offset
             if offset + 4 > len(self.data):
                 return ""
-            length = struct.unpack("<I", self.data[offset:offset+4])[0]
+            length = struct.unpack("<I", self.data[offset : offset + 4])[0]
             if length == 0:
                 return ""
             if offset + 4 + length > len(self.data):
@@ -348,11 +354,11 @@ class GFFParser:
             size = self.data[offset]
             if size == 0:
                 return ""
-            raw = self.data[offset+1:offset+1+size]
+            raw = self.data[offset + 1 : offset + 1 + size]
             try:
-                return raw.decode('ascii')
+                return raw.decode("ascii")
             except Exception:
-                return raw.decode('ascii', errors='ignore')
+                return raw.decode("ascii", errors="ignore")
 
         elif field.type == GFFType.CExoLocString:
             # Layout in Field Data block (data_or_offset is relative to field_data_offset):
@@ -363,8 +369,8 @@ class GFFParser:
             if offset + 12 > len(self.data):
                 return {"StrRef": -1, "Value": ""}
 
-            str_ref = struct.unpack("<i", self.data[offset+4:offset+8])[0]
-            count   = struct.unpack("<I", self.data[offset+8:offset+12])[0]
+            str_ref = struct.unpack("<i", self.data[offset + 4 : offset + 8])[0]
+            count = struct.unpack("<I", self.data[offset + 8 : offset + 12])[0]
 
             if count == 0:
                 return {"StrRef": str_ref, "Value": ""}
@@ -375,7 +381,7 @@ class GFFParser:
                     if sub_offset + 8 > len(self.data):
                         break
                     sub_offset += 4  # skip LanguageID
-                    length = struct.unpack("<I", self.data[sub_offset:sub_offset+4])[0]
+                    length = struct.unpack("<I", self.data[sub_offset : sub_offset + 4])[0]
                     sub_offset += 4
                     if sub_offset + length > len(self.data):
                         break
@@ -397,13 +403,13 @@ class GFFParser:
             if offset + 4 > len(self.data):
                 return []
 
-            count = struct.unpack("<I", self.data[offset:offset+4])[0]
+            count = struct.unpack("<I", self.data[offset : offset + 4])[0]
             result = []
             for i in range(count):
                 entry_off = offset + 4 + i * 4
                 if entry_off + 4 > len(self.data):
                     break
-                struct_idx = struct.unpack("<I", self.data[entry_off:entry_off+4])[0]
+                struct_idx = struct.unpack("<I", self.data[entry_off : entry_off + 4])[0]
                 result.append(struct_idx)
             return result
 
@@ -431,7 +437,7 @@ class GFFParser:
         if gff_type == GFFType.BYTE:
             return value & 0xFF
         elif gff_type == GFFType.CHAR:
-            return chr(value & 0xFF) if value < 128 else '?'
+            return chr(value & 0xFF) if value < 128 else "?"
         elif gff_type == GFFType.WORD:
             return value & 0xFFFF
         elif gff_type == GFFType.SHORT:
@@ -488,7 +494,7 @@ def _expand_struct(struct_fields: Dict[str, Any], gff: GFFFile, visited: set) ->
     result = {}
     field_types = {}
     record_offsets = {}
-    
+
     for key, value in struct_fields.items():
         if hasattr(value, "value"):
             gff_val = value.value
@@ -514,7 +520,7 @@ def _expand_struct(struct_fields: Dict[str, Any], gff: GFFFile, visited: set) ->
             result[key] = expanded
         else:
             result[key] = gff_val
-            
+
     result["_field_types"] = field_types
     result["_record_offsets"] = record_offsets
     return result

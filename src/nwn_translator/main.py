@@ -116,9 +116,7 @@ def inject_translations_into_file(
     if not injector:
         return
     inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
-    inject_metadata["module_text_encoding"] = module_string_encoding_for_target_lang(
-        target_lang
-    )
+    inject_metadata["module_text_encoding"] = module_string_encoding_for_target_lang(target_lang)
     if extracted.content_type == "ncs_script":
         by_id: Dict[str, str] = {}
         if ncs_translations_by_item_id is not None:
@@ -219,7 +217,9 @@ class ModuleTranslator:
                 self.config.progress_callback("scanning", 0, 1, "Building world context...")
             scanner = WorldScanner()
             self.world_context = scanner.scan_directory(
-                extract_dir, tlk=self.tlk, gff_cache=self._gff_cache,
+                extract_dir,
+                tlk=self.tlk,
+                gff_cache=self._gff_cache,
                 progress_callback=self.config.progress_callback,
             )
 
@@ -233,7 +233,8 @@ class ModuleTranslator:
         extracted_map: Dict[Path, Tuple[Dict[str, Any], ExtractedContent, str]] = {}
 
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        max_workers = max(1, getattr(self.config, 'max_concurrent_requests', 4))
+
+        max_workers = max(1, getattr(self.config, "max_concurrent_requests", 4))
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_file = {
@@ -262,7 +263,8 @@ class ModuleTranslator:
         # Decide which files go to the contextual dialog path.
         use_context_manager = bool(self.config.use_context and self.world_context)
         dialog_files: List[Path] = [
-            fp for fp, (_pd, _ex, ext) in extracted_map.items()
+            fp
+            for fp, (_pd, _ex, ext) in extracted_map.items()
             if ext == ".dlg" and use_context_manager
         ]
 
@@ -274,7 +276,9 @@ class ModuleTranslator:
 
         logger.info(
             "Phase A complete: %d files extracted, %d non-dialog items, %d dialog files",
-            len(extracted_map), len(non_dialog_items), len(dialog_files),
+            len(extracted_map),
+            len(non_dialog_items),
+            len(dialog_files),
         )
 
         # Step 2.7: Entity extraction from text bodies (feeds glossary).
@@ -285,9 +289,7 @@ class ModuleTranslator:
             for _fp, (_pd, extracted, _ext) in extracted_map.items():
                 all_items.extend(extracted.items)
 
-            known_names = {
-                name for name, _cat in self.world_context.get_all_names()
-            }
+            known_names = {name for name, _cat in self.world_context.get_all_names()}
             extracted_entities = EntityExtractor().extract(
                 all_items,
                 self.provider,
@@ -308,7 +310,9 @@ class ModuleTranslator:
                 self.config.progress_callback("scanning", 0, 1, "Building glossary...")
             try:
                 self.glossary = GlossaryBuilder().build(
-                    self.world_context, self.provider, self.config,
+                    self.world_context,
+                    self.provider,
+                    self.config,
                     progress_callback=self.config.progress_callback,
                 )
             except RuntimeError as e:
@@ -318,9 +322,7 @@ class ModuleTranslator:
                 self.config.progress_callback("scanning", 1, 1, "done")
 
         # Initialize translation managers for Phase B (need glossary).
-        manager = TranslationManager(
-            self.config, self.provider, glossary=self.glossary
-        )
+        manager = TranslationManager(self.config, self.provider, glossary=self.glossary)
         # Delta-tracking cursors for cumulative manager stats
         self._prev_items = 0
         self._prev_errors = 0
@@ -344,9 +346,7 @@ class ModuleTranslator:
         # dialog translation paths). Total is the sum of translatable items
         # across every file that enters Phase B — this is what lets the
         # progress bar move smoothly instead of jumping per file.
-        dialog_item_total = sum(
-            len(extracted_map[fp][1].items) for fp in dialog_files
-        )
+        dialog_item_total = sum(len(extracted_map[fp][1].items) for fp in dialog_files)
         total_items_b = len(non_dialog_items) + dialog_item_total
         item_progress = _ItemProgress(
             total=total_items_b,
@@ -354,9 +354,7 @@ class ModuleTranslator:
         )
         if self.config.progress_callback and total_items_b:
             # Brief sentinel so the UI switches to the translating phase label.
-            self.config.progress_callback(
-                "translating", 0, total_items_b, "starting"
-            )
+            self.config.progress_callback("translating", 0, total_items_b, "starting")
 
         # B-1: Translate all non-dialog items in one deduplicated batch
         if non_dialog_items:
@@ -380,7 +378,8 @@ class ModuleTranslator:
             file_item_budget = len(extracted.items)
             try:
                 translations = context_manager.translate_dialog(
-                    file_path, parsed_data,
+                    file_path,
+                    parsed_data,
                     item_progress=item_progress,
                     item_budget=file_item_budget,
                 )
@@ -406,7 +405,8 @@ class ModuleTranslator:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_file = {
                 executor.submit(
-                    self._inject_file, file_path,
+                    self._inject_file,
+                    file_path,
                     extracted_map[file_path][0],  # parsed_data
                     extracted_map[file_path][1],  # extracted
                     all_translations,
@@ -445,6 +445,7 @@ class ModuleTranslator:
         output_path = self.config.output_file
         if output_path is None:
             from .config import create_output_path
+
             output_path = create_output_path(self.config.input_file, self.config.target_lang)
 
         create_mod_from_directory(extract_dir, output_path, self.config.input_file)
@@ -466,7 +467,11 @@ class ModuleTranslator:
         """
         if self.config.skip_cleanup:
             # Use a persistent directory that won't auto-delete on GC
-            parent = self.config.temp_dir if self.config.temp_dir.exists() else Path(tempfile.gettempdir())
+            parent = (
+                self.config.temp_dir
+                if self.config.temp_dir.exists()
+                else Path(tempfile.gettempdir())
+            )
             extract_dir = Path(tempfile.mkdtemp(prefix="nwn_translate_", dir=parent))
             self.temp_dir = None
         else:
@@ -536,9 +541,7 @@ class ModuleTranslator:
             (parsed_data, ExtractedContent, file_ext) or None if nothing to extract.
         """
         file_ext = file_path.suffix.lower()
-        loaded = load_parsed_and_extracted(
-            file_path, file_ext, self.tlk, self._gff_cache
-        )
+        loaded = load_parsed_and_extracted(file_path, file_ext, self.tlk, self._gff_cache)
         if loaded is None:
             return None
         parsed_data, extracted = loaded
@@ -586,9 +589,7 @@ class ModuleTranslator:
                     continue
                 translated = all_translations.get(item.text)
                 if translated is None and (item.metadata or {}).get("type") == "ncs_string":
-                    translated = manager.ncs_translations_by_item_id.get(
-                        item.item_id or ""
-                    )
+                    translated = manager.ncs_translations_by_item_id.get(item.item_id or "")
                 if translated is None:
                     continue
                 if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
@@ -603,9 +604,9 @@ class ModuleTranslator:
                     translated=translated,
                     context=item.context,
                     source_filename=file_path.name,
-                    item_id=item.item_id
-                    if (item.metadata or {}).get("type") == "ncs_string"
-                    else None,
+                    item_id=(
+                        item.item_id if (item.metadata or {}).get("type") == "ncs_string" else None
+                    ),
                 )
 
     def _patch_git_files(
@@ -628,24 +629,22 @@ class ModuleTranslator:
         total_patched = 0
         for git_path in git_files:
             try:
-                gff_cached = read_gff(
-                    git_path, tlk=self.tlk, cache=self._gff_cache
-                )
+                gff_cached = read_gff(git_path, tlk=self.tlk, cache=self._gff_cache)
                 patched = patch_git_file(
                     git_path,
                     translations,
                     tlk=self.tlk,
                     parsed_data=gff_cached,
-                    text_encoding=module_string_encoding_for_target_lang(
-                        self.config.target_lang
-                    ),
+                    text_encoding=module_string_encoding_for_target_lang(self.config.target_lang),
                 )
                 total_patched += patched
             except Exception as e:
                 logger.error(f"Failed to patch {git_path.name}: {e}")
 
         if total_patched:
-            logger.info(f"Patched {total_patched} instance fields across {len(git_files)} .git files")
+            logger.info(
+                f"Patched {total_patched} instance fields across {len(git_files)} .git files"
+            )
 
     def _sync_manager_stats(self, manager: "TranslationManager") -> None:
         """Merge delta from the shared TranslationManager stats into orchestrator stats.
@@ -657,7 +656,7 @@ class ModuleTranslator:
             items_now = manager.stats["items_translated"]
             errors_now = len(manager.stats["errors"])
             self.stats["items_translated"] += items_now - self._prev_items
-            self.stats["errors"].extend(manager.stats["errors"][self._prev_errors:])
+            self.stats["errors"].extend(manager.stats["errors"][self._prev_errors :])
             self._prev_items = items_now
             self._prev_errors = errors_now
 
@@ -666,6 +665,7 @@ class ModuleTranslator:
         output_path = self.config.output_file
         if output_path is None:
             from .config import create_output_path
+
             output_path = create_output_path(self.config.input_file, self.config.target_lang)
 
         return output_path
@@ -772,6 +772,7 @@ def rebuild_module(
 
     # Patch .git area instance files
     from .injectors.git_injector import patch_git_file
+
     for git_path in extract_dir.glob("*.git"):
         try:
             parsed_data = read_gff(git_path, tlk=tlk, cache=gff_cache)

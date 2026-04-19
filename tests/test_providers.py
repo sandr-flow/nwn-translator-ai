@@ -60,11 +60,8 @@ class TestBaseAIProvider:
     def test_translate_with_context(self):
         """Test translating with context."""
         provider = MockAIProvider(api_key="test-key")
-        result = provider.translate(
-            "Hello", "english", "spanish", context="Greeting"
-        )
+        result = provider.translate("Hello", "english", "spanish", context="Greeting")
         assert result.success
-
 
 
 class TestCreateProvider:
@@ -79,9 +76,7 @@ class TestCreateProvider:
 
     def test_create_returns_polza_for_pza_prefix(self):
         """``pza…`` keys route to PolzaProvider with the Polza base URL."""
-        with patch(
-            "src.nwn_translator.ai_providers.openrouter_provider.OpenAI"
-        ) as mock_openai_cls:
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI") as mock_openai_cls:
             p = create_provider("pza-abcdef1234567890", model="openai/gpt-4o")
         assert isinstance(p, PolzaProvider)
         assert p.get_provider_name() == "polza"
@@ -126,9 +121,7 @@ class TestTranslationItem:
 
     def test_create_item_with_context(self):
         """Test creating item with context."""
-        item = TranslationItem(
-            original="Hello", context="Greeting", metadata={"speaker": "NPC"}
-        )
+        item = TranslationItem(original="Hello", context="Greeting", metadata={"speaker": "NPC"})
         assert item.context == "Greeting"
         assert item.metadata["speaker"] == "NPC"
 
@@ -138,9 +131,7 @@ class TestTranslationResult:
 
     def test_create_successful_result(self):
         """Test creating a successful result."""
-        result = TranslationResult(
-            translated="Hola", original="Hello", success=True
-        )
+        result = TranslationResult(translated="Hola", original="Hello", success=True)
         assert result.translated == "Hola"
         assert result.original == "Hello"
         assert result.success

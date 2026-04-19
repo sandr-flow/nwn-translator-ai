@@ -18,11 +18,7 @@ class AreaExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract area content from an .are file.
 
         Args:
@@ -48,29 +44,33 @@ class AreaExtractor(BaseExtractor):
 
         # Create item for name
         if name:
-            items.append(TranslatableItem(
-                text=name,
-                context="Location/area name in game world",
-                item_id=f"{tag}_name",
-                location=str(file_path),
-                metadata={
-                    "type": "area_name",
-                    "tag": tag,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=name,
+                    context="Location/area name in game world",
+                    item_id=f"{tag}_name",
+                    location=str(file_path),
+                    metadata={
+                        "type": "area_name",
+                        "tag": tag,
+                    },
+                )
+            )
 
         # Create item for description
         if description:
-            items.append(TranslatableItem(
-                text=description,
-                context=f"Area description: {tag}",
-                item_id=f"{tag}_description",
-                location=str(file_path),
-                metadata={
-                    "type": "area_description",
-                    "tag": tag,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=description,
+                    context=f"Area description: {tag}",
+                    item_id=f"{tag}_description",
+                    location=str(file_path),
+                    metadata={
+                        "type": "area_description",
+                        "tag": tag,
+                    },
+                )
+            )
 
         return ExtractedContent(
             content_type="area",
@@ -79,7 +79,7 @@ class AreaExtractor(BaseExtractor):
             metadata={
                 "tag": tag,
                 "item_count": len(items),
-            }
+            },
         )
 
 
@@ -96,11 +96,7 @@ class TriggerExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract trigger content from a .utt file.
 
         Args:
@@ -120,9 +116,7 @@ class TriggerExtractor(BaseExtractor):
             )
             if name_item:
                 items.append(name_item)
-            desc = self._extract_text_from_local_string(
-                parsed_data.get("Description", {})
-            )
+            desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))
             if desc:
                 items.append(
                     TranslatableItem(
@@ -155,11 +149,7 @@ class PlaceableExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract placeable content from a .utp file.
 
         Args:
@@ -191,9 +181,7 @@ class PlaceableExtractor(BaseExtractor):
                     metadata={"type": "placeable_description", "tag": tag},
                 )
             )
-        idesc = self._extract_text_from_local_string(
-            parsed_data.get("DescIdentified", {})
-        )
+        idesc = self._extract_text_from_local_string(parsed_data.get("DescIdentified", {}))
         if idesc and idesc != desc:
             items.append(
                 TranslatableItem(
@@ -221,11 +209,7 @@ class DoorExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract door content from a .utd file.
 
         Args:
@@ -274,11 +258,7 @@ class EncounterExtractor(BaseExtractor):
     def can_extract(self, file_type: str) -> bool:
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         tag = parsed_data.get("Tag", file_path.stem)
         items: List[TranslatableItem] = []
         name_item = self._make_name_item(
@@ -286,9 +266,7 @@ class EncounterExtractor(BaseExtractor):
         )
         if name_item:
             items.append(name_item)
-        desc = self._extract_text_from_local_string(
-            parsed_data.get("Description", {})
-        )
+        desc = self._extract_text_from_local_string(parsed_data.get("Description", {}))
         if desc:
             items.append(
                 TranslatableItem(
@@ -316,11 +294,7 @@ class StoreExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract store content from a .utm file.
 
         Args:
@@ -333,9 +307,7 @@ class StoreExtractor(BaseExtractor):
         tag = parsed_data.get("Tag", file_path.stem)
         items: List[TranslatableItem] = []
         # NWN store templates use LocName; some modules use LocalizedName instead.
-        name_item = self._make_name_item(
-            parsed_data, file_path, "LocName", "Store", "store_name"
-        )
+        name_item = self._make_name_item(parsed_data, file_path, "LocName", "Store", "store_name")
         if not name_item:
             name_item = self._make_name_item(
                 parsed_data, file_path, "LocalizedName", "Store", "store_name"

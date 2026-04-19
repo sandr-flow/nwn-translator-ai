@@ -83,9 +83,7 @@ class EntityExtractor:
             Returns an empty list on complete failure (never raises).
         """
         if not hasattr(provider, "complete_json_chat_async"):
-            logger.warning(
-                "Entity extraction skipped: provider has no complete_json_chat_async"
-            )
+            logger.warning("Entity extraction skipped: provider has no complete_json_chat_async")
             return []
 
         texts = _select_texts(items)
@@ -96,12 +94,11 @@ class EntityExtractor:
         batches = _batch_texts(texts, _BATCH_TEXT_COUNT)
         logger.info(
             "Entity extraction: %d texts in %d batch(es)…",
-            len(texts), len(batches),
+            len(texts),
+            len(batches),
         )
 
-        overall_timeout = min(
-            GLOSSARY_RUN_TIMEOUT * len(batches), _MAX_OVERALL_TIMEOUT
-        )
+        overall_timeout = min(GLOSSARY_RUN_TIMEOUT * len(batches), _MAX_OVERALL_TIMEOUT)
 
         from ..async_utils import run_async
 
@@ -137,7 +134,9 @@ class EntityExtractor:
                 failed += 1
                 logger.warning(
                     "Entity extraction batch %d/%d failed: %s",
-                    batch_idx, len(batches), batch_result,
+                    batch_idx,
+                    len(batches),
+                    batch_result,
                 )
                 continue
             if not batch_result:
@@ -151,7 +150,8 @@ class EntityExtractor:
 
         logger.info(
             "Entity extraction: %d new proper noun(s) found (%d batch failure(s))",
-            len(out), failed,
+            len(out),
+            failed,
         )
         return out
 
@@ -164,15 +164,18 @@ class EntityExtractor:
         progress_callback: Optional[ProgressCallback],
     ) -> List[List[Tuple[str, str]] | BaseException]:
         """Run every batch concurrently under a semaphore."""
-        sem = asyncio.Semaphore(
-            min(_MAX_CONCURRENCY, max(1, config.max_concurrent_requests))
-        )
+        sem = asyncio.Semaphore(min(_MAX_CONCURRENCY, max(1, config.max_concurrent_requests)))
         total = len(batches)
 
         async def _one(idx: int, batch: List[str]):
             return await self._extract_batch_async(
-                sem, provider, source_lang, batch,
-                idx, total, progress_callback,
+                sem,
+                provider,
+                source_lang,
+                batch,
+                idx,
+                total,
+                progress_callback,
             )
 
         return await asyncio.gather(
@@ -198,7 +201,9 @@ class EntityExtractor:
 
         if progress_callback:
             progress_callback(
-                "scanning", batch_idx - 1, total_batches,
+                "scanning",
+                batch_idx - 1,
+                total_batches,
                 f"Entity extraction batch {batch_idx}/{total_batches}…",
             )
 
@@ -219,7 +224,10 @@ class EntityExtractor:
             elapsed = time.monotonic() - t0
             logger.warning(
                 "Entity extraction batch %d/%d LLM error after %.1fs: %s",
-                batch_idx, total_batches, elapsed, exc,
+                batch_idx,
+                total_batches,
+                elapsed,
+                exc,
             )
             return []
 
@@ -227,7 +235,10 @@ class EntityExtractor:
         entries = _parse_entities_json(raw)
         logger.info(
             "Entity extraction batch %d/%d: %d entities in %.1fs",
-            batch_idx, total_batches, len(entries), elapsed,
+            batch_idx,
+            total_batches,
+            len(entries),
+            elapsed,
         )
         return entries
 
@@ -235,6 +246,7 @@ class EntityExtractor:
 # ---------------------------------------------------------------------------
 # Helpers (module-private)
 # ---------------------------------------------------------------------------
+
 
 def _select_texts(items: List["TranslatableItem"]) -> List[str]:
     """Pick unique text bodies likely to contain embedded proper nouns."""

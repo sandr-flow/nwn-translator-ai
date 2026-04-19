@@ -279,6 +279,7 @@ class OpenRouterProvider(BaseAIProvider):
         target_lang: str,
         context: Optional[str] = None,
         glossary_block: Optional[str] = None,
+        content_profile: Optional[str] = None,
     ) -> TranslationResult:
         """Translate text via OpenRouter.
 
@@ -287,6 +288,7 @@ class OpenRouterProvider(BaseAIProvider):
             source_lang: Source language name (e.g. "english").
             target_lang: Target language name (e.g. "russian").
             context: Optional context hint for the model.
+            content_profile: Prompt profile selector ("default" or "short_label").
 
         Returns:
             TranslationResult with translated text.
@@ -303,7 +305,11 @@ class OpenRouterProvider(BaseAIProvider):
             race_block = match_race_terms(text, target_lang)
             if race_block:
                 gb = gb + "\n\n" + race_block if gb else race_block
-            stable, variable = self._create_system_prompt_parts(target_lang, glossary_block=gb)
+            stable, variable = self._create_system_prompt_parts(
+                target_lang,
+                glossary_block=gb,
+                content_profile=content_profile,
+            )
             system_content = self.make_system_message_content(stable, variable)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
@@ -357,6 +363,7 @@ class OpenRouterProvider(BaseAIProvider):
         target_lang: str,
         context: Optional[str] = None,
         glossary_block: Optional[str] = None,
+        content_profile: Optional[str] = None,
     ) -> TranslationResult:
         """Async translate via OpenRouter (concurrent-friendly)."""
         if not text or not text.strip():
@@ -367,7 +374,11 @@ class OpenRouterProvider(BaseAIProvider):
             race_block = match_race_terms(text, target_lang)
             if race_block:
                 gb = gb + "\n\n" + race_block if gb else race_block
-            stable, variable = self._create_system_prompt_parts(target_lang, glossary_block=gb)
+            stable, variable = self._create_system_prompt_parts(
+                target_lang,
+                glossary_block=gb,
+                content_profile=content_profile,
+            )
             system_content = self.make_system_message_content(stable, variable)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
@@ -515,6 +526,7 @@ class OpenRouterProvider(BaseAIProvider):
         source_lang: str,
         target_lang: str,
         glossary_block: Optional[str] = None,
+        content_profile: Optional[str] = None,
     ) -> List[TranslationResult]:
         """Translate a batch of short strings in a single API call.
 
@@ -526,6 +538,9 @@ class OpenRouterProvider(BaseAIProvider):
             source_lang: Source language name.
             target_lang: Target language name.
             glossary_block: Optional glossary prompt block.
+            content_profile: Prompt profile selector; must be deterministic across
+                batches that share the same content-type mix so the stable prefix
+                hits the provider cache.
 
         Returns:
             List of TranslationResult, one per input item.
@@ -538,7 +553,11 @@ class OpenRouterProvider(BaseAIProvider):
         race_block = match_race_terms(combined_text, target_lang)
         if race_block:
             gb = gb + "\n\n" + race_block if gb else race_block
-        stable, variable = self._create_system_prompt_parts(target_lang, glossary_block=gb)
+        stable, variable = self._create_system_prompt_parts(
+            target_lang,
+            glossary_block=gb,
+            content_profile=content_profile,
+        )
         # BATCH MODE instructions are identical for every batch call — keep
         # them inside the cached stable half so the prompt prefix is stable.
         batch_mode_suffix = (

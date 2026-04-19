@@ -39,10 +39,10 @@ from nwn_translator.extractors.ncs_extractor import (
 )
 from nwn_translator.injectors.ncs_injector import NcsInjector
 
-
 # ---------------------------------------------------------------------------
 # Bytecode builder helpers
 # ---------------------------------------------------------------------------
+
 
 def _header() -> bytes:
     return NCS_HEADER
@@ -51,11 +51,7 @@ def _header() -> bytes:
 def _consts(text: str, encoding: str = "cp1252") -> bytes:
     """Build a CONSTS (string) instruction."""
     encoded = text.encode(encoding)
-    return (
-        struct.pack(">BB", OP_CONST, TYPE_STRING)
-        + struct.pack(">H", len(encoded))
-        + encoded
-    )
+    return struct.pack(">BB", OP_CONST, TYPE_STRING) + struct.pack(">H", len(encoded)) + encoded
 
 
 def _consti(value: int) -> bytes:
@@ -113,6 +109,7 @@ def _write_ncs(tmp_dir: Path, name: str, *parts: bytes) -> Path:
 # ═══════════════════════════════════════════════════════════════════════════
 # Parser tests
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestNCSParser:
     """Tests for ncs_parser.py."""
@@ -183,13 +180,7 @@ class TestNCSParser:
         assert consts[0].offset == 13
 
     def test_multiple_instructions(self):
-        data = (
-            _header()
-            + _consts("Test")
-            + _consti(1)
-            + _jmp(6)
-            + _retn()
-        )
+        data = _header() + _consts("Test") + _consti(1) + _jmp(6) + _retn()
         ncs = parse_ncs_bytes(data)
         assert len(ncs.instructions) == 4
         # Verify offsets are sequential
@@ -208,13 +199,7 @@ class TestNCSParser:
             parse_ncs(tmp_path / "nonexistent.ncs")
 
     def test_string_constants_property(self):
-        data = (
-            _header()
-            + _consts("Hello")
-            + _consti(42)
-            + _consts("World")
-            + _retn()
-        )
+        data = _header() + _consts("Hello") + _consti(42) + _consts("World") + _retn()
         ncs = parse_ncs_bytes(data)
         strings = ncs.string_constants
         assert len(strings) == 2
@@ -225,6 +210,7 @@ class TestNCSParser:
 # ═══════════════════════════════════════════════════════════════════════════
 # Patcher tests
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestNCSPatcher:
     """Tests for ncs_patcher.py."""
@@ -265,7 +251,8 @@ class TestNCSPatcher:
         consts_size = 4 + 2  # "AB" is 2 bytes
         jmp_offset = jmp_size + consts_size  # jump from JMP to RETN
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _jmp(jmp_offset),
             _consts("AB"),
             _retn(),
@@ -285,12 +272,13 @@ class TestNCSPatcher:
     def test_backward_jump_adjustment(self, tmp_path):
         """JMP after CONSTS, target before CONSTS -- offset must adjust."""
         # Layout: [RETN] [CONSTS "AB"] [JMP back to RETN]
-        retn_bytes = _retn()     # 2 bytes at offset 8
+        retn_bytes = _retn()  # 2 bytes at offset 8
         consts_bytes = _consts("AB")  # 6 bytes at offset 10
         # JMP at offset 16, target is RETN at offset 8
         jmp_target_offset = 8 - 16  # -8
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             retn_bytes,
             consts_bytes,
             _jmp(jmp_target_offset),
@@ -309,7 +297,8 @@ class TestNCSPatcher:
         # Layout: [JMP to RETN] [RETN] [CONSTS "AB"] [RETN]
         jmp_offset = 6  # JMP(6 bytes) -> RETN at offset 14
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _jmp(jmp_offset),
             _retn(),
             _consts("AB"),
@@ -327,15 +316,19 @@ class TestNCSPatcher:
     def test_multiple_patches(self, tmp_path):
         """Replace two strings in the same file."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("First"),
             _consts("Second"),
             _retn(),
         )
-        count = patch_ncs_strings(path, {
-            "First": "Eerste",
-            "Second": "Tweede!!!",
-        })
+        count = patch_ncs_strings(
+            path,
+            {
+                "First": "Eerste",
+                "Second": "Tweede!!!",
+            },
+        )
         assert count == 2
         ncs = parse_ncs(path)
         assert ncs.instructions[0].string_value == "Eerste"
@@ -372,7 +365,8 @@ class TestNCSPatcher:
         jsr_offset_value = sub_offset - 8  # relative to JSR at offset 8
 
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _jsr(jsr_offset_value),
             consts1,
             _action(374, 2),
@@ -390,10 +384,13 @@ class TestNCSPatcher:
         assert jsr_instr.offset + jsr_instr.jump_offset == sub_instr.offset
 
         # Patch both strings (longer replacements)
-        count = patch_ncs_strings(path, {
-            "msg1": "translated message one",
-            "msg2": "translated message two",
-        })
+        count = patch_ncs_strings(
+            path,
+            {
+                "msg1": "translated message one",
+                "msg2": "translated message two",
+            },
+        )
         assert count == 2
 
         # Verify JSR still targets the subroutine CONSTS
@@ -406,7 +403,8 @@ class TestNCSPatcher:
     def test_patch_ncs_string_replacements_selective_offset(self, tmp_path):
         """Only the listed offset is patched when the same literal appears twice."""
         path = _write_ncs(
-            tmp_path, "dup.ncs",
+            tmp_path,
+            "dup.ncs",
             _consts("Same"),
             _retn(),
             _consts("Same"),
@@ -426,10 +424,10 @@ class TestNCSPatcher:
         assert vals.count("Same") == 1
 
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # String filter tests
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestStringFilter:
     """Tests for string classification heuristics."""
@@ -538,13 +536,15 @@ class TestStringFilter:
 # Extractor tests
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestNcsExtractor:
     """Tests for NcsExtractor."""
 
     def test_extract_player_facing_string(self, tmp_path):
         """String followed by SendMessageToPC ACTION should be extracted."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("Welcome, hero!"),
             _action(374, 2),  # SendMessageToPC
             _retn(),
@@ -559,7 +559,8 @@ class TestNcsExtractor:
     def test_two_strings_before_player_action_both_high(self, tmp_path):
         """Multiple CONSTS pushed before one SpeakString — both classify as player."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("First line."),
             _consts("Second line."),
             _action(39, 2),  # SpeakString, 2 args on stack
@@ -575,7 +576,8 @@ class TestNcsExtractor:
     def test_skip_internal_string(self, tmp_path):
         """String followed by GetObjectByTag ACTION should be skipped."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("NPC_MERCHANT"),
             _action(46, 1),  # GetObjectByTag
             _retn(),
@@ -588,7 +590,8 @@ class TestNcsExtractor:
     def test_skip_identifier_string(self, tmp_path):
         """snake_case string should be skipped even without ACTION context."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("nw_c2_default9"),
             _retn(),
         )
@@ -600,7 +603,8 @@ class TestNcsExtractor:
     def test_extract_ambiguous_string(self, tmp_path):
         """A sentence-like string without ACTION context goes through LLM gate."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("Something happened nearby."),
             _retn(),
         )
@@ -614,7 +618,8 @@ class TestNcsExtractor:
     def test_per_occurrence_extraction(self, tmp_path):
         """Same literal at two offsets produces two items (independent patching)."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("Duplicate text here."),
             _action(374, 2),
             _consts("Duplicate text here."),
@@ -644,7 +649,8 @@ class TestNcsExtractor:
     def test_skip_print_string(self, tmp_path):
         """PrintString (ACTION #1) should now be classified as internal."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("Debug: some internal message here."),
             _action(1, 1),  # PrintString
             _retn(),
@@ -657,7 +663,8 @@ class TestNcsExtractor:
     def test_no_cross_file_dedup(self, tmp_path):
         """Same string in different files must be extracted for each file."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("You feel a chill down your spine."),
             _action(374, 2),
             _retn(),
@@ -671,7 +678,8 @@ class TestNcsExtractor:
     def test_nss_source_skips_debug(self, tmp_path):
         """When .nss source shows PrintString, string should be skipped."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("Generate Treasure nSpecific here."),
             _retn(),
         )
@@ -689,7 +697,8 @@ class TestNcsExtractor:
     def test_nss_source_keeps_player(self, tmp_path):
         """When .nss source shows SpeakString, string should be extracted."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("Greetings, adventurer!"),
             _retn(),
         )
@@ -707,7 +716,8 @@ class TestNcsExtractor:
     def test_code_identifiers_downgrade_confidence(self, tmp_path):
         """Strings with CamelCase get low confidence and require LLM gate."""
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("DetermineClassToUse: This character is invalid."),
             _retn(),
         )
@@ -723,12 +733,14 @@ class TestNcsExtractor:
 # Injector tests
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestNcsInjector:
     """Tests for NcsInjector."""
 
     def test_inject_success(self, tmp_path):
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("Hello world!"),
             _retn(),
         )
@@ -758,7 +770,8 @@ class TestNcsInjector:
 
     def test_inject_no_match(self, tmp_path):
         path = _write_ncs(
-            tmp_path, "test.ncs",
+            tmp_path,
+            "test.ncs",
             _consts("Hello"),
             _retn(),
         )
@@ -777,6 +790,7 @@ class TestNcsInjector:
 # Integration test
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class TestNCSIntegration:
     """End-to-end: extract -> (mock translate) -> inject -> verify."""
 
@@ -786,9 +800,9 @@ class TestNCSIntegration:
         # - 2 translatable strings (with player-facing ACTIONs)
         # - 1 non-translatable identifier
         # - Jump instructions crossing the strings
-        str1 = "Hello, brave adventurer!"    # 24 bytes, player-facing
-        str2 = "nw_c2_default1"              # 14 bytes, identifier
-        str3 = "Farewell, noble traveler!"   # 25 bytes, player-facing
+        str1 = "Hello, brave adventurer!"  # 24 bytes, player-facing
+        str2 = "nw_c2_default1"  # 14 bytes, identifier
+        str3 = "Farewell, noble traveler!"  # 25 bytes, player-facing
 
         # Calculate sizes: CONSTS = 4 + len(string)
         s1 = 4 + len(str1.encode("cp1252"))  # 28
@@ -797,15 +811,16 @@ class TestNCSIntegration:
         jsr_offset = 6 + s1 + 5 + s2 + 5 + 2
 
         path = _write_ncs(
-            tmp_path, "script.ncs",
-            _jsr(jsr_offset),                # JSR to subroutine
-            _consts(str1),                   # translatable (SendMessageToPC)
+            tmp_path,
+            "script.ncs",
+            _jsr(jsr_offset),  # JSR to subroutine
+            _consts(str1),  # translatable (SendMessageToPC)
             _action(374, 2),
-            _consts(str2),                   # NOT translatable (identifier)
+            _consts(str2),  # NOT translatable (identifier)
             _action(46, 1),
             _retn(),
             # subroutine:
-            _consts(str3),                   # translatable (SpeakString)
+            _consts(str3),  # translatable (SpeakString)
             _action(39, 1),
             _retn(),
         )
@@ -825,16 +840,8 @@ class TestNCSIntegration:
         # Step 3: Inject translations
         trans1 = "Привет, храбрый искатель приключений!"
         trans3 = "Прощай, благородный путник!"
-        by_item_id = {
-            item.item_id: trans1
-            for item in extracted.items
-            if item.text == str1
-        }
-        by_item_id.update({
-            item.item_id: trans3
-            for item in extracted.items
-            if item.text == str3
-        })
+        by_item_id = {item.item_id: trans1 for item in extracted.items if item.text == str1}
+        by_item_id.update({item.item_id: trans3 for item in extracted.items if item.text == str3})
         translations = {str1: trans1, str3: trans3}
         injector = NcsInjector()
         result = injector.inject(
@@ -856,8 +863,10 @@ class TestNCSIntegration:
         # Step 5: Verify JSR still targets the subroutine
         jsr = ncs2.instructions[0]
         # The subroutine's first instruction is the translated CONSTS
-        sub_consts = [i for i in ncs2.instructions
-                      if i.is_string_const and i.string_value != str2
-                      and i.offset > 20]  # after the main block
+        sub_consts = [
+            i
+            for i in ncs2.instructions
+            if i.is_string_const and i.string_value != str2 and i.offset > 20
+        ]  # after the main block
         assert len(sub_consts) == 1
         assert jsr.offset + jsr.jump_offset == sub_consts[0].offset

@@ -11,9 +11,7 @@ from nwn_translator.translators.prefix_translation_cache import PrefixAwareTrans
 from nwn_translator.translators.translation_manager import _MIN_PREFIX_LEN
 
 
-def _naive_longest_prefix(
-    cache: PrefixAwareTranslationCache, sanitized: str, min_len: int
-):
+def _naive_longest_prefix(cache: PrefixAwareTranslationCache, sanitized: str, min_len: int):
     best_key = None
     best_len = 0
     for key in cache:

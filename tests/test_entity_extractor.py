@@ -104,7 +104,7 @@ class TestJsonParsing:
             '{"entities": ['
             '{"name": "Stout Village", "type": "location"},'
             '{"name": "Marvin", "type": "character"}'
-            ']}'
+            "]}"
         )
         out = _parse_entities_json(raw)
         assert out == [
@@ -151,19 +151,20 @@ class TestExtractIntegration:
     """End-to-end extraction with fake provider."""
 
     def test_new_names_returned_known_filtered(self):
-        long = (
-            "Leading a coach to Stout Village with farming equipment to deliver."
-        )
+        long = "Leading a coach to Stout Village with farming equipment to deliver."
         items = [_item(long)]
         payload = (
             '{"entities": ['
             '{"name": "Stout Village", "type": "location"},'
             '{"name": "Glod Gloddson", "type": "character"}'
-            ']}'
+            "]}"
         )
         provider = _FakeProvider([payload])
         result = EntityExtractor().extract(
-            items, provider, _config(), known_names={"Glod Gloddson"},
+            items,
+            provider,
+            _config(),
+            known_names={"Glod Gloddson"},
         )
         assert result == [("Stout Village", "location")]
 
@@ -173,7 +174,10 @@ class TestExtractIntegration:
         payload = '{"entities": [{"name": "stout village", "type": "location"}]}'
         provider = _FakeProvider([payload])
         result = EntityExtractor().extract(
-            items, provider, _config(), known_names={"Stout Village"},
+            items,
+            provider,
+            _config(),
+            known_names={"Stout Village"},
         )
         assert result == []
 
@@ -194,7 +198,10 @@ class TestExtractIntegration:
 
         provider = _FailingProvider([])
         result = EntityExtractor().extract(
-            items, provider, _config(), known_names=set(),
+            items,
+            provider,
+            _config(),
+            known_names=set(),
         )
         assert result == []
 
@@ -204,22 +211,27 @@ class TestExtractIntegration:
         payload = '{"entities": [{"name": "Foo", "type": "location"}]}'
         provider = _FakeProvider([payload])
         EntityExtractor().extract(
-            items, provider, _config(source_lang="auto"), known_names=set(),
+            items,
+            provider,
+            _config(source_lang="auto"),
+            known_names=set(),
         )
         system_prompt, _ = provider.calls[0]
         assert "English" in system_prompt
 
     def test_dedup_across_batches(self):
         texts = [
-            f"Sentence number {i} that is well over forty chars long here." * 1
-            for i in range(30)
+            f"Sentence number {i} that is well over forty chars long here." * 1 for i in range(30)
         ]
         items = [_item(t) for t in texts]
         payload_a = '{"entities": [{"name": "Dup", "type": "location"}]}'
         payload_b = '{"entities": [{"name": "dup", "type": "character"}]}'
         provider = _FakeProvider([payload_a, payload_b])
         result = EntityExtractor().extract(
-            items, provider, _config(), known_names=set(),
+            items,
+            provider,
+            _config(),
+            known_names=set(),
         )
         # Two batches (25 + 5), both return a name collapsing to same key.
         assert len(result) == 1

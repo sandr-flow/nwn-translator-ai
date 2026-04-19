@@ -40,13 +40,27 @@ def _make_provider(translations: dict) -> Mock:
     """Return a mock provider that translates via the given dict."""
     provider = Mock()
 
-    def translate(text, source_lang, target_lang, context=None, glossary_block=None):
+    def translate(
+        text,
+        source_lang,
+        target_lang,
+        context=None,
+        glossary_block=None,
+        content_profile=None,
+    ):
         translated = translations.get(text, text)
         return TranslationResult(translated=translated, original=text, success=True)
 
     provider.translate.side_effect = translate
 
-    async def translate_async(text, source_lang, target_lang, context=None, glossary_block=None):
+    async def translate_async(
+        text,
+        source_lang,
+        target_lang,
+        context=None,
+        glossary_block=None,
+        content_profile=None,
+    ):
         return translate(text, source_lang, target_lang, context, glossary_block)
 
     provider.translate_async = AsyncMock(side_effect=translate_async)
@@ -244,7 +258,13 @@ class TestBatchDedupBySanitized:
         # by calling the batch path directly.
         provider = Mock()
 
-        async def translate_batch_async(items, source_lang, target_lang, glossary_block=None):
+        async def translate_batch_async(
+            items,
+            source_lang,
+            target_lang,
+            glossary_block=None,
+            content_profile=None,
+        ):
             return [
                 TranslationResult(
                     translated=f"TR:{bi.original}",
@@ -257,7 +277,12 @@ class TestBatchDedupBySanitized:
         provider.translate_batch_async = AsyncMock(side_effect=translate_batch_async)
 
         async def translate_async(
-            text, source_lang, target_lang, context=None, glossary_block=None
+            text,
+            source_lang,
+            target_lang,
+            context=None,
+            glossary_block=None,
+            content_profile=None,
         ):
             return TranslationResult(translated=f"TR:{text}", original=text, success=True)
 

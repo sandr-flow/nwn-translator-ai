@@ -55,10 +55,7 @@ def run_async(
             return loop.run_until_complete(wrapped)
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - t0
-            msg = (
-                f"run_async timed out after {elapsed:.1f}s "
-                f"(limit {timeout}s)"
-            )
+            msg = f"run_async timed out after {elapsed:.1f}s " f"(limit {timeout}s)"
             logger.error(msg)
             raise TimeoutError(msg) from None
     finally:

@@ -49,7 +49,9 @@ def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version=None, prog_name="nwn-translate", package_name="nwn-modules-translator")
+@click.version_option(
+    version=None, prog_name="nwn-translate", package_name="nwn-modules-translator"
+)
 @click.pass_context
 def cli(ctx):
     """NWN Modules Translator - AI-powered translation for Neverwinter Nights modules.
@@ -62,12 +64,14 @@ def cli(ctx):
     Put ``NWN_TRANSLATE_API_KEY`` in a ``.env`` file (or the environment); ``--api-key`` is optional.
     """
     if ctx.invoked_subcommand is None:
-        console.print(Panel.fit(
-            "[bold cyan]NWN Modules Translator[/bold cyan]\n\n"
-            "AI-powered translation for Neverwinter Nights modules.\n\n"
-            "[dim]Use --help for usage information[/dim]",
-            title="Welcome",
-        ))
+        console.print(
+            Panel.fit(
+                "[bold cyan]NWN Modules Translator[/bold cyan]\n\n"
+                "AI-powered translation for Neverwinter Nights modules.\n\n"
+                "[dim]Use --help for usage information[/dim]",
+                title="Welcome",
+            )
+        )
         ctx.invoke(translate)
 
 
@@ -211,10 +215,10 @@ def translate(
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
         output_file = workspace_dir / f"{safe_stem}{suf}.mod"
-        
+
         if not log_file:
             log_file = workspace_dir / "translation_log.jsonl"
-            
+
         if temp_dir is None:
             temp_dir = workspace_dir / "temp"
     else:
@@ -238,7 +242,7 @@ def translate(
         "verbose": verbose,
         "quiet": quiet,
     }
-    
+
     if temp_dir is not None:
         config_kwargs["temp_dir"] = temp_dir
     if api_key:
@@ -337,13 +341,10 @@ def test(
         key = api_key or os.environ.get("NWN_TRANSLATE_API_KEY", "")
         if not key.strip():
             console.print(
-                "[bold red]Error:[/bold red] Set NWN_TRANSLATE_API_KEY in .env "
-                "or pass --api-key"
+                "[bold red]Error:[/bold red] Set NWN_TRANSLATE_API_KEY in .env " "or pass --api-key"
             )
             sys.exit(1)
-        provider_instance = create_provider(
-            key, model, reasoning_effort=reasoning_effort
-        )
+        provider_instance = create_provider(key, model, reasoning_effort=reasoning_effort)
         result = provider_instance.translate(text, "english", target_lang)
 
         if result.success:
@@ -403,7 +404,7 @@ def web_server(host: str, port: int, reload: bool):
     except ImportError:
         console.print(
             "[bold red]Error:[/bold red] web dependencies are not installed.\n"
-            "Run: [cyan]pip install -e \".[web]\"[/cyan]"
+            'Run: [cyan]pip install -e ".[web]"[/cyan]'
         )
         sys.exit(1)
 
@@ -430,9 +431,7 @@ def list_providers():
     console.print("[dim]Popular model slugs (pass with --model):[/dim]\n")
     for slug in OpenRouterProvider.POPULAR_MODELS:
         console.print(f"  • {slug}")
-    console.print(
-        "\n[dim]See https://openrouter.ai/models for the full catalog.[/dim]"
-    )
+    console.print("\n[dim]See https://openrouter.ai/models for the full catalog.[/dim]")
 
 
 def main():

@@ -17,6 +17,7 @@ from .token_handler import (
 def __getattr__(name):
     if name == "TranslationManager":
         from .translation_manager import TranslationManager
+
         return TranslationManager
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

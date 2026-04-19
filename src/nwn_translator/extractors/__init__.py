@@ -3,7 +3,13 @@
 This package contains extractors for various NWN file types that need translation.
 """
 
-from .base import BaseExtractor, ExtractedContent, TranslatableItem, DialogNode, extract_local_string
+from .base import (
+    BaseExtractor,
+    ExtractedContent,
+    TranslatableItem,
+    DialogNode,
+    extract_local_string,
+)
 from .dialog_extractor import DialogExtractor
 from .journal_extractor import JournalExtractor
 from .item_extractor import ItemExtractor

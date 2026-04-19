@@ -63,9 +63,7 @@ def _assert_nested_offsets(git_path: Path, parsed: dict) -> None:
                     continue
                 off = ro.get(fn, 0) if isinstance(ro, dict) else 0
                 if off <= 0:
-                    missing.append(
-                        f"{git_path.name} {list_key}[{inst_idx}].{fn} value={val!r}"
-                    )
+                    missing.append(f"{git_path.name} {list_key}[{inst_idx}].{fn} value={val!r}")
             for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(list_key, []):
                 for j, inv in enumerate(_nested_item_entries(instance, nested_key)):
                     iro = inv.get("_record_offsets", {})
@@ -130,11 +128,7 @@ def test_real_git_nested_record_offsets_and_inventory_res_alignment():
                     if not rr:
                         continue
                     name_obj = inv.get("LocalizedName", {})
-                    git_name = (
-                        name_obj.get("Value", "")
-                        if isinstance(name_obj, dict)
-                        else ""
-                    )
+                    git_name = name_obj.get("Value", "") if isinstance(name_obj, dict) else ""
                     if not git_name:
                         continue
                     uti_name = _uti_text_for_resref(extract_root, rr)

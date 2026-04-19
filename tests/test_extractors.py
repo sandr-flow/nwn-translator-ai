@@ -286,10 +286,7 @@ class TestPlaceableExtractorLocName:
             "Description": {"StrRef": -1, "Value": ""},
         }
         result = extractor.extract(file_path, parsed_data)
-        names = [
-            it.text for it in result.items
-            if it.metadata.get("type") == "placeable_name"
-        ]
+        names = [it.text for it in result.items if it.metadata.get("type") == "placeable_name"]
         assert names == ["corpse"]
 
     def test_loc_name_wins_over_name_when_both_present(self):
@@ -300,10 +297,7 @@ class TestPlaceableExtractorLocName:
             "Name": {"StrRef": -1, "Value": "LegacyToolsetExport"},
         }
         result = extractor.extract(Path("dup.utp"), parsed_data)
-        names = [
-            it.text for it in result.items
-            if it.metadata.get("type") == "placeable_name"
-        ]
+        names = [it.text for it in result.items if it.metadata.get("type") == "placeable_name"]
         assert names == ["Canonical"]
 
 

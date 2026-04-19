@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class NPCInfo:
     """Information about a specific NPC."""
+
     tag: str
     first_name: str
     last_name: str
@@ -37,6 +38,7 @@ class NPCInfo:
 @dataclass
 class WorldContext:
     """Registry of world entities for context injection."""
+
     npcs: Dict[str, NPCInfo] = field(default_factory=dict)
     areas: Dict[str, str] = field(default_factory=dict)
     quests: Dict[str, str] = field(default_factory=dict)
@@ -115,43 +117,37 @@ class WorldContext:
                 gloss = ""
                 if full_name != tag:
                     gloss = _gloss_suffix(full_name)
-                
+
                 desc_parts = []
                 if npc.race:
                     desc_parts.append(npc.race)
                 if npc.gender:
                     desc_parts.append(npc.gender)
-                    
+
                 traits_str = f" ({', '.join(desc_parts)})" if desc_parts else ""
-                
+
                 npc_line = f"  * [{tag}] {full_name}{traits_str}{gloss}"
-                
+
                 desc = (npc.description or "").strip()
                 if desc:
                     npc_line += f" - {desc}"
-                    
+
                 lines.append(npc_line)
 
         if self.areas:
             lines.append("- LOCATIONS:")
             for tag, name in sorted(self.areas.items()):
-                lines.append(
-                    f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
-                )
+                lines.append(f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
 
         if self.quests:
             lines.append("- QUESTS:")
             for tag, name in sorted(self.quests.items()):
-                lines.append(
-                    f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
-                )
+                lines.append(f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
 
         if self.items:
             lines.append("- KEY ITEMS:")
             for tag, name in sorted(self.items.items()):
-                lines.append(
-                    f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
-                )
+                lines.append(f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
 
         return "\n".join(lines)
 
@@ -200,14 +196,15 @@ class WorldScanner:
         # Collect scannable files first for progress reporting
         scannable_exts = {".utc", ".are", ".jrl", ".uti"}
         scan_files = [
-            f for f in extract_dir.rglob("*")
-            if f.is_file() and f.suffix.lower() in scannable_exts
+            f for f in extract_dir.rglob("*") if f.is_file() and f.suffix.lower() in scannable_exts
         ]
 
         for idx, file_path in enumerate(scan_files):
             if progress_callback and idx % 20 == 0:
                 progress_callback(
-                    "scanning", idx, len(scan_files),
+                    "scanning",
+                    idx,
+                    len(scan_files),
                     f"Scanning {file_path.name}",
                 )
 
@@ -230,7 +227,10 @@ class WorldScanner:
 
         logger.info(
             "World context built: %d NPCs, %d locations, %d quests, %d items",
-            count_npcs, count_areas, count_quests, count_items
+            count_npcs,
+            count_areas,
+            count_quests,
+            count_items,
         )
         return context
 
@@ -273,7 +273,7 @@ class WorldScanner:
         first_name = self._get_local_string(data, "FirstName")
         last_name = self._get_local_string(data, "LastName")
         desc = self._get_local_string(data, "Description")
-        
+
         # In NWN: Race and Gender are IDs. We could map them to strings,
         # but for prompt context, just capturing them if available is good.
         # These are usually ints. Let's do a basic mapping for common ones.
@@ -295,7 +295,7 @@ class WorldScanner:
                 description=desc,
                 race=race_str,
                 gender=gender_str,
-                conversation=conversation
+                conversation=conversation,
             )
             return True
         return False
@@ -321,7 +321,7 @@ class WorldScanner:
         data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "Name")
-        
+
         if tag and name:
             context.areas[tag] = name
             return True
@@ -347,7 +347,7 @@ class WorldScanner:
         """
         data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         categories = data.get("Categories", [])
-        
+
         added = 0
         for cat in categories:
             if not isinstance(cat, dict):
@@ -357,7 +357,7 @@ class WorldScanner:
             if tag and name:
                 context.quests[tag] = name
                 added += 1
-                
+
         return added
 
     def _process_uti(
@@ -381,8 +381,8 @@ class WorldScanner:
         data = read_gff(file_path, tlk=tlk, cache=gff_cache)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "LocalizedName")
-        
-        # Only add uniquely-tagged items or items with descriptions 
+
+        # Only add uniquely-tagged items or items with descriptions
         # to avoid blowing up the context window with generic items.
         # For simplicity, we filter out common ones or generic tags if needed.
         # For now, if it has a LocalizedName and Tag, add it.

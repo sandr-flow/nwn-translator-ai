@@ -49,11 +49,9 @@ class DialogInjector(BaseInjector):
         # Get entry and reply lists
         entry_list = parsed_data.get("EntryList", [])
         reply_list = parsed_data.get("ReplyList", [])
-        
+
         try:
-            patcher = GFFPatcher(
-                file_path, text_encoding=_module_text_encoding(metadata)
-            )
+            patcher = GFFPatcher(file_path, text_encoding=_module_text_encoding(metadata))
         except Exception as e:
             logger.error(f"Failed to initialize GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
@@ -105,7 +103,7 @@ class DialogInjector(BaseInjector):
                 "type": "dialog",
                 "entry_count": len(entry_list),
                 "reply_count": len(reply_list),
-            }
+            },
         )
 
 
@@ -138,9 +136,7 @@ class JournalInjector(BaseInjector):
         modified = False
 
         try:
-            patcher = GFFPatcher(
-                file_path, text_encoding=_module_text_encoding(metadata)
-            )
+            patcher = GFFPatcher(file_path, text_encoding=_module_text_encoding(metadata))
         except Exception as e:
             logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
@@ -194,7 +190,7 @@ class JournalInjector(BaseInjector):
             metadata={
                 "type": "journal",
                 "category_count": len(categories),
-            }
+            },
         )
 
 
@@ -204,7 +200,17 @@ class GenericInjector(BaseInjector):
     This handles items, creatures, areas, placeables, doors, and stores.
     """
 
-    SUPPORTED_TYPES = ["item", "creature", "area", "trigger", "placeable", "door", "encounter", "store", "module"]
+    SUPPORTED_TYPES = [
+        "item",
+        "creature",
+        "area",
+        "trigger",
+        "placeable",
+        "door",
+        "encounter",
+        "store",
+        "module",
+    ]
 
     # Mapping of content types to GFF field names
     FIELD_MAP = {
@@ -284,11 +290,9 @@ class GenericInjector(BaseInjector):
         items_updated = 0
         modified = False
         fields = self.FIELD_MAP[content_type]
-        
+
         try:
-            patcher = GFFPatcher(
-                file_path, text_encoding=_module_text_encoding(metadata)
-            )
+            patcher = GFFPatcher(file_path, text_encoding=_module_text_encoding(metadata))
         except Exception as e:
             logger.error(f"Failed to load GFFPatcher for {file_path}: {e}")
             return InjectedContent(source_file=file_path, modified=False, items_updated=0)
@@ -377,5 +381,5 @@ class GenericInjector(BaseInjector):
             items_updated=items_updated,
             metadata={
                 "type": content_type,
-            }
+            },
         )

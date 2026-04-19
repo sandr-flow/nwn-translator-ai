@@ -15,13 +15,22 @@ from typing import Any, Dict, Tuple
 
 from .examples import get_examples
 
+#: Deterministic content profile used by :func:`build_translation_system_prompt_parts`
+#: to swap between compact and full rule sets.  Phase 3.4: ``short_label`` skips
+#: speech-style and player-gender rules (irrelevant for names/tags) so the cached
+#: stable prefix of name-heavy batches shrinks by a few hundred tokens without
+#: changing behaviour for dialog/description calls.
+CONTENT_PROFILE_DEFAULT = "default"
+CONTENT_PROFILE_SHORT_LABEL = "short_label"
+_VALID_CONTENT_PROFILES = frozenset({CONTENT_PROFILE_DEFAULT, CONTENT_PROFILE_SHORT_LABEL})
+
 # ---------------------------------------------------------------------------
 # Static glossary-usage rules (always included in STABLE prefix so providers
 # can prefix-cache the prompt; the actual entries live in the VARIABLE suffix).
 # ---------------------------------------------------------------------------
 
-_GLOSSARY_RULE_TRANSLATION = (
-    "10. GLOSSARY USAGE \u2014 if a GLOSSARY section follows the rules, use it "
+_GLOSSARY_RULE_BODY = (
+    "GLOSSARY USAGE \u2014 if a GLOSSARY section follows the rules, use it "
     "as a consistency reference, NOT as a substitution table:\n"
     "   a) Apply a glossary entry ONLY when the EXACT full proper name from "
     "the glossary appears in the source text as a capitalized name. Do NOT "
@@ -39,10 +48,16 @@ _GLOSSARY_RULE_TRANSLATION = (
     "glossary name with another, even if they seem related or co-located in "
     "the game world. Translate ONLY the name that literally appears in the "
     "source line.\n"
-    "   e) If a proper name is not listed in the glossary, follow rules 7-9.\n"
+    "   e) If a proper name is not listed in the glossary, follow the "
+    "PROPER NAMES rule above.\n"
     "   f) Recurring epithets, nicknames, and hyphenated compound terms used "
     "as forms of address MUST be translated consistently across all lines.\n"
 )
+
+_GLOSSARY_RULE_TRANSLATION_DEFAULT = f"7. {_GLOSSARY_RULE_BODY}"
+_GLOSSARY_RULE_TRANSLATION_SHORT = f"6. {_GLOSSARY_RULE_BODY}"
+#: Legacy alias kept for callers / tests that imported the old constant.
+_GLOSSARY_RULE_TRANSLATION = _GLOSSARY_RULE_TRANSLATION_DEFAULT
 
 _GLOSSARY_RULE_DIALOG = (
     "5. GLOSSARY USAGE (if a GLOSSARY section follows the rules) \u2014 the "
@@ -106,28 +121,24 @@ def _speech_style_rules(target_lang: str) -> str:
     counterexample = ex.get("speech_normal_counterexample", "")
 
     example_block = "\n".join(
-        f'    - "{eng}" -> "{good}" ' f'(GOOD, broken) \u2014 NOT "{bad}" (BAD, normalized)'
+        f'    - "{eng}" -> "{good}" (GOOD, broken) \u2014 NOT "{bad}" (BAD, normalized)'
         for eng, good, bad in lines
     )
 
     counter_block = f"\n    {counterexample}" if counterexample else ""
 
     return (
-        "PRESERVE SPEECH STYLE AND REGISTER. This is a role-playing game with characters "
-        "of different intelligence and background.\n"
-        "    CRITICAL: broken/primitive style MUST be applied ONLY when the ORIGINAL "
-        "English text itself has broken grammar, misspellings, or primitive syntax "
-        "(low-INT characters, barbarians, goblins, etc.). "
-        "If the original English text is grammatically correct — even if the speaker is "
-        "a dwarf, goblin, or monster — the translation MUST be grammatically correct too. "
-        "Notices, letters, signs, memos, and any other written text with proper English "
-        "grammar must be translated with proper target-language grammar.\n"
-        "    When broken style IS appropriate, reproduce an equally broken, primitive style. "
-        'DO NOT "fix" or "correct" intentionally broken speech — that would destroy the character.\n'
+        "PRESERVE SPEECH STYLE AND REGISTER.\n"
+        "    Apply broken/primitive style ONLY when the ORIGINAL English itself is "
+        "broken (low-INT characters, barbarians, goblins). Grammatically correct "
+        "English \u2014 including notices, letters, signs, and memos \u2014 MUST map to "
+        "grammatically correct target text regardless of speaker race (dwarf, goblin, "
+        "monster, etc.). When broken style IS appropriate, reproduce an equally "
+        'primitive register; do NOT "fix" intentionally broken speech.\n'
         f"    Examples (English low-INT -> {target_lang} low-INT equivalent):\n"
         f"{example_block}\n\n"
-        '    Key pattern: in English, low-INT speech uses "me" instead of "I", drops articles/verbs, '
-        f"simplifies grammar. {pattern}\n"
+        '    Key pattern: English low-INT uses "me" instead of "I", drops '
+        f"articles/verbs, simplifies grammar. {pattern}\n"
         f"{counter_block}"
     )
 
@@ -136,22 +147,21 @@ def _player_gender_rule(gender: str) -> str:
     """One-liner for player character grammatical gender agreement."""
     agreement = "masculine" if gender == "male" else "feminine"
     return (
-        f"PLAYER CHARACTER: The protagonist is {gender}. When the text addresses "
-        f"or describes the player character, ALL grammatical forms (verbs, adjectives, "
-        f"participles, pronouns) MUST agree with {agreement} gender.\n"
+        f"PLAYER CHARACTER: the protagonist is {gender}. All grammatical forms "
+        f"addressing or describing the player (verbs, adjectives, participles, "
+        f"pronouns) MUST agree with {agreement} gender.\n"
     )
 
 
 def _token_preservation_rule() -> str:
     """One-liner for preserving game tokens."""
     return (
-        "MANDATORY TAG/TOKEN PRESERVATION:\n"
-        "- Do NOT translate, reorder, duplicate, invent, or delete placeholders like "
-        "<<TOKEN_0>>, <<TOKEN_1>>, etc.\n"
-        "- Preserve inline NWN markup tags exactly as in source (e.g. <StartAction>, </Start>) "
-        "without renaming, rebalancing, or moving them.\n"
-        "- Never output internal helper placeholders such as [[NWN_TAG_*]].\n"
-        "- If uncertain, leave tags/placeholders exactly unchanged.\n"
+        "TAG/TOKEN PRESERVATION (mandatory):\n"
+        "- Keep placeholders like <<TOKEN_0>>, <<TOKEN_1>> unchanged \u2014 no "
+        "translating, reordering, duplicating, inventing, or deleting.\n"
+        "- Keep inline NWN markup tags (e.g. <StartAction>, </Start>) exactly as "
+        "in source.\n"
+        "- Never output helper placeholders like [[NWN_TAG_*]].\n"
     )
 
 
@@ -160,10 +170,59 @@ def _token_preservation_rule() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _build_default_profile_rules(target_lang: str, gender: str) -> str:
+    """Full RULES body used for narrative / description / dialog-like calls."""
+    return (
+        "RULES:\n"
+        "1. Never translate word-for-word. Focus on meaning, emotion, and tone. "
+        "Use natural syntax; avoid bureaucratic language "
+        "(Chancellery/\u041a\u0430\u043d\u0446\u0435\u043b\u044f\u0440\u0438\u0442). "
+        "Adapt idioms to natural target-language equivalents.\n"
+        "2. Preserve all formatting, line breaks, and special characters.\n"
+        f"3. {_token_preservation_rule()}"
+        "4. The translated text MUST be grammatically correct, strictly preserving "
+        "gender and case agreements. Exception: see rule 9 for intentionally "
+        "broken speech.\n"
+        f"5. {_proper_names_rules(target_lang)}"
+        "6. When translating a creature's first name or last name field, output ONLY "
+        "the translation of the given text. Do NOT add the other part of the name "
+        "from context \u2014 the game engine concatenates FirstName + LastName "
+        "automatically.\n"
+        f"{_GLOSSARY_RULE_TRANSLATION_DEFAULT}"
+        f"8. {_player_gender_rule(gender)}"
+        f"9. {_speech_style_rules(target_lang)}"
+    )
+
+
+def _build_short_label_profile_rules(target_lang: str) -> str:
+    """Compact RULES body for name/label batches (no speech style, no gender rule).
+
+    Dropped vs. default profile:
+      * bureaucratic/idiom guidance (irrelevant for labels),
+      * broken-speech examples block (~500 tokens, never applies),
+      * player-gender agreement (names have no verbs to inflect),
+      * exception cross-reference to the broken-speech rule.
+    """
+    return (
+        "RULES:\n"
+        "1. Preserve all formatting, line breaks, and special characters.\n"
+        f"2. {_token_preservation_rule()}"
+        "3. The translated text MUST be grammatically correct.\n"
+        f"4. {_proper_names_rules(target_lang)}"
+        "5. When translating a creature's first name or last name field, output ONLY "
+        "the translation of the given text. Do NOT add the other part of the name "
+        "from context \u2014 the game engine concatenates FirstName + LastName "
+        "automatically.\n"
+        f"{_GLOSSARY_RULE_TRANSLATION_SHORT}"
+    )
+
+
 def build_translation_system_prompt_parts(
     target_lang: str,
     gender: str,
     glossary_block: str = "",
+    *,
+    content_profile: str = CONTENT_PROFILE_DEFAULT,
 ) -> Tuple[str, str]:
     """Return ``(stable, variable)`` halves of the line-by-line / batch system prompt.
 
@@ -175,31 +234,26 @@ def build_translation_system_prompt_parts(
 
     The *variable* half holds the GLOSSARY section (may include per-call
     race-term hints) and is the only portion that changes between calls.
+
+    *content_profile* selects one of a small, deterministic set of rule
+    bodies (Phase 3.4 — dynamic few-shot).  It MUST depend only on the
+    content-type mix of the caller's batch; otherwise cache hits are lost.
+    Valid values: :data:`CONTENT_PROFILE_DEFAULT`,
+    :data:`CONTENT_PROFILE_SHORT_LABEL`.
     """
+    if content_profile not in _VALID_CONTENT_PROFILES:
+        content_profile = CONTENT_PROFILE_DEFAULT
+
+    if content_profile == CONTENT_PROFILE_SHORT_LABEL:
+        rules_body = _build_short_label_profile_rules(target_lang)
+    else:
+        rules_body = _build_default_profile_rules(target_lang, gender)
+
     stable = (
         f"You are an elite translator for the game Neverwinter Nights. "
         f"Your task is to translate the text to {target_lang} according to "
         "Nora Gal's Golden School of Translation.\n\n"
-        "RULES:\n"
-        "1. Never translate word-for-word. Focus on meaning, emotion, and tone.\n"
-        "2. Use natural syntax and vocabulary. Avoid bureaucratic language "
-        "(Chancellery/\u041a\u0430\u043d\u0446\u0435\u043b\u044f\u0440\u0438\u0442).\n"
-        "3. Identify idioms and adapt them to natural equivalents in the target language.\n"
-        "4. Preserve all formatting, line breaks, and special characters.\n"
-        f"5. {_token_preservation_rule()}"
-        "6. The translated text MUST be grammatically correct, strictly preserving "
-        "gender and case agreements. Exception: see rule 11 for intentionally "
-        "broken speech.\n"
-        f"7. {_proper_names_rules(target_lang)}"
-        "8. When translating a creature's first name or last name field, output ONLY "
-        "the translation of the given text. Do NOT add the other part of the name "
-        "from context \u2014 the game engine concatenates FirstName + LastName automatically.\n"
-        "9. When in doubt whether a name is descriptive or personal, check: does the name "
-        "consist of ordinary English words with clear meaning? Then translate the meaning. "
-        "Is it a made-up fantasy name? Then transliterate.\n"
-        f"{_GLOSSARY_RULE_TRANSLATION}"
-        f"11. {_player_gender_rule(gender)}"
-        f"12. {_speech_style_rules(target_lang)}"
+        f"{rules_body}"
         "\nYour output MUST be strictly valid JSON. Do not use markdown code blocks.\n"
         "The JSON object must contain exactly ONE key:\n"
         '- "translation": The final translated text ONLY, perfectly formatted '
@@ -215,9 +269,16 @@ def build_translation_system_prompt(
     target_lang: str,
     gender: str,
     glossary_block: str = "",
+    *,
+    content_profile: str = CONTENT_PROFILE_DEFAULT,
 ) -> str:
     """System prompt for line-by-line / batch translation (stable + variable concatenated)."""
-    stable, variable = build_translation_system_prompt_parts(target_lang, gender, glossary_block)
+    stable, variable = build_translation_system_prompt_parts(
+        target_lang,
+        gender,
+        glossary_block,
+        content_profile=content_profile,
+    )
     if variable:
         return f"{stable}\n\n{variable}"
     return stable

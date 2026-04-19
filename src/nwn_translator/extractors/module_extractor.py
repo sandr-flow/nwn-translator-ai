@@ -18,11 +18,7 @@ class ModuleExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract module info content from a .ifo file.
 
         Args:
@@ -40,31 +36,35 @@ class ModuleExtractor(BaseExtractor):
         name_obj = parsed_data.get("Mod_Name", {})
         name = self._extract_text_from_local_string(name_obj)
         if name:
-            items.append(TranslatableItem(
-                text=name,
-                context=f"Module name: {tag}",
-                item_id=f"{tag}_mod_name",
-                location=str(file_path),
-                metadata={
-                    "type": "module_name",
-                    "tag": tag,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=name,
+                    context=f"Module name: {tag}",
+                    item_id=f"{tag}_mod_name",
+                    location=str(file_path),
+                    metadata={
+                        "type": "module_name",
+                        "tag": tag,
+                    },
+                )
+            )
 
         # Extract module description (Mod_Description is CExoLocString)
         desc_obj = parsed_data.get("Mod_Description", {})
         description = self._extract_text_from_local_string(desc_obj)
         if description:
-            items.append(TranslatableItem(
-                text=description,
-                context=f"Module description: {tag}",
-                item_id=f"{tag}_mod_description",
-                location=str(file_path),
-                metadata={
-                    "type": "module_description",
-                    "tag": tag,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=description,
+                    context=f"Module description: {tag}",
+                    item_id=f"{tag}_mod_description",
+                    location=str(file_path),
+                    metadata={
+                        "type": "module_description",
+                        "tag": tag,
+                    },
+                )
+            )
 
         return ExtractedContent(
             content_type="module",
@@ -73,5 +73,5 @@ class ModuleExtractor(BaseExtractor):
             metadata={
                 "tag": tag,
                 "item_count": len(items),
-            }
+            },
         )

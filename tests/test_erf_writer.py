@@ -13,10 +13,10 @@ import pytest
 from src.nwn_translator.file_handlers.erf_writer import ERFWriter, ERFWriterError
 from src.nwn_translator.file_handlers.erf_reader import ERFEntry, ERFReader, ERFHeader
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _write_and_read(resources: dict, suffix: str = ".mod") -> list:
     """Write resources to a temp ERF file and read them back.
@@ -48,6 +48,7 @@ def _write_and_read(resources: dict, suffix: str = ".mod") -> list:
 # ---------------------------------------------------------------------------
 # Header format tests
 # ---------------------------------------------------------------------------
+
 
 class TestERFWriterHeader:
     """Verify the ERF v1.0 header layout."""
@@ -81,7 +82,7 @@ class TestERFWriterHeader:
         out = tmp_path / "test.mod"
         writer = ERFWriter(out)
         writer.add_resource("alpha", ".dlg", b"DLG DATA")
-        writer.add_resource("beta",  ".uti", b"UTI DATA")
+        writer.add_resource("beta", ".uti", b"UTI DATA")
         writer.write()
 
         data = out.read_bytes()
@@ -117,6 +118,7 @@ class TestERFWriterHeader:
 # Round-trip tests
 # ---------------------------------------------------------------------------
 
+
 class TestERFWriterRoundTrip:
     """Verify write → read produces the same resources."""
 
@@ -145,7 +147,7 @@ class TestERFWriterRoundTrip:
             # Read raw data using offset/size from the entry
             raw = tmp.read_bytes()
             entry = entries[0]
-            extracted = raw[entry.offset: entry.offset + entry.size]
+            extracted = raw[entry.offset : entry.offset + entry.size]
             assert extracted == payload
         finally:
             tmp.unlink(missing_ok=True)
@@ -154,7 +156,7 @@ class TestERFWriterRoundTrip:
         """All added resources appear in re-read ERF."""
         resources = {
             "dialog.dlg": b"dlg data",
-            "item.uti":   b"uti data",
+            "item.uti": b"uti data",
             "journal.jrl": b"jrl data",
         }
         entries = _write_and_read(resources)
@@ -227,9 +229,8 @@ class TestERFWriterRoundTrip:
             assert len(entries) == 3
 
             for entry in entries:
-                extracted = raw[entry.offset: entry.offset + entry.size]
-                assert extracted == payloads[entry.res_ref], \
-                    f"Data mismatch for {entry.res_ref}"
+                extracted = raw[entry.offset : entry.offset + entry.size]
+                assert extracted == payloads[entry.res_ref], f"Data mismatch for {entry.res_ref}"
         finally:
             tmp.unlink(missing_ok=True)
 
@@ -260,7 +261,7 @@ class TestERFWriterRoundTrip:
         entries = reader.read_entries()
         assert len(entries) == 1
         entry = entries[0]
-        assert raw[entry.offset: entry.offset + entry.size] == b"DLG FILE CONTENT"
+        assert raw[entry.offset : entry.offset + entry.size] == b"DLG FILE CONTENT"
 
     @pytest.mark.parametrize(
         ("signature", "expected_ext"),
@@ -279,9 +280,7 @@ class TestERFWriterRoundTrip:
             (b"NCS ", ".ncs"),
         ],
     )
-    def test_detect_type_from_header_maps_known_signatures(
-        self, tmp_path, signature, expected_ext
-    ):
+    def test_detect_type_from_header_maps_known_signatures(self, tmp_path, signature, expected_ext):
         """Known file signatures must override unknown numeric resource type IDs."""
         raw = tmp_path / f"{expected_ext[1:]}_blob.bin"
         raw.write_bytes(signature + b"\x00" * 8)

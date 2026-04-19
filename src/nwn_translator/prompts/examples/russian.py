@@ -57,9 +57,9 @@ EXAMPLES = {
         "grammatically correct (e.g. a notice, letter, sign, or literate character), "
         "the translation MUST also be grammatically correct.\n"
         "    Example: \"this isn't worth 5 gold a day, we're out of here\" "
-        "-> \"это не стоит 5 золотых в день, мы уходим отсюда\" "
+        '-> "это не стоит 5 золотых в день, мы уходим отсюда" '
         "(GOOD, normal grammar preserved)\n"
-        "    NOT: \"оно не стоить 5 золотых в день, мы уходить\" "
+        '    NOT: "оно не стоить 5 золотых в день, мы уходить" '
         "(BAD — original is literate, so broken translation is wrong)\n"
     ),
     "dialog_output": {

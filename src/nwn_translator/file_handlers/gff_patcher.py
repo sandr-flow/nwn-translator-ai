@@ -13,6 +13,7 @@ from typing import List, Tuple
 
 class GFFPatchError(Exception):
     """Exception raised for GFF patching errors."""
+
     pass
 
 
@@ -112,19 +113,20 @@ class GFFPatcher:
 
     def _read_header(self, data: bytes) -> dict:
         """Parse key GFF header fields from file bytes."""
+
         def dword(off: int) -> int:
             return struct.unpack_from("<I", data, off)[0]
 
         return {
-            "struct_offset":        dword(self._HDR_STRUCT_OFFSET),
-            "field_offset":         dword(self._HDR_FIELD_OFFSET),
-            "label_offset":         dword(self._HDR_LABEL_OFFSET),
-            "fielddata_offset":     dword(self._HDR_FIELDDATA_OFFSET),
-            "fielddata_size":       dword(self._HDR_FIELDDATA_SIZE),
-            "fieldindices_offset":  dword(self._HDR_FIELDINDICES_OFFSET),
-            "fieldindices_size":    dword(self._HDR_FIELDINDICES_SIZE),
-            "listindices_offset":   dword(self._HDR_LISTINDICES_OFFSET),
-            "listindices_size":     dword(self._HDR_LISTINDICES_SIZE),
+            "struct_offset": dword(self._HDR_STRUCT_OFFSET),
+            "field_offset": dword(self._HDR_FIELD_OFFSET),
+            "label_offset": dword(self._HDR_LABEL_OFFSET),
+            "fielddata_offset": dword(self._HDR_FIELDDATA_OFFSET),
+            "fielddata_size": dword(self._HDR_FIELDDATA_SIZE),
+            "fieldindices_offset": dword(self._HDR_FIELDINDICES_OFFSET),
+            "fieldindices_size": dword(self._HDR_FIELDINDICES_SIZE),
+            "listindices_offset": dword(self._HDR_LISTINDICES_OFFSET),
+            "listindices_size": dword(self._HDR_LISTINDICES_SIZE),
         }
 
     def _build_cexo_locstring_payload(self, new_text: str) -> bytearray:

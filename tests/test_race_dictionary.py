@@ -4,15 +4,30 @@ import pytest
 
 from src.nwn_translator.race_dictionary import RACE_TERMS, match_race_terms
 
-
 # All language keys present in the dictionary.
 ALL_LANGS = list(RACE_TERMS.keys())
 
 # Minimum English keys each language must define (singular forms).
 _EXPECTED_MIN_KEYS = {
-    "dwarf", "dwarves", "halfling", "gnome", "drow", "tiefling",
-    "goblin", "hobgoblin", "bugbear", "orc", "kobold", "gnoll",
-    "yuan-ti", "ogre", "troll", "elf", "elves", "half-elf", "half-orc",
+    "dwarf",
+    "dwarves",
+    "halfling",
+    "gnome",
+    "drow",
+    "tiefling",
+    "goblin",
+    "hobgoblin",
+    "bugbear",
+    "orc",
+    "kobold",
+    "gnoll",
+    "yuan-ti",
+    "ogre",
+    "troll",
+    "elf",
+    "elves",
+    "half-elf",
+    "half-orc",
 }
 
 
@@ -27,22 +42,31 @@ class TestRaceTermsData:
     @pytest.mark.parametrize("lang", ALL_LANGS)
     def test_values_are_nonempty_strings(self, lang: str):
         for key, value in RACE_TERMS[lang].items():
-            assert isinstance(value, str) and value.strip(), (
-                f"{lang}[{key!r}] has empty or non-string value: {value!r}"
-            )
+            assert (
+                isinstance(value, str) and value.strip()
+            ), f"{lang}[{key!r}] has empty or non-string value: {value!r}"
 
     @pytest.mark.parametrize("lang", ALL_LANGS)
     def test_keys_are_lowercase(self, lang: str):
         for key in RACE_TERMS[lang]:
-            assert key == key.lower(), (
-                f"{lang} has non-lowercase key: {key!r}"
-            )
+            assert key == key.lower(), f"{lang} has non-lowercase key: {key!r}"
 
     def test_all_expected_languages_present(self):
         expected = {
-            "russian", "ukrainian", "polish", "german", "french", "spanish",
-            "italian", "portuguese", "czech", "romanian", "hungarian",
-            "dutch", "turkish", "english",
+            "russian",
+            "ukrainian",
+            "polish",
+            "german",
+            "french",
+            "spanish",
+            "italian",
+            "portuguese",
+            "czech",
+            "romanian",
+            "hungarian",
+            "dutch",
+            "turkish",
+            "english",
         }
         missing = expected - set(RACE_TERMS.keys())
         assert not missing, f"Missing languages: {missing}"
@@ -57,9 +81,7 @@ class TestMatchRaceTerms:
         assert "дварфы" in result
 
     def test_multiple_matches(self):
-        result = match_race_terms(
-            "The bugbear and the kobolds attacked the elves.", "russian"
-        )
+        result = match_race_terms("The bugbear and the kobolds attacked the elves.", "russian")
         assert "багбир" in result
         assert "кобольды" in result
         assert "эльфы" in result

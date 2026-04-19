@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class ERFReaderError(Exception):
     """Exception raised for ERF reading errors."""
+
     pass
 
 
@@ -103,110 +104,110 @@ class ERFReader:
 
     # Resource type mappings (common ones)
     RESOURCE_TYPES = {
-        0: ".bmp",      # Texture
-        1: ".tga",      # Texture
-        2: ".wav",      # Sound
-        3: ".plt",      # Color palette
-        4: ".ini",      # Configuration
-        5: ".txt",      # Text
-        6: ".mdl",      # Model
-        7: ".thg",      # Tileset generic
-        8: ".fxt",      # Font texture
-        9: ".txi",      # Texture info
-        10: ".git",     # Instance file
-        11: ".uti",     # Item
-        12: ".ptc",     # Particle
-        13: ".sst",     # Store state
-        14: ".ncs",     # Script
-        15: ".mod",     # Module
-        16: ".are",     # Area
-        17: ".set",     # Special effect
-        18: ".ifo",     # Module info
-        19: ".bic",     # Character
-        20: ".wok",     # Walk mesh
-        21: ".2da",     # 2D array
-        22: ".tlk",     # Talk table
-        23: ".txi",     # Texture info
-        24: ".git",     # Instance
-        25: ".bti",     # Item blueprint
-        26: ".utc",     # Creature
-        27: ".dlg",     # Dialog
-        28: ".itp",     # Tool palette
-        29: ".btt",     # Trigger blueprint
-        30: ".utt",     # Trigger / Placeable
-        31: ".btc",     # Creature blueprint
-        32: ".uts",     # Sound blueprint
-        33: ".utr",     # Trap blueprint
-        34: ".btd",     # Door blueprint
-        35: ".btp",     # Placeable blueprint
-        36: ".ptm",     # Plot manager
-        37: ".ptt",     # Plot instance
-        38: ".ncs",     # Script
-        39: ".bfx",     # Effect
-        40: ".bte",     # Effect blueprint
-        41: ".css",     # Client script
-        42: ".fs",      # Faction
-        43: ".jrl",     # Journal
-        44: ".sec",     # Secret
-        45: ".ifo",     # Module info
-        46: ".bio",     # Player info
-        47: ".spe",     # Spawn point
-        48: ".sem",     # Trigger
-        49: ".lus",     # Locomotion
-        50: ".gor",     # Gore
-        51: ".fxs",     # FX script
-        52: ".wmp",     # Map
-        53: ".fac",     # Faction
-        54: ".gff",     # Generic GFF
-        55: ".gam",     # Game
-        56: ".gui",     # GUI
-        57: ".ute",     # Encounter
-        58: ".utp",     # Placeable
-        59: ".utm",     # Store
-        60: ".utw",     # Waypoint
-        61: ".uts",     # Sound
-        62: ".utr",     # Trap
-        63: ".utf",     # Layout
-        64: ".utd",     # Door
-        65: ".utn",     # Waypoint
-        66: ".pal",     # Palette
-        67: ".pdf",     # Palette data
-        68: ".gic",     # Instance
-        69: ".fxe",     # Effect
-        70: ".ptx",     # Plot
-        71: ".png",     # Texture
-        72: ".ltx",     # Lexicon
-        73: ".utx",     # Tileset
-        74: ".gff",     # GFF
-        75: ".xml",     # XML
-        76: ".xba",     # Animation
-        77: ".ids",     # Identifier
-        78: ".bwd",     # Data
-        79: ".bwm",     # Walkmesh
-        2009: ".nss",   # Script source
-        2010: ".ncs",   # Compiled script
-        2012: ".are",   # Area static
-        2013: ".set",   # Tileset info
-        2014: ".ifo",   # Module info
-        2015: ".bic",   # Character
-        2016: ".wok",   # Walkmesh
-        2017: ".2da",   # 2D Array
-        2022: ".txi",   # Texture info
-        2023: ".git",   # Area instance
-        2025: ".uti",   # Item
-        2027: ".utc",   # Creature
-        2029: ".dlg",   # Dialogue
-        2032: ".uts",   # Sound
-        2035: ".uts",   # Sound (alt)
-        2038: ".fac",   # Faction
-        2040: ".ute",   # Encounter
-        2042: ".utm",   # Store
-        2044: ".utp",   # Placeable
-        2045: ".ncs",   # Script (alt)
-        2047: ".gui",   # GUI
-        2052: ".css",   # Client script
-        2056: ".jrl",   # Journal
-        2058: ".utw",   # Waypoint
+        0: ".bmp",  # Texture
+        1: ".tga",  # Texture
+        2: ".wav",  # Sound
+        3: ".plt",  # Color palette
+        4: ".ini",  # Configuration
+        5: ".txt",  # Text
+        6: ".mdl",  # Model
+        7: ".thg",  # Tileset generic
+        8: ".fxt",  # Font texture
+        9: ".txi",  # Texture info
+        10: ".git",  # Instance file
+        11: ".uti",  # Item
+        12: ".ptc",  # Particle
+        13: ".sst",  # Store state
+        14: ".ncs",  # Script
+        15: ".mod",  # Module
+        16: ".are",  # Area
+        17: ".set",  # Special effect
+        18: ".ifo",  # Module info
+        19: ".bic",  # Character
+        20: ".wok",  # Walk mesh
+        21: ".2da",  # 2D array
+        22: ".tlk",  # Talk table
+        23: ".txi",  # Texture info
+        24: ".git",  # Instance
+        25: ".bti",  # Item blueprint
+        26: ".utc",  # Creature
+        27: ".dlg",  # Dialog
+        28: ".itp",  # Tool palette
+        29: ".btt",  # Trigger blueprint
+        30: ".utt",  # Trigger / Placeable
+        31: ".btc",  # Creature blueprint
+        32: ".uts",  # Sound blueprint
+        33: ".utr",  # Trap blueprint
+        34: ".btd",  # Door blueprint
+        35: ".btp",  # Placeable blueprint
+        36: ".ptm",  # Plot manager
+        37: ".ptt",  # Plot instance
+        38: ".ncs",  # Script
+        39: ".bfx",  # Effect
+        40: ".bte",  # Effect blueprint
+        41: ".css",  # Client script
+        42: ".fs",  # Faction
+        43: ".jrl",  # Journal
+        44: ".sec",  # Secret
+        45: ".ifo",  # Module info
+        46: ".bio",  # Player info
+        47: ".spe",  # Spawn point
+        48: ".sem",  # Trigger
+        49: ".lus",  # Locomotion
+        50: ".gor",  # Gore
+        51: ".fxs",  # FX script
+        52: ".wmp",  # Map
+        53: ".fac",  # Faction
+        54: ".gff",  # Generic GFF
+        55: ".gam",  # Game
+        56: ".gui",  # GUI
+        57: ".ute",  # Encounter
+        58: ".utp",  # Placeable
+        59: ".utm",  # Store
+        60: ".utw",  # Waypoint
+        61: ".uts",  # Sound
+        62: ".utr",  # Trap
+        63: ".utf",  # Layout
+        64: ".utd",  # Door
+        65: ".utn",  # Waypoint
+        66: ".pal",  # Palette
+        67: ".pdf",  # Palette data
+        68: ".gic",  # Instance
+        69: ".fxe",  # Effect
+        70: ".ptx",  # Plot
+        71: ".png",  # Texture
+        72: ".ltx",  # Lexicon
+        73: ".utx",  # Tileset
+        74: ".gff",  # GFF
+        75: ".xml",  # XML
+        76: ".xba",  # Animation
+        77: ".ids",  # Identifier
+        78: ".bwd",  # Data
+        79: ".bwm",  # Walkmesh
+        2009: ".nss",  # Script source
+        2010: ".ncs",  # Compiled script
+        2012: ".are",  # Area static
+        2013: ".set",  # Tileset info
+        2014: ".ifo",  # Module info
+        2015: ".bic",  # Character
+        2016: ".wok",  # Walkmesh
+        2017: ".2da",  # 2D Array
+        2022: ".txi",  # Texture info
+        2023: ".git",  # Area instance
+        2025: ".uti",  # Item
+        2027: ".utc",  # Creature
+        2029: ".dlg",  # Dialogue
+        2032: ".uts",  # Sound
+        2035: ".uts",  # Sound (alt)
+        2038: ".fac",  # Faction
+        2040: ".ute",  # Encounter
+        2042: ".utm",  # Store
+        2044: ".utp",  # Placeable
+        2045: ".ncs",  # Script (alt)
+        2047: ".gui",  # GUI
+        2052: ".css",  # Client script
+        2056: ".jrl",  # Journal
+        2058: ".utw",  # Waypoint
     }
 
     def __init__(self, file_path: Path, progress_callback: ProgressCallback = None):
@@ -261,34 +262,38 @@ class ERFReader:
             self.read_header()
 
         entry_count = self.header.entry_count
-        
+
         # 1. Read Key List
         keys = []
         with open(self.file_path, "rb") as f:
             f.seek(self.header.offset_to_key_list)
             # Key entry is 24 bytes in the actual file structure (Ref 16 + ID 4 + Type 4)
             # despite offset delta suggesting 32. The gap is likely padding.
-            key_stride = 24 
+            key_stride = 24
             key_data_block = f.read(entry_count * key_stride)
-            
+
             for i in range(entry_count):
                 base = i * key_stride
-                res_ref = key_data_block[base:base+16].split(b"\x00")[0].decode("ascii", errors="ignore")
-                res_id = struct.unpack("<I", key_data_block[base+16:base+20])[0]
-                res_type = struct.unpack("<I", key_data_block[base+20:base+24])[0]
+                res_ref = (
+                    key_data_block[base : base + 16]
+                    .split(b"\x00")[0]
+                    .decode("ascii", errors="ignore")
+                )
+                res_id = struct.unpack("<I", key_data_block[base + 16 : base + 20])[0]
+                res_type = struct.unpack("<I", key_data_block[base + 20 : base + 24])[0]
                 keys.append((res_ref, res_id, res_type))
-            
+
             # 2. Read Resource List
             f.seek(self.header.offset_to_resource_list)
             # Resource entry is 8 bytes
             # [Offset 4b] [Size 4b]
             res_data_block = f.read(entry_count * 8)
-            
+
             resources = []
             for i in range(entry_count):
                 base = i * 8
-                offset = struct.unpack("<I", res_data_block[base:base+4])[0]
-                size = struct.unpack("<I", res_data_block[base+4:base+8])[0]
+                offset = struct.unpack("<I", res_data_block[base : base + 4])[0]
+                size = struct.unpack("<I", res_data_block[base + 4 : base + 8])[0]
                 resources.append((offset, size))
 
         # 3. Combine
@@ -363,10 +368,10 @@ class ERFReader:
 
     def detect_type_from_header(self, entry: ERFEntry) -> str:
         """Detect file type from signature, fallback to Type ID.
-        
+
         Args:
             entry: ERFEntry to check
-            
+
         Returns:
             Computed extension
         """
@@ -404,14 +409,11 @@ class ERFReader:
         result = filename
 
         # Replace control characters (0-31) with underscore
-        result = ''.join(
-            '_' if (0 <= ord(c) <= 31) else c
-            for c in result
-        )
+        result = "".join("_" if (0 <= ord(c) <= 31) else c for c in result)
 
         # Replace other invalid characters
         for char in invalid_chars:
-            result = result.replace(char, '_')
+            result = result.replace(char, "_")
 
         return result
 
@@ -487,8 +489,11 @@ class ERFReader:
                 # OR if requested type matches the raw ID type (fallback)
                 detected_type = self.detect_type_from_header(entry)
                 raw_type = self.get_resource_type(entry.res_type)
-                
-                if detected_type.lower() == res_type.lower() or raw_type.lower() == res_type.lower():
+
+                if (
+                    detected_type.lower() == res_type.lower()
+                    or raw_type.lower() == res_type.lower()
+                ):
                     # Extract it
                     with open(self.file_path, "rb") as f:
                         f.seek(entry.offset)
@@ -508,7 +513,17 @@ class ERFReader:
             self.read_entries()
 
         # Translatable file types
-        translatable_types = {".dlg", ".jrl", ".uti", ".utc", ".are", ".utt", ".utp", ".utd", ".utm"}
+        translatable_types = {
+            ".dlg",
+            ".jrl",
+            ".uti",
+            ".utc",
+            ".are",
+            ".utt",
+            ".utp",
+            ".utd",
+            ".utm",
+        }
 
         translatable = []
         for entry in self.entries:

@@ -165,9 +165,7 @@ class TestEdgeCases:
         handler = TokenHandler()
         source = "<StartAction>[Wave]</Start> Hello <FirstName>."
         sanitized = handler.sanitize(source)
-        placeholders = re.findall(
-            r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text
-        )
+        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text)
         assert len(placeholders) == 2
         translated = f"Привет {placeholders[0]}[машет]{placeholders[1]}, <<TOKEN_0>>."
         restored = handler.restore(translated)
@@ -186,9 +184,7 @@ class TestEdgeCases:
         handler = TokenHandler()
         source = "<StartAction>[Wave]</Start>"
         sanitized = handler.sanitize(source)
-        placeholders = re.findall(
-            r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text
-        )
+        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text)
         translated = f"{placeholders[0]}[машет]{placeholders[1]}[[NWN_TAG_999999]]"
         restored = handler.restore(translated)
         assert restored == "<StartAction>[машет]</Start>"
@@ -198,9 +194,7 @@ class TestEdgeCases:
         handler = TokenHandler()
         source = "<StartAction>[Wave]</Start>"
         sanitized = handler.sanitize(source)
-        placeholders = re.findall(
-            r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text
-        )
+        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text)
         # Simulate model mutation seen in logs: __NWN_TAG_x__ -> <<[NWN_TAG_x]>>
         wrapped = []
         for p in placeholders:
@@ -215,9 +209,7 @@ class TestEdgeCases:
         handler = TokenHandler()
         source = "<StartAction>[Wave]</Start>"
         sanitized = handler.sanitize(source)
-        placeholders = re.findall(
-            r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text
-        )
+        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text)
         translated = f"{placeholders[0]}[машет]{placeholders[1]} «NWN_TAG_garbage_42»"
         restored = handler.restore(translated)
         assert restored == "<StartAction>[машет]</Start> "

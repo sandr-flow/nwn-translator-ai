@@ -14,10 +14,10 @@ import pytest
 
 from src.nwn_translator.async_utils import run_async
 
-
 # ---------------------------------------------------------------------------
 # run_async timeout
 # ---------------------------------------------------------------------------
+
 
 class TestRunAsyncTimeout:
     """Tests for ``run_async`` timeout wrapper."""
@@ -69,6 +69,7 @@ class TestRunAsyncTimeout:
 # GlossaryBuilder partial failure
 # ---------------------------------------------------------------------------
 
+
 class TestGlossaryPartialFailure:
     """Glossary builder must survive individual batch failures."""
 
@@ -80,9 +81,7 @@ class TestGlossaryPartialFailure:
         batch_seen = {"TestName": "character"}
 
         mock_provider = Mock()
-        mock_provider.complete_glossary_chat_async = AsyncMock(
-            side_effect=TimeoutError("timeout")
-        )
+        mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=TimeoutError("timeout"))
         mock_provider.close_async_client = AsyncMock()
 
         mock_config = Mock()
@@ -92,7 +91,13 @@ class TestGlossaryPartialFailure:
 
         async def run_test():
             return await builder._translate_batch_async(
-                sem, batch_seen, mock_provider, mock_config, 1, 1, None,
+                sem,
+                batch_seen,
+                mock_provider,
+                mock_config,
+                1,
+                1,
+                None,
             )
 
         result = run_async(run_test(), timeout=10.0)
@@ -113,15 +118,19 @@ class TestGlossaryPartialFailure:
         expected_json = json.dumps({"Perin": "Перин", "Dark Forest": "Тёмный Лес"})
 
         mock_provider = Mock()
-        mock_provider.complete_glossary_chat_async = AsyncMock(
-            return_value=expected_json
-        )
+        mock_provider.complete_glossary_chat_async = AsyncMock(return_value=expected_json)
 
         sem = asyncio.Semaphore(1)
 
         async def run_test():
             return await builder._translate_batch_async(
-                sem, batch_seen, mock_provider, mock_config, 1, 1, None,
+                sem,
+                batch_seen,
+                mock_provider,
+                mock_config,
+                1,
+                1,
+                None,
             )
 
         result = run_async(run_test(), timeout=10.0)
@@ -148,9 +157,7 @@ class TestGlossaryPartialFailure:
                 return json.dumps({"Dark Forest": "Тёмный Лес"})
 
         mock_provider = Mock()
-        mock_provider.complete_glossary_chat_async = AsyncMock(
-            side_effect=fake_glossary
-        )
+        mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
         mock_config = Mock()
         mock_config.target_lang = "russian"
 
@@ -158,7 +165,13 @@ class TestGlossaryPartialFailure:
 
         async def run_test():
             return await builder._translate_batch_async(
-                sem, batch_seen, mock_provider, mock_config, 1, 1, None,
+                sem,
+                batch_seen,
+                mock_provider,
+                mock_config,
+                1,
+                1,
+                None,
             )
 
         result = run_async(run_test(), timeout=10.0)
@@ -186,9 +199,7 @@ class TestGlossaryPartialFailure:
                 return json.dumps({"Beta": "Бета", "Gamma": "Гамма"})
 
         mock_provider = Mock()
-        mock_provider.complete_glossary_chat_async = AsyncMock(
-            side_effect=fake_glossary
-        )
+        mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
         mock_config = Mock()
         mock_config.target_lang = "russian"
 
@@ -196,7 +207,13 @@ class TestGlossaryPartialFailure:
 
         async def run_test():
             return await builder._translate_batch_async(
-                sem, batch_seen, mock_provider, mock_config, 1, 1, None,
+                sem,
+                batch_seen,
+                mock_provider,
+                mock_config,
+                1,
+                1,
+                None,
             )
 
         result = run_async(run_test(), timeout=10.0)
@@ -207,6 +224,7 @@ class TestGlossaryPartialFailure:
 # ---------------------------------------------------------------------------
 # TranslationManager timeout handling
 # ---------------------------------------------------------------------------
+
 
 class TestTranslationManagerTimeouts:
     """Translation manager must handle item-level timeouts gracefully."""

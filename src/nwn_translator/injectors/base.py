@@ -19,6 +19,7 @@ class InjectedContent:
         items_updated: Number of items updated
         metadata: Additional metadata
     """
+
     source_file: Path
     modified: bool
     items_updated: int
@@ -70,4 +71,3 @@ class BaseInjector(ABC):
             InjectedContent with injection results
         """
         pass
-

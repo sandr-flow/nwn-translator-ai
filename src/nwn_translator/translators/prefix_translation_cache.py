@@ -54,9 +54,7 @@ class PrefixAwareTranslationCache:
     def keys(self):
         return self._data.keys()
 
-    def longest_prefix_match(
-        self, sanitized: str, min_len: int
-    ) -> Optional[Tuple[str, str]]:
+    def longest_prefix_match(self, sanitized: str, min_len: int) -> Optional[Tuple[str, str]]:
         """Longest cached key that is a prefix of *sanitized* with length >= *min_len*."""
         node = self._root
         best_key: Optional[str] = None

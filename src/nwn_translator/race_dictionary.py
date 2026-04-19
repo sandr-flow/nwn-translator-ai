@@ -559,11 +559,7 @@ _ALL_KEYS: List[str] = sorted(
 _BOUNDARY_LEFT = r"(?<![a-zA-Z0-9\-])"
 _BOUNDARY_RIGHT = r"(?![a-zA-Z0-9\-])"
 _PATTERN = re.compile(
-    _BOUNDARY_LEFT
-    + r"(?:"
-    + "|".join(re.escape(k) for k in _ALL_KEYS)
-    + r")"
-    + _BOUNDARY_RIGHT,
+    _BOUNDARY_LEFT + r"(?:" + "|".join(re.escape(k) for k in _ALL_KEYS) + r")" + _BOUNDARY_RIGHT,
     re.IGNORECASE,
 )
 

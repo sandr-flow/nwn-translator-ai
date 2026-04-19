@@ -19,11 +19,7 @@ class ItemExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract item content from a .uti file.
 
         Args:
@@ -58,16 +54,18 @@ class ItemExtractor(BaseExtractor):
                 if base_item
                 else "Game item name. Translate the name naturally."
             )
-            items.append(TranslatableItem(
-                text=name,
-                context=name_ctx,
-                item_id=f"{tag}_name",
-                location=str(file_path),
-                metadata={
-                    "type": "item_name",
-                    "tag": tag,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=name,
+                    context=name_ctx,
+                    item_id=f"{tag}_name",
+                    location=str(file_path),
+                    metadata={
+                        "type": "item_name",
+                        "tag": tag,
+                    },
+                )
+            )
 
         # Create item for description
         if description:
@@ -77,16 +75,18 @@ class ItemExtractor(BaseExtractor):
                 desc_ctx = f"Item description for '{name}'"
             else:
                 desc_ctx = "Item description"
-            items.append(TranslatableItem(
-                text=description,
-                context=desc_ctx,
-                item_id=f"{tag}_description",
-                location=str(file_path),
-                metadata={
-                    "type": "item_description",
-                    "tag": tag,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=description,
+                    context=desc_ctx,
+                    item_id=f"{tag}_description",
+                    location=str(file_path),
+                    metadata={
+                        "type": "item_description",
+                        "tag": tag,
+                    },
+                )
+            )
 
         # Create item for identified description
         if identified_description and identified_description != description:
@@ -96,16 +96,18 @@ class ItemExtractor(BaseExtractor):
                 idesc_ctx = f"Item identified description for '{name}'"
             else:
                 idesc_ctx = "Item identified description"
-            items.append(TranslatableItem(
-                text=identified_description,
-                context=idesc_ctx,
-                item_id=f"{tag}_identified_description",
-                location=str(file_path),
-                metadata={
-                    "type": "item_identified_description",
-                    "tag": tag,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=identified_description,
+                    context=idesc_ctx,
+                    item_id=f"{tag}_identified_description",
+                    location=str(file_path),
+                    metadata={
+                        "type": "item_identified_description",
+                        "tag": tag,
+                    },
+                )
+            )
 
         return ExtractedContent(
             content_type="item",
@@ -114,5 +116,5 @@ class ItemExtractor(BaseExtractor):
             metadata={
                 "tag": tag,
                 "item_count": len(items),
-            }
+            },
         )

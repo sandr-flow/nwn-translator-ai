@@ -111,6 +111,7 @@ class BaseAIProvider(ABC):
         target_lang: str,
         context: Optional[str] = None,
         glossary_block: Optional[str] = None,
+        content_profile: Optional[str] = None,
     ) -> TranslationResult:
         """Translate text from source language to target language.
 
@@ -120,6 +121,9 @@ class BaseAIProvider(ABC):
             target_lang: Target language name (e.g., "spanish", "german")
             context: Additional context for translation (optional)
             glossary_block: Optional GLOSSARY section for consistent proper names
+            content_profile: Optional prompt profile name (``"short_label"`` for
+                name/label batches, ``"default"`` otherwise). Deterministic per
+                batch to keep prompt-caching cache keys stable.
 
         Returns:
             TranslationResult with translated text
@@ -137,21 +141,12 @@ class BaseAIProvider(ABC):
         target_lang: str,
         context: Optional[str] = None,
         glossary_block: Optional[str] = None,
+        content_profile: Optional[str] = None,
     ) -> TranslationResult:
         """Translate text asynchronously.
 
         Default implementation runs :meth:`translate` in a worker thread.
         Providers may override with native async HTTP for better concurrency.
-
-        Args:
-            text: Text to translate
-            source_lang: Source language name
-            target_lang: Target language name
-            context: Optional context hint
-            glossary_block: Optional GLOSSARY section for consistent proper names
-
-        Returns:
-            TranslationResult with translated text
         """
         return await asyncio.to_thread(
             self.translate,
@@ -160,6 +155,7 @@ class BaseAIProvider(ABC):
             target_lang,
             context,
             glossary_block,
+            content_profile,
         )
 
     async def translate_batch_async(
@@ -168,6 +164,7 @@ class BaseAIProvider(ABC):
         source_lang: str,
         target_lang: str,
         glossary_block: Optional[str] = None,
+        content_profile: Optional[str] = None,
     ) -> List["TranslationResult"]:
         """Translate a batch of short strings in a single API call.
 
@@ -182,6 +179,7 @@ class BaseAIProvider(ABC):
                 target_lang=target_lang,
                 context=item.context,
                 glossary_block=glossary_block,
+                content_profile=content_profile,
             )
             results.append(result)
         return results
@@ -212,30 +210,40 @@ class BaseAIProvider(ABC):
         self,
         target_lang: str,
         glossary_block: str = "",
+        content_profile: Optional[str] = None,
     ) -> str:
         """Create system prompt for translation (stable + variable concatenated).
 
         Args:
             target_lang: Target language for translation
             glossary_block: Optional GLOSSARY section (from :class:`~nwn_translator.glossary.Glossary`)
-
-        Returns:
-            System prompt string
+            content_profile: Prompt profile name (see :func:`build_translation_system_prompt`).
         """
         from ..prompts import build_translation_system_prompt
+        from ..prompts._builder import CONTENT_PROFILE_DEFAULT
 
-        return build_translation_system_prompt(target_lang, self.player_gender, glossary_block)
+        return build_translation_system_prompt(
+            target_lang,
+            self.player_gender,
+            glossary_block,
+            content_profile=content_profile or CONTENT_PROFILE_DEFAULT,
+        )
 
     def _create_system_prompt_parts(
         self,
         target_lang: str,
         glossary_block: str = "",
+        content_profile: Optional[str] = None,
     ) -> Tuple[str, str]:
         """Return the stable/variable halves of the line-by-line translation prompt."""
         from ..prompts import build_translation_system_prompt_parts
+        from ..prompts._builder import CONTENT_PROFILE_DEFAULT
 
         return build_translation_system_prompt_parts(
-            target_lang, self.player_gender, glossary_block
+            target_lang,
+            self.player_gender,
+            glossary_block,
+            content_profile=content_profile or CONTENT_PROFILE_DEFAULT,
         )
 
     @staticmethod

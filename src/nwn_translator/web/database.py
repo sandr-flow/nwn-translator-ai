@@ -115,6 +115,7 @@ def close_db() -> None:
 # Task CRUD
 # ---------------------------------------------------------------------------
 
+
 def create_task_row(
     task_id: str,
     client_token: str,
@@ -129,7 +130,16 @@ def create_task_row(
     db.execute(
         "INSERT INTO tasks (task_id, client_token, client_ip, created_at, input_filename, target_lang, source_lang, model) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (task_id, client_token, client_ip, created_at, input_filename, target_lang, source_lang, model),
+        (
+            task_id,
+            client_token,
+            client_ip,
+            created_at,
+            input_filename,
+            target_lang,
+            source_lang,
+            model,
+        ),
     )
     db.commit()
 
@@ -189,6 +199,7 @@ def delete_task_row(task_id: str) -> bool:
 # Translations
 # ---------------------------------------------------------------------------
 
+
 def insert_translation(
     task_id: str,
     original: str,
@@ -241,6 +252,7 @@ def get_translation_map_by_task(task_id: str) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 # SqliteTranslationLogWriter — implements TranslationLogWriter protocol
 # ---------------------------------------------------------------------------
+
 
 class SqliteTranslationLogWriter:
     """Write translation log entries to SQLite instead of JSONL files."""

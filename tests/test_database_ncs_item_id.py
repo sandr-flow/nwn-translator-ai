@@ -45,8 +45,7 @@ def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(db, "_connection", None)
     path = tmp_path / "legacy.db"
     conn = __import__("sqlite3").connect(str(path))
-    conn.executescript(
-        """
+    conn.executescript("""
         CREATE TABLE tasks (
             task_id TEXT PRIMARY KEY,
             client_token TEXT NOT NULL,
@@ -65,8 +64,7 @@ def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyP
             file TEXT,
             UNIQUE(task_id, file, original)
         );
-        """
-    )
+        """)
     conn.close()
 
     monkeypatch.setattr(db, "_connection", None)

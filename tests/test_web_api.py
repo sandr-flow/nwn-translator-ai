@@ -133,7 +133,9 @@ def test_translate_status_download(client: TestClient) -> None:
     assert d.content == b"FAKE_MOD"
 
 
-def test_translate_rate_limit_second_request(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_translate_rate_limit_second_request(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def slow_translate(self):
         time.sleep(0.5)
         out = self.config.output_file
@@ -228,7 +230,9 @@ def test_translate_streamed_upload_bytes_preserved(
     assert saved.read_bytes() == payload
 
 
-def test_translate_rejects_oversized_stream(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_translate_rejects_oversized_stream(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr("nwn_translator.web.routes.MAX_UPLOAD_BYTES", 800)
     payload = b"y" * 900
     files = {"file": ("huge.mod", payload, "application/octet-stream")}

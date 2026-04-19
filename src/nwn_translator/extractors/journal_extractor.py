@@ -18,11 +18,7 @@ class JournalExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract journal content from a .jrl file.
 
         Args:
@@ -54,14 +50,11 @@ class JournalExtractor(BaseExtractor):
             source_file=file_path,
             metadata={
                 "category_count": len(categories),
-            }
+            },
         )
 
     def _extract_category(
-        self,
-        category_data: Dict[str, Any],
-        index: int,
-        file_path: Path
+        self, category_data: Dict[str, Any], index: int, file_path: Path
     ) -> List[TranslatableItem]:
         """Extract translatable items from a journal category.
 
@@ -83,17 +76,19 @@ class JournalExtractor(BaseExtractor):
         name_obj = category_data.get("Name", {})
         name = self._extract_text_from_local_string(name_obj) or ""
         if name:
-            items.append(TranslatableItem(
-                text=name,
-                context=f"Journal category name: {tag}" if tag else "Journal category name",
-                item_id=f"category_{index}_name",
-                location=str(file_path),
-                metadata={
-                    "type": "journal_category_name",
-                    "tag": tag,
-                    "priority": priority,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=name,
+                    context=f"Journal category name: {tag}" if tag else "Journal category name",
+                    item_id=f"category_{index}_name",
+                    location=str(file_path),
+                    metadata={
+                        "type": "journal_category_name",
+                        "tag": tag,
+                        "priority": priority,
+                    },
+                )
+            )
 
         return items
 
@@ -133,14 +128,18 @@ class JournalExtractor(BaseExtractor):
         return TranslatableItem(
             text=text,
             context=(
-                f"Journal entry (quest title: '{cat_tag}'). "
-                f"The quest title is context only — do not substitute it into the entry text."
-            ) if cat_tag else f"Journal entry in category {category_index}",
+                (
+                    f"Journal entry (quest title: '{cat_tag}'). "
+                    f"The quest title is context only — do not substitute it into the entry text."
+                )
+                if cat_tag
+                else f"Journal entry in category {category_index}"
+            ),
             item_id=f"entry_{category_index}_{entry_index}",
             location=str(file_path),
             metadata={
                 "type": "journal_entry",
                 "category": category_index,
                 "entry_id": entry_id,
-            }
+            },
         )

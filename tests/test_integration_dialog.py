@@ -11,7 +11,6 @@ from src.nwn_translator.file_handlers.erf_reader import ERFReader
 from src.nwn_translator.file_handlers import read_gff
 from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
 
-
 MODULE_PATH = Path(__file__).parent.parent / "test_modules" / "The Dark Ranger's Treasure.mod"
 
 

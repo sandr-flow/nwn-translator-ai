@@ -19,6 +19,7 @@ class ExtractedContent:
         source_file: Path to source file
         metadata: Additional metadata about the extraction
     """
+
     content_type: str
     items: List["TranslatableItem"]
     source_file: Path
@@ -44,6 +45,7 @@ class TranslatableItem:
         location: Location information (e.g., dialog node ID)
         metadata: Additional metadata
     """
+
     text: str
     context: Optional[str] = None
     item_id: Optional[str] = None
@@ -71,6 +73,7 @@ class DialogNode:
         replies: List of replies (for entries) or next entries (for replies)
         metadata: Additional metadata
     """
+
     node_id: int
     text: str
     speaker: Optional[str] = None
@@ -133,19 +136,11 @@ class BaseExtractor(ABC):
         """
         pass
 
-    def _extract_text_from_local_string(
-        self,
-        text_data: Dict[str, Any]
-    ) -> Optional[str]:
+    def _extract_text_from_local_string(self, text_data: Dict[str, Any]) -> Optional[str]:
         """Delegate to module-level :func:`extract_local_string`."""
         return extract_local_string(text_data)
 
-    def _safe_get(
-        self,
-        data: Dict[str, Any],
-        key: str,
-        default: Any = None
-    ) -> Any:
+    def _safe_get(self, data: Dict[str, Any], key: str, default: Any = None) -> Any:
         """Safely get a value from a dictionary.
 
         Args:
@@ -158,11 +153,7 @@ class BaseExtractor(ABC):
         """
         return data.get(key, default) if isinstance(data, dict) else default
 
-    def _get_list_value(
-        self,
-        data: Dict[str, Any],
-        key: str
-    ) -> List[Any]:
+    def _get_list_value(self, data: Dict[str, Any], key: str) -> List[Any]:
         """Get a list value from dictionary, returning empty list if not found.
 
         Args:

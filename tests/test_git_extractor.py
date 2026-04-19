@@ -228,7 +228,8 @@ def test_git_extractor_collects_area_floor_items():
     by_text = {item.text: item.metadata.get("type") for item in result.items}
     assert by_text.get("Dragon Bones") == "item_name"
     assert any(
-        item.text.startswith("Yellowed with age") and item.metadata.get("type") == "item_description"
+        item.text.startswith("Yellowed with age")
+        and item.metadata.get("type") == "item_description"
         for item in result.items
     )
     # Empty values on the engine-default entry must not emit TranslatableItems.

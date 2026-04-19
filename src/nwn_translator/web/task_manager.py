@@ -207,13 +207,13 @@ class TaskManager:
     # non-dialog and dialog translations); ``translating`` is kept as a brief
     # sentinel that marks entry into Phase B.
     _PHASE_WEIGHTS = {
-        "extracting":        (0.0,  0.03),
-        "scanning":          (0.03, 0.08),
-        "extracting_content":(0.08, 0.12),
-        "translating":       (0.12, 0.14),
-        "translating_item":  (0.14, 0.88),
-        "injecting":         (0.88, 0.96),
-        "building":          (0.96, 1.0),
+        "extracting": (0.0, 0.03),
+        "scanning": (0.03, 0.08),
+        "extracting_content": (0.08, 0.12),
+        "translating": (0.12, 0.14),
+        "translating_item": (0.14, 0.88),
+        "injecting": (0.88, 0.96),
+        "building": (0.96, 1.0),
     }
 
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
@@ -222,6 +222,7 @@ class TaskManager:
         Progress is weighted across phases and guaranteed to be monotonically
         increasing so the progress bar never jumps backwards.
         """
+
         def callback(
             phase: str,
             current: int,
@@ -229,7 +230,11 @@ class TaskManager:
             message: Optional[str] = None,
         ) -> None:
             task.phase = phase
-            task.status = phase if phase in ("extracting", "scanning", "translating", "building") else task.status
+            task.status = (
+                phase
+                if phase in ("extracting", "scanning", "translating", "building")
+                else task.status
+            )
             task.current_file = message
 
             start, end = self._PHASE_WEIGHTS.get(phase, (0.0, 1.0))

@@ -44,6 +44,7 @@ _HEADER_SIZE = 160
 
 class GFFWriteError(Exception):
     """Exception raised for GFF write errors."""
+
     pass
 
 
@@ -93,13 +94,13 @@ class GFFWriter:
         self._file_type: bytes = padded.encode("ascii")
 
         # Build tables incrementally
-        self._structs:       List[bytes] = []   # 12-byte records
-        self._fields:        List[bytes] = []   # 12-byte records
-        self._labels:        List[bytes] = []   # 16-byte records per label
-        self._label_index:   Dict[str, int] = {}
-        self._field_data:    bytearray = bytearray()
+        self._structs: List[bytes] = []  # 12-byte records
+        self._fields: List[bytes] = []  # 12-byte records
+        self._labels: List[bytes] = []  # 16-byte records per label
+        self._label_index: Dict[str, int] = {}
+        self._field_data: bytearray = bytearray()
         self._field_indices: bytearray = bytearray()  # DWORD array
-        self._list_indices:  bytearray = bytearray()  # DWORD arrays
+        self._list_indices: bytearray = bytearray()  # DWORD arrays
 
     # ------------------------------------------------------------------
     # Public API
@@ -154,25 +155,25 @@ class GFFWriter:
         self._emit_struct(root_fields, struct_id=0xFFFFFFFF)
 
         # Step 2: calculate section offsets.
-        struct_count   = len(self._structs)
-        field_count    = len(self._fields)
-        label_count    = len(self._labels)
-        fd_size        = len(self._field_data)
-        fi_size        = len(self._field_indices)
-        li_size        = len(self._list_indices)
+        struct_count = len(self._structs)
+        field_count = len(self._fields)
+        label_count = len(self._labels)
+        fd_size = len(self._field_data)
+        fi_size = len(self._field_indices)
+        li_size = len(self._list_indices)
 
-        struct_offset      = _HEADER_SIZE
-        field_offset       = struct_offset  + struct_count * 12
-        label_offset       = field_offset   + field_count  * 12
-        field_data_offset  = label_offset   + label_count  * 16
+        struct_offset = _HEADER_SIZE
+        field_offset = struct_offset + struct_count * 12
+        label_offset = field_offset + field_count * 12
+        field_data_offset = label_offset + label_count * 16
         field_indices_offset = field_data_offset + fd_size
-        list_indices_offset  = field_indices_offset + fi_size
+        list_indices_offset = field_indices_offset + fi_size
 
         # Step 3: assemble header.
         header = bytearray(_HEADER_SIZE)
-        header[0:4]   = self._file_type
-        header[4:8]   = b"V3.2"
-        _wi(header,  8, struct_offset)
+        header[0:4] = self._file_type
+        header[4:8] = b"V3.2"
+        _wi(header, 8, struct_offset)
         _wi(header, 12, struct_count)
         _wi(header, 16, field_offset)
         _wi(header, 20, field_count)
@@ -290,7 +291,9 @@ class GFFWriter:
     # Value encoding
     # ------------------------------------------------------------------
 
-    def _encode_value(self, label: str, value: Any, explicit_type: Optional[int] = None) -> Tuple[GFFType, int]:
+    def _encode_value(
+        self, label: str, value: Any, explicit_type: Optional[int] = None
+    ) -> Tuple[GFFType, int]:
         """Determine GFF type and DataOrDataOffset for a Python value.
 
         The type is inferred from `explicit_type` if provided, otherwise heuristically.
@@ -307,7 +310,9 @@ class GFFWriter:
             try:
                 gff_type = GFFType(explicit_type)
                 if gff_type == GFFType.CExoLocString:
-                    return gff_type, self._encode_locstring(value if isinstance(value, dict) else {"StrRef": -1, "Value": str(value)})
+                    return gff_type, self._encode_locstring(
+                        value if isinstance(value, dict) else {"StrRef": -1, "Value": str(value)}
+                    )
                 elif gff_type == GFFType.Struct:
                     return gff_type, self._emit_struct(value, struct_id=0)
                 elif gff_type == GFFType.List:
@@ -317,13 +322,15 @@ class GFFWriter:
                 elif gff_type == GFFType.CExoString:
                     return gff_type, self._encode_exostring(str(value))
                 elif gff_type in (GFFType.BYTE, GFFType.CHAR):
-                    return gff_type, int(value) & 0xFF if not isinstance(value, str) else ord(value[0])
+                    return gff_type, (
+                        int(value) & 0xFF if not isinstance(value, str) else ord(value[0])
+                    )
                 elif gff_type in (GFFType.WORD, GFFType.SHORT):
                     return gff_type, int(value) & 0xFFFF
                 elif gff_type == GFFType.DWORD:
                     return gff_type, int(value) & 0xFFFFFFFF
                 elif gff_type == GFFType.INT:
-                    packed = _struct.pack("<i", max(-2**31, min(int(value), 2**31-1)))
+                    packed = _struct.pack("<i", max(-(2**31), min(int(value), 2**31 - 1)))
                     return gff_type, _struct.unpack("<I", packed)[0]
                 elif gff_type == GFFType.DWORD64:
                     return gff_type, self._encode_int64(int(value), signed=False)
@@ -339,7 +346,9 @@ class GFFWriter:
                 elif gff_type == GFFType.VOID:
                     return gff_type, self._encode_void(value if isinstance(value, bytes) else b"")
             except Exception as e:
-                logger.warning("Failed to encode explicit type %s for label '%s': %s", explicit_type, label, e)
+                logger.warning(
+                    "Failed to encode explicit type %s for label '%s': %s", explicit_type, label, e
+                )
 
         # --- dict → CExoLocString or nested Struct ---
         if isinstance(value, dict):
@@ -368,7 +377,7 @@ class GFFWriter:
         if isinstance(value, int):
             if value < 0:
                 # Store as INT (signed 32-bit); pack as unsigned for the field
-                packed = _struct.pack("<i", max(-2**31, value))
+                packed = _struct.pack("<i", max(-(2**31), value))
                 data_or_offset = _struct.unpack("<I", packed)[0]
                 return GFFType.INT, data_or_offset
             # Unsigned; if > 32-bit store as DWORD64 in field data
@@ -387,8 +396,11 @@ class GFFWriter:
             return GFFType.VOID, self._encode_void(value)
 
         # --- fallback: convert to string ---
-        logger.warning("GFFWriter: unknown value type %s for label '%s', storing as CExoString",
-                       type(value).__name__, label)
+        logger.warning(
+            "GFFWriter: unknown value type %s for label '%s', storing as CExoString",
+            type(value).__name__,
+            label,
+        )
         return GFFType.CExoString, self._encode_exostring(str(value))
 
     # ------------------------------------------------------------------
@@ -439,7 +451,7 @@ class GFFWriter:
             Byte offset into ``self._field_data``.
         """
         str_ref = int(loc.get("StrRef", -1))
-        text    = loc.get("Value", "") or ""
+        text = loc.get("Value", "") or ""
         encoded = text.encode("utf-8") if text else b""
 
         substring_count = 1 if encoded else 0
@@ -448,14 +460,14 @@ class GFFWriter:
         total_size = 4 + 4 + (8 + len(encoded)) * substring_count
 
         offset = len(self._field_data)
-        self._field_data += _struct.pack("<I", total_size)          # TotalSize
-        self._field_data += _struct.pack("<i", str_ref)             # StrRef (signed)
-        self._field_data += _struct.pack("<I", substring_count)     # SubStringCount
+        self._field_data += _struct.pack("<I", total_size)  # TotalSize
+        self._field_data += _struct.pack("<i", str_ref)  # StrRef (signed)
+        self._field_data += _struct.pack("<I", substring_count)  # SubStringCount
 
         if encoded:
-            self._field_data += _struct.pack("<I", 0)               # LanguageID = 0 (English)
-            self._field_data += _struct.pack("<I", len(encoded))    # Length
-            self._field_data += encoded                             # String bytes
+            self._field_data += _struct.pack("<I", 0)  # LanguageID = 0 (English)
+            self._field_data += _struct.pack("<I", len(encoded))  # Length
+            self._field_data += encoded  # String bytes
 
         return offset
 
@@ -541,6 +553,7 @@ class GFFWriter:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
 
 def _wi(buf: bytearray, offset: int, value: int) -> None:
     """Write a little-endian DWORD into *buf* at *offset* in-place.

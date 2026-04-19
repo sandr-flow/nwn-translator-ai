@@ -112,8 +112,9 @@ def _npc_possessive_hint(
     for name_lower, gend in npc_index.items():
         needle = name_lower + "'s"
         if needle in text.lower():
-            original_name = text[text.lower().index(name_lower):
-                                 text.lower().index(name_lower) + len(name_lower)]
+            original_name = text[
+                text.lower().index(name_lower) : text.lower().index(name_lower) + len(name_lower)
+            ]
             return f" (contains possessive of NPC '{original_name}', gender: {gend})"
     return ""
 
@@ -179,7 +180,7 @@ def _build_instance_context(
             return (
                 "Generic trigger name. Often retrieved by scripts via "
                 "GetLocalizedName() and shown to the player as floating text / "
-                "SpeakString when crossing the trigger. Quoted text in \"…\" is an "
+                'SpeakString when crossing the trigger. Quoted text in "…" is an '
                 "NPC one-liner; bracketed text in […] is an internal thought / "
                 "narrator comment — preserve the surrounding punctuation."
             )
@@ -230,15 +231,9 @@ def _build_area_item_context(
 
     if field_name == "DescIdentified":
         if bi and item_name:
-            return (
-                f"Identified description of {bi} '{item_name}' "
-                "(placed on the area floor)"
-            )
+            return f"Identified description of {bi} '{item_name}' " "(placed on the area floor)"
         if item_name:
-            return (
-                f"Item identified description for '{item_name}' "
-                "(placed on the area floor)"
-            )
+            return f"Item identified description for '{item_name}' " "(placed on the area floor)"
         return "Item identified description (placed on the area floor)"
 
     return f"Area floor item field ({field_name})"
@@ -302,9 +297,7 @@ class GitExtractor(BaseExtractor):
                     file_path,
                     meta_type=meta_type,
                     context=ctx_label,
-                    item_id=(
-                        f"{stem}_StoreList_{inst_idx}_{path_suffix}_il{j}_{inv_field}"
-                    ),
+                    item_id=(f"{stem}_StoreList_{inst_idx}_{path_suffix}_il{j}_{inv_field}"),
                     items=items,
                 )
         children = store_node.get("StoreList", [])
@@ -367,9 +360,7 @@ class GitExtractor(BaseExtractor):
                     continue
                 for field_name in field_names:
                     meta_type = _meta_type_for_instance_field(list_key, field_name)
-                    ctx_label = _build_instance_context(
-                        list_key, field_name, instance, npc_index
-                    )
+                    ctx_label = _build_instance_context(list_key, field_name, instance, npc_index)
                     self._append_loc_string_item(
                         instance,
                         field_name,
@@ -391,9 +382,7 @@ class GitExtractor(BaseExtractor):
                         ):
                             for inv_field in ITEM_INVENTORY_FIELDS:
                                 meta_type = _meta_type_for_inventory_field(inv_field)
-                                ctx_label = _build_inventory_context(
-                                    inv_field, inv_item
-                                )
+                                ctx_label = _build_inventory_context(inv_field, inv_item)
                                 self._append_loc_string_item(
                                     inv_item,
                                     inv_field,
@@ -417,9 +406,7 @@ class GitExtractor(BaseExtractor):
                     file_path,
                     meta_type=meta_type,
                     context=ctx_label,
-                    item_id=(
-                        f"{stem}_{AREA_ITEM_LIST_KEY}_{area_idx}_{area_field}"
-                    ),
+                    item_id=(f"{stem}_{AREA_ITEM_LIST_KEY}_{area_idx}_{area_field}"),
                     items=items,
                 )
 

@@ -34,11 +34,7 @@ class DialogExtractor(BaseExtractor):
         """Check if this extractor can handle the given file type."""
         return file_type.lower() in self.SUPPORTED_TYPES
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any]
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract dialog content from a .dlg file.
 
         Produces one TranslatableItem per dialog node (entry or reply) that
@@ -58,7 +54,7 @@ class DialogExtractor(BaseExtractor):
         stem = file_path.stem
 
         record_offsets = parsed_data.get("_record_offsets", {})
-        
+
         # Extract all entry texts
         for i, entry in enumerate(entry_list):
             if not isinstance(entry, dict):
@@ -67,18 +63,28 @@ class DialogExtractor(BaseExtractor):
             if not text:
                 continue
             speaker = entry.get("Speaker", "")
-            items.append(TranslatableItem(
-                text=text,
-                context=f"Dialog line in {stem}.dlg (speaker: {speaker})" if speaker else f"NPC dialog line in {stem}.dlg",
-                item_id=f"{stem}:entry:{i}",
-                location=str(file_path),
-                metadata={
-                    "type": "entry",
-                    "index": i,
-                    "speaker": speaker,
-                    "record_offset": entry.get("_record_offsets", {}).get("Text", 0) if isinstance(entry.get("_record_offsets"), dict) else 0,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=text,
+                    context=(
+                        f"Dialog line in {stem}.dlg (speaker: {speaker})"
+                        if speaker
+                        else f"NPC dialog line in {stem}.dlg"
+                    ),
+                    item_id=f"{stem}:entry:{i}",
+                    location=str(file_path),
+                    metadata={
+                        "type": "entry",
+                        "index": i,
+                        "speaker": speaker,
+                        "record_offset": (
+                            entry.get("_record_offsets", {}).get("Text", 0)
+                            if isinstance(entry.get("_record_offsets"), dict)
+                            else 0
+                        ),
+                    },
+                )
+            )
 
         # Extract all reply texts
         for i, reply in enumerate(reply_list):
@@ -87,17 +93,23 @@ class DialogExtractor(BaseExtractor):
             text = self._extract_text_from_local_string(reply.get("Text", {}))
             if not text:
                 continue
-            items.append(TranslatableItem(
-                text=text,
-                context=f"Player reply in {stem}.dlg",
-                item_id=f"{stem}:reply:{i}",
-                location=str(file_path),
-                metadata={
-                    "type": "reply",
-                    "index": i,
-                    "record_offset": reply.get("_record_offsets", {}).get("Text", 0) if isinstance(reply.get("_record_offsets"), dict) else 0,
-                }
-            ))
+            items.append(
+                TranslatableItem(
+                    text=text,
+                    context=f"Player reply in {stem}.dlg",
+                    item_id=f"{stem}:reply:{i}",
+                    location=str(file_path),
+                    metadata={
+                        "type": "reply",
+                        "index": i,
+                        "record_offset": (
+                            reply.get("_record_offsets", {}).get("Text", 0)
+                            if isinstance(reply.get("_record_offsets"), dict)
+                            else 0
+                        ),
+                    },
+                )
+            )
 
         return ExtractedContent(
             content_type="dialog",
@@ -107,7 +119,7 @@ class DialogExtractor(BaseExtractor):
                 "entry_count": len(entry_list),
                 "reply_count": len(reply_list),
                 "text_node_count": len(items),
-            }
+            },
         )
 
     def build_dialog_tree(self, parsed_data: Dict[str, Any]) -> List[DialogNode]:
@@ -183,7 +195,7 @@ class DialogExtractor(BaseExtractor):
         )
 
         # Each entry has a RepliesList of link structs: {Index: <reply_index>, ...}
-        for link in (entry_data.get("RepliesList") or []):
+        for link in entry_data.get("RepliesList") or []:
             if not isinstance(link, dict):
                 continue
             reply_idx = link.get("Index")
@@ -224,7 +236,7 @@ class DialogExtractor(BaseExtractor):
         )
 
         # Each reply has an EntriesList of link structs: {Index: <entry_index>, ...}
-        for link in (reply_data.get("EntriesList") or []):
+        for link in reply_data.get("EntriesList") or []:
             if not isinstance(link, dict):
                 continue
             entry_idx = link.get("Index")

@@ -91,23 +91,23 @@ JUMP_OPCODES = frozenset({OP_JMP, OP_JSR, OP_JZ, OP_JNZ})
 # Most opcodes have 0 extra bytes (header-only = 2 bytes total).
 # This dict lists exceptions.
 _OPCODE_ARG_SIZES: Dict[int, int] = {
-    OP_CPDOWNSP: 4,       # int32: stack offset + size
-    OP_CPTOPSP: 4,        # int32: stack offset + size
-    OP_ACTION: 3,         # uint16 routine number + uint8 arg count
-    OP_MOVSP: 4,          # int32: displacement
-    OP_STORE_STATEALL: 4, # int32 (obsolete, but may appear)
-    OP_JMP: 4,            # int32: relative offset
-    OP_JSR: 4,            # int32: relative offset
-    OP_JZ: 4,             # int32: relative offset
-    OP_DESTRUCT: 6,       # int16 + int16 + int16
-    OP_DECISP: 4,         # int32
-    OP_INCISP: 4,         # int32
-    OP_JNZ: 4,            # int32: relative offset
-    OP_CPDOWNBP: 4,       # int32
-    OP_CPTOPBP: 4,        # int32
-    OP_DECIBP: 4,         # int32
-    OP_INCIBP: 4,         # int32
-    OP_STORE_STATE: 8,    # int32 BP size + int32 stack size
+    OP_CPDOWNSP: 4,  # int32: stack offset + size
+    OP_CPTOPSP: 4,  # int32: stack offset + size
+    OP_ACTION: 3,  # uint16 routine number + uint8 arg count
+    OP_MOVSP: 4,  # int32: displacement
+    OP_STORE_STATEALL: 4,  # int32 (obsolete, but may appear)
+    OP_JMP: 4,  # int32: relative offset
+    OP_JSR: 4,  # int32: relative offset
+    OP_JZ: 4,  # int32: relative offset
+    OP_DESTRUCT: 6,  # int16 + int16 + int16
+    OP_DECISP: 4,  # int32
+    OP_INCISP: 4,  # int32
+    OP_JNZ: 4,  # int32: relative offset
+    OP_CPDOWNBP: 4,  # int32
+    OP_CPTOPBP: 4,  # int32
+    OP_DECIBP: 4,  # int32
+    OP_INCIBP: 4,  # int32
+    OP_STORE_STATE: 8,  # int32 BP size + int32 stack size
 }
 
 # CONST arg sizes by type qualifier (TYPE_STRING is variable-length)
@@ -123,20 +123,21 @@ _CONST_ARG_SIZES: Dict[int, int] = {
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class NCSInstruction:
     """A single parsed NCS bytecode instruction."""
 
-    offset: int         # absolute byte offset from file start
-    opcode: int         # 1-byte opcode
-    type_byte: int      # 1-byte type qualifier
-    size: int           # total instruction size in bytes
-    args: bytes         # raw argument bytes (after opcode+type)
+    offset: int  # absolute byte offset from file start
+    opcode: int  # 1-byte opcode
+    type_byte: int  # 1-byte type qualifier
+    size: int  # total instruction size in bytes
+    args: bytes  # raw argument bytes (after opcode+type)
 
     # Convenience fields populated during parsing:
-    string_value: Optional[str] = None   # decoded string for CONSTS
-    jump_offset: Optional[int] = None    # signed int32 for jump opcodes
-    action_routine: Optional[int] = None # routine number for ACTION opcode
+    string_value: Optional[str] = None  # decoded string for CONSTS
+    jump_offset: Optional[int] = None  # signed int32 for jump opcodes
+    action_routine: Optional[int] = None  # routine number for ACTION opcode
     action_arg_count: Optional[int] = None
 
     @property
@@ -159,9 +160,9 @@ class NCSInstruction:
 class NCSFile:
     """Parsed NCS script file."""
 
-    header: bytes                       # raw 8-byte header
+    header: bytes  # raw 8-byte header
     instructions: List[NCSInstruction]  # ordered list of all instructions
-    raw_bytes: bytearray                # complete file contents
+    raw_bytes: bytearray  # complete file contents
 
     @property
     def string_constants(self) -> List[NCSInstruction]:
@@ -311,9 +312,7 @@ def parse_ncs_bytes(raw: bytes) -> NCSFile:
 
     header = raw[:NCS_HEADER_SIZE]
     if header != NCS_HEADER:
-        raise NCSParseError(
-            f"Invalid NCS header: expected {NCS_HEADER!r}, got {header!r}"
-        )
+        raise NCSParseError(f"Invalid NCS header: expected {NCS_HEADER!r}, got {header!r}")
 
     data = bytearray(raw)
     instructions: List[NCSInstruction] = []

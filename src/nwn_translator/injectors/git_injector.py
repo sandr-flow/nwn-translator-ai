@@ -20,11 +20,11 @@ logger = logging.getLogger(__name__)
 # Also matches CamelCase identifiers with no spaces (e.g. "NW_YOURTAGHERE").
 _INTERNAL_TAG_RE = re.compile(
     r"^(?:"
-    r"WP_?\w*"        # WP, WP_, WPBasement, WP_Spawn …
-    r"|DST_\w*"       # DST_Tunnel …
-    r"|POST_\w*"      # POST_Guard …
-    r"|NW_\w*"        # NW_ engine prefixes
-    r"|YOURTAGHERE"   # placeholder tags from Bioware templates
+    r"WP_?\w*"  # WP, WP_, WPBasement, WP_Spawn …
+    r"|DST_\w*"  # DST_Tunnel …
+    r"|POST_\w*"  # POST_Guard …
+    r"|NW_\w*"  # NW_ engine prefixes
+    r"|YOURTAGHERE"  # placeholder tags from Bioware templates
     r")$",
     re.IGNORECASE,
 )
@@ -107,15 +107,11 @@ def _collect_patches_from_store_tree(
         return total
     for child in children:
         if isinstance(child, dict):
-            total += _collect_patches_from_store_tree(
-                child, translations, git_basename, patches
-            )
+            total += _collect_patches_from_store_tree(child, translations, git_basename, patches)
     return total
 
 
-def _iter_nested_item_entries(
-    instance: Dict[str, Any], nested_key: str
-) -> List[Dict[str, Any]]:
+def _iter_nested_item_entries(instance: Dict[str, Any], nested_key: str) -> List[Dict[str, Any]]:
     """Return dict entries from a nested item list field of an instance struct.
 
     Args:
@@ -198,13 +194,9 @@ def collect_git_strings_missing_from_translations(
         for instance in instances:
             if not isinstance(instance, dict):
                 continue
-            _add_string_values_from_fields(
-                instance, field_names, found, existing_translations
-            )
+            _add_string_values_from_fields(instance, field_names, found, existing_translations)
             if list_key == "StoreList":
-                _collect_strings_from_store_tree(
-                    instance, found, existing_translations
-                )
+                _collect_strings_from_store_tree(instance, found, existing_translations)
             else:
                 for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(list_key, []):
                     for inv_item in _iter_nested_item_entries(instance, nested_key):
@@ -216,9 +208,7 @@ def collect_git_strings_missing_from_translations(
                         )
 
     for area_item in _iter_area_item_entries(parsed_data):
-        _add_string_values_from_fields(
-            area_item, AREA_ITEM_FIELDS, found, existing_translations
-        )
+        _add_string_values_from_fields(area_item, AREA_ITEM_FIELDS, found, existing_translations)
 
     return found
 

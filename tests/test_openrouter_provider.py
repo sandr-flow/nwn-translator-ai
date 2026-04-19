@@ -11,7 +11,6 @@ from src.nwn_translator.ai_providers.openrouter_provider import (
 )
 from src.nwn_translator.ai_providers.base import TranslationItem, RateLimitError
 
-
 FAKE_KEY = "sk-or-v1-test1234"
 
 
@@ -44,18 +43,14 @@ class TestOpenRouterProviderInit:
 
     def test_base_url_passed_to_client(self):
         """OpenAI client must be created with OpenRouter base_url."""
-        with patch(
-            "src.nwn_translator.ai_providers.openrouter_provider.OpenAI"
-        ) as mock_openai_cls:
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI") as mock_openai_cls:
             OpenRouterProvider(api_key=FAKE_KEY)
         call_kwargs = mock_openai_cls.call_args.kwargs
         assert call_kwargs["base_url"] == "https://openrouter.ai/api/v1"
 
     def test_http_referer_header_present(self):
         """HTTP-Referer header must be forwarded to the OpenAI client."""
-        with patch(
-            "src.nwn_translator.ai_providers.openrouter_provider.OpenAI"
-        ) as mock_openai_cls:
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI") as mock_openai_cls:
             OpenRouterProvider(api_key=FAKE_KEY)
         headers = mock_openai_cls.call_args.kwargs.get("default_headers", {})
         assert "HTTP-Referer" in headers
@@ -63,6 +58,7 @@ class TestOpenRouterProviderInit:
     def test_missing_api_key_raises(self):
         """Empty API key must raise ProviderError."""
         from src.nwn_translator.ai_providers.base import ProviderError
+
         with pytest.raises(ProviderError):
             OpenRouterProvider(api_key="")
 

@@ -17,15 +17,14 @@ from ..file_handlers.ncs_parser import (
     TYPE_STRING,
 )
 
-
 # ---------------------------------------------------------------------------
 # Engine function numbers for context-based classification
 # ---------------------------------------------------------------------------
 
 # ACTION routines whose *string* argument is shown to the player.
 PLAYER_FACING_ACTIONS: Set[int] = {
-    39,   # SpeakString (classic NWN)
-    40,   # ActionSpeakString
+    39,  # SpeakString (classic NWN)
+    40,  # ActionSpeakString
     169,  # ActionSpeakStringByStrRef (has string variant too)
     221,  # SpeakString (NWN:EE / some compilers — same role as 39)
     284,  # SetCustomToken
@@ -38,21 +37,21 @@ PLAYER_FACING_ACTIONS: Set[int] = {
 
 # ACTION routines whose string argument is an internal identifier.
 NON_PLAYER_ACTIONS: Set[int] = {
-    1,    # PrintString (server log / DM console, not player screen)
-    8,    # ExecuteScript
-    13,   # SetLocalString (var name)
-    14,   # SetLocalInt (var name)
-    15,   # SetLocalFloat (var name)
-    16,   # SetLocalObject (var name)
-    17,   # SetLocalLocation (var name)
-    29,   # GetLocalString (var name)
-    30,   # GetLocalInt (var name)
-    31,   # GetLocalFloat (var name)
-    32,   # GetLocalObject (var name)
-    33,   # GetLocalLocation (var name)
-    45,   # PlaySound
-    46,   # GetObjectByTag
-    57,   # GetWaypointByTag
+    1,  # PrintString (server log / DM console, not player screen)
+    8,  # ExecuteScript
+    13,  # SetLocalString (var name)
+    14,  # SetLocalInt (var name)
+    15,  # SetLocalFloat (var name)
+    16,  # SetLocalObject (var name)
+    17,  # SetLocalLocation (var name)
+    29,  # GetLocalString (var name)
+    30,  # GetLocalInt (var name)
+    31,  # GetLocalFloat (var name)
+    32,  # GetLocalObject (var name)
+    33,  # GetLocalLocation (var name)
+    45,  # PlaySound
+    46,  # GetObjectByTag
+    57,  # GetWaypointByTag
     165,  # CreateObject (resref)
     173,  # EffectVisualEffect  # not string, but sometimes confused
     200,  # GetObjectByTag (alt number)
@@ -81,8 +80,19 @@ _RE_RESREF = re.compile(r"^[a-zA-Z0-9_]{1,16}$")  # max 16 chars, no spaces
 
 # Known non-translatable prefixes (script names, system identifiers)
 _SKIP_PREFIXES = (
-    "nw_", "x0_", "x2_", "x3_", "k_act_", "k_def_", "k_hb_",
-    "nwnx_", "dmfi_", "aps_", "hc_", "zep_", "prc_",
+    "nw_",
+    "x0_",
+    "x2_",
+    "x3_",
+    "k_act_",
+    "k_def_",
+    "k_hb_",
+    "nwnx_",
+    "dmfi_",
+    "aps_",
+    "hc_",
+    "zep_",
+    "prc_",
 )
 
 
@@ -136,10 +146,16 @@ def _is_definitely_not_translatable(text: str) -> bool:
         return True
 
     # Developer / debug error messages
-    if any(phrase in lower for phrase in (
-        "report as bug", "report this bug", "please report",
-        "debug string", "error:",
-    )):
+    if any(
+        phrase in lower
+        for phrase in (
+            "report as bug",
+            "report this bug",
+            "please report",
+            "debug string",
+            "error:",
+        )
+    ):
         return True
 
     # ALL-CAPS debug shouts — only letter-only tokens, so normal dialogue with
@@ -228,14 +244,19 @@ def _action_name(routine: int) -> str:
 
 # Functions whose string argument is player-visible
 _NSS_PLAYER_FUNCS = (
-    "SpeakString", "ActionSpeakString", "SendMessageToPC",
-    "FloatingTextStringOnCreature", "SetCustomToken",
-    "SpeakOneLinerConversation", "SetDescription",
+    "SpeakString",
+    "ActionSpeakString",
+    "SendMessageToPC",
+    "FloatingTextStringOnCreature",
+    "SetCustomToken",
+    "SpeakOneLinerConversation",
+    "SetDescription",
 )
 
 # Functions whose string argument is debug / internal
 _NSS_DEBUG_FUNCS = (
-    "PrintString", "SendMessageToAllDMs",
+    "PrintString",
+    "SendMessageToAllDMs",
 )
 
 
@@ -354,10 +375,7 @@ class NcsExtractor(BaseExtractor):
                 confidence = "high"
             elif action_class is None and (
                 _is_likely_translatable(text)
-                or (
-                    _contains_code_identifiers(text)
-                    and len(text.split()) >= 2
-                )
+                or (_contains_code_identifiers(text) and len(text.split()) >= 2)
             ):
                 # Unclear bytecode context — require LLM gate before translate
                 if _contains_code_identifiers(text):

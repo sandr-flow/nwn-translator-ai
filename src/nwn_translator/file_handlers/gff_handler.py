@@ -14,6 +14,7 @@ from .tlk_reader import TLKFile, TLKEntry
 
 class GFFHandlerError(Exception):
     """Exception raised for GFF handling errors."""
+
     pass
 
 
@@ -137,7 +138,6 @@ class GFFHandler:
             raise GFFHandlerError(f"Failed to write GFF file {file_path}: {e}") from e
         except Exception as e:
             raise GFFHandlerError(f"Failed to write GFF file {file_path}: {e}") from e
-
 
 
 # Convenience functions for common operations

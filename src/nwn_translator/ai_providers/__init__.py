@@ -18,11 +18,10 @@ from .base import (
 from .openrouter_provider import OpenRouterProvider
 from .polza_provider import PolzaProvider
 
-
 #: Order matters: first matching prefix wins.
 _PROVIDER_BY_PREFIX: Dict[str, Type[OpenRouterProvider]] = {
     "sk-or-": OpenRouterProvider,
-    "pza":    PolzaProvider,
+    "pza": PolzaProvider,
 }
 
 #: Fallback when the key matches no known prefix.

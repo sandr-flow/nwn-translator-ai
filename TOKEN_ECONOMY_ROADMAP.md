@@ -4,23 +4,25 @@
 `prompts/_builder.py`, `ai_providers/base.py`, `ai_providers/openrouter_provider.py`,
 `translators/context_translator.py`, `config.py`.
 
-## Фаза 2 — сокращение промпта (provider-agnostic)
+Фаза 2 (provider-agnostic сокращение промпта) — **done**. Сделанное:
 
-1. **Фильтр глоссария по батчу.** `Glossary.to_prompt_block()` принимает набор
-   текстов батча и отдаёт только те entries, чьи имена встречаются
-   (case-insensitive, whole-word). Полный блок остаётся для диалогов.
-   Точки: `glossary.py:53-65`, вызовы в `translation_manager.py:463` и
-   `openrouter_provider.translate*`. Блок должен оставаться в **variable**-части,
-   stable-префикс не трогать.
+1. **Фильтр глоссария по батчу.** `Glossary.to_prompt_block(texts=...)` отдаёт
+   только entries, имена которых встречаются в текстах батча (whole-word,
+   case-insensitive). Реализация: `glossary.py:53-97`. Точки вызова:
+   `translation_manager._glossary_block_for_texts` (индивидуальные и батчевые
+   запросы). Блок живёт в variable-части, stable-префикс не меняется.
+   Регрессии: `tests/test_glossary_filter.py`.
 
 2. **Dedup коротких items по sanitized внутри батча.** В `batch_one`
-   (`translation_manager.py:447`) группировать повторяющиеся sanitized-тексты,
-   отправлять по разу, результат размножать по индексам. Актуально для `.git`
-   и tag-имён.
+   (`translation_manager.py`) повторяющиеся sanitized-тексты сворачиваются в
+   одну entry API-payload'а, результат размножается по индексам исходного
+   батча. Регрессия: `tests/test_translation_manager.py::TestBatchDedupBySanitized`.
 
-3. **Skip non-translatable после sanitize.** Если sanitized-текст после снятия
-   `<<TOKEN_*>>`, NWN-тегов и пунктуации пустой — возвращать оригинал без вызова
-   API. Guard в `translation_manager._translate_uncached_concurrent`.
+3. **Skip non-translatable после sanitize.** `_is_empty_after_sanitize` +
+   `_apply_passthrough` короткозамыкают строки, превратившиеся после снятия
+   `<<TOKEN_*>>`/NWN-тегов в пунктуацию/пустоту: оригинал кэшируется и
+   возвращается без вызова API. Регрессия:
+   `tests/test_translation_manager.py::TestPassthroughEmptyAfterSanitize`.
 
 ## Фаза 3 — тонкая настройка (требует A/B)
 

@@ -44,6 +44,7 @@ _RES_ENTRY_SIZE = 8
 
 class ERFWriterError(Exception):
     """Exception raised for ERF writing errors."""
+
     pass
 
 
@@ -71,10 +72,10 @@ class ERFWriter:
     }
 
     def __init__(
-        self, 
-        output_path: Path, 
+        self,
+        output_path: Path,
         version: str = "V1.0",
-        type_overrides: Optional[Dict[str, int]] = None
+        type_overrides: Optional[Dict[str, int]] = None,
     ):
         """Initialize ERF writer.
 
@@ -147,8 +148,12 @@ class ERFWriter:
             raise ERFWriterError(f"Failed to build ERF: {exc}") from exc
 
         self.output_path.write_bytes(binary)
-        logger.info("ERF archive written: %s (%d bytes, %d resources)",
-                    self.output_path, len(binary), len(self._resources))
+        logger.info(
+            "ERF archive written: %s (%d bytes, %d resources)",
+            self.output_path,
+            len(binary),
+            len(self._resources),
+        )
 
     # ------------------------------------------------------------------
     # Internal build
@@ -164,21 +169,21 @@ class ERFWriter:
         entry_count = len(sorted_resources)
 
         # ── 1. Calculate section offsets ──────────────────────────────
-        key_list_offset      = _HEADER_SIZE
+        key_list_offset = _HEADER_SIZE
         resource_list_offset = key_list_offset + entry_count * _KEY_ENTRY_SIZE
         resource_data_offset = resource_list_offset + entry_count * _RES_ENTRY_SIZE
 
         # ── 2. Build Key List and Resource List in parallel ────────────
-        key_list_bytes  = bytearray()
-        res_list_bytes  = bytearray()
+        key_list_bytes = bytearray()
+        res_list_bytes = bytearray()
         res_data_parts: List[bytes] = []
 
         current_data_offset = resource_data_offset
 
         for res_id, (filename, data) in enumerate(sorted_resources):
-            stem   = Path(filename).stem
+            stem = Path(filename).stem
             suffix = Path(filename).suffix.lower()
-            
+
             # Prefer the explicit override if we have it from the original mod
             if filename in self.type_overrides:
                 res_type_id = self.type_overrides[filename]
@@ -202,12 +207,14 @@ class ERFWriter:
         )
 
         # ── 4. Assemble ───────────────────────────────────────────────
-        return b"".join([
-            header,
-            bytes(key_list_bytes),
-            bytes(res_list_bytes),
-            *res_data_parts,
-        ])
+        return b"".join(
+            [
+                header,
+                bytes(key_list_bytes),
+                bytes(res_list_bytes),
+                *res_data_parts,
+            ]
+        )
 
     @staticmethod
     def _pack_key_entry(res_ref: str, res_id: int, res_type_id: int) -> bytes:
@@ -243,24 +250,24 @@ class ERFWriter:
         """
         now = datetime.datetime.now()
         build_year = now.year - 1900
-        build_day  = now.timetuple().tm_yday - 1  # 0-based
+        build_day = now.timetuple().tm_yday - 1  # 0-based
 
         header = bytearray(_HEADER_SIZE)
-        header[0:4]   = self.file_type          # FileType
-        header[4:8]   = self.version            # Version
+        header[0:4] = self.file_type  # FileType
+        header[4:8] = self.version  # Version
         # [8:12]  LanguageCount = 0 (already zero)
         # [12:16] LocalizedStringSize = 0 (already zero)
-        struct.pack_into("<I", header, 16, entry_count)            # EntryCount
+        struct.pack_into("<I", header, 16, entry_count)  # EntryCount
         # [20:24] unused — keep zero
-        struct.pack_into("<I", header, 24, key_list_offset)        # OffsetToKeyList
-        struct.pack_into("<I", header, 28, resource_list_offset)   # OffsetToResourceList
-        struct.pack_into("<I", header, 32, build_year)             # BuildYear
-        struct.pack_into("<I", header, 36, build_day)              # BuildDay
-        
+        struct.pack_into("<I", header, 24, key_list_offset)  # OffsetToKeyList
+        struct.pack_into("<I", header, 28, resource_list_offset)  # OffsetToResourceList
+        struct.pack_into("<I", header, 32, build_year)  # BuildYear
+        struct.pack_into("<I", header, 36, build_day)  # BuildDay
+
         # [40:44] DescriptionStrRef. MUST be 0xFFFFFFFF if LanguageCount=0,
         # otherwise NWN looks up string 0 in dialog.tlk, which is "Bad Strref"!
         struct.pack_into("<I", header, 40, 0xFFFFFFFF)
-        
+
         # Bytes [44:160] remain zero
         return bytes(header)
 
@@ -268,6 +275,7 @@ class ERFWriter:
 # ---------------------------------------------------------------------------
 # Convenience functions
 # ---------------------------------------------------------------------------
+
 
 def create_mod_from_directory(
     input_dir: Path,
@@ -282,7 +290,7 @@ def create_mod_from_directory(
         original_mod: Original .mod for reference metadata (res_type IDs).
     """
     type_overrides: Dict[str, int] = {}
-    
+
     if original_mod and original_mod.exists():
         try:
             reader = ERFReader(original_mod)

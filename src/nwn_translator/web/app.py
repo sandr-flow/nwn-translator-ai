@@ -42,9 +42,7 @@ async def lifespan(app: FastAPI):
     init_db()
     app.state.db = get_db()
     app.state.task_manager = get_task_manager()
-    purge_task = asyncio.create_task(
-        purge_loop_task_manager(app.state.task_manager, 3600)
-    )
+    purge_task = asyncio.create_task(purge_loop_task_manager(app.state.task_manager, 3600))
     yield
     purge_task.cancel()
     try:

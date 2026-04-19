@@ -56,7 +56,6 @@ from .schemas import (
     TranslationsResponse,
 )
 
-
 #: Friendly labels for the providers exposed to the UI.
 _PROVIDER_LABELS: dict[str, str] = {
     OpenRouterProvider.PROVIDER_NAME: OpenRouterProvider.PROVIDER_LABEL,
@@ -448,10 +447,7 @@ async def get_translations(
             if len(all_files) > 1:
                 item.shared_with = [f for f in all_files if f != filename]
 
-    files = [
-        TranslationFileGroup(filename=fn, items=items)
-        for fn, items in groups.items()
-    ]
+    files = [TranslationFileGroup(filename=fn, items=items) for fn, items in groups.items()]
     return TranslationsResponse(files=files)
 
 
@@ -511,6 +507,7 @@ async def rebuild_task(
         raise HTTPException(status_code=500, detail=f"Ошибка сборки: {e}")
 
     import time
+
     update_task_row(task_id, updated_at=time.time())
     return RebuildResponse(result_filename=output_path.name)
 
@@ -566,6 +563,7 @@ async def delete_task(
     workspace = tm.workspace_root / task_id
     if workspace.is_dir():
         import shutil
+
         shutil.rmtree(workspace, ignore_errors=True)
 
     # Remove from in-memory store
@@ -587,12 +585,8 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
             reff = parse_reasoning_effort(body.reasoning_effort)
         except ValueError as e:
             return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
-        provider = create_provider(
-            body.api_key.strip(), body.model, reasoning_effort=reff
-        )
-        result = await asyncio.to_thread(
-            provider.translate, text, "english", body.target_lang
-        )
+        provider = create_provider(body.api_key.strip(), body.model, reasoning_effort=reff)
+        result = await asyncio.to_thread(provider.translate, text, "english", body.target_lang)
         model = getattr(provider, "model", None) or OpenRouterProvider.DEFAULT_MODEL
         if result.success:
             return TestConnectionResponse(

@@ -144,6 +144,16 @@ export default {
     "history.status.building": "Сборка",
     "history.edited": "изм.",
     "history.expired": "Файлы удалены (истёк срок хранения)",
+    "history.searchPlaceholder": "Поиск по названию…",
+    "history.sortBy": "Сортировка",
+    "history.sort.dateDesc": "Сначала новые",
+    "history.sort.dateAsc": "Сначала старые",
+    "history.sort.nameAsc": "Название (А–Я)",
+    "history.sort.nameDesc": "Название (Я–А)",
+    "history.noMatches": "Ничего не найдено",
+    "history.prev": "← Назад",
+    "history.next": "Вперёд →",
+    "history.page": "Страница",
 
     // Errors
     "error.noFile": "Выберите файл .mod",
@@ -298,6 +308,16 @@ export default {
     "history.status.building": "Building",
     "history.edited": "edited",
     "history.expired": "Files deleted (expired)",
+    "history.searchPlaceholder": "Search by filename…",
+    "history.sortBy": "Sort",
+    "history.sort.dateDesc": "Newest first",
+    "history.sort.dateAsc": "Oldest first",
+    "history.sort.nameAsc": "Name (A–Z)",
+    "history.sort.nameDesc": "Name (Z–A)",
+    "history.noMatches": "No matches",
+    "history.prev": "← Prev",
+    "history.next": "Next →",
+    "history.page": "Page",
 
     // Errors
     "error.noFile": "Please select a .mod file",

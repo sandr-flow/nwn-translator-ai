@@ -115,7 +115,7 @@ class GFFPatcher:
         """Parse key GFF header fields from file bytes."""
 
         def dword(off: int) -> int:
-            return struct.unpack_from("<I", data, off)[0]
+            return int(struct.unpack_from("<I", data, off)[0])
 
         return {
             "struct_offset": dword(self._HDR_STRUCT_OFFSET),

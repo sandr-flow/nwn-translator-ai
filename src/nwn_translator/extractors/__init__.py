@@ -47,8 +47,8 @@ __all__ = [
 ]
 
 # Singleton registry: file extension -> extractor instance
-_EXTRACTOR_MAP = {}
-for _cls in [
+_EXTRACTOR_MAP: dict = {}
+_EXTRACTOR_CLASSES: list = [
     DialogExtractor,
     JournalExtractor,
     ItemExtractor,
@@ -62,7 +62,8 @@ for _cls in [
     ModuleExtractor,
     NcsExtractor,
     GitExtractor,
-]:
+]
+for _cls in _EXTRACTOR_CLASSES:
     _inst = _cls()
     for _ext in _inst.SUPPORTED_TYPES:
         _EXTRACTOR_MAP[_ext] = _inst

@@ -221,15 +221,16 @@ class TestStableVariableSplit:
         stable, _ = build_translation_system_prompt_parts("russian", "male")
         assert "GLOSSARY USAGE" in stable
 
-    def test_dialog_stable_includes_world_block(self):
-        """World context is run-stable and must live in the cached prefix."""
+    def test_dialog_world_block_lives_in_variable(self):
+        """World context is per-batch (filtered) and must NOT pollute the cached prefix."""
         stable, var = build_dialog_system_prompt_parts(
             "russian",
             "male",
             "WORLD CONTEXT: NPCs...",
             glossary_block="GLOSSARY: Zephirax",
         )
-        assert "WORLD CONTEXT: NPCs..." in stable
+        assert "WORLD CONTEXT: NPCs..." in var
+        assert "WORLD CONTEXT: NPCs..." not in stable
         assert "Zephirax" in var
         assert "Zephirax" not in stable
 

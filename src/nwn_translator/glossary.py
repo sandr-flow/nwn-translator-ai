@@ -12,7 +12,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set
 
 from .config import (
     GLOSSARY_LLM_TIMEOUT,
@@ -53,16 +53,16 @@ class Glossary:
     def to_prompt_block(self, texts: Optional[Iterable[str]] = None) -> str:
         """Format glossary for system prompt injection.
 
-        When *texts* is provided, only entries whose English name occurs
-        (case-insensitive, whole-word) in at least one of the texts are
-        included.  This keeps the variable half of the prompt small for
-        short batches (Phase 2 — glossary-by-batch filtering).  Dialog
-        translation should pass *texts=None* to get the full block.
+        When *texts* is provided, only entries whose English name has at
+        least one token matching the source corpus (exact / prefix>=4 /
+        Damerau-Levenshtein<=1 on tokens>=6 chars) are included; entries
+        sharing the same translated value are deduplicated to one. Pass
+        ``texts=None`` for the full unfiltered block.
         """
         if not self.entries:
             return ""
         if texts is None:
-            entries = self.entries
+            entries = dict(self.entries)
         else:
             entries = self._filter_entries_by_texts(texts)
             if not entries:
@@ -73,30 +73,31 @@ class Glossary:
             "but only if the name is declinable; each entry is a DISTINCT entity — "
             "never substitute one name for another):",
         ]
+        seen_translations: Set[str] = set()
         for en in sorted(entries.keys(), key=str.lower):
-            lines.append(f'  * "{en}" → {entries[en]}')
+            tr = entries[en]
+            tr_key = (tr or "").strip().casefold()
+            if tr_key and tr_key in seen_translations:
+                continue
+            if tr_key:
+                seen_translations.add(tr_key)
+            lines.append(f'  * "{en}" → {tr}')
         return "\n".join(lines)
 
     def _filter_entries_by_texts(self, texts: Iterable[str]) -> Dict[str, str]:
-        """Return glossary entries whose keys appear in *texts* (whole-word, ci)."""
-        blob_parts: List[str] = []
-        for t in texts:
-            if t:
-                blob_parts.append(str(t))
-        if not blob_parts:
-            return {}
-        blob = "\n".join(blob_parts).lower()
-        out: Dict[str, str] = {}
-        for en, tr in self.entries.items():
-            name = en.strip().lower()
-            if not name:
-                continue
-            pattern = r"\b" + re.escape(name) + r"\b"
-            if re.search(pattern, blob):
-                out[en] = tr
-        return out
+        """Return glossary entries whose keys are relevant to *texts*."""
+        from .context.relevance import is_relevant, tokenize_corpus
 
-    def seed_cache(self, cache: Dict[str, str], *, preserve_tokens: bool) -> None:
+        source_tokens = tokenize_corpus(texts)
+        if not source_tokens:
+            return {}
+        return {
+            en: tr
+            for en, tr in self.entries.items()
+            if en and en.strip() and is_relevant(en, source_tokens)
+        }
+
+    def seed_cache(self, cache: Any, *, preserve_tokens: bool) -> None:
         """Populate session translation cache so exact-match strings skip the API.
 
         Keys must match :func:`~nwn_translator.translators.token_handler.sanitize_text`

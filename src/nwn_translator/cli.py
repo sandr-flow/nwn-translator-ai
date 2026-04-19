@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import click
 from dotenv import load_dotenv
@@ -227,7 +227,7 @@ def translate(
             log_file = output_file.with_name(output_file.stem + "_log.jsonl")
 
     # Create configuration (omit empty api_key so TranslationConfig reads .env / os.environ)
-    config_kwargs = {
+    config_kwargs: Dict[str, Any] = {
         "model": model,
         "source_lang": source_lang,
         "target_lang": target_lang,

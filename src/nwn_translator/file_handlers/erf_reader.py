@@ -64,7 +64,7 @@ class ERFHeader:
 
         # Validate (support both ERF and MOD types)
         if self.file_type not in self.VALID_TYPES:
-            raise ERFReaderError(f"Invalid file type: {self.file_type}")
+            raise ERFReaderError(f"Invalid file type: {self.file_type!r}")
 
     def is_valid(self) -> bool:
         """Check if header is valid."""
@@ -260,6 +260,7 @@ class ERFReader:
         """
         if not self.header:
             self.read_header()
+        assert self.header is not None
 
         entry_count = self.header.entry_count
 

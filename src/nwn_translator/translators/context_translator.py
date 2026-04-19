@@ -36,7 +36,7 @@ class ContextualTranslationManager:
         config: TranslationConfig,
         provider: BaseAIProvider,
         world_context: WorldContext,
-        translation_cache: Optional[Dict[str, str]] = None,
+        translation_cache: Any = None,
         glossary: Optional["Glossary"] = None,
     ):
         self.config = config
@@ -50,16 +50,6 @@ class ContextualTranslationManager:
             config.translation_log_writer,
         )
         self.formatter = DialogFormatter()
-        # The world-context block and the glossary block are both stable for
-        # the duration of a translation run. Compute once and reuse to keep
-        # the cached prefix byte-identical between dialog calls.
-        self._world_block: str = world_context.to_prompt_block(
-            glossary=glossary,
-            target_lang=config.target_lang,
-        )
-        self._glossary_block_base: str = (
-            glossary.to_prompt_block() if glossary and getattr(glossary, "entries", None) else ""
-        )
 
     def translate_dialog(
         self,
@@ -102,6 +92,8 @@ class ContextualTranslationManager:
             )
             _finish()
             return {}
+
+        provider: OpenRouterProvider = self.provider
 
         extractor = DialogExtractor()
 
@@ -181,7 +173,7 @@ class ContextualTranslationManager:
             _finish()
             return translations
 
-        system_prompt = self._build_system_prompt(source_text=script)
+        system_prompt = self._build_system_prompt(source_text=script, filename_stem=file_path.stem)
         user_prompt = self._build_user_prompt(file_path.name, script)
 
         logger.info(
@@ -196,7 +188,7 @@ class ContextualTranslationManager:
             async def call_api(
                 sp: str, up: str, *, max_tokens: int = TRANSLATION_MAX_TOKENS
             ) -> str:
-                return await self.provider.complete_json_chat_async(
+                return await provider.complete_json_chat_async(
                     sp,
                     up,
                     max_tokens=max_tokens,
@@ -207,7 +199,7 @@ class ContextualTranslationManager:
 
             raw_response = run_async(
                 call_api(system_prompt, user_prompt),
-                cleanup=self.provider.close_async_client,
+                cleanup=provider.close_async_client,
             )
             parsed_json = self._parse_json_response(raw_response, file_path.name)
 
@@ -221,7 +213,7 @@ class ContextualTranslationManager:
                 )
                 raw_response = run_async(
                     call_api(system_prompt, repair_prompt),
-                    cleanup=self.provider.close_async_client,
+                    cleanup=provider.close_async_client,
                 )
                 parsed_json = self._parse_json_response(raw_response, file_path.name)
 
@@ -239,7 +231,7 @@ class ContextualTranslationManager:
                         repair_prompt,
                         max_tokens=_DIALOG_MAX_TOKENS_BOOST,
                     ),
-                    cleanup=self.provider.close_async_client,
+                    cleanup=provider.close_async_client,
                 )
                 parsed_json = self._parse_json_response(raw_response, file_path.name)
 
@@ -280,12 +272,14 @@ class ContextualTranslationManager:
 
                 async def run_retry() -> str:
                     return await call_api(
-                        self._build_system_prompt(),
+                        self._build_system_prompt(
+                            source_text=retry_script, filename_stem=file_path.stem
+                        ),
                         self._build_user_prompt(file_path.name, retry_script),
                         max_tokens=TRANSLATION_MAX_TOKENS,
                     )
 
-                retry_raw = run_async(run_retry(), cleanup=self.provider.close_async_client)
+                retry_raw = run_async(run_retry(), cleanup=provider.close_async_client)
 
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json is None and self._dialog_response_likely_truncated(retry_raw):
@@ -297,11 +291,13 @@ class ContextualTranslationManager:
                     )
                     retry_raw = run_async(
                         call_api(
-                            self._build_system_prompt(),
+                            self._build_system_prompt(
+                                source_text=retry_script, filename_stem=file_path.stem
+                            ),
                             repair,
                             max_tokens=_DIALOG_MAX_TOKENS_BOOST,
                         ),
-                        cleanup=self.provider.close_async_client,
+                        cleanup=provider.close_async_client,
                     )
                     retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json:
@@ -415,17 +411,43 @@ class ContextualTranslationManager:
                 logger.debug("Failed to write to translation log: %s", log_e)
         return translations
 
-    def _build_system_prompt(self, source_text: str = "") -> Any:
+    def _build_system_prompt(self, source_text: str = "", filename_stem: str = "") -> Any:
         """Build the system ``content`` payload for a dialog translation call.
 
-        Stable portion (world context + rules + output format) is cached
-        across all dialogs in the run; variable portion holds the glossary
-        entries and per-dialog race-term hints.
+        Stable portion (rules + output format) is cached across all dialogs;
+        variable portion holds the per-batch WORLD CONTEXT, glossary, and
+        race-term hints, all filtered to entities/terms actually mentioned
+        in *source_text* (with *filename_stem* added to the matching corpus
+        as a cheap owner-NPC safety net — e.g. ``thea2`` matches «Thea …»).
         """
         from ..prompts import build_dialog_system_prompt_parts
         from ..race_dictionary import match_race_terms
 
-        glossary_block = self._glossary_block_base
+        corpus = [t for t in (source_text, filename_stem) if t]
+
+        if self.world_context is not None and corpus:
+            world_block = self.world_context.to_prompt_block(
+                glossary=self.glossary,
+                target_lang=self.config.target_lang,
+                source_texts=corpus,
+            )
+        elif self.world_context is not None:
+            world_block = self.world_context.to_prompt_block(
+                glossary=self.glossary,
+                target_lang=self.config.target_lang,
+            )
+        else:
+            world_block = ""
+
+        if self.glossary and getattr(self.glossary, "entries", None):
+            glossary_block = (
+                self.glossary.to_prompt_block(texts=corpus)
+                if corpus
+                else self.glossary.to_prompt_block()
+            )
+        else:
+            glossary_block = ""
+
         race_block = match_race_terms(source_text, self.config.target_lang)
         if race_block:
             glossary_block = glossary_block + "\n\n" + race_block if glossary_block else race_block
@@ -433,7 +455,7 @@ class ContextualTranslationManager:
         stable, variable = build_dialog_system_prompt_parts(
             self.config.target_lang,
             self.config.player_gender,
-            self._world_block,
+            world_block,
             glossary_block,
         )
         return self.provider.make_system_message_content(stable, variable)

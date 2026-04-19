@@ -12,7 +12,7 @@ import logging
 import re
 import threading
 import asyncio
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, NoReturn, Optional, Union, cast
 
 import httpx
 
@@ -156,7 +156,7 @@ class OpenRouterProvider(BaseAIProvider):
                 timeout=self._timeout,
                 max_retries=0,
             )
-        return self._thread_local.async_client
+        return cast(AsyncOpenAI, self._thread_local.async_client)
 
     async def close_async_client(self) -> None:
         """Explicitly close the thread-local async client (call before loop shutdown)."""
@@ -258,7 +258,7 @@ class OpenRouterProvider(BaseAIProvider):
             )
             return ""
 
-    def _map_openrouter_exception(self, e: Exception) -> None:
+    def _map_openrouter_exception(self, e: Exception) -> NoReturn:
         """Raise RateLimitError or OpenRouterError from a caught API exception."""
         error_msg = str(e)
         if "rate_limit" in error_msg.lower() or "429" in error_msg:

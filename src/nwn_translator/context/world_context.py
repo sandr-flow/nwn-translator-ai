@@ -9,7 +9,7 @@ translation coherence.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 
 from ..file_handlers import read_gff
 from ..file_handlers.tlk_reader import TLKFile
@@ -86,16 +86,33 @@ class WorldContext:
         self,
         glossary: Optional["Glossary"] = None,
         target_lang: Optional[str] = None,
+        source_texts: Optional[Iterable[str]] = None,
     ) -> str:
         """Format the world context as a concise text block for the system prompt.
 
         Args:
             glossary: If set, append canonical translations next to matching English names.
             target_lang: Short label for those hints (e.g. ``russian`` → ``RUS``).
+            source_texts: When provided, only entities whose name or tag is
+                relevant (exact / prefix>=4 / Damerau-Levenshtein<=1 on
+                tokens>=6 chars) to the source corpus are emitted.  Empty
+                category sections are dropped entirely.  ``None`` returns
+                the full block (used by glossary build and other callers
+                that need a complete view).
 
         Returns:
             Formatted string containing necessary context.
         """
+        from .relevance import is_relevant, tokenize_corpus
+
+        source_tokens = tokenize_corpus(source_texts) if source_texts is not None else None
+
+        def _keep(*candidates: str) -> bool:
+            if source_tokens is None:
+                return True
+            joined = " ".join(c for c in candidates if c)
+            return bool(joined) and is_relevant(joined, source_tokens)
+
         lines = []
         lines.append("WORLD CONTEXT:")
         lang_lbl = self._label_for_target_lang(target_lang)
@@ -108,47 +125,65 @@ class WorldContext:
                 return ""
             return f" [{lang_lbl}: {tr}]"
 
-        if self.npcs:
+        npc_lines: List[str] = []
+        for tag, npc in sorted(self.npcs.items()):
+            name_parts = [npc.first_name, npc.last_name]
+            full_name = " ".join(p for p in name_parts if p).strip() or tag
+            if not _keep(full_name, tag):
+                continue
+            gloss = ""
+            if full_name != tag:
+                gloss = _gloss_suffix(full_name)
+
+            desc_parts = []
+            if npc.race:
+                desc_parts.append(npc.race)
+            if npc.gender:
+                desc_parts.append(npc.gender)
+
+            traits_str = f" ({', '.join(desc_parts)})" if desc_parts else ""
+
+            npc_line = f"  * [{tag}] {full_name}{traits_str}{gloss}"
+
+            desc = (npc.description or "").strip()
+            if desc:
+                npc_line += f" - {desc}"
+
+            npc_lines.append(npc_line)
+        if npc_lines:
             lines.append("- KEY CHARACTERS IN THE GAME:")
-            # Sort to ensure stable prompt
-            for tag, npc in sorted(self.npcs.items()):
-                name_parts = [npc.first_name, npc.last_name]
-                full_name = " ".join(p for p in name_parts if p).strip() or tag
-                gloss = ""
-                if full_name != tag:
-                    gloss = _gloss_suffix(full_name)
+            lines.extend(npc_lines)
 
-                desc_parts = []
-                if npc.race:
-                    desc_parts.append(npc.race)
-                if npc.gender:
-                    desc_parts.append(npc.gender)
-
-                traits_str = f" ({', '.join(desc_parts)})" if desc_parts else ""
-
-                npc_line = f"  * [{tag}] {full_name}{traits_str}{gloss}"
-
-                desc = (npc.description or "").strip()
-                if desc:
-                    npc_line += f" - {desc}"
-
-                lines.append(npc_line)
-
-        if self.areas:
+        area_lines = [
+            f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
+            for tag, name in sorted(self.areas.items())
+            if _keep(name, tag)
+        ]
+        if area_lines:
             lines.append("- LOCATIONS:")
-            for tag, name in sorted(self.areas.items()):
-                lines.append(f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
+            lines.extend(area_lines)
 
-        if self.quests:
+        quest_lines = [
+            f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
+            for tag, name in sorted(self.quests.items())
+            if _keep(name, tag)
+        ]
+        if quest_lines:
             lines.append("- QUESTS:")
-            for tag, name in sorted(self.quests.items()):
-                lines.append(f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
+            lines.extend(quest_lines)
 
-        if self.items:
+        item_lines = [
+            f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
+            for tag, name in sorted(self.items.items())
+            if _keep(name, tag)
+        ]
+        if item_lines:
             lines.append("- KEY ITEMS:")
-            for tag, name in sorted(self.items.items()):
-                lines.append(f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
+            lines.extend(item_lines)
 
+        # If filtering produced no entries at all, suppress the lone header.
+        if len(lines) == 1:
+            return ""
         return "\n".join(lines)
 
     @staticmethod

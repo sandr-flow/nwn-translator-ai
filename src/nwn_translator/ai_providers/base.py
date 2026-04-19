@@ -6,7 +6,7 @@ ensuring a consistent API across different AI services.
 
 import asyncio
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..config import PROMPT_CACHE_BREAKPOINTS_ENABLED
@@ -36,11 +36,7 @@ class TranslationItem:
 
     original: str
     context: Optional[str] = None
-    metadata: Dict[str, Any] = None
-
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -59,11 +55,7 @@ class TranslationResult:
     original: str
     success: bool = True
     error: Optional[str] = None
-    metadata: Dict[str, Any] = None
-
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class BaseAIProvider(ABC):
@@ -102,6 +94,10 @@ class BaseAIProvider(ABC):
             Provider name (e.g., "grok", "openai")
         """
         pass
+
+    async def close_async_client(self) -> None:
+        """Release any provider-held async resources. Default no-op."""
+        return None
 
     @abstractmethod
     def translate(

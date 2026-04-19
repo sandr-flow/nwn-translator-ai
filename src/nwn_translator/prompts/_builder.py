@@ -11,7 +11,7 @@ so that few-shot demonstrations match the actual target language.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .examples import get_examples
 
@@ -292,11 +292,9 @@ def build_dialog_system_prompt_parts(
 ) -> Tuple[str, str]:
     """Return ``(stable, variable)`` halves of the contextual dialog system prompt.
 
-    ``world_block`` is treated as stable (it is built once per run from the
-    scanned module) and is embedded in the stable half alongside the rules
-    and the output-format example. The glossary entries are placed in the
-    variable half so that glossary-filtering optimisations (Phase 2) do not
-    invalidate the cached prefix.
+    ``world_block`` is per-batch (filtered to entities the batch actually
+    mentions) and lives in the variable half alongside the glossary, so it
+    does not invalidate the cached stable prefix.
     """
     ex = get_examples(target_lang)
     dialog_output = ex["dialog_output"]
@@ -306,7 +304,6 @@ def build_dialog_system_prompt_parts(
         "You are an elite translator for the game Neverwinter Nights.\n"
         f"Your task is to translate entire dialogue scripts to {target_lang} "
         "according to Nora Gal's Golden School of Translation.\n\n"
-        f"{world_block}\n\n"
         "RULES:\n"
         "1. You will receive a dialogue script. Each line to translate is marked "
         "with an ID like [E0] or [R1], inside <<< >>>.\n"
@@ -331,7 +328,12 @@ def build_dialog_system_prompt_parts(
         f"{output_example}\n\n"
         "Do NOT include any markdown code blocks outside the JSON."
     )
-    variable = glossary_block.strip() if glossary_block and glossary_block.strip() else ""
+    variable_parts: List[str] = []
+    if world_block and world_block.strip():
+        variable_parts.append(world_block.strip())
+    if glossary_block and glossary_block.strip():
+        variable_parts.append(glossary_block.strip())
+    variable = "\n\n".join(variable_parts)
     return stable, variable
 
 

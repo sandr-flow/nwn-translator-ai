@@ -17,7 +17,7 @@ import json
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, List, Optional, Set, Tuple, Union
 
 from ..config import (
     GLOSSARY_LLM_TIMEOUT,
@@ -178,10 +178,11 @@ class EntityExtractor:
                 progress_callback,
             )
 
-        return await asyncio.gather(
+        results: List[Union[List[Tuple[str, str]], BaseException]] = await asyncio.gather(
             *[_one(i + 1, b) for i, b in enumerate(batches)],
             return_exceptions=True,
         )
+        return results
 
     async def _extract_batch_async(
         self,

@@ -158,7 +158,7 @@ class ModuleTranslator:
         )
 
         # Statistics
-        self.stats = {
+        self.stats: Dict[str, Any] = {
             "files_processed": 0,
             "items_translated": 0,
             "errors": [],
@@ -326,17 +326,17 @@ class ModuleTranslator:
         # Delta-tracking cursors for cumulative manager stats
         self._prev_items = 0
         self._prev_errors = 0
-        context_manager = (
-            ContextualTranslationManager(
+        context_manager: Optional[ContextualTranslationManager]
+        if use_context_manager and self.world_context is not None:
+            context_manager = ContextualTranslationManager(
                 self.config,
                 self.provider,
                 self.world_context,
                 translation_cache=manager.translation_cache,
                 glossary=self.glossary,
             )
-            if use_context_manager
-            else None
-        )
+        else:
+            context_manager = None
 
         # ── Phase B: deduplicated translate ────────────────────────────
         logger.info("Phase B: translating content...")
@@ -374,6 +374,7 @@ class ModuleTranslator:
 
         # B-2: Translate dialog files (contextual, sequential to benefit from cache)
         for file_path in dialog_files:
+            assert context_manager is not None
             parsed_data, extracted, file_ext = extracted_map[file_path]
             file_item_budget = len(extracted.items)
             try:

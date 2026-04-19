@@ -4,7 +4,7 @@ This module defines the abstract interface that all injectors must implement.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -23,11 +23,7 @@ class InjectedContent:
     source_file: Path
     modified: bool
     items_updated: int
-    metadata: Dict[str, Any] = None
-
-    def __post_init__(self):
-        if self.metadata is None:
-            self.metadata = {}
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class BaseInjector(ABC):

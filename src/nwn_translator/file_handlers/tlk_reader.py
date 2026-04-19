@@ -128,7 +128,7 @@ class TLKReader:
         # Parse header
         file_type = data[0:4]
         if file_type != b"TLK ":
-            raise TLKParseError(f"Invalid TLK file type: {file_type}")
+            raise TLKParseError(f"Invalid TLK file type: {file_type!r}")
 
         version = data[4:8]
         tlk.language = struct.unpack("<I", data[8:12])[0]

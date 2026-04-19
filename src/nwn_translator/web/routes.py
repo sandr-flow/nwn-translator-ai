@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 from queue import Empty
-from typing import Optional
+from typing import Any, Dict, Optional
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
@@ -485,13 +485,15 @@ async def rebuild_task(
     extract_dir = Path(task.extract_dir)
     output_path = task.result_path
     original_mod_path = task.input_path or output_path
+    if output_path is None or original_mod_path is None:
+        raise HTTPException(status_code=400, detail="Task has no result path")
 
     try:
         from ..main import rebuild_module
 
-        row = get_task_row(task_id)
+        task_row: Optional[Dict[str, Any]] = get_task_row(task_id)
         req_tl = (body.target_lang or "").strip() or None
-        rebuild_target_lang = req_tl or task.target_lang or (row or {}).get("target_lang")
+        rebuild_target_lang = req_tl or task.target_lang or (task_row or {}).get("target_lang")
 
         await asyncio.to_thread(
             rebuild_module,

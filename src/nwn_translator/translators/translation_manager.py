@@ -89,7 +89,7 @@ class TranslationManager:
         self.token_handler = TokenHandler(preserve_standard_tokens=config.preserve_tokens)
 
         # Statistics
-        self.stats = {
+        self.stats: Dict[str, Any] = {
             "files_processed": 0,
             "items_translated": 0,
             "cache_hits": 0,
@@ -238,7 +238,7 @@ class TranslationManager:
         Returns:
             Translation mapping (original text → translated text)
         """
-        translations = {}
+        translations: Dict[str, str] = {}
         items = [item for item in content.items if item.has_text()]
 
         if not items:

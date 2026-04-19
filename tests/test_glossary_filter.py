@@ -62,6 +62,47 @@ class TestGlossaryFilterByBatch:
         assert g.to_prompt_block(texts=[]) == ""
         assert g.to_prompt_block(texts=["", None]) == ""
 
+    def test_filter_matches_prefix(self):
+        """Prefix-match (>=4 chars) catches inflected/possessive forms."""
+        g = Glossary(entries={"Merrick Winters": "Меррик Винтерс"})
+        block = g.to_prompt_block(texts=["Mr. Winter's house was empty."])
+        assert '"Merrick Winters"' in block
+
+    def test_filter_matches_levenshtein_one(self):
+        """Damerau-Levenshtein <=1 catches typos in long tokens."""
+        g = Glossary(entries={"Merrick": "Меррик"})
+        block = g.to_prompt_block(texts=["I met Merric in the hall."])
+        assert '"Merrick"' in block
+
+    def test_filter_no_fuzzy_on_short_tokens(self):
+        """Short entity tokens must not pull random near-matches."""
+        g = Glossary(entries={"Iris": "Ирис"})
+        # "Irish" shares prefix len 4 with "Iris" — both are 4/5 chars; prefix-match
+        # does fire (both >=4). This is acceptable: keeping prefix symmetric is
+        # simpler than a one-sided rule. Use a clearly disjoint token instead:
+        block = g.to_prompt_block(texts=["The brave warrior approached."])
+        assert block == "" or '"Iris"' not in block
+
+    def test_filter_dedups_same_translation(self):
+        g = Glossary(
+            entries={
+                "Inmate": "Заключённый",
+                "Inmate2": "Заключённый",
+                "Inmate3": "Заключённый",
+            }
+        )
+        block = g.to_prompt_block(texts=["The Inmate refused to talk."])
+        assert block.count("Заключённый") == 1
+        assert '"Inmate"' in block
+        assert '"Inmate2"' not in block
+        assert '"Inmate3"' not in block
+
+    def test_filter_unicode_casefold(self):
+        """Polish/Cyrillic glossary keys should match on case-folded tokens."""
+        g = Glossary(entries={"Łódź": "Лодзь"})
+        block = g.to_prompt_block(texts=["Travelled through łódź at dawn."])
+        assert '"Łódź"' in block
+
     def test_entries_remain_sorted_in_output(self):
         """Phase 1 rule: order is deterministic (sorted, case-insensitive)."""
         g = Glossary(

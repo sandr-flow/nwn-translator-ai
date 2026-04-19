@@ -491,9 +491,9 @@ def _expand_struct(struct_fields: Dict[str, Any], gff: GFFFile, visited: set) ->
     Returns:
         Expanded fields dict
     """
-    result = {}
-    field_types = {}
-    record_offsets = {}
+    result: Dict[str, Any] = {}
+    field_types: Dict[str, int] = {}
+    record_offsets: Dict[str, Any] = {}
 
     for key, value in struct_fields.items():
         if hasattr(value, "value"):

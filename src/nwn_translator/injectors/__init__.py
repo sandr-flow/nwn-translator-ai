@@ -21,8 +21,9 @@ __all__ = [
 ]
 
 # Singleton registry: content_type -> injector instance
-_INJECTOR_MAP = {}
-for _cls in [DialogInjector, JournalInjector, GenericInjector, NcsInjector]:
+_INJECTOR_MAP: dict = {}
+_INJECTOR_CLASSES: list = [DialogInjector, JournalInjector, GenericInjector, NcsInjector]
+for _cls in _INJECTOR_CLASSES:
     _inst = _cls()
     _types = getattr(_inst, "SUPPORTED_TYPES", [])
     if not _types:

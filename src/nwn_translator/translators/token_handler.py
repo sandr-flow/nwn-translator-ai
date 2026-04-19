@@ -85,8 +85,8 @@ class TokenHandler:
         def replace_token(match: re.Match) -> str:
             """Replacement function for regex."""
             nonlocal offset
-            original_token = match.group(0)  # Full match including brackets
-            token_name = match.group(1)  # Content inside brackets
+            original_token: str = match.group(0)  # Full match including brackets
+            token_name: str = match.group(1)  # Content inside brackets
 
             # Check if this is a standard token we should preserve
             if not self._should_preserve_token(token_name):
@@ -140,7 +140,7 @@ class TokenHandler:
 
         def restore_placeholder(match: re.Match) -> str:
             """Restoration function for regex."""
-            placeholder = match.group(0)
+            placeholder: str = match.group(0)
             return self.token_map.get(placeholder, placeholder)
 
         def restore_action_placeholder(match: re.Match) -> str:

@@ -11,7 +11,8 @@ from .task_manager import TaskManager, get_task_manager
 
 def db_connection(request: Request) -> sqlite3.Connection:
     """SQLite connection created in app lifespan."""
-    return request.app.state.db
+    db: sqlite3.Connection = request.app.state.db
+    return db
 
 
 def web_task_manager(request: Request) -> TaskManager:

@@ -6,7 +6,7 @@ This module defines the abstract interface that all extractors must implement.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 
 @dataclass
@@ -102,6 +102,9 @@ def extract_local_string(text_data: Dict[str, Any]) -> Optional[str]:
     return value if value else None
 
 
+ContextBuilder = Union[str, Callable[[str], str]]
+
+
 class BaseExtractor(ABC):
     """Abstract base class for content extractors.
 
@@ -111,7 +114,6 @@ class BaseExtractor(ABC):
     def __init__(self):
         """Initialize the extractor."""
 
-    @abstractmethod
     def can_extract(self, file_type: str) -> bool:
         """Check if this extractor can handle the given file type.
 
@@ -121,7 +123,7 @@ class BaseExtractor(ABC):
         Returns:
             True if this extractor can handle this file type
         """
-        pass
+        return file_type.lower() in getattr(self, "SUPPORTED_TYPES", [])
 
     @abstractmethod
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
@@ -203,4 +205,78 @@ class BaseExtractor(ABC):
             item_id=f"{tag}_name",
             location=str(file_path),
             metadata={"type": item_type, "tag": tag},
+        )
+
+    def _first_localized_text(
+        self,
+        parsed_data: Dict[str, Any],
+        field_names: Sequence[str],
+    ) -> Optional[str]:
+        """Return the first non-empty localized string among *field_names*."""
+        for field_name in field_names:
+            text = self._extract_text_from_local_string(parsed_data.get(field_name, {}))
+            if text:
+                return text
+        return None
+
+
+class SimpleLocalizedExtractor(BaseExtractor):
+    """Declarative extractor for simple single-struct GFF resources."""
+
+    CONTENT_TYPE = ""
+    TAG_FIELD = "Tag"
+    FIELD_SPECS: Sequence[Dict[str, Any]] = ()
+
+    def _should_extract(self, parsed_data: Dict[str, Any]) -> bool:
+        """Return whether extraction should proceed for *parsed_data*."""
+        return True
+
+    def _build_context(self, context: ContextBuilder, tag: str) -> str:
+        return context(tag) if callable(context) else context
+
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
+        """Extract items described by :attr:`FIELD_SPECS`."""
+        tag = parsed_data.get(self.TAG_FIELD, file_path.stem)
+        items: List[TranslatableItem] = []
+        extracted_by_key: Dict[str, str] = {}
+
+        if not self._should_extract(parsed_data):
+            return ExtractedContent(
+                content_type=self.CONTENT_TYPE,
+                items=items,
+                source_file=file_path,
+                metadata={"tag": tag, "item_count": 0},
+            )
+
+        for spec in self.FIELD_SPECS:
+            key = str(spec.get("key") or spec["item_suffix"])
+            fields_raw = spec.get("fields", ())
+            fields = (fields_raw,) if isinstance(fields_raw, str) else tuple(fields_raw)
+            text = self._first_localized_text(parsed_data, fields)
+            if not text:
+                continue
+
+            skip_if_same_as = spec.get("skip_if_same_as")
+            if skip_if_same_as and text == extracted_by_key.get(str(skip_if_same_as)):
+                continue
+
+            items.append(
+                TranslatableItem(
+                    text=text,
+                    context=self._build_context(spec["context"], tag),
+                    item_id=f"{tag}_{spec['item_suffix']}",
+                    location=str(file_path),
+                    metadata={
+                        "type": spec["item_type"],
+                        "tag": tag,
+                    },
+                )
+            )
+            extracted_by_key[key] = text
+
+        return ExtractedContent(
+            content_type=self.CONTENT_TYPE,
+            items=items,
+            source_file=file_path,
+            metadata={"tag": tag, "item_count": len(items)},
         )

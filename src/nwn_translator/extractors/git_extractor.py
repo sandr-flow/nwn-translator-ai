@@ -274,9 +274,6 @@ class GitExtractor(BaseExtractor):
 
     SUPPORTED_TYPES = [".git"]
 
-    def can_extract(self, file_type: str) -> bool:
-        return file_type.lower() in self.SUPPORTED_TYPES
-
     def _extract_nested_store_inventory(
         self,
         store_node: Dict[str, Any],

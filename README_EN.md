@@ -2,212 +2,112 @@
 
 # NWN Modules Translator
 
-AI-powered tool for translating Neverwinter Nights modules from any language to any language using OpenRouter.
+Web-based translator for Neverwinter Nights modules powered by OpenRouter.
 
 ## Features
 
-- **OpenRouter** — one API key gives access to many models (Claude, GPT, Gemini, DeepSeek, etc.)
-- **Smart Token Preservation** — game tokens like `<FirstName>`, `<Class>`, `<CustomToken:123>` are preserved intact
-- **Context-Aware Translation** — dialog trees are translated as complete units for coherence
-- **Batch Processing** — dialogs, journals, items, creatures, areas, doors, triggers, and stores
-- **Web Interface** — FastAPI + Vue SPA for browser-based translation
-- **Docker** — ready-to-use docker-compose for production deployment
+- FastAPI + Vue web UI
+- Context-aware translation for dialogs and journals
+- Preservation of NWN tokens such as `<FirstName>` and `<CustomToken:123>`
+- Support for `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, and `.ncs`
+- Rebuild flow after manual translation edits in the web editor
+- Docker setup for production deployment
 
 ## Installation
 
-### From PyPI
+### Development
 
-```bash
-pip install nwn-modules-translator
-```
-
-### Development from Repository
-
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-```
-
-**Linux / macOS:**
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-```
-
-For web interface support:
-```bash
 pip install -e ".[web]"
 ```
 
-## CLI Usage
+Windows PowerShell:
 
-### Translate a Module
-
-API key is read from `.env` (`NWN_TRANSLATE_API_KEY`) or passed via `--api-key`:
-
-```bash
-nwn-translate translate module.mod --lang russian
-```
-
-Specify output file:
-```bash
-nwn-translate translate module.mod --lang french -o module_fr.mod
-```
-
-Choose an OpenRouter model:
-```bash
-nwn-translate translate module.mod --lang russian --model anthropic/claude-sonnet-4
-```
-
-### Test Connection
-
-```bash
-nwn-translate test --lang russian
-nwn-translate test --lang spanish --text "Hello, adventurer!"
-```
-
-### List NWN Tokens
-
-```bash
-nwn-translate tokens
-```
-
-### List Models
-
-```bash
-nwn-translate providers
-```
-
-### Start Web Server
-
-```bash
-nwn-translate web --host 127.0.0.1 --port 8000
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+pip install -e ".[web]"
 ```
 
 ## Web Interface
 
-The project includes a FastAPI backend and Vue SPA frontend.
-
-### Development
-
 Backend:
+
 ```bash
-pip install -e ".[web]"
-nwn-translate web
+python -m nwn_translator.web
 ```
 
-Frontend (separate terminal):
+or
+
+```bash
+nwn-translate-web
+```
+
+Frontend:
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173` — `/api` requests are proxied to FastAPI.
+During development the frontend is served at `http://localhost:5173`, with `/api` proxied to FastAPI.
 
-Single command (backend + frontend):
-```bash
-python scripts/run_web_ui.py
-```
+Windows users can use `run-web-ui.bat` after dependencies are installed.
 
-Windows: double-click `run-web-ui.bat` (after installing dependencies).
-
-### Docker (Production)
+## Docker
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-The application will be available on port `8080` (nginx → FastAPI).
-
-## Supported Content Types
-
-| Extension | Type           | What is Translated                     |
-|-----------|----------------|----------------------------------------|
-| `.dlg`    | Dialogs        | Complete dialog trees with context     |
-| `.jrl`    | Journals       | Quest names and descriptions           |
-| `.uti`    | Items          | Item names and descriptions            |
-| `.utc`    | Creatures      | NPC names and descriptions             |
-| `.are`    | Areas          | Area names and descriptions            |
-| `.utt`    | Triggers       | Trigger names and descriptions         |
-| `.utp`    | Placeables     | Placeable names and descriptions       |
-| `.utd`    | Doors          | Door names and descriptions            |
-| `.utm`    | Stores         | Store names                            |
-| `.ifo`    | Module Info    | Module name and description            |
-| `.git`    | Instances      | Placed object names in areas           |
-
-## Token Preservation
-
-The tool automatically preserves NWN game tokens during translation:
-
-- `<FirstName>`, `<LastName>`, `<Class>`, `<Race>`, `<Gender>`
-- `<HeShe>`, `<HisHer>`, `<HimHer>`, `<SirMadam>`, `<LordLady>`, etc.
-- `<CustomToken:123>` — custom token references
-
-Tokens are replaced with placeholders before sending to AI and restored after translation.
+The application will be available on port `8080`.
 
 ## Configuration
 
-### Environment Variables
+Primary environment variables:
 
-| Variable                         | Description                                   | Default          |
-|----------------------------------|-----------------------------------------------|------------------|
-| `NWN_TRANSLATE_API_KEY`          | OpenRouter API key                            | —                |
-| `NWN_TRANSLATE_MAX_CONCURRENT`   | Max parallel API requests                     | `12`             |
-| `NWN_WEB_HOST`                   | Web server bind address                       | `127.0.0.1`      |
-| `NWN_WEB_PORT`                   | Web server port                               | `8000`           |
-| `NWN_WEB_CORS_ORIGINS`           | Allowed CORS origins (comma-separated)        | `*`              |
-| `NWN_WEB_STATIC_DIR`             | Path to SPA static files (production)         | —                |
-| `NWN_WEB_TASK_ROOT`              | Task workspace root directory                 | `workspace/web`  |
+- `NWN_TRANSLATE_API_KEY` — OpenRouter API key
+- `NWN_TRANSLATE_MAX_CONCURRENT` — maximum parallel translation requests
+- `NWN_WEB_HOST` — web server host
+- `NWN_WEB_PORT` — web server port
+- `NWN_WEB_CORS_ORIGINS` — allowed CORS origins
+- `NWN_WEB_STATIC_DIR` — production SPA static directory
+- `NWN_WEB_TASK_ROOT` — workspace root for web tasks
 
-### `.env` File
-
-Create a `.env` file in the project root:
+Example `.env`:
 
 ```env
 NWN_TRANSLATE_API_KEY=sk-or-v1-...
 NWN_TRANSLATE_MAX_CONCURRENT=12
+NWN_WEB_HOST=127.0.0.1
+NWN_WEB_PORT=8000
 ```
 
-## Architecture
+## Diagnostics
 
-```
-.mod file
-  │
-  ├── ERF Reader ─── Extract resources
-  │                      │
-  │                      ▼
-  │              GFF Parser ─── Parse binary files
-  │                      │
-  │                      ▼
-  │              Extractors ─── Extract text (.dlg, .utc, .uti, …)
-  │                      │
-  │                      ▼
-  │              World Scanner ─── Collect world context (NPCs, locations, quests)
-  │                      │
-  │                      ▼
-  │              Context Translator ─── AI translation via OpenRouter
-  │                      │
-  │                      ▼
-  │              GFF Patcher ─── Binary injection of translated strings
-  │                      │
-  │                      ▼
-  └── ERF Writer ─── Build translated .mod file
+`scripts/` now contains a single reusable diagnostic helper:
+
+```bash
+python scripts/dump_gff_strings.py file path/to/file.utc
+python scripts/dump_gff_strings.py file path/to/file.utc --compare path/to/original.utc
+python scripts/dump_gff_strings.py module path/to/module.mod talias.utc drixie.dlg
 ```
 
 ## Development
 
-### Tests
+Tests:
 
 ```bash
 pytest
 pytest --cov=src
 ```
 
-### Linting
+Checks:
 
 ```bash
 black src tests
@@ -217,4 +117,4 @@ mypy src
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) file for details.
+MIT, see [LICENSE](LICENSE).

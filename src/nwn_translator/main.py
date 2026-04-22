@@ -20,6 +20,7 @@ from .config import (
     TranslationCancelled,
     TranslationConfig,
     TRANSLATABLE_TYPES,
+    create_output_path,
     module_string_encoding_for_target_lang,
 )
 from .file_handlers import (
@@ -455,12 +456,7 @@ class ModuleTranslator:
             self.config.progress_callback("building", 1, 2, "Repacking module...")
         logger.info("Creating translated module...")
 
-        output_path = self.config.output_file
-        if output_path is None:
-            from .config import create_output_path
-
-            output_path = create_output_path(self.config.input_file, self.config.target_lang)
-
+        output_path = self._resolve_output_path(extract_dir)
         create_mod_from_directory(extract_dir, output_path, self.config.input_file)
 
         logger.info(f"Translation complete: {output_path}")
@@ -677,8 +673,6 @@ class ModuleTranslator:
         """Determine the output .mod file path from config or input filename."""
         output_path = self.config.output_file
         if output_path is None:
-            from .config import create_output_path
-
             output_path = create_output_path(self.config.input_file, self.config.target_lang)
 
         return output_path
@@ -818,6 +812,16 @@ def translate_module(config: TranslationConfig) -> Path:
         ValueError: If configuration is invalid
         Exception: If translation fails
     """
+    result_path, _translator = run_translation_pipeline(config)
+    return result_path
+
+
+def run_translation_pipeline(config: TranslationConfig) -> Tuple[Path, ModuleTranslator]:
+    """Validate config, run the translation pipeline, and return the translator.
+
+    Shared by the public library entrypoint and the web task runner so the
+    validation / startup path stays in one place.
+    """
     # Validate configuration
     if not config.input_file.exists():
         raise ValueError(f"Input file not found: {config.input_file}")
@@ -830,4 +834,5 @@ def translate_module(config: TranslationConfig) -> Path:
 
     # Create translator and translate
     translator = ModuleTranslator(config)
-    return translator.translate()
+    result_path = translator.translate()
+    return result_path, translator

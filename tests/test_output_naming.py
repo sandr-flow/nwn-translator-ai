@@ -23,3 +23,8 @@ def test_create_output_path_no_underscores_in_name() -> None:
     p = create_output_path(Path("in") / "my_mod_name.mod", "russian")
     assert p.name == "my-mod-name-rus.mod"
     assert "_" not in p.name
+
+
+def test_create_output_path_honors_output_dir_override() -> None:
+    p = create_output_path(Path("in") / "my_mod_name.mod", "russian", output_dir=Path("out"))
+    assert p == Path("out") / "my-mod-name-rus.mod"

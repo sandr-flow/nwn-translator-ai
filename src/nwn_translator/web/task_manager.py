@@ -17,11 +17,11 @@ from typing import Any, Callable, Dict, List, Optional
 from ..config import (
     TranslationCancelled,
     TranslationConfig,
-    lang_suffix,
+    create_output_path,
     module_string_encoding_for_target_lang,
-    sanitized_mod_stem,
 )
-from ..main import ModuleTranslator
+from ..main import ModuleTranslator, run_translation_pipeline
+# ``ModuleTranslator`` stays imported here for test monkeypatch compatibility.
 from .database import SqliteTranslationLogWriter, create_task_row, update_task_row, get_db
 
 logger = logging.getLogger(__name__)
@@ -284,9 +284,7 @@ class TaskManager:
         base = self.workspace_for_task(task.task_id)
         temp_dir = base / "temp"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        lang_suf = lang_suffix(target_lang)
-        out_stem = sanitized_mod_stem(input_path.stem)
-        output_file = base / f"{out_stem}{lang_suf}{input_path.suffix}"
+        output_file = create_output_path(input_path, target_lang, output_dir=base)
 
         log_writer = SqliteTranslationLogWriter(task.task_id)
 
@@ -331,17 +329,7 @@ class TaskManager:
                 cancel_check=task.is_cancel_requested,
             )
 
-            if not config.input_file.exists():
-                raise ValueError(f"Input file not found: {config.input_file}")
-
-            suffix = config.input_file.suffix.lower()
-            if suffix not in (".mod", ".erf", ".hak"):
-                raise ValueError("Input must be a .mod, .erf, or .hak file")
-
-            config.api_key = config.get_api_key()
-
-            translator = ModuleTranslator(config)
-            result_path = translator.translate()
+            result_path, translator = run_translation_pipeline(config)
             task.result_path = Path(result_path)
             task.extract_dir = translator.extract_dir
             task.stats = translator.get_statistics()

@@ -27,8 +27,6 @@ classifiers = [
 
 dependencies = [
     "openai>=1.0.0",
-    "click>=8.0.0",
-    "rich>=13.0.0",
     "tqdm>=4.65.0",
     "python-dotenv>=1.0.0",
     "tenacity>=8.2.0",
@@ -52,7 +50,6 @@ dev = [
 ]
 
 [project.scripts]
-nwn-translate = "nwn_translator.cli:main"
 nwn-translate-web = "nwn_translator.web.__main__:main"
 
 # [project.urls]

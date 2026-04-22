@@ -30,10 +30,6 @@ class DialogExtractor(BaseExtractor):
 
     SUPPORTED_TYPES = [".dlg"]
 
-    def can_extract(self, file_type: str) -> bool:
-        """Check if this extractor can handle the given file type."""
-        return file_type.lower() in self.SUPPORTED_TYPES
-
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract dialog content from a .dlg file.
 

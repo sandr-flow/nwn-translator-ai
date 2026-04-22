@@ -9,7 +9,6 @@ import logging
 
 from .base import BaseInjector, InjectedContent
 from ..file_handlers.gff_patcher import GFFPatcher, GFFPatchError
-from ..extractors.base import DialogNode
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +19,7 @@ def _module_text_encoding(metadata: Optional[Dict[str, Any]]) -> str:
 
 class DialogInjector(BaseInjector):
     """Injector for dialog (.dlg) files."""
-
-    def can_inject(self, content_type: str) -> bool:
-        """Check if this injector can handle the given content type."""
-        return content_type == "dialog"
+    SUPPORTED_TYPES = ["dialog"]
 
     def inject(
         self,
@@ -109,10 +105,7 @@ class DialogInjector(BaseInjector):
 
 class JournalInjector(BaseInjector):
     """Injector for journal (.jrl) files."""
-
-    def can_inject(self, content_type: str) -> bool:
-        """Check if this injector can handle the given content type."""
-        return content_type == "journal"
+    SUPPORTED_TYPES = ["journal"]
 
     def inject(
         self,
@@ -256,9 +249,32 @@ class GenericInjector(BaseInjector):
         },
     }
 
-    def can_inject(self, content_type: str) -> bool:
-        """Check if this injector can handle the given content type."""
-        return content_type in self.SUPPORTED_TYPES
+    @staticmethod
+    def _append_patch_for_field(
+        patches: List[Tuple[int, str]],
+        record_offsets: Dict[str, Any],
+        field_name: str,
+        field_obj: Any,
+        translations: Dict[str, str],
+    ) -> bool:
+        """Append a translated patch for one localized field when possible."""
+        if not isinstance(field_obj, dict):
+            return False
+
+        original_text = field_obj.get("Value", "")
+        if not original_text or original_text not in translations:
+            return False
+
+        translated_text = translations[original_text]
+        if translated_text == original_text:
+            return False
+
+        rec_offset = record_offsets.get(field_name, 0)
+        if rec_offset <= 0:
+            return False
+
+        patches.append((rec_offset, translated_text))
+        return True
 
     def inject(
         self,
@@ -309,64 +325,53 @@ class GenericInjector(BaseInjector):
         }
         if content_type in _NAME_CANDIDATES:
             for name_field in _NAME_CANDIDATES[content_type]:
-                if name_field not in parsed_data:
-                    continue
-                field_obj = parsed_data[name_field]
-                if not isinstance(field_obj, dict):
-                    continue
-                original_text = field_obj.get("Value", "")
-                if not original_text or original_text not in translations:
-                    continue
-                translated_text = translations[original_text]
-                if translated_text == original_text:
-                    continue
-                rec_offset = record_offsets.get(name_field, 0)
-                if rec_offset > 0:
-                    patches.append((rec_offset, translated_text))
+                if self._append_patch_for_field(
+                    patches,
+                    record_offsets,
+                    name_field,
+                    parsed_data.get(name_field),
+                    translations,
+                ):
                     items_updated += 1
                     modified = True
                     break
 
         # For creatures, we need to handle first and last name specially
         if content_type == "creature":
-            first_name_obj = parsed_data.get("FirstName", {})
-            last_name_obj = parsed_data.get("LastName", {})
+            if self._append_patch_for_field(
+                patches,
+                record_offsets,
+                "FirstName",
+                parsed_data.get("FirstName"),
+                translations,
+            ):
+                items_updated += 1
+                modified = True
 
-            if isinstance(first_name_obj, dict):
-                original_first = first_name_obj.get("Value", "")
-                if original_first and original_first in translations:
-                    rec_offset = record_offsets.get("FirstName", 0)
-                    if rec_offset > 0:
-                        patches.append((rec_offset, translations[original_first]))
-                        items_updated += 1
-                        modified = True
-
-            if isinstance(last_name_obj, dict):
-                original_last = last_name_obj.get("Value", "")
-                if original_last and original_last in translations:
-                    rec_offset = record_offsets.get("LastName", 0)
-                    if rec_offset > 0:
-                        patches.append((rec_offset, translations[original_last]))
-                        items_updated += 1
-                        modified = True
+            if self._append_patch_for_field(
+                patches,
+                record_offsets,
+                "LastName",
+                parsed_data.get("LastName"),
+                translations,
+            ):
+                items_updated += 1
+                modified = True
 
         # Handle other fields
         for key, field_name in fields.items():
             if key == "first_name" or key == "last_name":
                 continue  # Already handled above
 
-            if field_name in parsed_data:
-                field_obj = parsed_data[field_name]
-                if isinstance(field_obj, dict):
-                    original_text = field_obj.get("Value", "")
-                    if original_text and original_text in translations:
-                        translated_text = translations[original_text]
-                        if translated_text != original_text:
-                            rec_offset = record_offsets.get(field_name, 0)
-                            if rec_offset > 0:
-                                patches.append((rec_offset, translated_text))
-                                items_updated += 1
-                                modified = True
+            if self._append_patch_for_field(
+                patches,
+                record_offsets,
+                field_name,
+                parsed_data.get(field_name),
+                translations,
+            ):
+                items_updated += 1
+                modified = True
 
         if patches:
             try:

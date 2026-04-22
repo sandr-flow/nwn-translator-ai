@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-AI-powered translator for Neverwinter Nights (NWN/NWN:EE) modules. Takes a `.mod` file, extracts translatable strings from binary GFF resources, translates them via OpenRouter, and byte-patches the strings back into a new `.mod` without rebuilding the files. Ships with a CLI (`nwn-translate`) and a FastAPI + Vue web UI.
+AI-powered translator for Neverwinter Nights (NWN/NWN:EE) modules. Takes a `.mod` file, extracts translatable strings from binary GFF resources, translates them via OpenRouter, and byte-patches the strings back into a new `.mod` without rebuilding the files. Ships with a FastAPI + Vue web UI.
 
 ## Common commands
 
@@ -30,16 +30,8 @@ black src tests
 pylint src/nwn_translator
 mypy src
 
-# CLI (entrypoint nwn-translate -> src/nwn_translator/cli.py)
-nwn-translate translate module.mod --lang russian
-nwn-translate translate module.mod --lang french --model anthropic/claude-sonnet-4 -o out.mod
-nwn-translate test --lang russian --text "Hello, adventurer!"
-nwn-translate tokens       # list NWN tokens preserved during translation
-nwn-translate providers    # list available OpenRouter models
-nwn-translate web --host 127.0.0.1 --port 8000
-
-# Web UI dev (two terminals, or use scripts/run_web_ui.py)
-nwn-translate web
+# Web UI dev (two terminals, or use run-web-ui.bat on Windows)
+python -m nwn_translator.web
 cd frontend && npm install && npm run dev   # http://localhost:5173, /api proxied
 
 # Docker (production)

@@ -35,7 +35,6 @@ class BaseInjector(ABC):
     def __init__(self):
         """Initialize the injector."""
 
-    @abstractmethod
     def can_inject(self, content_type: str) -> bool:
         """Check if this injector can handle the given content type.
 
@@ -45,7 +44,7 @@ class BaseInjector(ABC):
         Returns:
             True if this injector can handle this content type
         """
-        pass
+        return content_type in getattr(self, "SUPPORTED_TYPES", [])
 
     @abstractmethod
     def inject(

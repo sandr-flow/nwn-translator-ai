@@ -18,9 +18,6 @@ class NcsInjector(BaseInjector):
 
     SUPPORTED_TYPES = ["ncs_script"]
 
-    def can_inject(self, content_type: str) -> bool:
-        return content_type in self.SUPPORTED_TYPES
-
     def inject(
         self,
         file_path: Path,

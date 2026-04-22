@@ -290,9 +290,6 @@ class NcsExtractor(BaseExtractor):
 
     SUPPORTED_TYPES = [".ncs"]
 
-    def can_extract(self, file_type: str) -> bool:
-        return file_type.lower() in self.SUPPORTED_TYPES
-
     def extract(
         self,
         file_path: Path,

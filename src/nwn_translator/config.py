@@ -241,19 +241,25 @@ def lang_suffix(target_lang: str) -> str:
     return f"-{tag}"
 
 
-def create_output_path(input_path: Path, target_lang: str) -> Path:
+def create_output_path(
+    input_path: Path,
+    target_lang: str,
+    output_dir: Optional[Path] = None,
+) -> Path:
     """Generate output filename based on input and target language.
 
     Args:
         input_path: Path to input .mod file
         target_lang: Target language name
+        output_dir: Optional directory override for the generated file
 
     Returns:
         Path for output .mod file
     """
     stem = sanitized_mod_stem(input_path.stem)
     suffix = input_path.suffix
-    return input_path.parent / f"{stem}{lang_suffix(target_lang)}{suffix}"
+    parent = Path(output_dir) if output_dir is not None else input_path.parent
+    return parent / f"{stem}{lang_suffix(target_lang)}{suffix}"
 
 
 # Standard NWN tokens that should be preserved (frozenset for O(1) membership)

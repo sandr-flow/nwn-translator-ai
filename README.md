@@ -2,212 +2,112 @@
 
 # NWN Modules Translator
 
-Инструмент для перевода модулей Neverwinter Nights с любого языка на любой другой с помощью AI (OpenRouter).
+Веб-инструмент для перевода модулей Neverwinter Nights через OpenRouter.
 
 ## Возможности
 
-- **OpenRouter** — один API-ключ открывает доступ к множеству моделей (Claude, GPT, Gemini, DeepSeek и др.)
-- **Сохранение игровых токенов** — `<FirstName>`, `<Class>`, `<CustomToken:123>` и прочие токены NWN сохраняются без изменений
-- **Контекстный перевод** — деревья диалогов переводятся целиком, что обеспечивает смысловую связность
-- **Пакетная обработка** — диалоги, журналы, предметы, существа, области, двери, триггеры и магазины
-- **Веб-интерфейс** — FastAPI + Vue SPA для перевода через браузер
-- **Docker** — готовый docker-compose для продакшен-деплоя
+- Перевод модулей через FastAPI + Vue web UI
+- Контекстный перевод диалогов и журналов
+- Сохранение NWN-токенов вроде `<FirstName>` и `<CustomToken:123>`
+- Поддержка `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, `.ncs`
+- Rebuild модуля после ручного редактирования переводов в web-интерфейсе
+- Docker-конфигурация для production-развёртывания
 
 ## Установка
 
-### Из PyPI
+### Разработка
 
-```bash
-pip install nwn-modules-translator
-```
-
-### Разработка из репозитория
-
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-```
-
-**Linux / macOS:**
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-```
-
-Для веб-интерфейса дополнительно:
-```bash
 pip install -e ".[web]"
 ```
 
-## Использование CLI
+Windows PowerShell:
 
-### Перевод модуля
-
-Ключ API берётся из `.env` (`NWN_TRANSLATE_API_KEY`) или передаётся через `--api-key`:
-
-```bash
-nwn-translate translate module.mod --lang russian
-```
-
-Указать выходной файл:
-```bash
-nwn-translate translate module.mod --lang french -o module_fr.mod
-```
-
-Выбрать модель OpenRouter:
-```bash
-nwn-translate translate module.mod --lang russian --model anthropic/claude-sonnet-4
-```
-
-### Тестирование подключения
-
-```bash
-nwn-translate test --lang russian
-nwn-translate test --lang spanish --text "Hello, adventurer!"
-```
-
-### Список токенов NWN
-
-```bash
-nwn-translate tokens
-```
-
-### Список моделей
-
-```bash
-nwn-translate providers
-```
-
-### Запуск веб-сервера
-
-```bash
-nwn-translate web --host 127.0.0.1 --port 8000
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+pip install -e ".[web]"
 ```
 
 ## Веб-интерфейс
 
-Проект включает FastAPI-бэкенд и Vue SPA-фронтенд.
+Backend:
 
-### Разработка
-
-Бэкенд:
 ```bash
-pip install -e ".[web]"
-nwn-translate web
+python -m nwn_translator.web
 ```
 
-Фронтенд (отдельный терминал):
+или
+
+```bash
+nwn-translate-web
+```
+
+Frontend:
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Откройте `http://localhost:5173` — запросы `/api` проксируются на FastAPI.
+Во время разработки frontend доступен на `http://localhost:5173`, запросы `/api` проксируются в FastAPI.
 
-Одной командой (бэкенд + фронтенд):
-```bash
-python scripts/run_web_ui.py
-```
+Windows: можно использовать `run-web-ui.bat`, если зависимости уже установлены.
 
-Windows: можно дважды щёлкнуть `run-web-ui.bat` (после установки зависимостей).
-
-### Docker (продакшен)
+## Docker
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-Приложение будет доступно на порту `8080` (nginx → FastAPI).
-
-## Поддерживаемые типы контента
-
-| Расширение | Тип            | Что переводится                        |
-|------------|----------------|----------------------------------------|
-| `.dlg`     | Диалоги        | Полные деревья диалогов с контекстом   |
-| `.jrl`     | Журнал квестов | Названия и описания квестов            |
-| `.uti`     | Предметы       | Названия и описания предметов          |
-| `.utc`     | Существа       | Имена и описания NPC                   |
-| `.are`     | Области        | Названия и описания областей           |
-| `.utt`     | Триггеры       | Названия и описания триггеров          |
-| `.utp`     | Размещаемые    | Названия и описания размещаемых        |
-| `.utd`     | Двери          | Названия и описания дверей             |
-| `.utm`     | Магазины       | Названия магазинов                     |
-| `.ifo`     | Информация     | Название и описание модуля             |
-| `.git`     | Экземпляры     | Имена размещённых объектов в областях   |
-
-## Сохранение токенов NWN
-
-Инструмент автоматически сохраняет игровые токены при переводе:
-
-- `<FirstName>`, `<LastName>`, `<Class>`, `<Race>`, `<Gender>`
-- `<HeShe>`, `<HisHer>`, `<HimHer>`, `<SirMadam>`, `<LordLady>` и др.
-- `<CustomToken:123>` — пользовательские токены
-
-Токены заменяются плейсхолдерами перед отправкой в AI и восстанавливаются после перевода.
+Приложение будет доступно на порту `8080`.
 
 ## Конфигурация
 
-### Переменные окружения
+Основные переменные окружения:
 
-| Переменная                       | Описание                                      | По умолчанию     |
-|----------------------------------|-----------------------------------------------|------------------|
-| `NWN_TRANSLATE_API_KEY`          | API-ключ OpenRouter                           | —                |
-| `NWN_TRANSLATE_MAX_CONCURRENT`   | Макс. параллельных запросов к API              | `12`             |
-| `NWN_WEB_HOST`                   | Адрес привязки веб-сервера                    | `127.0.0.1`      |
-| `NWN_WEB_PORT`                   | Порт веб-сервера                              | `8000`           |
-| `NWN_WEB_CORS_ORIGINS`           | Разрешённые CORS-источники (через запятую)    | `*`              |
-| `NWN_WEB_STATIC_DIR`             | Путь к статике SPA (production)               | —                |
-| `NWN_WEB_TASK_ROOT`              | Корневая директория задач                     | `workspace/web`  |
+- `NWN_TRANSLATE_API_KEY` — API key OpenRouter
+- `NWN_TRANSLATE_MAX_CONCURRENT` — максимальное число параллельных запросов
+- `NWN_WEB_HOST` — адрес web-сервера
+- `NWN_WEB_PORT` — порт web-сервера
+- `NWN_WEB_CORS_ORIGINS` — разрешённые CORS origins
+- `NWN_WEB_STATIC_DIR` — путь к production static files SPA
+- `NWN_WEB_TASK_ROOT` — корневая директория задач web-интерфейса
 
-### Файл `.env`
-
-Создайте `.env` в корне проекта:
+Пример `.env`:
 
 ```env
 NWN_TRANSLATE_API_KEY=sk-or-v1-...
 NWN_TRANSLATE_MAX_CONCURRENT=12
+NWN_WEB_HOST=127.0.0.1
+NWN_WEB_PORT=8000
 ```
 
-## Архитектура
+## Диагностика
 
-```
-.mod файл
-  │
-  ├── ERF Reader ─── Извлечение ресурсов
-  │                      │
-  │                      ▼
-  │              GFF Parser ─── Парсинг бинарных файлов
-  │                      │
-  │                      ▼
-  │              Extractors ─── Извлечение текста (.dlg, .utc, .uti, …)
-  │                      │
-  │                      ▼
-  │              World Scanner ─── Сбор контекста мира (NPC, локации, квесты)
-  │                      │
-  │                      ▼
-  │              Context Translator ─── AI-перевод через OpenRouter
-  │                      │
-  │                      ▼
-  │              GFF Patcher ─── Бинарная инъекция переведённых строк
-  │                      │
-  │                      ▼
-  └── ERF Writer ─── Сборка переведённого .mod файла
+В `scripts/` оставлен один универсальный диагностический инструмент:
+
+```bash
+python scripts/dump_gff_strings.py file path/to/file.utc
+python scripts/dump_gff_strings.py file path/to/file.utc --compare path/to/original.utc
+python scripts/dump_gff_strings.py module path/to/module.mod talias.utc drixie.dlg
 ```
 
 ## Разработка
 
-### Тесты
+Тесты:
 
 ```bash
 pytest
 pytest --cov=src
 ```
 
-### Линтинг
+Проверки:
 
 ```bash
 black src tests
@@ -217,4 +117,4 @@ mypy src
 
 ## Лицензия
 
-MIT License — см. файл [LICENSE](LICENSE).
+MIT, см. [LICENSE](LICENSE).

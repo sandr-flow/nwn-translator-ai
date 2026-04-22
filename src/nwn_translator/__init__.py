@@ -22,10 +22,6 @@ def __getattr__(name):
         from .main import ModuleTranslator
 
         return ModuleTranslator
-    if name == "cli_main":
-        from .cli import main as cli_main
-
-        return cli_main
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -35,5 +31,4 @@ __all__ = [
     "create_output_path",
     "translate_module",
     "ModuleTranslator",
-    "cli_main",
 ]

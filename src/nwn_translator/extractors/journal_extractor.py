@@ -14,10 +14,6 @@ class JournalExtractor(BaseExtractor):
 
     SUPPORTED_TYPES = [".jrl"]
 
-    def can_extract(self, file_type: str) -> bool:
-        """Check if this extractor can handle the given file type."""
-        return file_type.lower() in self.SUPPORTED_TYPES
-
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extract journal content from a .jrl file.
 

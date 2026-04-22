@@ -25,16 +25,8 @@ _INJECTOR_MAP: dict = {}
 _INJECTOR_CLASSES: list = [DialogInjector, JournalInjector, GenericInjector, NcsInjector]
 for _cls in _INJECTOR_CLASSES:
     _inst = _cls()
-    _types = getattr(_inst, "SUPPORTED_TYPES", [])
-    if not _types:
-        # DialogInjector/JournalInjector match a single content_type via can_inject
-        # Probe the known content types
-        for _ct in ["dialog", "journal"]:
-            if _inst.can_inject(_ct):
-                _INJECTOR_MAP[_ct] = _inst
-    else:
-        for _ct in _types:
-            _INJECTOR_MAP[_ct] = _inst
+    for _ct in getattr(_inst, "SUPPORTED_TYPES", []):
+        _INJECTOR_MAP[_ct] = _inst
 
 
 def get_injector_for_content(content_type: str):

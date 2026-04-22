@@ -176,6 +176,13 @@ class TestDialogPrompt:
         parsed = json.loads(json_str)
         assert "E0" in parsed
 
+    def test_dialog_prompt_mentions_start_tag_preservation(self):
+        prompt = build_dialog_system_prompt("english", "male", "WORLD: test")
+        assert "<StartAction>" in prompt
+        assert "<StartCheck>" in prompt
+        assert "<StartHighlight>" in prompt
+        assert "__NWN_TOKEN_ABC__" in prompt
+
 
 class TestGlossaryPrompt:
     """build_glossary_system_prompt uses the right language examples."""

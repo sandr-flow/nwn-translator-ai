@@ -9,15 +9,15 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ..config import TranslationConfig, TRANSLATION_TEMPERATURE, TRANSLATION_MAX_TOKENS
-from ..json_utils import json_extract_first_object, strip_json_markdown_fences
 from ..ai_providers import BaseAIProvider
 from ..ai_providers.openrouter_provider import OpenRouterProvider
-from ..translation_logging import translation_log_writer_for_config
-from ..extractors.dialog_extractor import DialogExtractor, DialogNode
-from ..context.world_context import WorldContext
+from ..config import TranslationConfig, TRANSLATION_MAX_TOKENS, TRANSLATION_TEMPERATURE
 from ..context.dialog_formatter import DialogFormatter
-from .token_handler import TokenHandler, sanitize_text, restore_text
+from ..context.world_context import WorldContext
+from ..extractors.dialog_extractor import DialogExtractor, DialogNode
+from ..json_utils import json_extract_first_object, strip_json_markdown_fences
+from ..translation_logging import translation_log_writer_for_config
+from .token_handler import TokenHandler, sanitize_text
 
 if TYPE_CHECKING:
     from ..glossary import Glossary
@@ -30,6 +30,8 @@ _DIALOG_MAX_TOKENS_BOOST = min(32768, TRANSLATION_MAX_TOKENS * 2)
 
 class ContextualTranslationManager:
     """Manager for full-graph contextual translation."""
+
+    _TOKEN_RETRY_BUDGET = 2
 
     def __init__(
         self,
@@ -58,15 +60,7 @@ class ContextualTranslationManager:
         item_progress: Optional[Any] = None,
         item_budget: Optional[int] = None,
     ) -> Dict[str, str]:
-        """Translate a complete dialog tree.
-
-        Args:
-            file_path: Path to the .dlg file
-            parsed_data: Parsed GFF data
-
-        Returns:
-            Dictionary mapping original text to translated text
-        """
+        """Translate a complete dialog tree."""
         budget = int(item_budget) if item_budget else 0
         bumped = 0
 
@@ -94,19 +88,16 @@ class ContextualTranslationManager:
             return {}
 
         provider: OpenRouterProvider = self.provider
-
         extractor = DialogExtractor()
 
-        # Build hierarchical tree for context
         tree = extractor.build_dialog_tree(parsed_data)
         if not tree:
             _finish()
             return {}
 
-        # We also need a flat list of nodes to map back to original text
         node_map: Dict[str, DialogNode] = {}
 
-        def collect_nodes(nodes: List[DialogNode]):
+        def collect_nodes(nodes: List[DialogNode]) -> None:
             for node in nodes:
                 key = f"{'E' if node.is_entry else 'R'}{node.node_id}"
                 if key not in node_map:
@@ -115,7 +106,6 @@ class ContextualTranslationManager:
 
         collect_nodes(tree)
 
-        # Save original texts and sanitize
         original_text_map: Dict[str, str] = {}
         sanitized_by_key: Dict[str, str] = {}
         handlers: Dict[str, TokenHandler] = {}
@@ -126,7 +116,6 @@ class ContextualTranslationManager:
                 continue
 
             original_text_map[key] = original_text
-
             sanitized, handler = sanitize_text(
                 original_text,
                 preserve_tokens=self.config.preserve_tokens,
@@ -140,9 +129,11 @@ class ContextualTranslationManager:
         for key, original_text in original_text_map.items():
             san = sanitized_by_key[key]
             if self.translation_cache is not None and san in self.translation_cache:
-                translations[original_text] = restore_text(
-                    self.translation_cache[san], handlers[key]
+                outcome = handlers[key].finalize_translation(
+                    self.translation_cache[san],
+                    allow_cleanup=True,
                 )
+                translations[original_text] = outcome.final_text
             else:
                 keys_for_api.append(key)
 
@@ -243,85 +234,184 @@ class ContextualTranslationManager:
                 _finish()
                 return translations
 
-            api_translations = self._apply_translations(
+            api_translations, invalid_nodes = self._apply_translations(
                 parsed_json,
                 original_text_map,
                 handlers,
                 file_path,
                 sanitized_by_key=sanitized_by_key,
                 session_cache=self.translation_cache,
+                allow_cleanup=False,
             )
             translations.update(api_translations)
             _bump(len(api_translations))
 
-            # Retry for any nodes the model missed (among keys we asked to translate)
             missing_keys = [k for k in keys_for_api if k not in parsed_json]
-            if missing_keys:
+            pending_keys = sorted(set(missing_keys + list(invalid_nodes.keys())))
+            latest_invalid = dict(invalid_nodes)
+
+            if pending_keys:
                 logger.warning(
-                    "%s: %d/%d nodes were not translated, retrying missing nodes...",
+                    "%s: retrying %d dialog nodes with missing or invalid preserved artifacts...",
                     file_path.name,
-                    len(missing_keys),
-                    len(keys_for_api),
+                    len(pending_keys),
                 )
                 retry_script = self.formatter.format_nodes(
-                    missing_keys,
+                    pending_keys,
                     node_map,
                     original_text_map,
                     text_overrides=sanitized_by_key,
                 )
-
-                async def run_retry() -> str:
-                    return await call_api(
+                retry_prompt = self._build_token_retry_user_prompt(
+                    file_path.name,
+                    retry_script,
+                    pending_keys,
+                    handlers,
+                    {key: latest_invalid.get(key, {}).get("report") for key in pending_keys},
+                )
+                retry_raw = run_async(
+                    call_api(
                         self._build_system_prompt(
-                            source_text=retry_script, filename_stem=file_path.stem
+                            source_text=retry_script,
+                            filename_stem=file_path.stem,
                         ),
-                        self._build_user_prompt(file_path.name, retry_script),
+                        retry_prompt,
                         max_tokens=TRANSLATION_MAX_TOKENS,
-                    )
-
-                retry_raw = run_async(run_retry(), cleanup=provider.close_async_client)
-
+                    ),
+                    cleanup=provider.close_async_client,
+                )
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json is None and self._dialog_response_likely_truncated(retry_raw):
-                    repair = self._build_repair_user_prompt(
-                        file_path.name,
-                        retry_script,
-                        missing_keys,
-                        retry_raw,
-                    )
                     retry_raw = run_async(
                         call_api(
                             self._build_system_prompt(
-                                source_text=retry_script, filename_stem=file_path.stem
+                                source_text=retry_script,
+                                filename_stem=file_path.stem,
                             ),
-                            repair,
+                            retry_prompt,
                             max_tokens=_DIALOG_MAX_TOKENS_BOOST,
                         ),
                         cleanup=provider.close_async_client,
                     )
                     retry_json = self._parse_json_response(retry_raw, file_path.name)
+
+                pending_after_json = list(pending_keys)
                 if retry_json:
-                    retry_translations = self._apply_translations(
+                    retry_translations, retry_invalid = self._apply_translations(
                         retry_json,
                         original_text_map,
                         handlers,
                         file_path,
                         sanitized_by_key=sanitized_by_key,
                         session_cache=self.translation_cache,
+                        allow_cleanup=False,
                     )
                     translations.update(retry_translations)
                     _bump(len(retry_translations))
                     logger.info(
-                        "%s: retry recovered %d additional translations.",
+                        "%s: retry recovered %d additional dialog translations.",
                         file_path.name,
                         len(retry_translations),
                     )
+                    for key in pending_keys:
+                        if key in retry_json and key not in retry_invalid:
+                            latest_invalid.pop(key, None)
+                    latest_invalid.update(retry_invalid)
+                    pending_after_json = sorted(
+                        set(
+                            [key for key in pending_keys if key not in retry_json]
+                            + list(retry_invalid.keys())
+                        )
+                    )
+
+                if pending_after_json:
+                    logger.warning(
+                        "%s: %d dialog nodes still invalid after JSON retry; retrying individually.",
+                        file_path.name,
+                        len(pending_after_json),
+                    )
+                    glossary_block = self._glossary_block_for_texts(
+                        [sanitized_by_key[key] for key in pending_after_json]
+                    )
+                    for key in pending_after_json:
+                        context = self._build_dialog_retry_context(
+                            key,
+                            node_map,
+                            handlers,
+                            latest_invalid.get(key, {}).get("report"),
+                            file_path.name,
+                            self._TOKEN_RETRY_BUDGET,
+                        )
+
+                        async def run_single_retry() -> Any:
+                            return await provider.translate_async(
+                                text=sanitized_by_key[key],
+                                source_lang=self.config.source_lang,
+                                target_lang=self.config.target_lang,
+                                context=context,
+                                glossary_block=glossary_block,
+                                content_profile=None,
+                            )
+
+                        try:
+                            line_result = run_async(
+                                run_single_retry(),
+                                cleanup=provider.close_async_client,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "%s: individual dialog retry failed for %s: %s",
+                                file_path.name,
+                                key,
+                                exc,
+                            )
+                            line_result = None
+
+                        if line_result is not None and getattr(line_result, "success", False):
+                            single_translations, single_invalid = self._apply_translations(
+                                {key: line_result.translated},
+                                original_text_map,
+                                handlers,
+                                file_path,
+                                sanitized_by_key=sanitized_by_key,
+                                session_cache=self.translation_cache,
+                                allow_cleanup=False,
+                            )
+                            if single_translations:
+                                translations.update(single_translations)
+                                _bump(len(single_translations))
+                                latest_invalid.pop(key, None)
+                                continue
+                            latest_invalid[key] = single_invalid.get(
+                                key,
+                                {
+                                    "translated_sanitized": line_result.translated,
+                                    "report": None,
+                                },
+                            )
+
+                        cleanup_payload = latest_invalid.get(
+                            key,
+                            {"translated_sanitized": "", "report": None},
+                        )
+                        cleaned_translations, _ = self._apply_translations(
+                            {key: cleanup_payload.get("translated_sanitized", "")},
+                            original_text_map,
+                            handlers,
+                            file_path,
+                            sanitized_by_key=sanitized_by_key,
+                            session_cache=self.translation_cache,
+                            allow_cleanup=True,
+                        )
+                        if cleaned_translations:
+                            translations.update(cleaned_translations)
+                            _bump(len(cleaned_translations))
 
             _finish()
             return translations
 
-        except Exception as e:
-            logger.error("Contextual translation failed for %s: %s", file_path.name, e)
+        except Exception as exc:
+            logger.error("Contextual translation failed for %s: %s", file_path.name, exc)
             _finish()
             return translations
 
@@ -347,10 +437,79 @@ class ContextualTranslationManager:
             return False
         try:
             json.JSONDecoder().raw_decode(cleaned, idx)
-        except json.JSONDecodeError as e:
-            msg = str(e).lower()
+        except json.JSONDecodeError as exc:
+            msg = str(exc).lower()
             return "unterminated" in msg
         return False
+
+    def _build_dialog_retry_context(
+        self,
+        key: str,
+        node_map: Dict[str, DialogNode],
+        handlers: Dict[str, TokenHandler],
+        mismatch_report: Optional[Any],
+        filename: str,
+        attempt: int,
+    ) -> str:
+        """Build a stricter line-level retry context for one dialog node."""
+        node = node_map.get(key)
+        parts: List[str] = [f"Dialog node {key} in {filename}."]
+        if node is not None:
+            speaker = node.speaker or ("NPC" if node.is_entry else "Player")
+            parts.append(f"Speaker: {speaker}.")
+        parts.append(
+            "TOKEN/TAG PRESERVATION RETRY: preserve every placeholder and helper token "
+            "surrogate exactly as it appears in the source text. Do not rename, reorder, "
+            "delete, duplicate, or replace any placeholder."
+        )
+        parts.append(
+            "If the line contains NWN inline markup such as StartAction, StartCheck, "
+            "StartHighlight, or </Start>, preserve that markup exactly after restoration. "
+            "Translate only normal prose and text inside square brackets."
+        )
+        expected = handlers[key].get_expected_artifact_sequence()
+        if expected:
+            parts.append("Expected preserved artifacts after restoration: " + " | ".join(expected))
+        if mismatch_report is not None and not mismatch_report.is_exact_match:
+            parts.append(f"Previous mismatch type: {mismatch_report.mismatch_type}.")
+            if mismatch_report.actual_sequence:
+                parts.append(
+                    "Previous restored artifact sequence: "
+                    + " | ".join(mismatch_report.actual_sequence)
+                )
+        parts.append(f"Retry attempt {attempt} of {self._TOKEN_RETRY_BUDGET}.")
+        return "\n".join(parts)
+
+    def _build_token_retry_user_prompt(
+        self,
+        filename: str,
+        script: str,
+        keys_required: List[str],
+        handlers: Dict[str, TokenHandler],
+        mismatch_reports: Dict[str, Any],
+    ) -> str:
+        """Ask the model to regenerate only invalid/missing nodes with strict preservation."""
+        keys_csv = ", ".join(sorted(keys_required))
+        lines = [
+            f"The previous answer for {filename} changed, dropped, or omitted preserved NWN tags/tokens for keys: {keys_csv}.",
+            f"Return ONLY one JSON object: keys exactly {keys_csv} (same IDs as in the script), each value a string translation.",
+            "Preserve every placeholder and helper token surrogate EXACTLY as it appears in the script.",
+            "Do not rename, reorder, delete, duplicate, or replace any placeholder.",
+            "Translate only the normal prose and the text inside square brackets.",
+            "",
+            "Expected preserved artifacts after restoration:",
+        ]
+        for key in sorted(keys_required):
+            expected = handlers[key].get_expected_artifact_sequence()
+            if expected:
+                lines.append(f"- {key}: " + " | ".join(expected))
+            report = mismatch_reports.get(key)
+            if report is not None and not report.is_exact_match and report.actual_sequence:
+                lines.append(
+                    "  previous restored sequence: " + " | ".join(report.actual_sequence)
+                )
+        lines.extend(["", "Dialog script:", "", script])
+        return "\n".join(lines)
 
     def _build_repair_user_prompt(
         self,
@@ -379,9 +538,12 @@ class ContextualTranslationManager:
         file_path: Path,
         sanitized_by_key: Optional[Dict[str, str]] = None,
         session_cache: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, str]:
-        """Restore tokens and build the original→translated mapping."""
-        translations = {}
+        *,
+        allow_cleanup: bool = False,
+    ) -> tuple[Dict[str, str], Dict[str, Dict[str, Any]]]:
+        """Restore, validate, and return accepted plus invalid dialog nodes."""
+        translations: Dict[str, str] = {}
+        invalid: Dict[str, Dict[str, Any]] = {}
         for key, translated_sanitized in parsed_json.items():
             if key not in original_text_map:
                 continue
@@ -390,13 +552,40 @@ class ContextualTranslationManager:
                 translated_sanitized = ""
             elif not isinstance(translated_sanitized, str):
                 translated_sanitized = str(translated_sanitized)
-            final_translated = restore_text(translated_sanitized, handlers[key])
+
+            outcome = handlers[key].finalize_translation(
+                translated_sanitized,
+                allow_cleanup=allow_cleanup,
+            )
+            if not outcome.exact_valid and not outcome.used_cleanup:
+                invalid[key] = {
+                    "translated_sanitized": translated_sanitized,
+                    "report": outcome.mismatch_report,
+                }
+                logger.warning(
+                    "%s: token/tag mismatch for dialog node %s (%s). expected=%s actual=%s",
+                    file_path.name,
+                    key,
+                    outcome.mismatch_report.mismatch_type,
+                    outcome.mismatch_report.expected_sequence,
+                    outcome.mismatch_report.actual_sequence,
+                )
+                continue
+
+            final_translated = outcome.final_text
             translations[original_text] = final_translated
 
-            if session_cache is not None and sanitized_by_key is not None:
+            if outcome.exact_valid and session_cache is not None and sanitized_by_key is not None:
                 san = sanitized_by_key.get(key)
                 if san:
                     session_cache[san] = translated_sanitized
+
+            if outcome.used_cleanup:
+                logger.warning(
+                    "%s: accepted cleaned dialog translation for node %s after token/tag mismatch cleanup.",
+                    file_path.name,
+                    key,
+                )
 
             log_entry = {
                 "original": original_text,
@@ -407,23 +596,16 @@ class ContextualTranslationManager:
             }
             try:
                 self._log_writer.write(log_entry)
-            except Exception as log_e:
-                logger.debug("Failed to write to translation log: %s", log_e)
-        return translations
+            except Exception as log_exc:
+                logger.debug("Failed to write to translation log: %s", log_exc)
+        return translations, invalid
 
     def _build_system_prompt(self, source_text: str = "", filename_stem: str = "") -> Any:
-        """Build the system ``content`` payload for a dialog translation call.
-
-        Stable portion (rules + output format) is cached across all dialogs;
-        variable portion holds the per-batch WORLD CONTEXT, glossary, and
-        race-term hints, all filtered to entities/terms actually mentioned
-        in *source_text* (with *filename_stem* added to the matching corpus
-        as a cheap owner-NPC safety net — e.g. ``thea2`` matches «Thea …»).
-        """
+        """Build the system ``content`` payload for a dialog translation call."""
         from ..prompts import build_dialog_system_prompt_parts
         from ..race_dictionary import match_race_terms
 
-        corpus = [t for t in (source_text, filename_stem) if t]
+        corpus = [text for text in (source_text, filename_stem) if text]
 
         if self.world_context is not None and corpus:
             world_block = self.world_context.to_prompt_block(
@@ -468,3 +650,10 @@ class ContextualTranslationManager:
             f"Return ONLY a JSON object: map each line ID (e.g. E0, R1) to the "
             f"translated string. No markdown fences, no extra keys, no text outside JSON."
         )
+
+    def _glossary_block_for_texts(self, texts: List[str]) -> Optional[str]:
+        """Return a glossary block narrowed to entries present in *texts*."""
+        if not self.glossary or not getattr(self.glossary, "entries", None):
+            return None
+        block = self.glossary.to_prompt_block(texts=texts)
+        return block or None

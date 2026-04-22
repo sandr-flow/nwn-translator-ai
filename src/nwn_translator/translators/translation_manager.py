@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 from ..extractors import ExtractedContent
 from ..ai_providers import BaseAIProvider, TranslationItem, TranslationResult
 from .prefix_translation_cache import PrefixAwareTranslationCache
-from .token_handler import TokenHandler, sanitize_text, restore_text
+from .token_handler import TokenHandler, sanitize_text
 
 # Minimum length (characters) for a cached key to qualify as a prefix match.
 _MIN_PREFIX_LEN = 20
@@ -33,11 +33,10 @@ _MIN_PREFIX_LEN = 20
 # Placeholders produced by TokenHandler.sanitize() that carry no translatable
 # content and must be stripped before checking if a sanitized string is empty.
 _NON_TRANSLATABLE_RE = re.compile(
-    r"<<TOKEN_\d+>>"
-    r"|__NWN_TAG_[A-Za-z0-9_]+__"
-    r"|\[\[NWN_TAG_[A-Za-z0-9_]+\]\]"
-    r"|<<\[NWN_TAG_[A-Za-z0-9_]+\]>>"
-    r"|<\[NWN_TAG_[A-Za-z0-9_]+\]>"
+    r"__(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+__"
+    r"|\[\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]\]"
+    r"|<<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>>"
+    r"|<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>"
 )
 
 
@@ -259,6 +258,7 @@ class TranslationManager:
                 {
                     "item": item,
                     "sanitized": sanitized,
+                    "full_sanitized": sanitized,
                     "handler": handler,
                 }
             )
@@ -301,10 +301,13 @@ class TranslationManager:
 
             # Cache hit?
             if sanitized in self.translation_cache:
-                translated = restore_text(self.translation_cache[sanitized], handler)
-                translations[item.text] = translated
+                outcome = handler.finalize_translation(
+                    self.translation_cache[sanitized],
+                    allow_cleanup=True,
+                )
+                translations[item.text] = outcome.final_text
                 if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
-                    self.ncs_translations_by_item_id[item.item_id] = translated
+                    self.ncs_translations_by_item_id[item.item_id] = outcome.final_text
                 with self._stats_lock:
                     self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
                 logger.debug("Cache hit for '%s…'", sanitized[:40])
@@ -381,6 +384,8 @@ class TranslationManager:
     _GATHER_TIMEOUT: float = 600.0
     # run_async outer timeout (slightly above _GATHER_TIMEOUT).
     _RUN_ASYNC_TIMEOUT: float = 660.0
+    # Additional retries for token/tag mismatches after the first model answer.
+    _TOKEN_RETRY_BUDGET: int = 2
 
     # Item types that are safe for batching (short names/labels only)
     _BATCHABLE_TYPES = frozenset(
@@ -503,6 +508,218 @@ class TranslationManager:
         if bump:
             self._async_bump(item_data)
         return result
+
+    def _compose_translated_sanitized(
+        self,
+        item_data: dict,
+        translated_sanitized: str,
+        *,
+        use_full_output: bool = False,
+    ) -> tuple[str, str]:
+        """Return ``(full_translated_sanitized, cache_key)`` for one item output."""
+        full_sanitized = item_data.get("full_sanitized") or item_data["sanitized"]
+        if use_full_output:
+            return translated_sanitized, full_sanitized
+
+        prefix_translation = item_data.get("_prefix_translation")
+        original_sanitized = item_data.get("_original_sanitized")
+        if prefix_translation is not None and original_sanitized is not None:
+            return prefix_translation + translated_sanitized, original_sanitized
+
+        return translated_sanitized, full_sanitized
+
+    def _build_token_retry_context(
+        self,
+        item_data: dict,
+        attempt: int,
+        mismatch_report: Optional[Any],
+    ) -> str:
+        """Build a stricter context hint for token/tag preservation retries."""
+        item = item_data["item"]
+        handler = item_data["handler"]
+        expected = handler.get_expected_artifact_sequence()
+        parts: List[str] = []
+        if item.context:
+            parts.append(item.context)
+        parts.append(
+            "TOKEN/TAG PRESERVATION RETRY: preserve every placeholder and helper token "
+            "surrogate exactly as it appears in the source text. Do not rename, reorder, "
+            "delete, duplicate, or replace any placeholder."
+        )
+        parts.append(
+            "If the line contains NWN inline markup such as StartAction, StartCheck, "
+            "StartHighlight, or </Start>, preserve that markup exactly after restoration. "
+            "Translate only normal prose and text inside square brackets."
+        )
+        if expected:
+            parts.append(
+                "Expected preserved artifacts after restoration: " + " | ".join(expected)
+            )
+        if mismatch_report is not None and not mismatch_report.is_exact_match:
+            parts.append(f"Previous mismatch type: {mismatch_report.mismatch_type}.")
+            if mismatch_report.actual_sequence:
+                parts.append(
+                    "Previous restored artifact sequence: "
+                    + " | ".join(mismatch_report.actual_sequence)
+                )
+        parts.append(f"Retry attempt {attempt} of {self._TOKEN_RETRY_BUDGET}.")
+        return "\n".join(parts)
+
+    def _accept_translation_candidate(
+        self,
+        item_data: dict,
+        translated_sanitized: str,
+        translations: Dict[str, str],
+        *,
+        source_filename: Optional[str] = None,
+        model: Optional[str] = None,
+        allow_cleanup: bool = False,
+        use_full_output: bool = False,
+    ) -> bool:
+        """Finalize, validate, and store one model output."""
+        item = item_data["item"]
+        handler = item_data["handler"]
+        full_translated_sanitized, cache_key = self._compose_translated_sanitized(
+            item_data,
+            translated_sanitized,
+            use_full_output=use_full_output,
+        )
+        outcome = handler.finalize_translation(
+            full_translated_sanitized,
+            allow_cleanup=allow_cleanup,
+        )
+
+        if not outcome.exact_valid and not outcome.used_cleanup:
+            item_data["_token_mismatch_report"] = outcome.mismatch_report
+            item_data["_last_invalid_sanitized"] = full_translated_sanitized
+            item_filename = Path(item.location).name if item.location else source_filename
+            logger.warning(
+                "%s: token/tag mismatch for %s (%s). expected=%s actual=%s",
+                item_filename or "<unknown>",
+                item.item_id or item.text[:40],
+                outcome.mismatch_report.mismatch_type,
+                outcome.mismatch_report.expected_sequence,
+                outcome.mismatch_report.actual_sequence,
+            )
+            return False
+
+        translated = outcome.final_text
+        with self._stats_lock:
+            if outcome.exact_valid:
+                self.translation_cache[cache_key] = full_translated_sanitized
+            translations[item.text] = translated
+            self.stats["items_translated"] += 1
+
+        if outcome.used_cleanup:
+            item_filename = Path(item.location).name if item.location else source_filename
+            logger.warning(
+                "%s: accepted cleaned translation for %s after token/tag mismatch cleanup.",
+                item_filename or "<unknown>",
+                item.item_id or item.text[:40],
+            )
+
+        if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
+            self.ncs_translations_by_item_id[item.item_id] = translated
+
+        item_filename = Path(item.location).name if item.location else source_filename
+        log_entry = {
+            "original": item.text,
+            "translated": translated,
+            "context": item.context,
+            "model": model or self.config.model,
+            "file": item_filename,
+            "item_id": (
+                item.item_id if (item.metadata or {}).get("type") == "ncs_string" else None
+            ),
+        }
+        try:
+            self._log_writer.write(log_entry)
+        except Exception as log_e:
+            logger.debug("Failed to write to translation log: %s", log_e)
+
+        return True
+
+    def _retry_token_mismatch(
+        self,
+        item_data: dict,
+        initial_translated_sanitized: str,
+        translations: Dict[str, str],
+        *,
+        source_filename: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> bool:
+        """Retry token/tag-mismatched outputs individually, then cleanup."""
+        last_candidate, _ = self._compose_translated_sanitized(
+            item_data,
+            initial_translated_sanitized,
+            use_full_output=False,
+        )
+        last_model = model or self.config.model
+        mismatch_report = item_data.get("_token_mismatch_report")
+        full_sanitized = item_data.get("full_sanitized") or item_data["sanitized"]
+        glossary_block = self._glossary_block_for_texts([full_sanitized])
+        content_profile = self._content_profile_for_item(item_data)
+        from ..async_utils import run_async
+
+        for attempt in range(1, self._TOKEN_RETRY_BUDGET + 1):
+
+            async def run_retry() -> TranslationResult:
+                return await self.provider.translate_async(
+                    text=full_sanitized,
+                    source_lang=self.config.source_lang,
+                    target_lang=self.config.target_lang,
+                    context=self._build_token_retry_context(item_data, attempt, mismatch_report),
+                    glossary_block=glossary_block,
+                    content_profile=content_profile,
+                )
+
+            try:
+                retry_result = run_async(
+                    run_retry(),
+                    cleanup=self.provider.close_async_client,
+                    timeout=self._ITEM_TIMEOUT,
+                )
+            except Exception as exc:
+                retry_result = TranslationResult(
+                    translated="",
+                    original=full_sanitized,
+                    success=False,
+                    error=str(exc),
+                    metadata={},
+                )
+
+            if not retry_result.success:
+                logger.warning(
+                    "Token retry failed for %s on attempt %d: %s",
+                    item_data["item"].item_id or item_data["item"].text[:40],
+                    attempt,
+                    retry_result.error,
+                )
+                continue
+
+            last_candidate = retry_result.translated
+            last_model = retry_result.metadata.get("model", last_model)
+            if self._accept_translation_candidate(
+                item_data,
+                retry_result.translated,
+                translations,
+                source_filename=source_filename,
+                model=last_model,
+                allow_cleanup=False,
+                use_full_output=True,
+            ):
+                return True
+            mismatch_report = item_data.get("_token_mismatch_report", mismatch_report)
+
+        return self._accept_translation_candidate(
+            item_data,
+            last_candidate,
+            translations,
+            source_filename=source_filename,
+            model=last_model,
+            allow_cleanup=True,
+            use_full_output=True,
+        )
 
     def _translate_uncached_concurrent(
         self,
@@ -823,25 +1040,23 @@ class TranslationManager:
         the original text is the identity, so we reuse the sanitized form as
         the "translated" value and restore tokens via the handler.
         """
-        item = item_data["item"]
-        handler = item_data["handler"]
         sanitized = item_data["sanitized"]
-        original_sanitized = item_data.get("_original_sanitized") or sanitized
 
         translated_sanitized = sanitized
         prefix_translation = item_data.get("_prefix_translation")
         if prefix_translation is not None:
             translated_sanitized = prefix_translation + translated_sanitized
 
-        with self._stats_lock:
-            self.translation_cache[original_sanitized] = translated_sanitized
-            translated = restore_text(translated_sanitized, handler)
-            translations[item.text] = translated
-            self.stats["items_translated"] = self.stats.get("items_translated", 0) + 1
-
-        if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
-            self.ncs_translations_by_item_id[item.item_id] = translated
-
+        self._accept_translation_candidate(
+            item_data,
+            translated_sanitized,
+            translations,
+            source_filename=Path(item_data["item"].location).name
+            if item_data["item"].location
+            else None,
+            model=self.config.model,
+            use_full_output=True,
+        )
         self._async_bump(item_data)
 
     def _process_translation_result(
@@ -852,46 +1067,24 @@ class TranslationManager:
         source_filename: Optional[str] = None,
     ) -> None:
         """Process a single translation result (shared by individual and batch paths)."""
-        item = item_data["item"]
-        sanitized = item_data["sanitized"]
-        handler = item_data["handler"]
-
         if result.success:
-            # Reassemble prefix translation if this was a prefix-cache hit
-            translated_sanitized = result.translated
-            prefix_translation = item_data.get("_prefix_translation")
-            original_sanitized = item_data.get("_original_sanitized")
-            if prefix_translation is not None and original_sanitized is not None:
-                translated_sanitized = prefix_translation + translated_sanitized
-                # Cache under the full sanitized key
-                sanitized = original_sanitized
-
-            with self._stats_lock:
-                self.translation_cache[sanitized] = translated_sanitized
-                translated = restore_text(translated_sanitized, handler)
-                translations[item.text] = translated
-                self.stats["items_translated"] += 1
-
-            if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
-                self.ncs_translations_by_item_id[item.item_id] = translated
-
-            # Prefer per-item location for file attribution (handles merged batches)
-            item_filename = Path(item.location).name if item.location else source_filename
-            log_entry = {
-                "original": item.text,
-                "translated": translated,
-                "context": item.context,
-                "model": result.metadata.get("model", self.config.model),
-                "file": item_filename,
-                "item_id": (
-                    item.item_id if (item.metadata or {}).get("type") == "ncs_string" else None
-                ),
-            }
-            try:
-                self._log_writer.write(log_entry)
-            except Exception as log_e:
-                logger.debug("Failed to write to translation log: %s", log_e)
+            if self._accept_translation_candidate(
+                item_data,
+                result.translated,
+                translations,
+                source_filename=source_filename,
+                model=result.metadata.get("model", self.config.model),
+            ):
+                return
+            self._retry_token_mismatch(
+                item_data,
+                result.translated,
+                translations,
+                source_filename=source_filename,
+                model=result.metadata.get("model", self.config.model),
+            )
         else:
+            item = item_data["item"]
             error_msg = f"Translation failed for {item.item_id}: {result.error}"
             with self._stats_lock:
                 self.stats["errors"].append(error_msg)

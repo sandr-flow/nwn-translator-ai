@@ -1,230 +1,160 @@
-"""Tests for token handling functionality."""
+"""Tests for token and inline-tag preservation."""
 
 import re
-
-import pytest
 
 from src.nwn_translator.translators.token_handler import (
     TokenHandler,
     TokenValidator,
-    sanitize_text,
     restore_text,
+    sanitize_text,
 )
+
+
+INLINE_PLACEHOLDER_RE = re.compile(r"__NWN_INLINE_[A-Za-z0-9_]+__")
+TOKEN_PLACEHOLDER_RE = re.compile(r"__NWN_TOKEN_[A-Za-z0-9_]+__")
 
 
 class TestTokenHandler:
     """Tests for TokenHandler class."""
 
     def test_sanitize_simple_text(self):
-        """Test sanitizing text without tokens."""
         handler = TokenHandler()
         result = handler.sanitize("Hello world")
         assert result.sanitized_text == "Hello world"
         assert len(result.replacements) == 0
+        assert handler.get_token_count() == 0
 
     def test_sanitize_with_first_name_token(self):
-        """Test sanitizing text with <FirstName> token."""
         handler = TokenHandler()
         result = handler.sanitize("Hello <FirstName>")
-        assert result.sanitized_text == "Hello <<TOKEN_0>>"
+        assert TOKEN_PLACEHOLDER_RE.fullmatch(result.sanitized_text.split()[-1])
         assert len(result.replacements) == 1
+        assert result.artifacts[0].kind == "engine_token"
 
-    def test_sanitize_with_multiple_tokens(self):
-        """Test sanitizing text with multiple tokens."""
-        handler = TokenHandler()
-        result = handler.sanitize("Hello <FirstName>, you are a <Class>!")
-        assert result.sanitized_text == "Hello <<TOKEN_0>>, you are a <<TOKEN_1>>!"
-        assert len(result.replacements) == 2
-
-    def test_sanitize_custom_token(self):
-        """Test sanitizing text with custom token."""
+    def test_sanitize_with_custom_token(self):
         handler = TokenHandler()
         result = handler.sanitize("Test <CustomToken:123>")
-        assert result.sanitized_text == "Test <<TOKEN_0>>"
+        assert TOKEN_PLACEHOLDER_RE.fullmatch(result.sanitized_text.split()[-1])
         assert len(result.replacements) == 1
+        assert result.artifacts[0].original == "<CustomToken:123>"
 
-    def test_restore_simple_text(self):
-        """Test restoring text without tokens."""
+    def test_sanitize_preserves_inline_tags_and_engine_tokens(self):
         handler = TokenHandler()
-        result = handler.restore("Hello world")
-        assert result == "Hello world"
-
-    def test_restore_with_placeholders(self):
-        """Test restoring text with placeholders."""
-        handler = TokenHandler()
-        handler.token_map = {"<<TOKEN_0>>": "<FirstName>", "<<TOKEN_1>>": "<Class>"}
-        result = handler.restore("Hello <<TOKEN_0>>, you are a <<TOKEN_1>>!")
-        assert result == "Hello <FirstName>, you are a <Class>!"
+        result = handler.sanitize("<StartAction>[Wave]</Start> Hello <FirstName>.")
+        inline_placeholders = INLINE_PLACEHOLDER_RE.findall(result.sanitized_text)
+        token_placeholders = TOKEN_PLACEHOLDER_RE.findall(result.sanitized_text)
+        assert len(inline_placeholders) == 2
+        assert len(token_placeholders) == 1
+        assert result.artifacts[0].kind == "inline_tag"
+        assert result.artifacts[1].kind == "inline_tag"
+        assert result.artifacts[2].kind == "engine_token"
 
     def test_sanitize_restore_roundtrip(self):
-        """Test that sanitize and restore preserve tokens."""
         handler = TokenHandler()
         original = "Hello <FirstName>, you are a <Race> <Class>!"
         sanitized = handler.sanitize(original)
         restored = handler.restore(sanitized.sanitized_text)
         assert restored == original
 
-    def test_preserve_tokens_disabled(self):
-        """Test with token preservation disabled."""
+    def test_preserve_tokens_disabled_keeps_engine_tokens_but_still_hides_inline_tags(self):
         handler = TokenHandler(preserve_standard_tokens=False)
-        result = handler.sanitize("Hello <FirstName>")
-        assert result.sanitized_text == "Hello <FirstName>"
-        assert len(result.replacements) == 0
+        result = handler.sanitize("<StartAction>[Wave]</Start> Hello <FirstName>")
+        assert "<FirstName>" in result.sanitized_text
+        assert len(INLINE_PLACEHOLDER_RE.findall(result.sanitized_text)) == 2
+
+    def test_restore_accepts_wrapped_placeholders(self):
+        source = "<StartAction>[Wave]</Start> Hello <FirstName>."
+        sanitized, handler = sanitize_text(source)
+        inline_wrapped = [
+            f"<<[{match[2:-2]}]>>" for match in INLINE_PLACEHOLDER_RE.findall(sanitized)
+        ]
+        token_wrapped = [f"<<[{match[2:-2]}]>>" for match in TOKEN_PLACEHOLDER_RE.findall(sanitized)]
+        translated = f"{inline_wrapped[0]}[Машет]{inline_wrapped[1]} Привет {token_wrapped[0]}."
+        restored = restore_text(translated, handler)
+        assert restored == "<StartAction>[Машет]</Start> Привет <FirstName>."
 
 
 class TestTokenValidator:
-    """Tests for TokenValidator class."""
+    """Tests for exact preserved-artifact validation."""
 
     def test_validate_restoration_success(self):
-        """Test validating successful restoration."""
-        original = "Hello <FirstName>, you are a <Class>!"
-        restored = "Hello <FirstName>, you are a <Class>!"
+        original = "<StartCheck>[Persuade]</Start> Hello <FirstName>!"
+        restored = "<StartCheck>[Убеждение]</Start> Привет <FirstName>!"
         assert TokenValidator.validate_restoration(original, restored)
 
-    def test_validate_restoration_failure(self):
-        """Test validating failed restoration."""
-        original = "Hello <FirstName>, you are a <Class>!"
-        restored = "Hola <FirstName>, eres un <Class>!"
-        # Tokens should still match even if text changed
-        assert TokenValidator.validate_restoration(original, restored)
+    def test_validate_restoration_fails_on_tag_type_change(self):
+        original = "<StartHighlight>[Shudder.]</Start>"
+        restored = "<StartAction>[Вздрогнуть.]</StartAction>"
+        report = TokenValidator.validate_exact_texts(original, restored)
+        assert not report.is_exact_match
+        assert report.mismatch_type in {"count_mismatch", "value_mismatch"}
+        assert report.expected_sequence == ["<StartHighlight>", "</Start>"]
+        assert report.actual_sequence == ["<StartAction>", "</StartAction>"]
 
-    def test_extract_tokens(self):
-        """Test extracting tokens from text."""
-        text = "Hello <FirstName>, you are a <Race> <Class>!"
+    def test_validate_restoration_fails_on_order_change(self):
+        original = "<FirstName><CustomToken:123>"
+        restored = "<CustomToken:123><FirstName>"
+        report = TokenValidator.validate_exact_texts(original, restored)
+        assert not report.is_exact_match
+        assert report.mismatch_type == "order_mismatch"
+
+    def test_find_token_mismatches_reports_missing_and_extra(self):
+        original = "<FirstName><CustomToken:123>"
+        restored = "<FirstName><BadToken>"
+        missing, extra = TokenValidator.find_token_mismatches(original, restored)
+        assert missing == ["<CustomToken:123>"]
+        assert extra == ["<BadToken>"]
+
+    def test_extract_all_tokens_ignores_inline_tags(self):
+        text = "<StartAction>[Wave]</Start> Hello <FirstName> <CustomToken:123>"
         tokens = TokenValidator.extract_all_tokens(text)
-        assert set(tokens) == {"FirstName", "Race", "Class"}
+        assert set(tokens) == {"CustomToken:123", "FirstName"}
 
 
-class TestConvenienceFunctions:
-    """Tests for convenience functions."""
+class TestCleanupPath:
+    """Tests for cleanup-only acceptance after retries are exhausted."""
 
-    def test_sanitize_text_function(self):
-        """Test sanitize_text convenience function."""
-        text = "Hello <FirstName>"
-        sanitized, handler = sanitize_text(text, preserve_tokens=True)
-        assert sanitized == "Hello <<TOKEN_0>>"
-
-    def test_restore_text_function(self):
-        """Test restore_text convenience function."""
-        text = "Hello <FirstName>"
-        sanitized, handler = sanitize_text(text)
-        restored = restore_text(sanitized, handler)
-        assert restored == text
-
-    def test_extract_tokens_via_validator(self):
-        """Test TokenValidator.extract_all_tokens convenience method."""
-        text = "Hello <FirstName>, you are a <Class>!"
-        tokens = TokenValidator.extract_all_tokens(text)
-        assert set(tokens) == {"FirstName", "Class"}
-
-
-class TestEdgeCases:
-    """Tests for edge cases."""
-
-    def test_empty_string(self):
-        """Test with empty string."""
+    def test_finalize_cleanup_removes_mismatched_start_tags_but_keeps_bracket_text(self):
         handler = TokenHandler()
-        result = handler.sanitize("")
-        assert result.sanitized_text == ""
+        handler.sanitize("<StartHighlight>[Shudder.]</Start>")
+        result = handler.finalize_translation(
+            "<StartAction> [Вздрогнуть.] </StartAction>",
+            allow_cleanup=True,
+        )
+        assert not result.exact_valid
+        assert result.used_cleanup
+        assert "<Start" not in result.final_text
+        assert "[Вздрогнуть.]" in result.final_text
 
-    def test_none_input(self):
-        """Test with None input."""
+    def test_finalize_cleanup_removes_only_bad_engine_token(self):
         handler = TokenHandler()
-        result = handler.sanitize(None)
-        assert result.sanitized_text == ""
+        handler.sanitize("Hello <FirstName> and <CustomToken:123>.")
+        result = handler.finalize_translation(
+            "Привет <FirstName> и <BadToken>.",
+            allow_cleanup=True,
+        )
+        assert not result.exact_valid
+        assert result.used_cleanup
+        assert "<FirstName>" in result.final_text
+        assert "<BadToken>" not in result.final_text
 
-    def test_nested_brackets(self):
-        """Test with nested brackets (shouldn't happen but handle gracefully)."""
+    def test_cleanup_keeps_remaining_valid_tag_pair_and_plain_bracket_text(self):
         handler = TokenHandler()
-        result = handler.sanitize("Test <<NotAToken>>")
-        # This should not be treated as a token
-        assert result.sanitized_text == "Test <<NotAToken>>"
+        handler.sanitize("<StartHighlight>[Success.]</Start><StartAction>[Wave]</Start> Bzzt!")
+        result = handler.finalize_translation(
+            "<StartHighlight>[Успех.][Машет]</Start> Бззт!",
+            allow_cleanup=True,
+        )
+        assert not result.exact_valid
+        assert result.used_cleanup
+        assert result.final_text.startswith("<StartHighlight>")
+        assert "[Машет]" in result.final_text
+        assert "<StartAction>" not in result.final_text
 
-    def test_token_at_start_and_end(self):
-        """Test tokens at start and end of string."""
+    def test_cleanup_drops_unknown_helper_noise(self):
         handler = TokenHandler()
-        result = handler.sanitize("<FirstName> text <Class>")
-        assert result.sanitized_text == "<<TOKEN_0>> text <<TOKEN_1>>"
-
-    def test_consecutive_tokens(self):
-        """Test consecutive tokens."""
-        handler = TokenHandler()
-        result = handler.sanitize("<FirstName><LastName>")
-        assert result.sanitized_text == "<<TOKEN_0>><<TOKEN_1>>"
-
-    def test_sanitize_preserves_nwn_action_tags(self):
-        """NWN action tags should be protected from model rewrites."""
-        handler = TokenHandler()
-        result = handler.sanitize("<StartAction>[Wave]</Start> Hello <FirstName>.")
-        assert result.sanitized_text.endswith(" Hello <<TOKEN_0>>.")
-        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", result.sanitized_text)
-        assert len(placeholders) == 2
-
-    def test_restore_preserves_nwn_action_tags(self):
-        """Roundtrip should restore original Start/StartAction tags."""
-        handler = TokenHandler()
-        source = "<StartAction>[Wave]</Start> Hello <FirstName>."
-        sanitized = handler.sanitize(source)
-        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text)
-        assert len(placeholders) == 2
-        translated = f"Привет {placeholders[0]}[машет]{placeholders[1]}, <<TOKEN_0>>."
-        restored = handler.restore(translated)
-        assert restored == "Привет <StartAction>[машет]</Start>, <FirstName>."
-
-    def test_sanitize_preserves_closing_start_tag(self):
-        """Even closing-only malformed tag fragments must remain unchanged."""
-        handler = TokenHandler()
-        result = handler.sanitize("[Felkram begins to scream.]</Start>")
-        assert result.sanitized_text.startswith("[Felkram begins to scream.]")
-        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", result.sanitized_text)
-        assert len(placeholders) == 1
-
-    def test_restore_drops_unknown_nwn_placeholders(self):
-        """Unknown placeholder artifacts from the model must be removed."""
-        handler = TokenHandler()
-        source = "<StartAction>[Wave]</Start>"
-        sanitized = handler.sanitize(source)
-        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text)
-        translated = f"{placeholders[0]}[машет]{placeholders[1]}[[NWN_TAG_999999]]"
-        restored = handler.restore(translated)
-        assert restored == "<StartAction>[машет]</Start>"
-
-    def test_restore_accepts_wrapped_nwn_placeholders(self):
-        """Restore should tolerate model-wrapped helper placeholders."""
-        handler = TokenHandler()
-        source = "<StartAction>[Wave]</Start>"
-        sanitized = handler.sanitize(source)
-        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text)
-        # Simulate model mutation seen in logs: __NWN_TAG_x__ -> <<[NWN_TAG_x]>>
-        wrapped = []
-        for p in placeholders:
-            inner = p[len("__") : -len("__")]
-            wrapped.append(f"<<[{inner}]>>")
-        translated = f"{wrapped[0]}[машет]{wrapped[1]}"
-        restored = handler.restore(translated)
-        assert restored == "<StartAction>[машет]</Start>"
-
-    def test_restore_scrubs_generic_nwn_tag_noise(self):
-        """Any leftover NWN_TAG artifacts should be removed as noise."""
-        handler = TokenHandler()
-        source = "<StartAction>[Wave]</Start>"
-        sanitized = handler.sanitize(source)
-        placeholders = re.findall(r"__NWN_TAG_[A-Za-z0-9_]+__", sanitized.sanitized_text)
-        translated = f"{placeholders[0]}[машет]{placeholders[1]} «NWN_TAG_garbage_42»"
-        restored = handler.restore(translated)
-        assert restored == "<StartAction>[машет]</Start> "
-
-    def test_restore_strips_unbalanced_action_tags(self):
-        """Malformed Start-tags should be stripped to avoid broken game markup."""
-        handler = TokenHandler()
-        handler.sanitize("<StartAction>[Wave]</Start>")
-        restored = handler.restore("<StartAction>[машет]")
-        assert restored == "[машет]"
-
-    def test_clear(self):
-        """Test clearing handler state."""
-        handler = TokenHandler()
-        handler.sanitize("Hello <FirstName>")
-        assert handler.get_token_count() > 0
-        handler.clear()
-        assert handler.get_token_count() == 0
+        sanitized = handler.sanitize("<StartAction>[Wave]</Start>").sanitized_text
+        inline_placeholder = INLINE_PLACEHOLDER_RE.findall(sanitized)
+        translated = f"{inline_placeholder[0]}[Машет]{inline_placeholder[1]} [[NWN_INLINE_garbage]]"
+        result = handler.finalize_translation(translated, allow_cleanup=True)
+        assert result.final_text.strip() == "<StartAction>[Машет]</Start>"

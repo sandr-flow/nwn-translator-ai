@@ -2,14 +2,15 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
 import pytest
 
+from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from src.nwn_translator.config import TranslationConfig
-from src.nwn_translator.translators.token_handler import TokenHandler
 from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
 from src.nwn_translator.injectors.dialog_injector import DialogInjector
-from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
-from unittest.mock import MagicMock, Mock, patch
+from src.nwn_translator.translators.token_handler import TokenHandler
 
 
 class TestTokenPreservationWorkflow:
@@ -19,14 +20,12 @@ class TestTokenPreservationWorkflow:
         """Test complete roundtrip of token preservation."""
         original = "Hello <FirstName>, you are a skilled <Class>!"
 
-        # Sanitize
         handler = TokenHandler()
         sanitized = handler.sanitize(original)
 
-        # Simulate translation (should preserve placeholders)
-        mock_translated = "¡Hola <<TOKEN_0>>, eres un <<TOKEN_1>> experto!"
+        placeholders = [replacement.placeholder for replacement in sanitized.replacements]
+        mock_translated = f"¡Hola {placeholders[0]}, eres un {placeholders[1]} experto!"
 
-        # Restore
         restored = handler.restore(mock_translated)
 
         assert "<FirstName>" in restored
@@ -44,7 +43,6 @@ class TestDialogExtractionAndInjection:
         mock_patcher_cls.return_value = mock_patcher
         file_path = Path("test_dialog.dlg")
 
-        # Original GFF data (offsets required for GFFPatcher path)
         original_gff = {
             "StructType": "DLG",
             "EntryList": [
@@ -65,23 +63,19 @@ class TestDialogExtractionAndInjection:
             ],
         }
 
-        # Extract
         extractor = DialogExtractor()
         extracted = extractor.extract(file_path, original_gff)
 
-        # After per-node refactor: 1 entry + 1 reply = 2 items
         assert len(extracted.items) == 2
         texts = {item.text for item in extracted.items}
         assert "Greetings, traveler." in texts
         assert "Hello, innkeeper." in texts
 
-        # Mock translation (one pair per node)
         translations = {
             "Greetings, traveler.": "¡Saludos, viajero!",
             "Hello, innkeeper.": "Hola, posadero.",
         }
 
-        # Inject
         injector = DialogInjector()
         result = injector.inject(file_path, original_gff, translations)
 
@@ -139,7 +133,7 @@ class TestErrorHandling:
     def test_missing_api_key_raises_error(self):
         """Test that missing API key raises appropriate error."""
         config = TranslationConfig(
-            api_key="",  # Empty API key
+            api_key="",
             input_file=Path("test.mod"),
             target_lang="spanish",
         )
@@ -155,5 +149,4 @@ class TestErrorHandling:
             target_lang="spanish",
         )
 
-        # File doesn't exist
         assert not config.input_file.exists()

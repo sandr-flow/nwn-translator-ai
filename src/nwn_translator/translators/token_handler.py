@@ -1,13 +1,19 @@
 """Token handler for preserving NWN game tokens during translation.
 
-This module handles the replacement and restoration of game tokens like <FirstName>,
-<Class>, <Race>, etc. to prevent them from being translated or corrupted by AI.
+This module protects both classic engine tokens (for example ``<FirstName>`` or
+``<CustomToken:123>``) and inline dialog markup (for example
+``<StartAction>...</Start>``).  The translation pipeline uses opaque placeholders
+before the LLM call, then validates the restored output against the original
+artifact inventory.  When exact preservation is impossible, the handler can
+clean up mismatched artifacts while keeping the translated prose.
 """
+
+from __future__ import annotations
 
 import re
 import secrets
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ..config import STANDARD_TOKENS
 
@@ -18,7 +24,18 @@ class TokenReplacement:
 
     original: str
     placeholder: str
-    position: int  # Position in original text
+    position: int
+
+
+@dataclass(frozen=True)
+class PreservedArtifact:
+    """Single protected NWN artifact detected in a text."""
+
+    kind: str
+    original: str
+    position: int
+    structural_role: str
+    placeholder: str = ""
 
 
 @dataclass
@@ -27,148 +44,270 @@ class SanitizedText:
 
     sanitized_text: str
     replacements: List[TokenReplacement] = field(default_factory=list)
+    artifacts: List[PreservedArtifact] = field(default_factory=list)
 
-    def add_replacement(self, original: str, placeholder: str, position: int) -> None:
-        """Add a token replacement record."""
+    def add_replacement(
+        self,
+        original: str,
+        placeholder: str,
+        position: int,
+        *,
+        kind: str,
+        structural_role: str,
+    ) -> None:
+        """Add one protected-artifact replacement record."""
         self.replacements.append(TokenReplacement(original, placeholder, position))
+        self.artifacts.append(
+            PreservedArtifact(
+                kind=kind,
+                original=original,
+                position=position,
+                structural_role=structural_role,
+                placeholder=placeholder,
+            )
+        )
+
+
+@dataclass
+class TokenMismatchReport:
+    """Details about preserved-artifact mismatch after restoration."""
+
+    is_exact_match: bool
+    mismatch_type: str
+    expected_sequence: List[str] = field(default_factory=list)
+    actual_sequence: List[str] = field(default_factory=list)
+    missing: List[str] = field(default_factory=list)
+    extra: List[str] = field(default_factory=list)
+
+
+@dataclass
+class TokenProcessingResult:
+    """Outcome of restore/validate/(optional) cleanup for one model output."""
+
+    restored_text: str
+    final_text: str
+    exact_valid: bool
+    used_cleanup: bool
+    mismatch_report: TokenMismatchReport
 
 
 class TokenHandler:
-    """Handler for managing token replacement and restoration."""
+    """Handler for managing token replacement, restoration, and cleanup."""
 
-    # Pattern to match NWN tokens: <word>, <word:number>, or <word/word> (gender tags)
-    TOKEN_PATTERN = re.compile(r"<(\w+(?:/\w+)?(?::\d+)?)>")
-
-    # Pattern to match NWN inline action tags used in dialog text.
-    # Examples: <StartAction>, </Start>, <StartSomething>
-    ACTION_TAG_PATTERN = re.compile(r"</?Start[A-Za-z]*>")
-
-    # Pattern for our placeholders: <<TOKEN_0>>, <<TOKEN_1>>, etc.
-    PLACEHOLDER_PATTERN = re.compile(r"<<TOKEN_(\d+)>>")
-    # Accept canonical and common model-mutated helper placeholders:
-    # __NWN_TAG_x__, [[NWN_TAG_x]], <<[NWN_TAG_x]>>, <[NWN_TAG_x]>
-    ACTION_PLACEHOLDER_PATTERN = re.compile(
-        r"(?:__NWN_TAG_([A-Za-z0-9_]+)__|\[\[NWN_TAG_([A-Za-z0-9_]+)\]\]|<<\[NWN_TAG_([A-Za-z0-9_]+)\]>>|<\[NWN_TAG_([A-Za-z0-9_]+)\]>)"
+    INLINE_TAG_PATTERN = re.compile(r"</?Start[A-Za-z]*>")
+    ENGINE_TOKEN_PATTERN = re.compile(r"<([A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*)>")
+    PRESERVED_ARTIFACT_PATTERN = re.compile(
+        r"</?Start[A-Za-z]*>|<[A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*>"
     )
-    NWN_TAG_NOISE_PATTERN = re.compile(r"[^\w\s]*NWN_TAG_[A-Za-z0-9_]+[^\w\s]*")
-    RESTORED_ACTION_TAG_PATTERN = re.compile(r"</?Start[A-Za-z]*>")
+    TOKEN_LIKE_FRAGMENT_PATTERN = PRESERVED_ARTIFACT_PATTERN
+    RESTORED_ACTION_TAG_PATTERN = INLINE_TAG_PATTERN
+
+    INLINE_PLACEHOLDER_CORE_PATTERN = r"NWN_INLINE_[A-Za-z0-9_]+"
+    ENGINE_PLACEHOLDER_CORE_PATTERN = r"NWN_TOKEN_[A-Za-z0-9_]+"
+    INLINE_PLACEHOLDER_PATTERN = re.compile(
+        r"(?:__(?P<core1>NWN_INLINE_[A-Za-z0-9_]+)__|\[\[(?P<core2>NWN_INLINE_[A-Za-z0-9_]+)\]\]|<<\[(?P<core3>NWN_INLINE_[A-Za-z0-9_]+)\]>>|<\[(?P<core4>NWN_INLINE_[A-Za-z0-9_]+)\]>)"
+    )
+    ENGINE_PLACEHOLDER_PATTERN = re.compile(
+        r"(?:__(?P<core1>NWN_TOKEN_[A-Za-z0-9_]+)__|\[\[(?P<core2>NWN_TOKEN_[A-Za-z0-9_]+)\]\]|<<\[(?P<core3>NWN_TOKEN_[A-Za-z0-9_]+)\]>>|<\[(?P<core4>NWN_TOKEN_[A-Za-z0-9_]+)\]>)"
+    )
+    HELPER_PLACEHOLDER_NOISE_PATTERN = re.compile(
+        r"(?:__(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+__|\[\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]\]|<<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>>|<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>)"
+    )
+    HELPER_PLACEHOLDER_BARE_NOISE_PATTERN = re.compile(
+        r"[^\w\s]*(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+[^\w\s]*"
+    )
 
     def __init__(self, preserve_standard_tokens: bool = True):
-        """Initialize token handler.
-
-        Args:
-            preserve_standard_tokens: Whether to preserve standard NWN tokens
-        """
+        """Initialize token handler."""
         self.preserve_standard_tokens = preserve_standard_tokens
-        self.token_map: Dict[str, str] = {}  # Maps placeholder to original token
-        # Maps action placeholder ids to original NWN tags.
+        self.original_text: str = ""
+        self.artifacts: List[PreservedArtifact] = []
+        self.token_map: Dict[str, str] = {}
         self.action_tag_map: Dict[str, str] = {}
-        self._action_nonce = secrets.token_hex(4)
-        self.placeholder_counter = 0
-        self.action_placeholder_counter = 0
+        self._placeholder_to_artifact: Dict[str, PreservedArtifact] = {}
+        self._inline_core_map: Dict[str, str] = {}
+        self._token_core_map: Dict[str, str] = {}
+        self._nonce = secrets.token_hex(4)
+        self._artifact_counter = 0
 
     def sanitize(self, text: str) -> SanitizedText:
-        """Replace tokens in text with placeholders.
-
-        Args:
-            text: Text potentially containing NWN tokens
-
-        Returns:
-            SanitizedText with placeholders and replacement metadata
-        """
+        """Replace protected artifacts in text with opaque placeholders."""
         if not text or not isinstance(text, str):
+            self.clear()
+            self.original_text = text or ""
             return SanitizedText(sanitized_text=text or "")
 
+        self.clear()
+        self.original_text = text
         result = SanitizedText(sanitized_text=text)
-        offset = 0
+        parts: List[str] = []
+        last_end = 0
 
-        def replace_token(match: re.Match) -> str:
-            """Replacement function for regex."""
-            nonlocal offset
-            original_token: str = match.group(0)  # Full match including brackets
-            token_name: str = match.group(1)  # Content inside brackets
+        for match in self.PRESERVED_ARTIFACT_PATTERN.finditer(text):
+            original = match.group(0)
+            kind, structural_role = self._classify_artifact(original)
+            if kind is None:
+                continue
 
-            # Check if this is a standard token we should preserve
-            if not self._should_preserve_token(token_name):
-                return original_token
+            placeholder = self._make_placeholder(kind)
+            artifact = PreservedArtifact(
+                kind=kind,
+                original=original,
+                position=match.start(),
+                structural_role=structural_role,
+                placeholder=placeholder,
+            )
+            self.artifacts.append(artifact)
+            self._placeholder_to_artifact[placeholder] = artifact
+            self._store_placeholder_mapping(artifact)
+            result.add_replacement(
+                original,
+                placeholder,
+                match.start(),
+                kind=kind,
+                structural_role=structural_role,
+            )
 
-            # Create placeholder
-            placeholder = f"<<TOKEN_{self.placeholder_counter}>>"
+            parts.append(text[last_end : match.start()])
+            parts.append(placeholder)
+            last_end = match.end()
 
-            # Record position
-            position = match.start() + offset
-            result.add_replacement(original_token, placeholder, position)
-
-            # Store mapping for restoration
-            self.token_map[placeholder] = original_token
-
-            # Update counter and offset
-            self.placeholder_counter += 1
-            offset += len(placeholder) - len(original_token)
-
-            return placeholder
-
-        def replace_action_tag(match: re.Match) -> str:
-            """Replacement function for NWN action tags."""
-            original_tag = match.group(0)
-            action_id = f"{self._action_nonce}_{self.action_placeholder_counter}"
-            placeholder = f"__NWN_TAG_{action_id}__"
-            self.action_tag_map[action_id] = original_tag
-            self.action_placeholder_counter += 1
-            return placeholder
-
-        # Preserve NWN inline action tags (e.g. <StartAction>...</Start>)
-        # so the model cannot rewrite tag names or closing forms.
-        with_action_placeholders = self.ACTION_TAG_PATTERN.sub(replace_action_tag, text)
-
-        # Replace all configured standard game tokens
-        result.sanitized_text = self.TOKEN_PATTERN.sub(replace_token, with_action_placeholders)
-
+        parts.append(text[last_end:])
+        result.sanitized_text = "".join(parts)
         return result
 
     def restore(self, text: str) -> str:
-        """Restore tokens from placeholders.
-
-        Args:
-            text: Text containing placeholders
-
-        Returns:
-            Text with restored tokens
-        """
+        """Restore protected artifacts from placeholders."""
         if not text or not isinstance(text, str):
             return text or ""
 
-        def restore_placeholder(match: re.Match) -> str:
-            """Restoration function for regex."""
-            placeholder: str = match.group(0)
-            return self.token_map.get(placeholder, placeholder)
+        restored = self.INLINE_PLACEHOLDER_PATTERN.sub(self._restore_inline_placeholder, text)
+        restored = self.ENGINE_PLACEHOLDER_PATTERN.sub(self._restore_engine_placeholder, restored)
+        restored = self.HELPER_PLACEHOLDER_NOISE_PATTERN.sub("", restored)
+        restored = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", restored)
 
-        def restore_action_placeholder(match: re.Match) -> str:
-            """Restore NWN action tags from placeholders."""
-            action_id = next((g for g in match.groups() if g), None)
-            if not action_id:
-                return ""
-            # Unknown placeholders are model artifacts and should be dropped.
-            return self.action_tag_map.get(action_id, "")
+        if self._has_unbalanced_action_tags(restored):
+            restored = self.RESTORED_ACTION_TAG_PATTERN.sub("", restored)
 
-        restored_tokens = self.PLACEHOLDER_PATTERN.sub(restore_placeholder, text)
-        restored_actions = self.ACTION_PLACEHOLDER_PATTERN.sub(
-            restore_action_placeholder, restored_tokens
+        return restored
+
+    def validate_text(self, restored: str) -> TokenMismatchReport:
+        """Return exact-match validation report for restored output."""
+        return TokenValidator.validate_exact_artifacts(self.artifacts, restored)
+
+    def finalize_translation(
+        self,
+        translated_text: str,
+        *,
+        allow_cleanup: bool = False,
+    ) -> TokenProcessingResult:
+        """Restore a model output and optionally clean mismatched artifacts."""
+        restored = self.restore(translated_text)
+        report = self.validate_text(restored)
+        if report.is_exact_match:
+            return TokenProcessingResult(
+                restored_text=restored,
+                final_text=restored,
+                exact_valid=True,
+                used_cleanup=False,
+                mismatch_report=report,
+            )
+
+        if not allow_cleanup:
+            return TokenProcessingResult(
+                restored_text=restored,
+                final_text=restored,
+                exact_valid=False,
+                used_cleanup=False,
+                mismatch_report=report,
+            )
+
+        cleaned = self.cleanup_mismatched_artifacts(restored)
+        return TokenProcessingResult(
+            restored_text=restored,
+            final_text=cleaned,
+            exact_valid=False,
+            used_cleanup=True,
+            mismatch_report=report,
         )
-        # Ultra-defensive cleanup for model-mutated helper placeholders that still
-        # contain NWN_TAG ids but no longer match known wrapper forms.
-        restored_actions = self.NWN_TAG_NOISE_PATTERN.sub("", restored_actions)
 
-        # Final safety net: if action tags became structurally broken,
-        # strip them instead of shipping malformed markup that can break game parsing.
-        if self._has_unbalanced_action_tags(restored_actions):
-            return self.RESTORED_ACTION_TAG_PATTERN.sub("", restored_actions)
+    def cleanup_mismatched_artifacts(self, restored: str) -> str:
+        """Drop helper placeholders and non-aligned token/tag-like fragments."""
+        if not restored:
+            return ""
 
-        return restored_actions
+        cleaned = self.HELPER_PLACEHOLDER_NOISE_PATTERN.sub("", restored)
+        cleaned = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", cleaned)
+
+        expected = [artifact.original for artifact in self.artifacts]
+        expected_index = 0
+        cursor = 0
+        parts: List[str] = []
+
+        for match in self.TOKEN_LIKE_FRAGMENT_PATTERN.finditer(cleaned):
+            raw = match.group(0)
+            parts.append(cleaned[cursor : match.start()])
+            if expected_index < len(expected) and raw == expected[expected_index]:
+                parts.append(raw)
+                expected_index += 1
+            cursor = match.end()
+
+        parts.append(cleaned[cursor:])
+        cleaned = "".join(parts)
+
+        cleaned = self.HELPER_PLACEHOLDER_NOISE_PATTERN.sub("", cleaned)
+        cleaned = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", cleaned)
+
+        if self._has_unbalanced_action_tags(cleaned):
+            cleaned = self.RESTORED_ACTION_TAG_PATTERN.sub("", cleaned)
+
+        return self._normalize_cleanup_whitespace(cleaned)
+
+    def get_expected_artifact_sequence(self) -> List[str]:
+        """Return the exact original preserved-artifact sequence."""
+        return [artifact.original for artifact in self.artifacts]
+
+    def clear(self) -> None:
+        """Clear handler state and reset placeholder counters."""
+        self.original_text = ""
+        self.artifacts.clear()
+        self.token_map.clear()
+        self.action_tag_map.clear()
+        self._placeholder_to_artifact.clear()
+        self._inline_core_map.clear()
+        self._token_core_map.clear()
+        self._nonce = secrets.token_hex(4)
+        self._artifact_counter = 0
+
+    def get_token_count(self) -> int:
+        """Get the number of preserved artifacts currently tracked."""
+        return len(self.artifacts)
+
+    @classmethod
+    def _extract_preserved_artifacts_from_text(cls, text: str) -> List[PreservedArtifact]:
+        """Extract preserved artifacts from an arbitrary restored string."""
+        artifacts: List[PreservedArtifact] = []
+        if not text:
+            return artifacts
+
+        for match in cls.PRESERVED_ARTIFACT_PATTERN.finditer(text):
+            raw = match.group(0)
+            kind, structural_role = cls._classify_artifact_static(raw)
+            if kind is None:
+                continue
+            artifacts.append(
+                PreservedArtifact(
+                    kind=kind,
+                    original=raw,
+                    position=match.start(),
+                    structural_role=structural_role,
+                )
+            )
+        return artifacts
 
     @classmethod
     def _has_unbalanced_action_tags(cls, text: str) -> bool:
-        """Return True when <Start...>/</Start> tags are malformed."""
+        """Return True when ``<Start...>``/``</Start>`` tags are malformed."""
         depth = 0
         for tag in cls.RESTORED_ACTION_TAG_PATTERN.findall(text):
             if tag.startswith("</"):
@@ -179,130 +318,217 @@ class TokenHandler:
                 return True
         return depth != 0
 
+    @staticmethod
+    def _normalize_cleanup_whitespace(text: str) -> str:
+        """Minimally normalize whitespace after artifact removal."""
+        normalized = re.sub(r"[ \t]+\n", "\n", text)
+        normalized = re.sub(r"\n[ \t]+", "\n", normalized)
+        normalized = re.sub(r"[ \t]{2,}", " ", normalized)
+        normalized = re.sub(r" +([,.;:!?])", r"\1", normalized)
+        normalized = re.sub(r"\( ", "(", normalized)
+        normalized = re.sub(r" \)", ")", normalized)
+        return normalized.strip()
+
+    def _make_placeholder(self, kind: str) -> str:
+        """Build one opaque placeholder for a preserved artifact."""
+        prefix = "NWN_INLINE" if kind == "inline_tag" else "NWN_TOKEN"
+        core = f"{prefix}_{self._nonce}_{self._artifact_counter}"
+        self._artifact_counter += 1
+        return f"__{core}__"
+
+    def _store_placeholder_mapping(self, artifact: PreservedArtifact) -> None:
+        """Store restoration mapping for one protected artifact."""
+        core = artifact.placeholder[2:-2]
+        if artifact.kind == "inline_tag":
+            self.action_tag_map[core] = artifact.original
+            self._inline_core_map[core] = artifact.original
+        else:
+            self.token_map[artifact.placeholder] = artifact.original
+            self._token_core_map[core] = artifact.original
+
+    def _restore_inline_placeholder(self, match: re.Match) -> str:
+        """Restore one inline-tag placeholder or drop unknown helper artifacts."""
+        core = next((group for group in match.groups() if group), None)
+        if not core:
+            return ""
+        return self._inline_core_map.get(core, "")
+
+    def _restore_engine_placeholder(self, match: re.Match) -> str:
+        """Restore one engine-token placeholder or drop unknown helper artifacts."""
+        core = next((group for group in match.groups() if group), None)
+        if not core:
+            return ""
+        return self._token_core_map.get(core, "")
+
+    def _classify_artifact(self, raw: str) -> Tuple[Optional[str], str]:
+        """Classify one raw artifact candidate from the original text."""
+        return self._classify_artifact_static(raw, preserve_standard_tokens=self.preserve_standard_tokens)
+
+    @classmethod
+    def _classify_artifact_static(
+        cls,
+        raw: str,
+        *,
+        preserve_standard_tokens: bool = True,
+    ) -> Tuple[Optional[str], str]:
+        """Classify one raw artifact candidate from any text."""
+        if cls.INLINE_TAG_PATTERN.fullmatch(raw):
+            role = "closing" if raw.startswith("</") else "opening"
+            return "inline_tag", role
+
+        token_match = cls.ENGINE_TOKEN_PATTERN.fullmatch(raw)
+        if token_match:
+            token_name = token_match.group(1)
+            if cls._should_preserve_token_static(
+                token_name,
+                preserve_standard_tokens=preserve_standard_tokens,
+            ):
+                return "engine_token", "token"
+
+        return None, ""
+
     def _should_preserve_token(self, token_name: str) -> bool:
-        """Determine if a token should be preserved.
+        """Determine if a token should be preserved."""
+        return self._should_preserve_token_static(
+            token_name,
+            preserve_standard_tokens=self.preserve_standard_tokens,
+        )
 
-        Args:
-            token_name: Token name without brackets (e.g., "FirstName" or "CustomToken:123")
-
-        Returns:
-            True if token should be preserved
-        """
-        if not self.preserve_standard_tokens:
+    @staticmethod
+    def _should_preserve_token_static(
+        token_name: str,
+        *,
+        preserve_standard_tokens: bool = True,
+    ) -> bool:
+        """Determine if a token-like candidate should be preserved."""
+        if not preserve_standard_tokens:
             return False
 
-        # Gender substitution tokens (e.g. <Brother/Sister>, <sir/madam>)
-        if "/" in token_name:
-            return True
+        if not token_name:
+            return False
 
-        # Check if it's a standard token
         full_token = f"<{token_name}>"
         if full_token in STANDARD_TOKENS:
             return True
 
-        # Check if it's a custom token (e.g., CustomToken:123)
         if token_name.startswith("CustomToken:"):
             return True
 
-        # Preserve any token with a colon (likely special token)
-        if ":" in token_name:
+        if "/" in token_name or ":" in token_name:
             return True
 
-        return False
-
-    def clear(self) -> None:
-        """Clear all token mappings and reset counter."""
-        self.token_map.clear()
-        self.action_tag_map.clear()
-        self.placeholder_counter = 0
-        self.action_placeholder_counter = 0
-
-    def get_token_count(self) -> int:
-        """Get the number of tokens currently tracked.
-
-        Returns:
-            Number of unique token placeholders
-        """
-        return len(self.token_map) + len(self.action_tag_map)
+        # Preserve any safe identifier-like angle token, not only the hardcoded whitelist.
+        return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*", token_name))
 
 
 class TokenValidator:
-    """Validator for checking token preservation."""
+    """Validator for checking exact preserved-artifact preservation."""
 
     @staticmethod
     def validate_restoration(original: str, restored: str) -> bool:
-        """Validate that restoration preserved all tokens correctly.
+        """Validate exact preserved-artifact sequence equality."""
+        report = TokenValidator.validate_exact_texts(original, restored)
+        return report.is_exact_match
 
-        Args:
-            original: Original text with tokens
-            restored: Restored text after sanitize-restore cycle
+    @staticmethod
+    def validate_exact_texts(original: str, restored: str) -> TokenMismatchReport:
+        """Compare preserved artifacts between two arbitrary texts."""
+        expected = TokenHandler._extract_preserved_artifacts_from_text(original)
+        return TokenValidator.validate_exact_artifacts(expected, restored)
 
-        Returns:
-            True if tokens were preserved correctly
-        """
-        # Extract tokens from both texts
-        original_tokens = set(TokenHandler.TOKEN_PATTERN.findall(original))
-        restored_tokens = set(TokenHandler.TOKEN_PATTERN.findall(restored))
+    @staticmethod
+    def validate_exact_artifacts(
+        expected_artifacts: List[PreservedArtifact],
+        restored: str,
+    ) -> TokenMismatchReport:
+        """Compare expected preserved artifacts against restored output."""
+        actual_artifacts = TokenHandler._extract_preserved_artifacts_from_text(restored)
+        expected_sequence = [artifact.original for artifact in expected_artifacts]
+        actual_sequence = [artifact.original for artifact in actual_artifacts]
 
-        return original_tokens == restored_tokens
+        if expected_sequence == actual_sequence:
+            return TokenMismatchReport(
+                is_exact_match=True,
+                mismatch_type="exact_match",
+                expected_sequence=expected_sequence,
+                actual_sequence=actual_sequence,
+            )
+
+        missing, extra = TokenValidator.find_token_mismatches_from_sequences(
+            expected_sequence,
+            actual_sequence,
+        )
+
+        mismatch_type = "value_mismatch"
+        if len(expected_sequence) != len(actual_sequence):
+            mismatch_type = "count_mismatch"
+        elif sorted(expected_sequence) == sorted(actual_sequence):
+            mismatch_type = "order_mismatch"
+
+        return TokenMismatchReport(
+            is_exact_match=False,
+            mismatch_type=mismatch_type,
+            expected_sequence=expected_sequence,
+            actual_sequence=actual_sequence,
+            missing=missing,
+            extra=extra,
+        )
 
     @staticmethod
     def find_token_mismatches(original: str, restored: str) -> Tuple[List[str], List[str]]:
-        """Find tokens that don't match between original and restored.
+        """Find missing/extra preserved artifacts between two texts."""
+        report = TokenValidator.validate_exact_texts(original, restored)
+        return report.missing, report.extra
 
-        Args:
-            original: Original text with tokens
-            restored: Restored text
+    @staticmethod
+    def find_token_mismatches_from_sequences(
+        expected_sequence: List[str],
+        actual_sequence: List[str],
+    ) -> Tuple[List[str], List[str]]:
+        """Find left-to-right missing and extra artifacts preserving duplicates."""
+        expected = list(expected_sequence)
+        actual = list(actual_sequence)
 
-        Returns:
-            Tuple of (missing_tokens, extra_tokens)
-        """
-        original_tokens = set(TokenHandler.TOKEN_PATTERN.findall(original))
-        restored_tokens = set(TokenHandler.TOKEN_PATTERN.findall(restored))
+        missing: List[str] = []
+        extra: List[str] = []
+        expected_index = 0
+        actual_index = 0
 
-        missing = original_tokens - restored_tokens
-        extra = restored_tokens - original_tokens
+        while expected_index < len(expected) and actual_index < len(actual):
+            if expected[expected_index] == actual[actual_index]:
+                expected_index += 1
+                actual_index += 1
+                continue
 
-        return sorted(missing), sorted(extra)
+            if actual[actual_index] in expected[expected_index + 1 :]:
+                missing.append(expected[expected_index])
+                expected_index += 1
+            else:
+                extra.append(actual[actual_index])
+                actual_index += 1
+
+        missing.extend(expected[expected_index:])
+        extra.extend(actual[actual_index:])
+        return missing, extra
 
     @staticmethod
     def extract_all_tokens(text: str) -> List[str]:
-        """Extract all tokens from text.
-
-        Args:
-            text: Text to extract tokens from
-
-        Returns:
-            List of unique tokens found
-        """
-        tokens = TokenHandler.TOKEN_PATTERN.findall(text)
+        """Extract engine-token names from text (legacy helper)."""
+        tokens = [
+            artifact.original[1:-1]
+            for artifact in TokenHandler._extract_preserved_artifacts_from_text(text)
+            if artifact.kind == "engine_token"
+        ]
         return sorted(set(tokens))
 
 
-# Convenience functions for simple use cases
 def sanitize_text(text: str, preserve_tokens: bool = True) -> Tuple[str, TokenHandler]:
-    """Sanitize text by replacing tokens with placeholders.
-
-    Args:
-        text: Text to sanitize
-        preserve_tokens: Whether to preserve tokens
-
-    Returns:
-        Tuple of (sanitized_text, handler) where handler can be used for restoration
-    """
+    """Sanitize text by replacing preserved artifacts with placeholders."""
     handler = TokenHandler(preserve_standard_tokens=preserve_tokens)
     result = handler.sanitize(text)
     return result.sanitized_text, handler
 
 
 def restore_text(text: str, handler: TokenHandler) -> str:
-    """Restore tokens from placeholders.
-
-    Args:
-        text: Text with placeholders
-        handler: TokenHandler that was used for sanitization
-
-    Returns:
-        Text with restored tokens
-    """
+    """Restore preserved artifacts from placeholders."""
     return handler.restore(text)

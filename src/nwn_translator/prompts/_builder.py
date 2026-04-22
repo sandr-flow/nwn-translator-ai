@@ -157,11 +157,13 @@ def _token_preservation_rule() -> str:
     """One-liner for preserving game tokens."""
     return (
         "TAG/TOKEN PRESERVATION (mandatory):\n"
-        "- Keep placeholders like <<TOKEN_0>>, <<TOKEN_1>> unchanged \u2014 no "
+        "- Keep helper placeholders like __NWN_TOKEN_ABC__, __NWN_INLINE_XYZ__ unchanged \u2014 no "
         "translating, reordering, duplicating, inventing, or deleting.\n"
-        "- Keep inline NWN markup tags (e.g. <StartAction>, </Start>) exactly as "
-        "in source.\n"
-        "- Never output helper placeholders like [[NWN_TAG_*]].\n"
+        "- Keep inline NWN markup tags exactly as in source, especially "
+        "<StartAction>, <StartCheck>, <StartHighlight>, and </Start>.\n"
+        "- Translate only normal prose and text inside square brackets; never "
+        "rename or rewrite the NWN tag names themselves.\n"
+        "- Never output helper placeholders like [[NWN_INLINE_*]] or [[NWN_TOKEN_*]].\n"
     )
 
 
@@ -314,9 +316,10 @@ def build_dialog_system_prompt_parts(
         f"4. {_player_gender_rule(gender)}"
         f"{_GLOSSARY_RULE_DIALOG}"
         "6. MANDATORY TAG/TOKEN PRESERVATION:\n"
-        "   - Preserve all special tokens exactly as they are (e.g., <<TOKEN_0>>).\n"
-        "   - Preserve inline NWN tags exactly as in source (e.g. <StartAction>, </Start>).\n"
-        "   - Never output helper placeholders like [[NWN_TAG_*]].\n"
+        "   - Preserve all special helper placeholders exactly as they are (e.g., __NWN_TOKEN_ABC__).\n"
+        "   - Preserve inline NWN tags exactly as in source, especially <StartAction>, <StartCheck>, <StartHighlight>, and </Start>.\n"
+        "   - Translate only normal prose and text inside square brackets; never rename or rewrite the NWN tag names themselves.\n"
+        "   - Never output helper placeholders like [[NWN_INLINE_*]] or [[NWN_TOKEN_*]].\n"
         "   - Do not reorder, duplicate, or delete any tag/token.\n"
         "7. Maintain natural phrasing, emotion, and tone.\n"
         f"8. {_proper_names_rules(target_lang)}"

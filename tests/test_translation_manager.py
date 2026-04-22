@@ -1,11 +1,11 @@
 """Unit tests for TranslationManager."""
 
-import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
-
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
@@ -64,6 +64,7 @@ def _make_provider(translations: dict) -> Mock:
         return translate(text, source_lang, target_lang, context, glossary_block)
 
     provider.translate_async = AsyncMock(side_effect=translate_async)
+    provider.close_async_client = AsyncMock(return_value=None)
     return provider
 
 
@@ -96,7 +97,6 @@ class TestTranslateContent:
         assert result["Hello!"] == "Привет!"
         assert result["Who are you?"] == "Кто ты?"
         assert result["Just passing."] == "Просто мимо."
-        # Provider must have been called once per item (async path)
         assert provider.translate_async.call_count == 3
 
     def test_dialog_empty_items_returns_empty(self):
@@ -137,7 +137,7 @@ class TestTranslateContent:
 
 
 class TestTranslationCache:
-    """Tests for translation deduplication (step 3.2 — not yet implemented)."""
+    """Tests for translation deduplication and statistics."""
 
     def test_statistics_increment(self):
         """items_translated statistic must match actual successful translations."""
@@ -167,6 +167,7 @@ class TestTranslationCache:
         fail = TranslationResult(translated="", original="Boom", success=False, error="API error")
         provider.translate.return_value = fail
         provider.translate_async = AsyncMock(return_value=fail)
+        provider.close_async_client = AsyncMock(return_value=None)
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
@@ -176,10 +177,10 @@ class TestTranslationCache:
 
 
 class TestPassthroughEmptyAfterSanitize:
-    """Phase 2.3 — strings with no translatable content skip the API entirely."""
+    """Strings with no translatable content skip the API entirely."""
 
     def test_token_only_item_bypasses_provider(self):
-        """A string like '<FirstName>' sanitizes to only placeholders → no API."""
+        """A string like '<FirstName>' sanitizes to only placeholders -> no API."""
         items = [TranslatableItem(text="<FirstName>", item_id="t:0")]
         content = ExtractedContent(
             content_type="item",
@@ -190,7 +191,6 @@ class TestPassthroughEmptyAfterSanitize:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
-        # Original returned verbatim, no provider call.
         assert result["<FirstName>"] == "<FirstName>"
         provider.translate_async.assert_not_called()
 
@@ -217,11 +217,7 @@ class TestPassthroughEmptyAfterSanitize:
             items=items,
             source_file=Path("hello.uti"),
         )
-        translations = {
-            # Provider receives sanitized text — we don't know its exact shape,
-            # so just echo it back so we can assert the call happened.
-        }
-        provider = _make_provider(translations)
+        provider = _make_provider({})
         manager = TranslationManager(_make_config(), provider)
         manager.translate_content(content)
 
@@ -229,7 +225,7 @@ class TestPassthroughEmptyAfterSanitize:
 
 
 class TestBatchDedupBySanitized:
-    """Phase 2.2 — the batch payload must not include duplicate sanitized texts."""
+    """The batch payload must not include duplicate sanitized texts."""
 
     def test_duplicate_short_names_dedup_in_batch_payload(self):
         items = [
@@ -253,9 +249,6 @@ class TestBatchDedupBySanitized:
             source_file=Path("guards.utc"),
         )
 
-        # The default translate_content dedups by key before entering
-        # _translate_uncached_concurrent, so craft the manager and bypass
-        # by calling the batch path directly.
         provider = Mock()
 
         async def translate_batch_async(
@@ -267,14 +260,12 @@ class TestBatchDedupBySanitized:
         ):
             return [
                 TranslationResult(
-                    translated=f"TR:{bi.original}",
-                    original=bi.original,
+                    translated=f"TR:{batch_item.original}",
+                    original=batch_item.original,
                     success=True,
                 )
-                for bi in items
+                for batch_item in items
             ]
-
-        provider.translate_batch_async = AsyncMock(side_effect=translate_batch_async)
 
         async def translate_async(
             text,
@@ -286,31 +277,106 @@ class TestBatchDedupBySanitized:
         ):
             return TranslationResult(translated=f"TR:{text}", original=text, success=True)
 
+        provider.translate_batch_async = AsyncMock(side_effect=translate_batch_async)
         provider.translate_async = AsyncMock(side_effect=translate_async)
         provider.close_async_client = AsyncMock(return_value=None)
 
         manager = TranslationManager(_make_config(), provider)
 
-        # Force duplicates through by disabling the per-content-dedup path:
-        # manually build uncached_items and invoke the concurrent translator.
         from src.nwn_translator.translators.token_handler import sanitize_text
 
         uncached = []
-        for itm in items:
-            san, h = sanitize_text(itm.text, preserve_tokens=True)
-            uncached.append({"item": itm, "sanitized": san, "handler": h})
+        for item in items:
+            sanitized, handler = sanitize_text(item.text, preserve_tokens=True)
+            uncached.append(
+                {
+                    "item": item,
+                    "sanitized": sanitized,
+                    "full_sanitized": sanitized,
+                    "handler": handler,
+                }
+            )
 
         translations: dict = {}
         manager._translate_uncached_concurrent(uncached, translations)
 
-        # translate_batch_async was called — exactly once in this small sample.
         assert provider.translate_batch_async.call_count == 1
         call = provider.translate_batch_async.call_args
         batch_items = call.kwargs.get("items") or call.args[0]
-        originals = [bi.original for bi in batch_items]
-        # Duplicates collapsed to one entry; "Captain" retained.
+        originals = [batch_item.original for batch_item in batch_items]
         assert originals.count("Guard") == 1
         assert originals.count("Captain") == 1
-        # But every original item got a translation, even the duplicates.
         assert translations["Guard"] == "TR:Guard"
         assert translations["Captain"] == "TR:Captain"
+
+
+class TestTokenMismatchRecovery:
+    """Token/tag mismatches trigger retries and cleanup, not English fallback."""
+
+    def test_invalid_inline_tags_retry_to_exact_match_and_cache(self):
+        text = "<StartHighlight>[Shudder.]</Start>"
+        content = ExtractedContent(
+            content_type="dialog",
+            items=[TranslatableItem(text=text, item_id="dlg:0")],
+            source_file=Path("test.dlg"),
+        )
+
+        provider = Mock()
+        attempts = {"count": 0}
+
+        async def translate_async(
+            text,
+            source_lang,
+            target_lang,
+            context=None,
+            glossary_block=None,
+            content_profile=None,
+        ):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                return TranslationResult(
+                    translated="<StartAction>[Вздрогнуть.]</StartAction>",
+                    original=text,
+                    success=True,
+                )
+            return TranslationResult(
+                translated=text.replace("[Shudder.]", "[Вздрогнуть.]"),
+                original=text,
+                success=True,
+            )
+
+        provider.translate_async = AsyncMock(side_effect=translate_async)
+        provider.close_async_client = AsyncMock(return_value=None)
+
+        manager = TranslationManager(_make_config(), provider)
+        result = manager.translate_content(content)
+
+        assert result[text] == "<StartHighlight>[Вздрогнуть.]</Start>"
+        assert provider.translate_async.call_count == 2
+        assert len(list(manager.translation_cache.items())) == 1
+
+    def test_cleanup_only_result_is_not_cached(self):
+        text = "<StartHighlight>[Shudder.]</Start>"
+        broken = "<StartAction>[Вздрогнуть.]</StartAction>"
+        content = ExtractedContent(
+            content_type="dialog",
+            items=[TranslatableItem(text=text, item_id="dlg:1")],
+            source_file=Path("test.dlg"),
+        )
+
+        provider = Mock()
+        provider.translate_async = AsyncMock(
+            side_effect=[
+                TranslationResult(translated=broken, original=text, success=True),
+                TranslationResult(translated=broken, original=text, success=True),
+                TranslationResult(translated=broken, original=text, success=True),
+            ]
+        )
+        provider.close_async_client = AsyncMock(return_value=None)
+
+        manager = TranslationManager(_make_config(), provider)
+        result = manager.translate_content(content)
+
+        assert result[text] == "[Вздрогнуть.]"
+        assert provider.translate_async.call_count == 3
+        assert len(list(manager.translation_cache.items())) == 0

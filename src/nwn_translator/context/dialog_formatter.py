@@ -71,13 +71,11 @@ class DialogFormatter:
                 for reply in node.replies:
                     reply_key = f"{'E' if reply.is_entry else 'R'}{reply.node_id}"
 
-                    # For flow context, we only need a short preview
-                    reply_raw = overrides.get(reply_key, reply.text or "")
-                    reply_text = reply_raw.replace("\n", " ").strip()
-                    preview = reply_text[:60] + "..." if len(reply_text) > 60 else reply_text
-
                     if node.is_entry:
-                        lines.append(f'   -> Player Reply [{reply_key}]: "{preview}"')
+                        # Do not echo reply text here. Showing a truncated preview
+                        # gives the model two competing versions of the same node:
+                        # the full <<<...>>> block and the shortened routing hint.
+                        lines.append(f"   -> Player Reply [{reply_key}]")
                     else:
                         lines.append(f"   -> NPC Response [{reply_key}]")
 

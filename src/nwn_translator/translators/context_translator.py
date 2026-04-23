@@ -25,7 +25,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Upper bound for dialog responses when retrying after likely truncation.
-_DIALOG_MAX_TOKENS_BOOST = min(32768, TRANSLATION_MAX_TOKENS * 2)
+# Kept local to the dialog path so future tuning does not affect the rest of
+# the translation pipeline.
+_DIALOG_TRUNCATION_MAX_TOKENS = 32768
 
 
 class ContextualTranslationManager:
@@ -195,36 +197,71 @@ class ContextualTranslationManager:
             parsed_json = self._parse_json_response(raw_response, file_path.name)
 
             if parsed_json is None:
-                logger.warning(
-                    "%s: dialog JSON parse failed, retrying with repair prompt...",
-                    file_path.name,
-                )
-                repair_prompt = self._build_repair_user_prompt(
-                    file_path.name, script, keys_for_api, raw_response
-                )
-                raw_response = run_async(
-                    call_api(system_prompt, repair_prompt),
-                    cleanup=provider.close_async_client,
-                )
-                parsed_json = self._parse_json_response(raw_response, file_path.name)
+                truncation_like_invalid_json = self._dialog_response_likely_truncated(raw_response)
+                if truncation_like_invalid_json:
+                    logger.warning(
+                        "%s: dialog JSON parse failed with truncation-like invalid JSON; "
+                        "retrying original prompt with higher max_tokens...",
+                        file_path.name,
+                    )
+                    raw_response = run_async(
+                        call_api(
+                            system_prompt,
+                            user_prompt,
+                            max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
+                        ),
+                        cleanup=provider.close_async_client,
+                    )
+                    parsed_json = self._parse_json_response(raw_response, file_path.name)
 
-            if parsed_json is None and self._dialog_response_likely_truncated(raw_response):
-                logger.warning(
-                    "%s: dialog JSON still invalid; retry with higher max_tokens...",
-                    file_path.name,
-                )
-                repair_prompt = self._build_repair_user_prompt(
-                    file_path.name, script, keys_for_api, raw_response
-                )
-                raw_response = run_async(
-                    call_api(
-                        system_prompt,
-                        repair_prompt,
-                        max_tokens=_DIALOG_MAX_TOKENS_BOOST,
-                    ),
-                    cleanup=provider.close_async_client,
-                )
-                parsed_json = self._parse_json_response(raw_response, file_path.name)
+                    if parsed_json is None:
+                        logger.warning(
+                            "%s: high-token original prompt retry still returned invalid JSON; "
+                            "retrying repair prompt with higher max_tokens as final fallback...",
+                            file_path.name,
+                        )
+                        repair_prompt = self._build_repair_user_prompt(
+                            file_path.name, script, keys_for_api, raw_response
+                        )
+                        raw_response = run_async(
+                            call_api(
+                                system_prompt,
+                                repair_prompt,
+                                max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
+                            ),
+                            cleanup=provider.close_async_client,
+                        )
+                        parsed_json = self._parse_json_response(raw_response, file_path.name)
+                else:
+                    logger.warning(
+                        "%s: dialog JSON parse failed with non-truncation invalid JSON; "
+                        "retrying with repair prompt...",
+                        file_path.name,
+                    )
+                    repair_prompt = self._build_repair_user_prompt(
+                        file_path.name, script, keys_for_api, raw_response
+                    )
+                    raw_response = run_async(
+                        call_api(system_prompt, repair_prompt),
+                        cleanup=provider.close_async_client,
+                    )
+                    parsed_json = self._parse_json_response(raw_response, file_path.name)
+
+                    if parsed_json is None:
+                        logger.warning(
+                            "%s: repair prompt still returned invalid JSON; "
+                            "retrying repair prompt with higher max_tokens as final fallback...",
+                            file_path.name,
+                        )
+                        raw_response = run_async(
+                            call_api(
+                                system_prompt,
+                                repair_prompt,
+                                max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
+                            ),
+                            cleanup=provider.close_async_client,
+                        )
+                        parsed_json = self._parse_json_response(raw_response, file_path.name)
 
             if parsed_json is None:
                 logger.error(
@@ -282,6 +319,11 @@ class ContextualTranslationManager:
                 )
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json is None and self._dialog_response_likely_truncated(retry_raw):
+                    logger.warning(
+                        "%s: pending dialog retry JSON looks truncated; "
+                        "retrying the same JSON retry prompt with higher max_tokens...",
+                        file_path.name,
+                    )
                     retry_raw = run_async(
                         call_api(
                             self._build_system_prompt(
@@ -289,7 +331,7 @@ class ContextualTranslationManager:
                                 filename_stem=file_path.stem,
                             ),
                             retry_prompt,
-                            max_tokens=_DIALOG_MAX_TOKENS_BOOST,
+                            max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                         ),
                         cleanup=provider.close_async_client,
                     )

@@ -2,16 +2,19 @@
 
 # NWN Modules Translator
 
-Web-based translator for Neverwinter Nights modules powered by OpenRouter.
+Web tool and Python library for translating Neverwinter Nights / NWN:EE modules through OpenAI-compatible AI providers. The current providers are OpenRouter and POLZA.AI; provider selection is automatic from the API key prefix.
 
 ## Features
 
-- FastAPI + Vue web UI
-- Context-aware translation for dialogs and journals
-- Preservation of NWN tokens such as `<FirstName>` and `<CustomToken:123>`
-- Support for `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, and `.ncs`
-- Rebuild flow after manual translation edits in the web editor
-- Docker setup for production deployment
+- Translation of NWN `.mod`, `.erf`, and `.hak` archives.
+- FastAPI backend and Vue 3 + Vite + Tailwind web UI.
+- Context-aware dialog translation using dialog trees, areas, NPCs, quests, and glossary terms.
+- Preservation of NWN tokens and inline tags such as `<FirstName>`, `<CustomToken:123>`, and `<StartAction>`.
+- Byte-level GFF/NCS string patching without fully rewriting binary GFF resources.
+- Support for `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, and `.ncs`.
+- Rebuild flow after manual translation edits in the web editor.
+- SQLite-backed web tasks so long-running translations survive reconnects.
+- Docker setup for production deployment.
 
 ## Installation
 
@@ -33,7 +36,9 @@ pip install -e ".[dev]"
 pip install -e ".[web]"
 ```
 
-## Web Interface
+This workspace normally uses `.venv/` for the local virtual environment.
+
+## Web UI
 
 Backend:
 
@@ -41,7 +46,7 @@ Backend:
 python -m nwn_translator.web
 ```
 
-or
+or the installed entrypoint:
 
 ```bash
 nwn-translate-web
@@ -55,9 +60,28 @@ npm install
 npm run dev
 ```
 
-During development the frontend is served at `http://localhost:5173`, with `/api` proxied to FastAPI.
+During development the frontend is served at `http://localhost:5173`, with `/api` proxied to FastAPI at `http://localhost:8000`.
 
-Windows users can use `run-web-ui.bat` after dependencies are installed.
+Windows users can use `run-web-ui.bat` after Python and npm dependencies are installed.
+
+## Python API
+
+The project no longer publishes a current `nwn-translate` CLI. For programmatic translation, use the library API:
+
+```python
+from pathlib import Path
+
+from nwn_translator import TranslationConfig, translate_module
+
+config = TranslationConfig(
+    input_file=Path("module.mod"),
+    target_lang="russian",
+)
+output_path = translate_module(config)
+print(output_path)
+```
+
+The API key is read from `NWN_TRANSLATE_API_KEY` or passed as `TranslationConfig(api_key=...)`.
 
 ## Docker
 
@@ -71,13 +95,21 @@ The application will be available on port `8080`.
 
 Primary environment variables:
 
-- `NWN_TRANSLATE_API_KEY` — OpenRouter API key
-- `NWN_TRANSLATE_MAX_CONCURRENT` — maximum parallel translation requests
-- `NWN_WEB_HOST` — web server host
-- `NWN_WEB_PORT` — web server port
-- `NWN_WEB_CORS_ORIGINS` — allowed CORS origins
-- `NWN_WEB_STATIC_DIR` — production SPA static directory
-- `NWN_WEB_TASK_ROOT` — workspace root for web tasks
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `NWN_TRANSLATE_API_KEY` | OpenRouter (`sk-or-...`) or POLZA.AI (`pza...`) API key | required |
+| `NWN_TRANSLATE_MAX_CONCURRENT` | Maximum parallel AI requests | `12` |
+| `NWN_TRANSLATE_PROMPT_CACHE` | Enables explicit prompt-cache breakpoints; set `0` to disable | `1` |
+| `NWN_GLOSSARY_LLM_TIMEOUT` | Timeout for one glossary LLM call, seconds | `300` |
+| `NWN_GLOSSARY_RUN_TIMEOUT` | Overall glossary wrapper timeout, seconds | `360` |
+| `NWN_WEB_HOST` | Web server host | `127.0.0.1` |
+| `NWN_WEB_PORT` | Web server port | `8000` |
+| `NWN_WEB_RELOAD` | Backend auto-reload in development | disabled |
+| `NWN_WEB_CORS_ORIGINS` | Comma-separated allowed CORS origins | `*` |
+| `NWN_WEB_STATIC_DIR` | Production SPA static directory | unset |
+| `NWN_WEB_TASK_ROOT` | Web task workspace root | `workspace/web` |
+| `NWN_WEB_DB_PATH` | SQLite task database path | `workspace/web/translations.db` |
+| `NWN_WEB_TRUSTED_PROXIES` | Reverse proxy IPs allowed for `X-Forwarded-For` | unset |
 
 Example `.env`:
 
@@ -88,9 +120,11 @@ NWN_WEB_HOST=127.0.0.1
 NWN_WEB_PORT=8000
 ```
 
+The model is selected through web/API parameters or `TranslationConfig(model=...)`; the current code does not read a separate `NWN_TRANSLATE_MODEL` environment variable.
+
 ## Diagnostics
 
-`scripts/` now contains a single reusable diagnostic helper:
+`scripts/` contains one reusable diagnostic helper:
 
 ```bash
 python scripts/dump_gff_strings.py file path/to/file.utc
@@ -114,6 +148,8 @@ black src tests
 pylint src/nwn_translator
 mypy src
 ```
+
+Code is expected to pass black with line length 100 and mypy. Pylint is useful as an advisory check.
 
 ## License
 

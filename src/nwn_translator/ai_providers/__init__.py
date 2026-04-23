@@ -1,7 +1,7 @@
 """AI providers for translation (OpenRouter and POLZA.AI).
 
 Provider selection is driven by the API key prefix: ``sk-or-...`` dispatches
-to :class:`OpenRouterProvider`, ``key_...`` dispatches to
+to :class:`OpenRouterProvider`, ``pza...`` dispatches to
 :class:`PolzaProvider`. Both share the same OpenAI-compatible request
 semantics and the same default / popular model lineup.
 """
@@ -63,7 +63,7 @@ def create_provider(
     """Create an AI provider instance, auto-selected from the API key prefix.
 
     Args:
-        api_key: OpenRouter (``sk-or-…``) or POLZA.AI (``key_…``) API key.
+        api_key: OpenRouter (``sk-or-...``) or POLZA.AI (``pza...``) API key.
         model: Model slug (optional; uses the provider's default if ``None``).
         **kwargs: Passed through to the provider (``site_url``,
             ``site_name``, ``reasoning_effort``, ``player_gender``, …).

@@ -313,21 +313,38 @@ class TranslationManager:
         from ..async_utils import run_async
 
         async def gate_all() -> Dict[str, Dict[str, Any]]:
-            merged: Dict[str, Dict[str, Any]] = {}
-            for start in range(0, len(entries), self._NCS_GATE_BATCH_SIZE):
-                chunk = entries[start : start + self._NCS_GATE_BATCH_SIZE]
+            limit = max(1, int(self.config.max_concurrent_requests))
+            sem = asyncio.Semaphore(limit)
+            chunks: List[List[Dict[str, Any]]] = [
+                entries[start : start + self._NCS_GATE_BATCH_SIZE]
+                for start in range(0, len(entries), self._NCS_GATE_BATCH_SIZE)
+            ]
+
+            async def run_chunk(chunk: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
                 rekeyed = [{**e, "key": str(j)} for j, e in enumerate(chunk)]
-                result = await self.provider.classify_ncs_translate_gate_batch_async(
-                    rekeyed, source_lang=self.config.source_lang
-                )
-                for j, e in enumerate(chunk):
-                    merged[e["key"]] = result.get(
+                async with sem:
+                    result = await self.provider.classify_ncs_translate_gate_batch_async(
+                        rekeyed, source_lang=self.config.source_lang
+                    )
+                return {
+                    e["key"]: result.get(
                         str(j), {"translate": False, "reason": "gate_missing_key"}
                     )
+                    for j, e in enumerate(chunk)
+                }
+
+            chunk_results = await asyncio.gather(*(run_chunk(c) for c in chunks))
+            merged: Dict[str, Dict[str, Any]] = {}
+            for cr in chunk_results:
+                merged.update(cr)
             return merged
 
         try:
-            verdicts = run_async(gate_all(), cleanup=self.provider.close_async_client)
+            # No overall timeout: large modules may need many minutes to gate.
+            # Per-call timeouts and retries live in the provider layer.
+            verdicts = run_async(
+                gate_all(), cleanup=self.provider.close_async_client, timeout=None
+            )
         except Exception as exc:
             logger.warning(
                 "NCS LLM gate failed for %d item(s): %s — defaulting to reject.",

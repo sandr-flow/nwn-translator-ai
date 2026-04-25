@@ -73,6 +73,65 @@ class TestTokenHandler:
         restored = restore_text(translated, handler)
         assert restored == "<StartAction>[Машет]</Start> Привет <FirstName>."
 
+    def test_double_angle_dialog_action_preserves_markers_but_translates_inner_text(self):
+        handler = TokenHandler()
+        result = handler.sanitize("<<Climb up the shaft>>")
+        inline_placeholders = INLINE_PLACEHOLDER_RE.findall(result.sanitized_text)
+        assert len(inline_placeholders) == 2
+        assert "Climb up the shaft" in result.sanitized_text
+        assert result.artifacts[0].original == "<<"
+        assert result.artifacts[1].original == ">>"
+
+        finalized = handler.finalize_translation(
+            f"{inline_placeholders[0]}Ascend the shaft{inline_placeholders[1]}"
+        )
+        assert finalized.exact_valid
+        assert finalized.final_text == "<<Ascend the shaft>>"
+
+    def test_dash_dialog_action_preserves_markers_but_translates_inner_text(self):
+        handler = TokenHandler()
+        result = handler.sanitize("-end dialogue-")
+        inline_placeholders = INLINE_PLACEHOLDER_RE.findall(result.sanitized_text)
+        assert len(inline_placeholders) == 2
+        assert "end dialogue" in result.sanitized_text
+
+        finalized = handler.finalize_translation(
+            f"{inline_placeholders[0]}end conversation{inline_placeholders[1]}"
+        )
+        assert finalized.exact_valid
+        assert finalized.final_text == "-end conversation-"
+
+    def test_dash_dialog_action_validates_with_cyrillic_inner_text(self):
+        """Regression: -more- → -далее- must still validate as exact match.
+
+        Previously the dash pattern required [A-Za-z] inside, so after
+        restoration the translated Cyrillic inner body did not re-match
+        and every Ravenloft dash-action node failed validation.
+        """
+        handler = TokenHandler()
+        result = handler.sanitize("-more-")
+        inline_placeholders = [r.placeholder for r in result.replacements]
+        assert len(inline_placeholders) == 2
+
+        finalized = handler.finalize_translation(
+            f"{inline_placeholders[0]}далее{inline_placeholders[1]}"
+        )
+        assert finalized.exact_valid
+        assert finalized.final_text == "-далее-"
+        assert finalized.mismatch_report.actual_sequence == ["-", "-"]
+
+    def test_dash_dialog_action_validates_multiword_cyrillic_inner(self):
+        handler = TokenHandler()
+        result = handler.sanitize("-give him the letter-")
+        inline_placeholders = [r.placeholder for r in result.replacements]
+        assert len(inline_placeholders) == 2
+
+        finalized = handler.finalize_translation(
+            f"{inline_placeholders[0]}отдать ему письмо{inline_placeholders[1]}"
+        )
+        assert finalized.exact_valid
+        assert finalized.final_text == "-отдать ему письмо-"
+
 
 class TestTokenValidator:
     """Tests for exact preserved-artifact validation."""
@@ -104,6 +163,22 @@ class TestTokenValidator:
         missing, extra = TokenValidator.find_token_mismatches(original, restored)
         assert missing == ["<CustomToken:123>"]
         assert extra == ["<BadToken>"]
+
+    def test_validate_rejects_start_tag_replacement_for_double_angle_action(self):
+        original = "<<Walk away from the shaft>>"
+        restored = "<StartAction>Walk away from the shaft</StartAction>"
+        report = TokenValidator.validate_exact_texts(original, restored)
+        assert not report.is_exact_match
+        assert report.expected_sequence == ["<<", ">>"]
+        assert report.actual_sequence == ["<StartAction>", "</StartAction>"]
+
+    def test_validate_rejects_new_pseudo_angle_tags(self):
+        original = "Good evening, madam."
+        restored = "Good evening, <sir/madam>."
+        report = TokenValidator.validate_exact_texts(original, restored)
+        assert not report.is_exact_match
+        assert report.expected_sequence == []
+        assert report.actual_sequence == ["<sir/madam>"]
 
     def test_extract_all_tokens_ignores_inline_tags(self):
         text = "<StartAction>[Wave]</Start> Hello <FirstName> <CustomToken:123>"
@@ -158,3 +233,15 @@ class TestCleanupPath:
         translated = f"{inline_placeholder[0]}[Машет]{inline_placeholder[1]} [[NWN_INLINE_garbage]]"
         result = handler.finalize_translation(translated, allow_cleanup=True)
         assert result.final_text.strip() == "<StartAction>[Машет]</Start>"
+
+    def test_cleanup_drops_new_pseudo_angle_tag(self):
+        handler = TokenHandler()
+        handler.sanitize("Good evening, madam.")
+        result = handler.finalize_translation(
+            "Good evening, <sir/madam>.",
+            allow_cleanup=True,
+        )
+        assert not result.exact_valid
+        assert result.used_cleanup
+        assert "<sir/madam>" not in result.final_text
+        assert "Good evening" in result.final_text

@@ -68,6 +68,24 @@ class TestGlossaryFilterByBatch:
         block = g.to_prompt_block(texts=["Mr. Winter's house was empty."])
         assert '"Merrick Winters"' in block
 
+    def test_filter_does_not_pull_ravenloft_entities_by_module_name_only(self):
+        g = Glossary(
+            entries={
+                "Ravenloft Vampire": "Vampire of Ravenloft",
+                "Ravenloft Shadow": "Shadow of Ravenloft",
+                "Barovia": "Barovia",
+            }
+        )
+        block = g.to_prompt_block(texts=["Welcome to Ravenloft."])
+        assert "Ravenloft Vampire" not in block
+        assert "Ravenloft Shadow" not in block
+        assert "Barovia" not in block
+
+    def test_filter_keeps_ravenloft_entity_when_specific_tokens_match(self):
+        g = Glossary(entries={"Ravenloft Vampire": "Vampire of Ravenloft"})
+        block = g.to_prompt_block(texts=["The Ravenloft Vampire blocks the road."])
+        assert '"Ravenloft Vampire"' in block
+
     def test_filter_matches_levenshtein_one(self):
         """Damerau-Levenshtein <=1 catches typos in long tokens."""
         g = Glossary(entries={"Merrick": "Меррик"})

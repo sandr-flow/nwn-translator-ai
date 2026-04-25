@@ -92,7 +92,11 @@ class NcsInjector(BaseInjector):
                 source_file=file_path,
                 modified=False,
                 items_updated=0,
-                metadata={"error": str(e)},
+                metadata={
+                    "type": "ncs_script",
+                    "error": str(e),
+                    "ncs_patch_failed": True,
+                },
             )
 
         return InjectedContent(

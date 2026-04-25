@@ -14,6 +14,8 @@ from ..file_handlers.ncs_parser import (
     NCSInstruction,
     OP_ACTION,
     OP_CONST,
+    OP_EQUAL,
+    OP_NEQUAL,
     TYPE_STRING,
 )
 
@@ -68,6 +70,12 @@ NON_PLAYER_ACTIONS: Set[int] = {
 # Max bytecode steps to scan after a CONST for a consuming ACTION.
 # Random/if/assign patterns may place SpeakString many instructions later in linear order.
 _ACTION_SCAN_WINDOW = 64
+
+# Context window around a literal in .nss source (lines on each side and
+# absolute character cap). Large enough to see the enclosing if/call, but
+# bounded so per-item token cost in the gate batch stays predictable.
+_NSS_SNIPPET_LINES = 20
+_NSS_SNIPPET_CHAR_CAP = 2000
 
 # ---------------------------------------------------------------------------
 # Pattern-based heuristics
@@ -169,11 +177,63 @@ def _is_definitely_not_translatable(text: str) -> bool:
 
 _RE_CAMEL_CASE = re.compile(r"[a-z][a-zA-Z]*[A-Z][a-zA-Z]*")
 _RE_FUNC_DOT = re.compile(r"\b\w+\.\w+")
+_RE_ALPHABET_DUMP = re.compile(
+    r"^(?:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ|"
+    r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz)$"
+)
 
 
 def _contains_code_identifiers(text: str) -> bool:
     """True if text contains CamelCase identifiers or struct.field patterns."""
     return bool(_RE_CAMEL_CASE.search(text) or _RE_FUNC_DOT.search(text))
+
+
+def ncs_hard_veto_reason(text: str) -> Optional[str]:
+    """Return a deterministic reason why an NCS string must never be translated.
+
+    This is stricter than extraction filtering and is used as a final safety
+    net before translation. NCS bytecode can contain script identifiers and
+    technical literals that become invalid if localized.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return "empty"
+
+    if _RE_ALPHABET_DUMP.match(stripped):
+        return "alphabet_dump"
+
+    lower = stripped.lower()
+    if any(lower.startswith(p) for p in _SKIP_PREFIXES):
+        return "known_internal_prefix"
+
+    if _RE_SNAKE_CASE.match(stripped):
+        return "snake_case_identifier"
+
+    if _RE_UPPER_CONST.match(stripped):
+        return "upper_case_constant"
+
+    if " " not in stripped and "_" in stripped:
+        return "underscore_identifier"
+
+    if " " not in stripped and _RE_RESREF.match(stripped):
+        return "resref_like_identifier"
+
+    if _contains_code_identifiers(stripped):
+        return "code_identifier"
+
+    if any(
+        phrase in lower
+        for phrase in (
+            "report as bug",
+            "report this bug",
+            "please report",
+            "debug string",
+            "error:",
+        )
+    ):
+        return "debug_or_developer_text"
+
+    return None
 
 
 def _is_likely_translatable(text: str) -> bool:
@@ -202,13 +262,22 @@ def _classify_by_action_context(
 
     Returns:
         - ``"player"`` if a player-facing ACTION consumes this string
-        - ``"internal"`` if a non-player ACTION consumes it
-        - ``None`` if no conclusive ACTION found nearby
+        - ``"internal"`` if a non-player ACTION or a string comparison
+          (``OP_EQUAL`` / ``OP_NEQUAL``) consumes it
+        - ``None`` if no conclusive consumer found nearby
     """
     # Scan forward for an ACTION that consumes this string (see _ACTION_SCAN_WINDOW).
+    # A comparison opcode seen before any ACTION wins: the string is a compare
+    # target (e.g. ``sChat == "animal empathy"`` in DMFI voice commands) and
+    # translating it silently breaks the script's dispatch.
     window = min(_ACTION_SCAN_WINDOW, len(instructions) - instr_index - 1)
     for i in range(1, window + 1):
         next_instr = instructions[instr_index + i]
+        if (
+            next_instr.opcode in (OP_EQUAL, OP_NEQUAL)
+            and next_instr.type_byte == TYPE_STRING
+        ):
+            return "internal"
         if next_instr.is_action and next_instr.action_routine is not None:
             routine = next_instr.action_routine
             if routine in PLAYER_FACING_ACTIONS:
@@ -264,12 +333,28 @@ def _classify_from_source(text: str, nss_content: str) -> Optional[str]:
     """Classify a string by searching the .nss source for its usage context.
 
     Returns:
+        - ``"compare"`` if the literal is a comparison target (``== "text"``
+          or ``"text" ==``) — translating it would silently break the script
         - ``"player"`` if the string is used in a player-facing function call
         - ``"debug"`` if the string is used in a debug/internal function call
         - ``None`` if the string is not found or context is ambiguous
     """
     # Escape the text for literal search
     escaped = re.escape(text)
+
+    # Comparison target wins over any other classification: a string that is
+    # ever compared against a variable MUST not be translated, even if the
+    # same literal is later echoed back via SendMessageToPC elsewhere.
+    compare_patterns = (
+        rf'==\s*"{escaped}"',
+        rf'"{escaped}"\s*==',
+        rf'!=\s*"{escaped}"',
+        rf'"{escaped}"\s*!=',
+    )
+    for pattern in compare_patterns:
+        if re.search(pattern, nss_content):
+            return "compare"
+
     # Match: FunctionName ( ... "text" ... )  — possibly across args
     # We look for the string literal near a known function name
     for func in _NSS_PLAYER_FUNCS:
@@ -283,6 +368,80 @@ def _classify_from_source(text: str, nss_content: str) -> Optional[str]:
             return "debug"
 
     return None
+
+
+def _nss_snippet_for_text(text: str, nss_content: str) -> Optional[str]:
+    """Return a ±N-line window around the first literal occurrence of ``text``.
+
+    Used to feed the LLM gate enough source context to decide whether the
+    literal is player-facing or a technical identifier. Returns ``None`` when
+    the literal is not found verbatim in ``nss_content``.
+    """
+    needle = f'"{text}"'
+    idx = nss_content.find(needle)
+    if idx == -1:
+        return None
+
+    lines = nss_content.splitlines()
+    # Find which line contains the hit.
+    running = 0
+    hit_line = 0
+    for i, line in enumerate(lines):
+        next_running = running + len(line) + 1  # +1 for the newline
+        if running <= idx < next_running:
+            hit_line = i
+            break
+        running = next_running
+
+    start = max(0, hit_line - _NSS_SNIPPET_LINES)
+    end = min(len(lines), hit_line + _NSS_SNIPPET_LINES + 1)
+    snippet = "\n".join(lines[start:end])
+    if len(snippet) > _NSS_SNIPPET_CHAR_CAP:
+        # Keep the window centred on the hit line when trimming.
+        hit_local = hit_line - start
+        hit_offset = sum(len(lines[start + i]) + 1 for i in range(hit_local))
+        half = _NSS_SNIPPET_CHAR_CAP // 2
+        cut_start = max(0, hit_offset - half)
+        cut_end = min(len(snippet), cut_start + _NSS_SNIPPET_CHAR_CAP)
+        snippet = snippet[cut_start:cut_end]
+    return snippet
+
+
+def _bytecode_context(
+    instr_index: int,
+    instructions: List[NCSInstruction],
+) -> Dict[str, Any]:
+    """Summarize the bytecode neighbourhood of a string CONST instruction.
+
+    Produces a structured record the LLM gate can reason over:
+    * ``next_action`` — routine number and human name if an ACTION consumes it
+    * ``compare_nearby`` — True if OP_EQUAL / OP_NEQUAL appears before any ACTION
+    * ``distance`` — instructions between the CONST and the first consumer
+    """
+    context: Dict[str, Any] = {
+        "next_action": None,
+        "next_action_name": None,
+        "compare_nearby": False,
+        "distance": None,
+    }
+    window = min(_ACTION_SCAN_WINDOW, len(instructions) - instr_index - 1)
+    for i in range(1, window + 1):
+        next_instr = instructions[instr_index + i]
+        # Only string-typed comparisons matter — int/float compares (e.g. loop
+        # counters) downstream of the literal don't make it a dispatch key.
+        if (
+            next_instr.opcode in (OP_EQUAL, OP_NEQUAL)
+            and next_instr.type_byte == TYPE_STRING
+        ):
+            context["compare_nearby"] = True
+            context["distance"] = i
+            return context
+        if next_instr.is_action and next_instr.action_routine is not None:
+            context["next_action"] = next_instr.action_routine
+            context["next_action_name"] = _action_name(next_instr.action_routine)
+            context["distance"] = i
+            return context
+    return context
 
 
 class NcsExtractor(BaseExtractor):
@@ -343,6 +502,10 @@ class NcsExtractor(BaseExtractor):
                 source_class = _classify_from_source(text, nss_content)
                 if source_class == "debug":
                     continue
+                # Comparison targets (e.g. DMFI `sChat == "animal empathy"`):
+                # translating silently breaks the script's dispatch.
+                if source_class == "compare":
+                    continue
 
             action_class = _classify_by_action_context(idx, instructions)
 
@@ -351,6 +514,11 @@ class NcsExtractor(BaseExtractor):
 
             source_is_player = source_class == "player"
             bytecode_is_player = action_class == "player"
+
+            bytecode_ctx = _bytecode_context(idx, instructions)
+            nss_snippet = (
+                _nss_snippet_for_text(text, nss_content) if nss_content is not None else None
+            )
 
             # High-confidence player-facing: deterministic pass (no LLM gate)
             if source_is_player or bytecode_is_player:
@@ -420,6 +588,9 @@ class NcsExtractor(BaseExtractor):
                         "confidence": confidence,
                         "needs_llm_gate": needs_llm_gate,
                         "ncs_hint": ncs_hint,
+                        "nss_snippet": nss_snippet,
+                        "bytecode_context": bytecode_ctx,
+                        "source_class": source_class,
                     },
                 )
             )

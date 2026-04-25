@@ -1,5 +1,7 @@
 """Unit tests for TranslationManager."""
 
+import asyncio
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -65,7 +67,46 @@ def _make_provider(translations: dict) -> Mock:
 
     provider.translate_async = AsyncMock(side_effect=translate_async)
     provider.close_async_client = AsyncMock(return_value=None)
+
+    # Default gate: approve every entry. Tests that care about rejection can
+    # override provider.classify_ncs_translate_gate_batch_async after creation.
+    async def gate_approve_all(entries, *, source_lang):
+        return {str(e["key"]): {"translate": True, "reason": "test_approve"} for e in entries}
+
+    provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_approve_all)
     return provider
+
+
+def _make_ncs_item(
+    text: str,
+    *,
+    item_id: str = "script:off_20",
+    needs_llm_gate: bool = False,
+    confidence: str = "high",
+    hint: str = "SpeakString",
+    offset: int = 0x20,
+) -> TranslatableItem:
+    return TranslatableItem(
+        text=text,
+        context=f"NCS string; hint={hint}",
+        item_id=item_id,
+        location="script.ncs",
+        metadata={
+            "type": "ncs_string",
+            "offset": offset,
+            "confidence": confidence,
+            "needs_llm_gate": needs_llm_gate,
+            "ncs_hint": hint,
+        },
+    )
+
+
+class CapturingWriter:
+    def __init__(self) -> None:
+        self.entries = []
+
+    def write(self, entry: Dict[str, Any]) -> None:
+        self.entries.append(entry)
 
 
 class TestTranslateContent:
@@ -134,6 +175,234 @@ class TestTranslateContent:
 
         assert len(result) == 2
         assert result["Sword of Fire"] == "Огненный меч"
+
+
+class TestNcsFailClosed:
+    """NCS fail-closed policy and diagnostics."""
+
+    def test_high_confidence_player_facing_ncs_is_translated_by_item_id(self):
+        item = _make_ncs_item("Look out, behind you!")
+        content = ExtractedContent(
+            content_type="ncs_script",
+            items=[item],
+            source_file=Path("script.ncs"),
+        )
+        provider = _make_provider({"Look out, behind you!": "RU: Look out, behind you!"})
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(content)
+
+        assert result == {"Look out, behind you!": "RU: Look out, behind you!"}
+        assert manager.ncs_translations_by_item_id == {item.item_id: "RU: Look out, behind you!"}
+        stats = manager.get_statistics()["ncs_diagnostics"]
+        assert stats["approved"] == 1
+        assert stats["translated"] == 1
+        assert stats["skipped_fail_closed"] == 0
+
+    def test_ambiguous_ncs_rejected_by_llm_gate_skips_translation(self):
+        item = _make_ncs_item(
+            "Something happened nearby.",
+            needs_llm_gate=True,
+            confidence="medium",
+            hint="ambiguous_bytecode",
+        )
+        content = ExtractedContent(
+            content_type="ncs_script",
+            items=[item],
+            source_file=Path("script.ncs"),
+        )
+        provider = _make_provider({"Something happened nearby.": "RU"})
+
+        async def gate_reject(entries, *, source_lang):
+            return {
+                str(e["key"]): {"translate": False, "reason": "ambiguous_conservative"}
+                for e in entries
+            }
+
+        provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_reject)
+        writer = CapturingWriter()
+        manager = TranslationManager(_make_config(translation_log_writer=writer), provider)
+
+        result = manager.translate_content(content)
+
+        assert result == {}
+        provider.translate_async.assert_not_called()
+        assert manager.ncs_translations_by_item_id == {}
+        stats = manager.get_statistics()["ncs_diagnostics"]
+        assert stats["total"] == 1
+        assert stats["extracted"] == 1
+        assert stats["skipped_fail_closed"] == 1
+        assert stats["approved"] == 0
+        assert stats["samples"][0]["reason"] == "gate_rejected:ambiguous_conservative"
+        diagnostic_entries = [
+            entry for entry in writer.entries if entry.get("event") == "ncs_diagnostic"
+        ]
+        assert len(diagnostic_entries) == 1
+        assert "original" not in diagnostic_entries[0]
+
+    def test_file_log_writer_records_ncs_diagnostic_jsonl_without_original(self, tmp_path):
+        item = _make_ncs_item(
+            "Something happened nearby.",
+            needs_llm_gate=True,
+            confidence="medium",
+            hint="ambiguous_bytecode",
+        )
+        content = ExtractedContent(
+            content_type="ncs_script",
+            items=[item],
+            source_file=Path("script.ncs"),
+        )
+        log_path = tmp_path / "translations.jsonl"
+        provider = _make_provider({item.text: "RU"})
+
+        async def gate_reject(entries, *, source_lang):
+            return {
+                str(e["key"]): {"translate": False, "reason": "ambiguous_conservative"}
+                for e in entries
+            }
+
+        provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_reject)
+        manager = TranslationManager(_make_config(translation_log=log_path), provider)
+
+        manager.translate_content(content)
+
+        records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+        assert records == [
+            {
+                "event": "ncs_diagnostic",
+                "file": "script.ncs",
+                "item_id": "script:off_20",
+                "offset": 32,
+                "confidence": "medium",
+                "ncs_hint": "ambiguous_bytecode",
+                "reason": "gate_rejected:ambiguous_conservative",
+                "text_prefix": "Something happened nearby.",
+            }
+        ]
+        assert "original" not in records[0]
+
+    def test_hard_veto_wins_even_when_ncs_gate_is_skipped(self):
+        item = _make_ncs_item(
+            "DetermineClassToUse: This character is invalid.",
+            needs_llm_gate=True,
+            confidence="low",
+            hint="ambiguous_bytecode",
+        )
+        content = ExtractedContent(
+            content_type="ncs_script",
+            items=[item],
+            source_file=Path("script.ncs"),
+        )
+        provider = _make_provider({item.text: "RU"})
+        manager = TranslationManager(_make_config(skip_ncs_llm_gate=True), provider)
+
+        result = manager.translate_content(content)
+
+        assert result == {}
+        provider.translate_async.assert_not_called()
+        stats = manager.get_statistics()["ncs_diagnostics"]
+        assert stats["skipped_hard_veto"] == 1
+        assert stats["approved"] == 0
+        assert stats["samples"][0]["reason"] == "code_identifier"
+
+    def test_timeout_on_approved_ncs_item_gets_one_minimal_retry(self):
+        item = _make_ncs_item("The seal is breaking!")
+        content = ExtractedContent(
+            content_type="ncs_script",
+            items=[item],
+            source_file=Path("script.ncs"),
+        )
+        calls = []
+
+        async def translate_async(
+            text,
+            source_lang,
+            target_lang,
+            context=None,
+            glossary_block=None,
+            content_profile=None,
+        ):
+            calls.append(
+                {
+                    "text": text,
+                    "context": context,
+                    "glossary_block": glossary_block,
+                    "content_profile": content_profile,
+                }
+            )
+            if len(calls) == 1:
+                await asyncio.sleep(1)
+            return TranslationResult(translated="RU: The seal is breaking!", original=text)
+
+        provider = Mock()
+        provider.translate_async = AsyncMock(side_effect=translate_async)
+        provider.close_async_client = AsyncMock(return_value=None)
+
+        async def gate_approve_all(entries, *, source_lang):
+            return {str(e["key"]): {"translate": True, "reason": "test_approve"} for e in entries}
+
+        provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_approve_all)
+        manager = TranslationManager(_make_config(), provider)
+        manager._ITEM_TIMEOUT = 0.01
+        manager._GATHER_TIMEOUT = 1.0
+        manager._RUN_ASYNC_TIMEOUT = 2.0
+
+        result = manager.translate_content(content)
+
+        assert result == {"The seal is breaking!": "RU: The seal is breaking!"}
+        assert provider.translate_async.call_count == 2
+        assert "NCS timeout fallback" in calls[1]["context"]
+        assert calls[1]["glossary_block"] is None
+        assert manager.ncs_translations_by_item_id == {item.item_id: "RU: The seal is breaking!"}
+        stats = manager.get_statistics()["ncs_diagnostics"]
+        assert stats["timeout"] == 1
+        assert stats["retry_recovered"] == 1
+        assert stats["translated"] == 1
+
+    def test_failed_ncs_timeout_retry_records_diagnostics_without_patchable_item(self):
+        item = _make_ncs_item("The portal resists you!")
+        content = ExtractedContent(
+            content_type="ncs_script",
+            items=[item],
+            source_file=Path("script.ncs"),
+        )
+
+        async def translate_async(
+            text,
+            source_lang,
+            target_lang,
+            context=None,
+            glossary_block=None,
+            content_profile=None,
+        ):
+            await asyncio.sleep(1)
+            return TranslationResult(translated="RU", original=text)
+
+        provider = Mock()
+        provider.translate_async = AsyncMock(side_effect=translate_async)
+        provider.close_async_client = AsyncMock(return_value=None)
+
+        async def gate_approve_all(entries, *, source_lang):
+            return {str(e["key"]): {"translate": True, "reason": "test_approve"} for e in entries}
+
+        provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_approve_all)
+        manager = TranslationManager(_make_config(), provider)
+        manager._ITEM_TIMEOUT = 0.01
+        manager._GATHER_TIMEOUT = 1.0
+        manager._RUN_ASYNC_TIMEOUT = 2.0
+
+        result = manager.translate_content(content)
+
+        assert result == {}
+        assert manager.ncs_translations_by_item_id == {}
+        assert provider.translate_async.call_count == 2
+        stats = manager.get_statistics()["ncs_diagnostics"]
+        assert stats["timeout"] == 1
+        assert stats["failed"] == 1
+        assert stats["retry_recovered"] == 0
+        reasons = {sample["reason"] for sample in stats["samples"]}
+        assert "translation_timeout_retry_failed" in reasons
+        assert "translation_failed" in reasons
 
 
 class TestTranslationCache:
@@ -378,5 +647,7 @@ class TestTokenMismatchRecovery:
         result = manager.translate_content(content)
 
         assert result[text] == "[Вздрогнуть.]"
-        assert provider.translate_async.call_count == 3
+        # Initial call + 1 retry reproducing the identical mismatch short-circuits
+        # the remaining retry and goes straight to cleanup.
+        assert provider.translate_async.call_count == 2
         assert len(list(manager.translation_cache.items())) == 0

@@ -185,13 +185,15 @@ class BaseAIProvider(ABC):
         entries: List[Dict[str, Any]],
         *,
         source_lang: str,
-    ) -> Dict[str, bool]:
+    ) -> Dict[str, Dict[str, Any]]:
         """Return whether each NCS string occurrence should be translated.
 
         *entries* items must include at least ``key`` (batch index as str) and
         ``text``. Default: approve all (no-op gate for providers without LLM).
+
+        Return mapping ``key -> {"translate": bool, "reason": str}``.
         """
-        return {str(e["key"]): True for e in entries}
+        return {str(e["key"]): {"translate": True, "reason": "noop_gate"} for e in entries}
 
     def _validate_api_key(self) -> None:
         """Validate that the API key is present and valid.

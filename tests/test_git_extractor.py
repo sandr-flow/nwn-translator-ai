@@ -274,3 +274,153 @@ def test_git_extractor_collects_encounter_instance_names():
     texts = {item.text: item.metadata.get("type") for item in result.items}
     assert texts.get("Human, Bandit Group") == "encounter_name"
     assert "enc_internal_tag" not in texts
+
+
+def test_git_filter_skips_code_like_trigger_route_labels_in_extractor_and_collector():
+    """Extractor and injector fallback must reject toolset route labels equally."""
+    from src.nwn_translator.injectors.git_injector import (
+        collect_git_strings_missing_from_translations,
+    )
+
+    extractor = GitExtractor()
+    path = Path("routes.git")
+    blocked = [
+        "CastleExt1To2South",
+        "BakersPlea",
+        "GolemStopAttackTrigger",
+        "CloudkillTarget",
+    ]
+    gff = {
+        "TriggerList": [
+            {
+                "Type": 1,
+                "TrapFlag": 0,
+                "LocalizedName": {"StrRef": -1, "Value": value},
+                "Description": {"StrRef": -1, "Value": ""},
+            }
+            for value in blocked
+        ]
+    }
+
+    extracted = {item.text for item in extractor.extract(path, gff).items}
+    collected = collect_git_strings_missing_from_translations(gff, {})
+
+    for value in blocked:
+        assert value not in extracted
+        assert value not in collected
+
+
+def test_git_filter_skips_code_like_item_names_in_extractor_and_collector():
+    """Inventory and area-floor item labels that look like resrefs stay untranslated."""
+    from src.nwn_translator.injectors.git_injector import (
+        collect_git_strings_missing_from_translations,
+    )
+
+    extractor = GitExtractor()
+    path = Path("items.git")
+    blocked = ["WWBite1d6", "WWBiteWolfForm", "WILL_O_WISP"]
+    gff = {
+        "Creature List": [
+            {
+                "FirstName": {"StrRef": -1, "Value": ""},
+                "ItemList": [
+                    {
+                        "LocalizedName": {"StrRef": -1, "Value": blocked[0]},
+                        "Description": {"StrRef": -1, "Value": ""},
+                        "DescIdentified": {"StrRef": -1, "Value": ""},
+                    },
+                    {
+                        "LocalizedName": {"StrRef": -1, "Value": blocked[1]},
+                        "Description": {"StrRef": -1, "Value": ""},
+                        "DescIdentified": {"StrRef": -1, "Value": ""},
+                    },
+                ],
+            }
+        ],
+        "List": [
+            {
+                "LocalizedName": {"StrRef": -1, "Value": blocked[2]},
+                "Description": {"StrRef": -1, "Value": ""},
+                "DescIdentified": {"StrRef": -1, "Value": ""},
+            }
+        ],
+    }
+
+    extracted = {item.text for item in extractor.extract(path, gff).items}
+    collected = collect_git_strings_missing_from_translations(gff, {})
+
+    for value in blocked:
+        assert value not in extracted
+        assert value not in collected
+
+
+def test_git_filter_keeps_player_visible_trigger_and_item_strings():
+    """Natural-language .git labels stay eligible for translation."""
+    from src.nwn_translator.injectors.git_injector import (
+        collect_git_strings_missing_from_translations,
+    )
+
+    extractor = GitExtractor()
+    path = Path("visible.git")
+    gff = {
+        "TriggerList": [
+            {
+                "Type": 1,
+                "TrapFlag": 0,
+                "LocalizedName": {"StrRef": -1, "Value": "To the Sewers"},
+                "Description": {"StrRef": -1, "Value": ""},
+            },
+            {
+                "Type": 0,
+                "TrapFlag": 0,
+                "LocalizedName": {
+                    "StrRef": -1,
+                    "Value": '"My lovely boots are getting mud on them!"',
+                },
+                "Description": {"StrRef": -1, "Value": ""},
+            },
+            {
+                "Type": 0,
+                "TrapFlag": 1,
+                "LocalizedName": {"StrRef": -1, "Value": "Market Square"},
+                "Description": {"StrRef": -1, "Value": ""},
+            },
+        ],
+        "Creature List": [
+            {
+                "ItemList": [
+                    {
+                        "LocalizedName": {"StrRef": -1, "Value": "Family Axe"},
+                        "Description": {"StrRef": -1, "Value": ""},
+                        "DescIdentified": {"StrRef": -1, "Value": ""},
+                    }
+                ]
+            }
+        ],
+        "List": [
+            {
+                "LocalizedName": {"StrRef": -1, "Value": "Dragon Bones"},
+                "Description": {"StrRef": -1, "Value": ""},
+                "DescIdentified": {"StrRef": -1, "Value": ""},
+            },
+            {
+                "LocalizedName": {"StrRef": -1, "Value": "Silver Nuggets"},
+                "Description": {"StrRef": -1, "Value": ""},
+                "DescIdentified": {"StrRef": -1, "Value": ""},
+            },
+        ],
+    }
+
+    extracted = {item.text for item in extractor.extract(path, gff).items}
+    collected = collect_git_strings_missing_from_translations(gff, {})
+    expected = {
+        "To the Sewers",
+        '"My lovely boots are getting mud on them!"',
+        "Market Square",
+        "Family Axe",
+        "Dragon Bones",
+        "Silver Nuggets",
+    }
+
+    assert expected <= extracted
+    assert expected <= collected

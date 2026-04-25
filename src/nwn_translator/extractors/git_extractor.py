@@ -7,7 +7,7 @@ strings are translated in Phase A/B and patched in :func:`patch_git_file`.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ..injectors.git_injector import (
     AREA_ITEM_FIELDS,
@@ -17,63 +17,12 @@ from ..injectors.git_injector import (
     ITEM_INVENTORY_FIELDS,
     _iter_area_item_entries,
     _iter_nested_item_entries,
-    is_internal_tag,
+    _meta_type_for_instance_field,
+    _meta_type_for_inventory_field,
+    should_translate_git_string,
 )
 from ..nwn_constants import race_label, gender_label, base_item_label
 from .base import BaseExtractor, ExtractedContent, TranslatableItem, extract_local_string
-
-
-def _meta_type_for_instance_field(list_key: str, field_name: str) -> str:
-    """Return metadata ``type`` string for batching decisions."""
-    if list_key == "Creature List":
-        if field_name == "FirstName":
-            return "creature_first_name"
-        if field_name == "LastName":
-            return "creature_last_name"
-        if field_name == "Description":
-            return "creature_description"
-    if list_key == "Placeable List":
-        if field_name == "LocName":
-            return "placeable_name"
-        if field_name == "Description":
-            return "placeable_description"
-    if list_key == "Door List":
-        if field_name == "LocalizedName":
-            return "door_name"
-        if field_name == "Description":
-            return "door_description"
-    if list_key == "TriggerList":
-        if field_name == "LocalizedName":
-            return "trigger_name"
-        if field_name == "Description":
-            return "trigger_description"
-    if list_key == "WaypointList":
-        if field_name == "LocalizedName":
-            return "waypoint_name"
-        if field_name == "Description":
-            return "waypoint_description"
-        if field_name == "MapNote":
-            return "waypoint_map_note"
-    if list_key == "Encounter List":
-        if field_name == "LocalizedName":
-            return "encounter_name"
-    if list_key == "StoreList":
-        if field_name in ("LocName", "LocalizedName"):
-            return "store_name"
-        if field_name == "Description":
-            return "store_description"
-    return "git_instance_string"
-
-
-def _meta_type_for_inventory_field(field_name: str) -> str:
-    """Return metadata ``type`` for an inventory/equipped item field."""
-    if field_name == "LocalizedName":
-        return "item_name"
-    if field_name == "Description":
-        return "item_description"
-    if field_name == "DescIdentified":
-        return "item_identified_description"
-    return "git_instance_string"
 
 
 def _build_npc_name_index(
@@ -326,7 +275,7 @@ class GitExtractor(BaseExtractor):
         if not isinstance(field_obj, dict):
             return
         text = self._extract_text_from_local_string(field_obj)
-        if not text or is_internal_tag(text):
+        if not should_translate_git_string(text, meta_type):
             return
         items.append(
             TranslatableItem(

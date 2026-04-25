@@ -94,12 +94,25 @@ class TokenProcessingResult:
 class TokenHandler:
     """Handler for managing token replacement, restoration, and cleanup."""
 
+    DIALOG_ACTION_PATTERN = re.compile(r"<<[^<>\r\n]+>>")
+    # Inner body requires at least one Unicode letter (not just ASCII) so the
+    # pattern still matches after restoration of translated text, e.g. "-далее-".
+    DASH_ACTION_PATTERN = re.compile(r"(?<!\w)-[^-\r\n]*[^\W\d_][^-\r\n]*-(?!\w)")
     INLINE_TAG_PATTERN = re.compile(r"</?Start[A-Za-z]*>")
     ENGINE_TOKEN_PATTERN = re.compile(r"<([A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*)>")
+    UNKNOWN_ANGLE_PATTERN = re.compile(r"<[^<>\r\n]+>")
     PRESERVED_ARTIFACT_PATTERN = re.compile(
-        r"</?Start[A-Za-z]*>|<[A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*>"
+        r"<<[^<>\r\n]+>>"
+        r"|(?<!\w)-[^-\r\n]*[^\W\d_][^-\r\n]*-(?!\w)"
+        r"|</?Start[A-Za-z]*>"
+        r"|<[A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*>"
+        r"|<[^<>\r\n]+>"
     )
-    TOKEN_LIKE_FRAGMENT_PATTERN = PRESERVED_ARTIFACT_PATTERN
+    TOKEN_LIKE_FRAGMENT_PATTERN = re.compile(
+        r"</?Start[A-Za-z]*>"
+        r"|<[A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*>"
+        r"|<[^<>\r\n]+>"
+    )
     RESTORED_ACTION_TAG_PATTERN = INLINE_TAG_PATTERN
 
     INLINE_PLACEHOLDER_CORE_PATTERN = r"NWN_INLINE_[A-Za-z0-9_]+"
@@ -145,24 +158,59 @@ class TokenHandler:
 
         for match in self.PRESERVED_ARTIFACT_PATTERN.finditer(text):
             original = match.group(0)
+            if self.DIALOG_ACTION_PATTERN.fullmatch(original):
+                inner = original[2:-2]
+                opening = self._add_protected_artifact(
+                    result,
+                    "<<",
+                    match.start(),
+                    kind="dialog_action_marker",
+                    structural_role="opening",
+                )
+                closing = self._add_protected_artifact(
+                    result,
+                    ">>",
+                    match.end() - 2,
+                    kind="dialog_action_marker",
+                    structural_role="closing",
+                )
+                parts.append(text[last_end : match.start()])
+                parts.append(opening)
+                parts.append(inner)
+                parts.append(closing)
+                last_end = match.end()
+                continue
+
+            if self.DASH_ACTION_PATTERN.fullmatch(original):
+                inner = original[1:-1]
+                opening = self._add_protected_artifact(
+                    result,
+                    "-",
+                    match.start(),
+                    kind="dash_action_marker",
+                    structural_role="opening",
+                )
+                closing = self._add_protected_artifact(
+                    result,
+                    "-",
+                    match.end() - 1,
+                    kind="dash_action_marker",
+                    structural_role="closing",
+                )
+                parts.append(text[last_end : match.start()])
+                parts.append(opening)
+                parts.append(inner)
+                parts.append(closing)
+                last_end = match.end()
+                continue
+
             kind, structural_role = self._classify_artifact(original)
             if kind is None:
                 continue
 
-            placeholder = self._make_placeholder(kind)
-            artifact = PreservedArtifact(
-                kind=kind,
-                original=original,
-                position=match.start(),
-                structural_role=structural_role,
-                placeholder=placeholder,
-            )
-            self.artifacts.append(artifact)
-            self._placeholder_to_artifact[placeholder] = artifact
-            self._store_placeholder_mapping(artifact)
-            result.add_replacement(
+            placeholder = self._add_protected_artifact(
+                result,
                 original,
-                placeholder,
                 match.start(),
                 kind=kind,
                 structural_role=structural_role,
@@ -267,6 +315,36 @@ class TokenHandler:
         """Return the exact original preserved-artifact sequence."""
         return [artifact.original for artifact in self.artifacts]
 
+    def _add_protected_artifact(
+        self,
+        result: SanitizedText,
+        original: str,
+        position: int,
+        *,
+        kind: str,
+        structural_role: str,
+    ) -> str:
+        """Register one protected artifact and return its placeholder."""
+        placeholder = self._make_placeholder(kind)
+        artifact = PreservedArtifact(
+            kind=kind,
+            original=original,
+            position=position,
+            structural_role=structural_role,
+            placeholder=placeholder,
+        )
+        self.artifacts.append(artifact)
+        self._placeholder_to_artifact[placeholder] = artifact
+        self._store_placeholder_mapping(artifact)
+        result.add_replacement(
+            original,
+            placeholder,
+            position,
+            kind=kind,
+            structural_role=structural_role,
+        )
+        return placeholder
+
     def clear(self) -> None:
         """Clear handler state and reset placeholder counters."""
         self.original_text = ""
@@ -292,6 +370,44 @@ class TokenHandler:
 
         for match in cls.PRESERVED_ARTIFACT_PATTERN.finditer(text):
             raw = match.group(0)
+            if cls.DIALOG_ACTION_PATTERN.fullmatch(raw):
+                artifacts.append(
+                    PreservedArtifact(
+                        kind="dialog_action_marker",
+                        original="<<",
+                        position=match.start(),
+                        structural_role="opening",
+                    )
+                )
+                artifacts.append(
+                    PreservedArtifact(
+                        kind="dialog_action_marker",
+                        original=">>",
+                        position=match.end() - 2,
+                        structural_role="closing",
+                    )
+                )
+                continue
+
+            if cls.DASH_ACTION_PATTERN.fullmatch(raw):
+                artifacts.append(
+                    PreservedArtifact(
+                        kind="dash_action_marker",
+                        original="-",
+                        position=match.start(),
+                        structural_role="opening",
+                    )
+                )
+                artifacts.append(
+                    PreservedArtifact(
+                        kind="dash_action_marker",
+                        original="-",
+                        position=match.end() - 1,
+                        structural_role="closing",
+                    )
+                )
+                continue
+
             kind, structural_role = cls._classify_artifact_static(raw)
             if kind is None:
                 continue
@@ -331,7 +447,11 @@ class TokenHandler:
 
     def _make_placeholder(self, kind: str) -> str:
         """Build one opaque placeholder for a preserved artifact."""
-        prefix = "NWN_INLINE" if kind == "inline_tag" else "NWN_TOKEN"
+        prefix = (
+            "NWN_INLINE"
+            if kind in {"inline_tag", "dialog_action_marker", "dash_action_marker"}
+            else "NWN_TOKEN"
+        )
         core = f"{prefix}_{self._nonce}_{self._artifact_counter}"
         self._artifact_counter += 1
         return f"__{core}__"
@@ -339,7 +459,7 @@ class TokenHandler:
     def _store_placeholder_mapping(self, artifact: PreservedArtifact) -> None:
         """Store restoration mapping for one protected artifact."""
         core = artifact.placeholder[2:-2]
-        if artifact.kind == "inline_tag":
+        if artifact.kind in {"inline_tag", "dialog_action_marker", "dash_action_marker"}:
             self.action_tag_map[core] = artifact.original
             self._inline_core_map[core] = artifact.original
         else:
@@ -384,6 +504,10 @@ class TokenHandler:
                 preserve_standard_tokens=preserve_standard_tokens,
             ):
                 return "engine_token", "token"
+            return None, ""
+
+        if cls.UNKNOWN_ANGLE_PATTERN.fullmatch(raw):
+            return "angle_fragment", "token"
 
         return None, ""
 

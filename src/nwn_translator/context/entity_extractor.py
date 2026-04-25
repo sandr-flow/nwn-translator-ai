@@ -26,6 +26,11 @@ from ..config import (
     GLOSSARY_TEMPERATURE,
     ProgressCallback,
 )
+from .string_filters import (
+    describe_rejection,
+    is_valid_entity_name,
+    should_skip_entity_source_text,
+)
 
 if TYPE_CHECKING:
     from ..ai_providers.openrouter_provider import OpenRouterProvider
@@ -129,6 +134,7 @@ class EntityExtractor:
         out: List[Tuple[str, str]] = []
         seen_lower: Set[str] = set()
         failed = 0
+        rejected: List[Tuple[str, str]] = []
         for batch_idx, batch_result in enumerate(results, 1):
             if isinstance(batch_result, BaseException):
                 failed += 1
@@ -142,17 +148,30 @@ class EntityExtractor:
             if not batch_result:
                 continue
             for name, category in batch_result:
-                key = name.strip().lower()
+                clean_name = name.strip()
+                clean_category = _coerce_category(category)
+                key = clean_name.lower()
                 if not key or key in known_lower or key in seen_lower:
                     continue
+                if not is_valid_entity_name(clean_name, clean_category):
+                    rejected.append(
+                        (clean_name, describe_rejection(clean_name, clean_category))
+                    )
+                    continue
                 seen_lower.add(key)
-                out.append((name.strip(), _coerce_category(category)))
+                out.append((clean_name, clean_category))
 
         logger.info(
-            "Entity extraction: %d new proper noun(s) found (%d batch failure(s))",
+            "Entity extraction: %d accepted, %d rejected (%d batch failure(s))",
             len(out),
+            len(rejected),
             failed,
         )
+        if rejected:
+            logger.info(
+                "Entity extraction rejected examples: %s",
+                ", ".join(f"{name} [{reason}]" for name, reason in rejected[:12]),
+            )
         return out
 
     async def _run_all_batches_async(
@@ -256,6 +275,8 @@ def _select_texts(items: List["TranslatableItem"]) -> List[str]:
     for item in items:
         text = (item.text or "").strip()
         if len(text) < _MIN_TEXT_LENGTH:
+            continue
+        if should_skip_entity_source_text(text, item.metadata or {}):
             continue
         if text in seen:
             continue

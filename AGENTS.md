@@ -7,6 +7,56 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - **User-facing replies must be in Russian.** Every chat message back to the user (explanations, status updates, summaries, questions) is written in Russian.
 - **Code stays in English.** All identifiers, comments, and docstrings are written in English regardless of the chat language. Existing user-facing UI strings in Russian (for example `frontend/src/locales.js` RU block and FastAPI error messages) remain as they are; do not translate them to English.
 
+## Working principles
+
+### Think before coding
+Don't assume. Don't hide confusion. Surface tradeoffs before touching code.
+
+- State assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them — don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+### Simplicity first
+Minimum code that solves the problem. Nothing speculative.
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+- Sanity check: would a senior engineer call this overcomplicated? If yes, simplify.
+
+### Surgical changes
+Touch only what you must. Clean up only your own mess.
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently. The project already enforces black (line length 100) and mypy — don't fight either.
+- If you notice unrelated dead code, mention it — don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that **your** changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: every changed line should trace directly to the user's request.
+
+### Goal-driven execution
+Define success criteria up front. Loop until verified.
+
+Transform fuzzy tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass."
+- "Fix the bug" → "Write a test that reproduces it, then make it pass."
+- "Refactor X" → "Ensure tests pass before and after."
+
+For multi-step tasks, state a brief plan with a verification step per item:
+```
+1. [step] → verify: [check]
+2. [step] → verify: [check]
+```
+Strong success criteria let you loop independently. Weak criteria ("make it work") force constant clarification.
+
 ## Project
 
 AI-powered translator for Neverwinter Nights (NWN/NWN:EE) modules. It takes a `.mod`, `.erf`, or `.hak` archive, extracts translatable strings from binary GFF resources and compiled NCS scripts, translates them via an OpenAI-compatible provider, and byte-patches the strings back into a new archive without fully rewriting GFF files.
@@ -85,4 +135,4 @@ The key consequence of injection: extractors must preserve `_record_offsets` on 
 
 - `tests/` uses pytest with `addopts = "-v --tb=short"` from `pyproject.toml`.
 - Many tests construct parsed-GFF dicts by hand; do not depend on `check_this/` fixtures for automated tests.
-- When changing extractor/injector behaviour, add focused regression tests that cover both the positive extraction/patching case and internal-tag negative cases where relevant.
+- When changing extractor/injector behaviour, add focused regression tests that cover both the positive extraction/patching case and internal-tag negative cases where relevant. Treat these regression tests as the verification step for the change (see "Goal-driven execution").

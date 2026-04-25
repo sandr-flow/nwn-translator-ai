@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 # the translation pipeline.
 _DIALOG_TRUNCATION_MAX_TOKENS = 32768
 
+# Chunking keeps large DLG files away from one huge JSON response. The limits
+# are intentionally conservative and based on prompt characters, not exact
+# tokenizer counts, because providers and models vary.
+_DIALOG_CHUNK_TARGET_CHARS = 24000
+_DIALOG_CHUNK_MAX_KEYS = 120
+
 
 class ContextualTranslationManager:
     """Manager for full-graph contextual translation."""
@@ -152,30 +158,6 @@ class ContextualTranslationManager:
             _finish()
             return translations
 
-        if set(keys_for_api) == set(all_keys):
-            script = self.formatter.format_dialog_tree(tree, text_overrides=sanitized_by_key)
-        else:
-            script = self.formatter.format_nodes(
-                keys_for_api,
-                node_map,
-                original_text_map,
-                text_overrides=sanitized_by_key,
-            )
-
-        if not script:
-            _finish()
-            return translations
-
-        system_prompt = self._build_system_prompt(source_text=script, filename_stem=file_path.stem)
-        user_prompt = self._build_user_prompt(file_path.name, script)
-
-        logger.info(
-            "Sending %d/%d dialog lines to AI for %s...",
-            len(keys_for_api),
-            len(original_text_map),
-            file_path.name,
-        )
-
         try:
 
             async def call_api(
@@ -190,102 +172,58 @@ class ContextualTranslationManager:
 
             from ..async_utils import run_async
 
-            raw_response = run_async(
-                call_api(system_prompt, user_prompt),
-                cleanup=provider.close_async_client,
+            dialog_chunks = self._build_dialog_chunks(
+                keys_for_api,
+                all_keys,
+                tree,
+                node_map,
+                original_text_map,
+                sanitized_by_key,
             )
-            parsed_json = self._parse_json_response(raw_response, file_path.name)
-
-            if parsed_json is None:
-                truncation_like_invalid_json = self._dialog_response_likely_truncated(raw_response)
-                if truncation_like_invalid_json:
-                    logger.warning(
-                        "%s: dialog JSON parse failed with truncation-like invalid JSON; "
-                        "retrying original prompt with higher max_tokens...",
-                        file_path.name,
-                    )
-                    raw_response = run_async(
-                        call_api(
-                            system_prompt,
-                            user_prompt,
-                            max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
-                        ),
-                        cleanup=provider.close_async_client,
-                    )
-                    parsed_json = self._parse_json_response(raw_response, file_path.name)
-
-                    if parsed_json is None:
-                        logger.warning(
-                            "%s: high-token original prompt retry still returned invalid JSON; "
-                            "retrying repair prompt with higher max_tokens as final fallback...",
-                            file_path.name,
-                        )
-                        repair_prompt = self._build_repair_user_prompt(
-                            file_path.name, script, keys_for_api, raw_response
-                        )
-                        raw_response = run_async(
-                            call_api(
-                                system_prompt,
-                                repair_prompt,
-                                max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
-                            ),
-                            cleanup=provider.close_async_client,
-                        )
-                        parsed_json = self._parse_json_response(raw_response, file_path.name)
-                else:
-                    logger.warning(
-                        "%s: dialog JSON parse failed with non-truncation invalid JSON; "
-                        "retrying with repair prompt...",
-                        file_path.name,
-                    )
-                    repair_prompt = self._build_repair_user_prompt(
-                        file_path.name, script, keys_for_api, raw_response
-                    )
-                    raw_response = run_async(
-                        call_api(system_prompt, repair_prompt),
-                        cleanup=provider.close_async_client,
-                    )
-                    parsed_json = self._parse_json_response(raw_response, file_path.name)
-
-                    if parsed_json is None:
-                        logger.warning(
-                            "%s: repair prompt still returned invalid JSON; "
-                            "retrying repair prompt with higher max_tokens as final fallback...",
-                            file_path.name,
-                        )
-                        raw_response = run_async(
-                            call_api(
-                                system_prompt,
-                                repair_prompt,
-                                max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
-                            ),
-                            cleanup=provider.close_async_client,
-                        )
-                        parsed_json = self._parse_json_response(raw_response, file_path.name)
-
-            if parsed_json is None:
-                logger.error(
-                    "%s: dialog translation failed after retries (invalid JSON).",
-                    file_path.name,
-                )
+            if not dialog_chunks:
                 _finish()
                 return translations
 
-            api_translations, invalid_nodes = self._apply_translations(
-                parsed_json,
-                original_text_map,
-                handlers,
-                file_path,
-                sanitized_by_key=sanitized_by_key,
-                session_cache=self.translation_cache,
-                allow_cleanup=False,
-            )
-            translations.update(api_translations)
-            _bump(len(api_translations))
+            if len(dialog_chunks) == 1:
+                logger.info(
+                    "Sending %d/%d dialog lines to AI for %s...",
+                    len(keys_for_api),
+                    len(original_text_map),
+                    file_path.name,
+                )
+            else:
+                logger.info(
+                    "Sending %d/%d dialog lines to AI for %s in %d chunk(s)...",
+                    len(keys_for_api),
+                    len(original_text_map),
+                    file_path.name,
+                    len(dialog_chunks),
+                )
 
-            missing_keys = [k for k in keys_for_api if k not in parsed_json]
-            pending_keys = sorted(set(missing_keys + list(invalid_nodes.keys())))
-            latest_invalid = dict(invalid_nodes)
+            pending_keys: List[str] = []
+            latest_invalid: Dict[str, Dict[str, Any]] = {}
+
+            for chunk_index, (chunk_keys, script) in enumerate(dialog_chunks, 1):
+                chunk_translations, chunk_pending, chunk_invalid = self._translate_dialog_chunk(
+                    file_path,
+                    file_path.stem,
+                    script,
+                    chunk_keys,
+                    original_text_map,
+                    handlers,
+                    sanitized_by_key,
+                    call_api,
+                    run_async,
+                    provider.close_async_client,
+                    chunk_index=chunk_index,
+                    total_chunks=len(dialog_chunks),
+                )
+                translations.update(chunk_translations)
+                _bump(len(chunk_translations))
+                pending_keys.extend(chunk_pending)
+                latest_invalid.update(chunk_invalid)
+
+            pending_keys = sorted(set(pending_keys))
 
             if pending_keys:
                 logger.warning(
@@ -484,6 +422,216 @@ class ContextualTranslationManager:
             return "unterminated" in msg
         return False
 
+    def _build_dialog_chunks(
+        self,
+        keys_for_api: List[str],
+        all_keys: List[str],
+        tree: List[DialogNode],
+        node_map: Dict[str, DialogNode],
+        original_text_map: Dict[str, str],
+        sanitized_by_key: Dict[str, str],
+    ) -> List[tuple[List[str], str]]:
+        """Return one full-dialog script or smaller node chunks for large dialogs."""
+        if set(keys_for_api) == set(all_keys):
+            full_script = self.formatter.format_dialog_tree(
+                tree,
+                text_overrides=sanitized_by_key,
+            )
+        else:
+            full_script = self.formatter.format_nodes(
+                keys_for_api,
+                node_map,
+                original_text_map,
+                text_overrides=sanitized_by_key,
+            )
+
+        if not full_script:
+            return []
+
+        if (
+            len(full_script) <= _DIALOG_CHUNK_TARGET_CHARS
+            and len(keys_for_api) <= _DIALOG_CHUNK_MAX_KEYS
+        ):
+            return [(list(keys_for_api), full_script)]
+
+        chunks: List[tuple[List[str], str]] = []
+        current_keys: List[str] = []
+        current_chars = 0
+
+        for key in keys_for_api:
+            node_script = self.formatter.format_nodes(
+                [key],
+                node_map,
+                original_text_map,
+                text_overrides=sanitized_by_key,
+            )
+            if not node_script:
+                continue
+
+            would_exceed_chars = (
+                current_keys and current_chars + len(node_script) > _DIALOG_CHUNK_TARGET_CHARS
+            )
+            would_exceed_keys = current_keys and len(current_keys) >= _DIALOG_CHUNK_MAX_KEYS
+            if would_exceed_chars or would_exceed_keys:
+                script = self.formatter.format_nodes(
+                    current_keys,
+                    node_map,
+                    original_text_map,
+                    text_overrides=sanitized_by_key,
+                )
+                if script:
+                    chunks.append((list(current_keys), script))
+                current_keys = []
+                current_chars = 0
+
+            current_keys.append(key)
+            current_chars += len(node_script)
+
+        if current_keys:
+            script = self.formatter.format_nodes(
+                current_keys,
+                node_map,
+                original_text_map,
+                text_overrides=sanitized_by_key,
+            )
+            if script:
+                chunks.append((list(current_keys), script))
+
+        return chunks
+
+    def _translate_dialog_chunk(
+        self,
+        file_path: Path,
+        filename_stem: str,
+        script: str,
+        keys_for_api: List[str],
+        original_text_map: Dict[str, str],
+        handlers: Dict[str, Any],
+        sanitized_by_key: Dict[str, str],
+        call_api: Any,
+        run_async: Any,
+        cleanup: Any,
+        *,
+        chunk_index: int,
+        total_chunks: int,
+    ) -> tuple[Dict[str, str], List[str], Dict[str, Dict[str, Any]]]:
+        """Translate one dialog script chunk and return accepted plus pending keys."""
+        system_prompt = self._build_system_prompt(
+            source_text=script,
+            filename_stem=filename_stem,
+        )
+        user_prompt = self._build_user_prompt(file_path.name, script)
+        if total_chunks > 1:
+            logger.info(
+                "%s: translating dialog chunk %d/%d (%d node(s), %d chars).",
+                file_path.name,
+                chunk_index,
+                total_chunks,
+                len(keys_for_api),
+                len(script),
+            )
+
+        raw_response = run_async(
+            call_api(system_prompt, user_prompt),
+            cleanup=cleanup,
+        )
+        parsed_json = self._parse_json_response(raw_response, file_path.name)
+
+        if parsed_json is None:
+            truncation_like_invalid_json = self._dialog_response_likely_truncated(raw_response)
+            if truncation_like_invalid_json:
+                logger.warning(
+                    "%s: dialog JSON parse failed with truncation-like invalid JSON; "
+                    "retrying original prompt with higher max_tokens...",
+                    file_path.name,
+                )
+                raw_response = run_async(
+                    call_api(
+                        system_prompt,
+                        user_prompt,
+                        max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
+                    ),
+                    cleanup=cleanup,
+                )
+                parsed_json = self._parse_json_response(raw_response, file_path.name)
+
+                if parsed_json is None:
+                    logger.warning(
+                        "%s: high-token original prompt retry still returned invalid JSON; "
+                        "retrying repair prompt with higher max_tokens as final fallback...",
+                        file_path.name,
+                    )
+                    repair_prompt = self._build_repair_user_prompt(
+                        file_path.name,
+                        script,
+                        keys_for_api,
+                        raw_response,
+                    )
+                    raw_response = run_async(
+                        call_api(
+                            system_prompt,
+                            repair_prompt,
+                            max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
+                        ),
+                        cleanup=cleanup,
+                    )
+                    parsed_json = self._parse_json_response(raw_response, file_path.name)
+            else:
+                logger.warning(
+                    "%s: dialog JSON parse failed with non-truncation invalid JSON; "
+                    "retrying with repair prompt...",
+                    file_path.name,
+                )
+                repair_prompt = self._build_repair_user_prompt(
+                    file_path.name,
+                    script,
+                    keys_for_api,
+                    raw_response,
+                )
+                raw_response = run_async(
+                    call_api(system_prompt, repair_prompt),
+                    cleanup=cleanup,
+                )
+                parsed_json = self._parse_json_response(raw_response, file_path.name)
+
+                if parsed_json is None:
+                    logger.warning(
+                        "%s: repair prompt still returned invalid JSON; "
+                        "retrying repair prompt with higher max_tokens as final fallback...",
+                        file_path.name,
+                    )
+                    raw_response = run_async(
+                        call_api(
+                            system_prompt,
+                            repair_prompt,
+                            max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
+                        ),
+                        cleanup=cleanup,
+                    )
+                    parsed_json = self._parse_json_response(raw_response, file_path.name)
+
+        if parsed_json is None:
+            logger.error(
+                "%s: dialog translation chunk %d/%d failed after retries (invalid JSON).",
+                file_path.name,
+                chunk_index,
+                total_chunks,
+            )
+            return {}, list(keys_for_api), {}
+
+        api_translations, invalid_nodes = self._apply_translations(
+            parsed_json,
+            original_text_map,
+            handlers,
+            file_path,
+            sanitized_by_key=sanitized_by_key,
+            session_cache=self.translation_cache,
+            allow_cleanup=False,
+        )
+        missing_keys = [key for key in keys_for_api if key not in parsed_json]
+        pending_keys = sorted(set(missing_keys + list(invalid_nodes.keys())))
+        return api_translations, pending_keys, dict(invalid_nodes)
+
     def _build_dialog_retry_context(
         self,
         key: str,
@@ -547,9 +695,7 @@ class ContextualTranslationManager:
                 lines.append(f"- {key}: " + " | ".join(expected))
             report = mismatch_reports.get(key)
             if report is not None and not report.is_exact_match and report.actual_sequence:
-                lines.append(
-                    "  previous restored sequence: " + " | ".join(report.actual_sequence)
-                )
+                lines.append("  previous restored sequence: " + " | ".join(report.actual_sequence))
         lines.extend(["", "Dialog script:", "", script])
         return "\n".join(lines)
 

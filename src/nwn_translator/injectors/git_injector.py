@@ -8,8 +8,9 @@ whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from ..context.string_filters import should_skip_entity_source_text
 from ..file_handlers.gff_handler import read_gff
 from ..file_handlers.gff_patcher import GFFPatcher, GFFPatchError
 
@@ -64,6 +65,74 @@ AREA_ITEM_LIST_KEY = "List"
 AREA_ITEM_FIELDS = ITEM_INVENTORY_FIELDS
 
 
+def _meta_type_for_instance_field(list_key: str, field_name: str) -> str:
+    """Return metadata ``type`` string for .git filtering decisions."""
+    if list_key == "Creature List":
+        if field_name == "FirstName":
+            return "creature_first_name"
+        if field_name == "LastName":
+            return "creature_last_name"
+        if field_name == "Description":
+            return "creature_description"
+    if list_key == "Placeable List":
+        if field_name == "LocName":
+            return "placeable_name"
+        if field_name == "Description":
+            return "placeable_description"
+    if list_key == "Door List":
+        if field_name == "LocalizedName":
+            return "door_name"
+        if field_name == "Description":
+            return "door_description"
+    if list_key == "TriggerList":
+        if field_name == "LocalizedName":
+            return "trigger_name"
+        if field_name == "Description":
+            return "trigger_description"
+    if list_key == "WaypointList":
+        if field_name == "LocalizedName":
+            return "waypoint_name"
+        if field_name == "Description":
+            return "waypoint_description"
+        if field_name == "MapNote":
+            return "waypoint_map_note"
+    if list_key == "Encounter List":
+        if field_name == "LocalizedName":
+            return "encounter_name"
+    if list_key == "StoreList":
+        if field_name in ("LocName", "LocalizedName"):
+            return "store_name"
+        if field_name == "Description":
+            return "store_description"
+    return "git_instance_string"
+
+
+def _meta_type_for_inventory_field(field_name: str) -> str:
+    """Return metadata ``type`` for a .git inventory/equipped item field."""
+    if field_name == "LocalizedName":
+        return "item_name"
+    if field_name == "Description":
+        return "item_description"
+    if field_name == "DescIdentified":
+        return "item_identified_description"
+    return "git_instance_string"
+
+
+def should_translate_git_string(text: object, meta_type: str = "git_instance_string") -> bool:
+    """Return True when a .git locstring is suitable for translation.
+
+    This is shared by extraction and fallback string collection so code-like
+    route labels, resrefs, placeholders, and toolset/system terms are filtered
+    consistently before they can reach the translator.
+    """
+    if not isinstance(text, str):
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return not should_skip_entity_source_text(stripped, {"type": meta_type})
+
+
 def _collect_strings_from_store_tree(
     store_node: Dict[str, Any],
     found: Set[str],
@@ -76,6 +145,7 @@ def _collect_strings_from_store_tree(
             ITEM_INVENTORY_FIELDS,
             found,
             existing,
+            _meta_type_for_inventory_field,
         )
     children = store_node.get("StoreList", [])
     if not isinstance(children, list):
@@ -137,12 +207,7 @@ def is_internal_tag(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return False
-    if _INTERNAL_TAG_RE.match(stripped):
-        return True
-    # Spaceless identifiers with underscores (e.g. "Spawn_Point_01") — skip
-    if "_" in stripped and " " not in stripped:
-        return True
-    return False
+    return bool(_INTERNAL_TAG_RE.match(stripped)) or not should_translate_git_string(stripped)
 
 
 def _add_string_values_from_fields(
@@ -150,6 +215,7 @@ def _add_string_values_from_fields(
     field_names: List[str],
     bucket: Set[str],
     existing: Dict[str, str],
+    meta_type_for_field: Optional[Callable[[str], str]] = None,
 ) -> None:
     """Collect embedded CExoLocString Values not already present in *existing*.
 
@@ -166,11 +232,16 @@ def _add_string_values_from_fields(
         if not isinstance(field_obj, dict):
             continue
         original_text = field_obj.get("Value", "")
+        meta_type = (
+            meta_type_for_field(field_name)
+            if meta_type_for_field is not None
+            else "git_instance_string"
+        )
         if (
             original_text
             and isinstance(original_text, str)
             and original_text not in existing
-            and not is_internal_tag(original_text)
+            and should_translate_git_string(original_text, meta_type)
         ):
             bucket.add(original_text)
 
@@ -194,7 +265,15 @@ def collect_git_strings_missing_from_translations(
         for instance in instances:
             if not isinstance(instance, dict):
                 continue
-            _add_string_values_from_fields(instance, field_names, found, existing_translations)
+            _add_string_values_from_fields(
+                instance,
+                field_names,
+                found,
+                existing_translations,
+                lambda field_name, list_key=list_key: _meta_type_for_instance_field(
+                    list_key, field_name
+                ),
+            )
             if list_key == "StoreList":
                 _collect_strings_from_store_tree(instance, found, existing_translations)
             else:
@@ -205,10 +284,17 @@ def collect_git_strings_missing_from_translations(
                             ITEM_INVENTORY_FIELDS,
                             found,
                             existing_translations,
+                            _meta_type_for_inventory_field,
                         )
 
     for area_item in _iter_area_item_entries(parsed_data):
-        _add_string_values_from_fields(area_item, AREA_ITEM_FIELDS, found, existing_translations)
+        _add_string_values_from_fields(
+            area_item,
+            AREA_ITEM_FIELDS,
+            found,
+            existing_translations,
+            _meta_type_for_inventory_field,
+        )
 
     return found
 

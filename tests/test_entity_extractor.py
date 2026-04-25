@@ -18,8 +18,8 @@ from src.nwn_translator.context.entity_extractor import (
 from src.nwn_translator.extractors.base import TranslatableItem
 
 
-def _item(text: str) -> TranslatableItem:
-    return TranslatableItem(text=text)
+def _item(text: str, metadata=None) -> TranslatableItem:
+    return TranslatableItem(text=text, metadata=metadata or {})
 
 
 class _FakeProvider:
@@ -62,6 +62,24 @@ class TestTextSelection:
     def test_empty_and_whitespace_skipped(self):
         items = [_item(""), _item("   "), _item("a" * 45)]
         assert _select_texts(items) == ["a" * 45]
+
+    def test_service_and_code_like_texts_filtered(self):
+        natural = "This long passage mentions Stout Village and should be analyzed."
+        items = [
+            _item("<FirstName>" * 10),
+            _item("ARCH_TARGET " * 8),
+            _item("BakersPleaBakersPleaBakersPleaBakersPlea"),
+            _item("DMFI Admin Server Wand " * 3),
+            _item(natural),
+        ]
+        assert _select_texts(items) == [natural]
+
+    def test_git_technical_code_like_labels_filtered(self):
+        items = [
+            _item("CastleExt1To2SouthCastleExt1To2South", {"type": "trigger_name"}),
+            _item("This trigger says Madam Eva waits in Barovia.", {"type": "trigger_name"}),
+        ]
+        assert _select_texts(items) == ["This trigger says Madam Eva waits in Barovia."]
 
 
 class TestBatching:
@@ -167,6 +185,49 @@ class TestExtractIntegration:
             known_names={"Glod Gloddson"},
         )
         assert result == [("Stout Village", "location")]
+
+    def test_model_noise_filtered_after_parse(self):
+        long = "This long enough text mentions Madam Eva near Stout Village."
+        items = [_item(long)]
+        payload = (
+            '{"entities": ['
+            '{"name": "DMFI", "type": "organization"},'
+            '{"name": "<FirstName>", "type": "character"},'
+            '{"name": "ARCH_TARGET", "type": "location"},'
+            '{"name": "BakersPlea", "type": "quest"},'
+            '{"name": "Madam Eva", "type": "character"},'
+            '{"name": "Stout Village", "type": "location"}'
+            "]}"
+        )
+        provider = _FakeProvider([payload])
+        result = EntityExtractor().extract(
+            items,
+            provider,
+            _config(),
+            known_names=set(),
+        )
+        assert result == [
+            ("Madam Eva", "character"),
+            ("Stout Village", "location"),
+        ]
+
+    def test_unknown_single_word_noise_filtered(self):
+        long = "This long enough text mentions Barovia and the Western Gate."
+        items = [_item(long)]
+        payload = (
+            '{"entities": ['
+            '{"name": "Barovia", "type": "unknown"},'
+            '{"name": "Western Gate", "type": "unknown"}'
+            "]}"
+        )
+        provider = _FakeProvider([payload])
+        result = EntityExtractor().extract(
+            items,
+            provider,
+            _config(),
+            known_names=set(),
+        )
+        assert result == [("Western Gate", "unknown")]
 
     def test_case_insensitive_dedup_against_known(self):
         long = "Some long descriptive passage mentioning a named place in-world."

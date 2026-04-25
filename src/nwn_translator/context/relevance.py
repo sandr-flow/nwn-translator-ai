@@ -4,11 +4,14 @@ Used by :meth:`Glossary.to_prompt_block` and
 :meth:`WorldContext.to_prompt_block` to keep only entries actually mentioned
 in the source text of a translation batch.
 
-Matching rules per token (entity vs. text):
+Matching is deliberately conservative:
 
-* exact match on the normalized form;
-* prefix match when both tokens share a common prefix of length >= 4;
-* Damerau-Levenshtein <= 1 when both tokens are >= 6 characters long.
+* single-token names match exact source tokens, simple plural/possessive
+  variants, or Damerau-Levenshtein <= 1 for long tokens;
+* multi-token names need at least two meaningful token hits, except for a
+  distinctive long surname/title token such as ``Winters`` vs. ``Winter's``;
+* common prompt/routing/game tokens (``player``, ``reply``, ``ravenloft``,
+  ``module``, etc.) never count as meaningful multi-token evidence.
 
 CJK is out of scope — see ``config.GAME_INCOMPATIBLE_TARGET_LANGS``.
 """
@@ -17,7 +20,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Iterable, Set
+from typing import Iterable, Literal, Set
 
 # Unicode letters only (no digits, no underscore). Works for Latin, Cyrillic,
 # Turkish, Polish, Czech and the like under Python 3's default re.UNICODE.
@@ -25,6 +28,40 @@ _TOKEN_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 _PREFIX_MIN = 4
 _FUZZY_MIN = 6
+_DISTINCTIVE_MIN = 6
+
+_MAGNET_TOKENS = frozenset(
+    {
+        "action",
+        "area",
+        "chapter",
+        "class",
+        "conversation",
+        "creature",
+        "dialog",
+        "dm",
+        "encounter",
+        "entry",
+        "item",
+        "level",
+        "module",
+        "narrator",
+        "npc",
+        "object",
+        "player",
+        "quest",
+        "ravenloft",
+        "reply",
+        "script",
+        "sound",
+        "tag",
+        "trigger",
+        "vampire",
+        "weapon",
+    }
+)
+
+_MatchKind = Literal["none", "exact", "variant", "fuzzy"]
 
 
 def tokenize(text: str) -> Set[str]:
@@ -36,7 +73,7 @@ def tokenize(text: str) -> Set[str]:
 
 
 def is_relevant(entity_text: str, source_tokens: Set[str]) -> bool:
-    """True if any token of *entity_text* matches one of *source_tokens*.
+    """True if *entity_text* is strongly evidenced by *source_tokens*.
 
     *source_tokens* must already be the output of :func:`tokenize`.
     """
@@ -45,23 +82,95 @@ def is_relevant(entity_text: str, source_tokens: Set[str]) -> bool:
     entity_tokens = tokenize(entity_text)
     if not entity_tokens:
         return False
-    for et in entity_tokens:
+
+    if len(entity_tokens) == 1:
+        token = next(iter(entity_tokens))
+        return _single_token_relevant(token, source_tokens)
+
+    if entity_tokens.issubset(source_tokens):
+        return True
+
+    meaningful_tokens = {t for t in entity_tokens if not _is_magnet_token(t)}
+    if not meaningful_tokens:
+        return False
+
+    exact_hits: Set[str] = set()
+    variant_hits: Set[str] = set()
+    fuzzy_hits: Set[str] = set()
+
+    for et in meaningful_tokens:
         for st in source_tokens:
-            if _tokens_match(et, st):
-                return True
+            kind = _token_match_kind(et, st)
+            if kind == "exact":
+                exact_hits.add(et)
+            elif kind == "variant":
+                variant_hits.add(et)
+            elif kind == "fuzzy":
+                fuzzy_hits.add(et)
+
+    strong_hits = exact_hits | variant_hits | fuzzy_hits
+    if len(strong_hits) >= 2:
+        return True
+
+    if len(strong_hits) == 1:
+        only = next(iter(strong_hits))
+        # Keep useful surname/title matches (e.g. "Merrick Winters" for
+        # "Mr. Winter's house") without letting one common token pull in
+        # every entity that happens to share it.
+        if only in exact_hits:
+            return len(only) >= _PREFIX_MIN and not _is_magnet_token(only)
+        return _is_distinctive_token(only) and only in variant_hits
+
     return False
 
 
 def _tokens_match(a: str, b: str) -> bool:
-    if a == b:
-        return True
-    if len(a) >= _PREFIX_MIN and len(b) >= _PREFIX_MIN:
-        if a.startswith(b) or b.startswith(a):
+    return _token_match_kind(a, b) != "none"
+
+
+def _single_token_relevant(entity_token: str, source_tokens: Set[str]) -> bool:
+    for source_token in source_tokens:
+        kind = _token_match_kind(entity_token, source_token)
+        if kind == "exact":
             return True
-    if len(a) >= _FUZZY_MIN and len(b) >= _FUZZY_MIN:
-        if _damerau_levenshtein_le_1(a, b):
+        if kind == "variant" and _is_distinctive_token(entity_token):
+            return True
+        if kind == "fuzzy" and _is_distinctive_token(entity_token):
             return True
     return False
+
+
+def _token_match_kind(a: str, b: str) -> _MatchKind:
+    if a == b:
+        return "exact"
+    if _simple_plural_or_possessive_variant(a, b):
+        return "variant"
+    if len(a) >= _FUZZY_MIN and len(b) >= _FUZZY_MIN:
+        if _damerau_levenshtein_le_1(a, b):
+            return "fuzzy"
+    return "none"
+
+
+def _simple_plural_or_possessive_variant(a: str, b: str) -> bool:
+    if len(a) < _PREFIX_MIN or len(b) < _PREFIX_MIN:
+        return False
+    if a.endswith("s") and a[:-1] == b:
+        return True
+    if b.endswith("s") and b[:-1] == a:
+        return True
+    if a.endswith("es") and a[:-2] == b:
+        return True
+    if b.endswith("es") and b[:-2] == a:
+        return True
+    return False
+
+
+def _is_distinctive_token(token: str) -> bool:
+    return len(token) >= _DISTINCTIVE_MIN and not _is_magnet_token(token)
+
+
+def _is_magnet_token(token: str) -> bool:
+    return token in _MAGNET_TOKENS
 
 
 def _damerau_levenshtein_le_1(a: str, b: str) -> bool:

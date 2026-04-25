@@ -93,7 +93,9 @@ class _FakeDialogExtractor:
 def _patch_dialog_environment(monkeypatch, tree):
     monkeypatch.setattr(context_module, "OpenRouterProvider", _FakeOpenRouter)
     monkeypatch.setattr(context_module, "DialogExtractor", lambda: _FakeDialogExtractor(tree))
-    monkeypatch.setattr(context_module, "translation_log_writer_for_config", lambda *_a, **_k: _NullWriter())
+    monkeypatch.setattr(
+        context_module, "translation_log_writer_for_config", lambda *_a, **_k: _NullWriter()
+    )
 
 
 def test_initial_invalid_json_truncation_retries_original_prompt_first(monkeypatch, caplog):
@@ -146,7 +148,10 @@ def test_initial_invalid_json_non_truncation_uses_repair_prompt(monkeypatch, cap
     assert provider.calls[0]["max_tokens"] == TRANSLATION_MAX_TOKENS
     assert provider.calls[1]["max_tokens"] == TRANSLATION_MAX_TOKENS
     assert provider.calls[0]["user_prompt"] != provider.calls[1]["user_prompt"]
-    assert "The previous answer for test.dlg was not valid JSON or was truncated." in provider.calls[1]["user_prompt"]
+    assert (
+        "The previous answer for test.dlg was not valid JSON or was truncated."
+        in provider.calls[1]["user_prompt"]
+    )
     assert "non-truncation invalid JSON" in caplog.text
 
 
@@ -184,5 +189,88 @@ def test_pending_keys_truncation_retries_same_retry_prompt_with_higher_tokens(mo
     assert provider.calls[1]["max_tokens"] == TRANSLATION_MAX_TOKENS
     assert provider.calls[2]["max_tokens"] == _DIALOG_TRUNCATION_MAX_TOKENS
     assert provider.calls[1]["user_prompt"] == provider.calls[2]["user_prompt"]
-    assert "changed, dropped, or omitted preserved NWN tags/tokens" in provider.calls[1]["user_prompt"]
+    assert (
+        "changed, dropped, or omitted preserved NWN tags/tokens" in provider.calls[1]["user_prompt"]
+    )
     assert "pending dialog retry JSON looks truncated" in caplog.text
+
+
+def test_large_dialog_is_translated_in_chunks(monkeypatch):
+    tree = [
+        DialogNode(
+            node_id=1,
+            text="Hello there, traveler.",
+            is_entry=True,
+            replies=[
+                DialogNode(node_id=2, text="Who are you?", is_entry=False),
+                DialogNode(node_id=3, text="Goodbye.", is_entry=False),
+            ],
+        )
+    ]
+    _patch_dialog_environment(monkeypatch, tree)
+    monkeypatch.setattr(context_module, "_DIALOG_CHUNK_MAX_KEYS", 1)
+    provider = _FakeOpenRouter(
+        [
+            '{"E1":"Привет, путник."}',
+            '{"R2":"Кто ты?"}',
+            '{"R3":"Прощай."}',
+        ]
+    )
+    manager = ContextualTranslationManager(
+        _make_config(),
+        provider,
+        WorldContext(),
+    )
+
+    result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
+
+    assert result == {
+        "Hello there, traveler.": "Привет, путник.",
+        "Who are you?": "Кто ты?",
+        "Goodbye.": "Прощай.",
+    }
+    assert len(provider.calls) == 3
+    assert "[E1]" in provider.calls[0]["user_prompt"]
+    assert "[R2]" not in provider.calls[0]["user_prompt"]
+    assert "[R2]" in provider.calls[1]["user_prompt"]
+    assert "[R3]" not in provider.calls[1]["user_prompt"]
+    assert "[R3]" in provider.calls[2]["user_prompt"]
+
+
+def test_chunked_dialog_retries_missing_keys_after_merge(monkeypatch):
+    tree = [
+        DialogNode(
+            node_id=1,
+            text="Hello there",
+            is_entry=True,
+            replies=[DialogNode(node_id=2, text="Who are you?", is_entry=False)],
+        )
+    ]
+    _patch_dialog_environment(monkeypatch, tree)
+    monkeypatch.setattr(context_module, "_DIALOG_CHUNK_MAX_KEYS", 1)
+    provider = _FakeOpenRouter(
+        [
+            '{"E1":"Привет"}',
+            "{}",
+            '{"R2":"Кто ты?"}',
+        ]
+    )
+    manager = ContextualTranslationManager(
+        _make_config(),
+        provider,
+        WorldContext(),
+    )
+
+    result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
+
+    assert result == {
+        "Hello there": "Привет",
+        "Who are you?": "Кто ты?",
+    }
+    assert len(provider.calls) == 3
+    assert "[E1]" in provider.calls[0]["user_prompt"]
+    assert "[R2]" in provider.calls[1]["user_prompt"]
+    assert (
+        "changed, dropped, or omitted preserved NWN tags/tokens" in provider.calls[2]["user_prompt"]
+    )
+    assert "keys exactly R2" in provider.calls[2]["user_prompt"]

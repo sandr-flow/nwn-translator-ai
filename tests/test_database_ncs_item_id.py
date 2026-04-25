@@ -39,6 +39,30 @@ def test_insert_and_get_ncs_map(isolated_db: None) -> None:
     assert rows[0]["item_id"] == "s:off_1a"
 
 
+def test_sqlite_log_writer_ignores_diagnostic_events(isolated_db: None) -> None:
+    db.create_task_row(
+        task_id="t1",
+        client_token="tok",
+        client_ip="127.0.0.1",
+        created_at=1.0,
+        input_filename="m.mod",
+    )
+    writer = db.SqliteTranslationLogWriter("t1")
+
+    writer.write(
+        {
+            "event": "ncs_diagnostic",
+            "file": "s.ncs",
+            "item_id": "s:off_1a",
+            "reason": "skipped_fail_closed_ambiguous",
+        }
+    )
+
+    assert db.get_translations_by_task("t1") == []
+    assert db.get_translation_map_by_task("t1") == {}
+    assert db.get_ncs_translation_map_by_task("t1") == {}
+
+
 def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Older DB without ``item_id`` gets column via ``_migrate``."""
     db.close_db()

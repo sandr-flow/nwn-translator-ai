@@ -64,16 +64,17 @@ class TestIsRelevant:
         toks = tokenize("Meet Perin at the tavern")
         assert not is_relevant("Drazek", toks)
 
-    def test_prefix_match_both_min_4(self):
+    def test_plural_possessive_variant_match(self):
         # "Winters" (entity) vs "Winter's" → tokenizes to "winter" (6 chars)
         # entity token: "winters" (7). Both >=4, common prefix "winter" → match.
         toks = tokenize("Mr. Winter's house")
         assert is_relevant("Winters", toks)
 
-    def test_prefix_too_short(self):
+    def test_arbitrary_prefix_match_rejected(self):
         # "Iri" (3) — below prefix-min 4
         toks = tokenize("ancient irises bloom")
         assert not is_relevant("Iri", toks)
+        assert not is_relevant("Iris", tokenize("The Irish warrior approached."))
 
     def test_levenshtein_match(self):
         toks = tokenize("I met Merric today")  # typo
@@ -87,9 +88,18 @@ class TestIsRelevant:
         # fuzzy fails (both must be >=6).  No match.
         assert not is_relevant("Aris", tokenize("Iris was here"))
 
-    def test_multi_token_entity_any_match(self):
+    def test_multi_token_entity_distinctive_single_match(self):
         toks = tokenize("Meet Winters tomorrow")
         assert is_relevant("Merrick Winters", toks)
+
+    def test_multi_token_entity_rejects_single_magnet_token(self):
+        toks = tokenize("Welcome to Ravenloft.")
+        assert not is_relevant("Ravenloft Vampire", toks)
+        assert not is_relevant("Ravenloft Shadow", toks)
+
+    def test_multi_token_entity_matches_two_meaningful_tokens(self):
+        toks = tokenize("The Ravenloft Vampire attacks.")
+        assert is_relevant("Ravenloft Vampire", toks)
 
     def test_empty_corpus_no_match(self):
         assert not is_relevant("Anything", set())

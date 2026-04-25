@@ -320,6 +320,7 @@ class OpenRouterProvider(BaseAIProvider):
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=TRANSLATION_TEMPERATURE,
+                max_tokens=TRANSLATION_MAX_TOKENS,
                 response_format={"type": "json_object"},
             )
 
@@ -389,6 +390,7 @@ class OpenRouterProvider(BaseAIProvider):
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=TRANSLATION_TEMPERATURE,
+                max_tokens=TRANSLATION_MAX_TOKENS,
                 response_format={"type": "json_object"},
             )
 
@@ -653,17 +655,80 @@ class OpenRouterProvider(BaseAIProvider):
     @staticmethod
     def _ncs_gate_system_prompt() -> str:
         return (
-            "You classify strings from Neverwinter Nights (NWN) compiled NWScript. "
-            "For each item, decide if it should be translated for players — text "
-            "shown as dialog, floating text, SendMessageToPC, SpeakString, etc.\n"
-            'Return ONLY a JSON object. Keys are "0", "1", … matching the input. '
-            'Each value must be an object: {"translate": true} or {"translate": false}. '
-            "Use false for script names, tags, resrefs, variable names, debug logs, "
-            "identifiers, and code-like fragments. "
-            'Short NPC lines (e.g. "Mommy.", "I\'m okay, sir. I think.", "Help!") '
-            "are usually real dialogue — use translate: true unless it is obviously a token. "
-            "Informal or broken English in-character lines still count as dialogue. "
-            "Use true for natural language the player reads.\n"
+            "You are a safety gate for translating string literals from compiled "
+            "Neverwinter Nights (NWN) NWScript bytecode. Your job: decide whether "
+            "each literal is natural-language text the player reads in-game, or a "
+            "technical value the script engine relies on (a rename would break it).\n"
+            "\n"
+            "## Context you receive per item\n"
+            "- `text`: the literal string from the bytecode.\n"
+            "- `file`: script filename (e.g. `dmfi_execute.ncs`).\n"
+            "- `nss_snippet`: source window around the literal when available. "
+            "THIS IS YOUR PRIMARY SIGNAL — read the surrounding lines carefully.\n"
+            "- `bytecode_context`: structured hint from bytecode analysis. "
+            "`next_action_name` names the engine routine that consumes the string "
+            "(e.g. `SendMessageToPC`, `SpeakString`, `SetCustomToken`). "
+            "`compare_nearby: true` means OP_EQUAL/OP_NEQUAL fires before any "
+            "ACTION — the literal is almost certainly a comparison target.\n"
+            "- `confidence` and `source_class`: prior heuristic classification "
+            "(`high` + `player` = probable player-facing, but VERIFY).\n"
+            "\n"
+            "## Rules — output `translate: false` when ANY of these hold\n"
+            "1. The literal appears as `== \"X\"`, `!= \"X\"`, `\"X\" ==`, `\"X\" !=` "
+            "in nss_snippet, OR bytecode_context.compare_nearby is true. "
+            "These are dispatch keys — translating breaks the script silently. "
+            "Classic trap: DMFI voice commands like `.loc`, `.dm`, "
+            "`animal empathy`, `Craft Armor`, `Open Lock` compared against "
+            "`sChat`, `sCommand`, `sSpeakString`.\n"
+            "2. Used as a tag/resref argument: `GetObjectByTag(\"X\")`, "
+            "`GetWaypointByTag(\"X\")`, `CreateObject(..., \"X\", ...)`, "
+            "`GetNearestObjectByTag`, `StartNewModule(\"X\")`, "
+            "`ExecuteScript(\"X\", ...)`.\n"
+            "3. Local-variable name argument: `GetLocalInt(oObj, \"X\")`, "
+            "`SetLocalString(..., \"X\", ...)`, `GetLocalObject`, "
+            "`DeleteLocalInt`, and any `*Local*` family call — the string "
+            "names a variable, never player text.\n"
+            "4. Looks like an identifier: `snake_case`, `UPPER_SNAKE`, "
+            "`CamelCase` with no spaces, resref (≤16 chars alnum+underscore), "
+            "dotted `module.function`, or an alphabet dump "
+            "(`ABC...XYZ`). Even when passed to a player-facing function, these "
+            "are usually debug fragments concatenated into a larger message.\n"
+            "5. Debug scaffolding: `PrintString`, `SendMessageToAllDMs`, "
+            "`WriteTimestampedLogEntry`, or obvious developer text like "
+            "`\"Module Leadership = \"` used as a `+ IntToString(x)` prefix. "
+            "`SendMessageToPC(oPC, \"X = \" + IntToString(...))` is DM/debug, "
+            "not in-character dialogue — still false.\n"
+            "6. Format/template fragments: trailing `\" = \"`, `\": \"`, empty-ish "
+            "punctuation-only strings, separator runs (`\"****\"`, `\"----\"`).\n"
+            "\n"
+            "## Rules — output `translate: true` when ALL these hold\n"
+            "- The literal is natural-language text in the source language.\n"
+            "- nss_snippet shows it flowing into a player-visible consumer: "
+            "`SpeakString`, `ActionSpeakString`, `SpeakOneLinerConversation`, "
+            "`FloatingTextStringOnCreature`, `SetCustomToken` (token body shown "
+            "in dialog), `SetDescription`, or `SendMessageToPC` carrying an "
+            "actual sentence, not a debug concatenation.\n"
+            "- It is a full or near-full utterance, not a fragment glued to "
+            "variables. Short barks (`\"Help!\"`, `\"Mommy.\"`, "
+            "`\"I'm okay, sir.\"`) count as dialogue; approve them.\n"
+            "- Informal or broken in-character English (`\"Oi, ye git!\"`) is "
+            "still dialogue — approve.\n"
+            "\n"
+            "## When nss_snippet is missing\n"
+            "Fall back to bytecode_context. `next_action_name` of "
+            "`SpeakString` / `ActionSpeakString` / `SpeakOneLinerConversation` / "
+            "`FloatingTextStringOnCreature` with natural-language text → true. "
+            "Anything else → be conservative, prefer false unless the text is "
+            "unmistakably a sentence.\n"
+            "\n"
+            "## Output format\n"
+            "Return ONLY a JSON object. Keys match input keys (`\"0\"`, `\"1\"`, …). "
+            "Each value: `{\"translate\": true|false, \"reason\": \"<short tag>\"}`. "
+            "`reason` is a short machine-readable tag like `compare_target`, "
+            "`tag_arg`, `var_name`, `identifier_like`, `debug_concat`, "
+            "`player_speakstring`, `player_sendmessage`, `player_floatingtext`, "
+            "`bark`, `ambiguous_conservative`. Keep it under ~30 chars.\n"
+            "Never add prose outside the JSON.\n"
         )
 
     def _ncs_gate_build_user_prompt(
@@ -672,14 +737,24 @@ class OpenRouterProvider(BaseAIProvider):
         source_lang: str,
         entries: List[Dict[str, Any]],
     ) -> str:
-        user_payload: Dict[str, Dict[str, str]] = {}
+        user_payload: Dict[str, Dict[str, Any]] = {}
         for e in entries:
-            user_payload[str(e["key"])] = {
+            cell: Dict[str, Any] = {
                 "text": e.get("text", ""),
                 "file": str(e.get("file", "")),
                 "offset": str(e.get("offset", "")),
                 "hint": str(e.get("hint", "")),
             }
+            # Optional enrichment fields — pass through when extractor supplied them.
+            if e.get("nss_snippet"):
+                cell["nss_snippet"] = e["nss_snippet"]
+            if e.get("bytecode_context"):
+                cell["bytecode_context"] = e["bytecode_context"]
+            if e.get("confidence"):
+                cell["confidence"] = e["confidence"]
+            if e.get("source_class"):
+                cell["source_class"] = e["source_class"]
+            user_payload[str(e["key"])] = cell
         return f"Source language label: {source_lang}. Classify each entry.\n\n" + json.dumps(
             user_payload, ensure_ascii=False
         )
@@ -688,7 +763,7 @@ class OpenRouterProvider(BaseAIProvider):
         self,
         raw: str,
         entries: List[Dict[str, Any]],
-    ) -> Dict[str, bool]:
+    ) -> Dict[str, Dict[str, Any]]:
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```\s*$", "", cleaned)
         decoder = json.JSONDecoder()
@@ -697,16 +772,19 @@ class OpenRouterProvider(BaseAIProvider):
             raise json.JSONDecodeError("No JSON object", cleaned, 0)
         parsed, _ = decoder.raw_decode(cleaned, idx)
 
-        out: Dict[str, bool] = {}
+        out: Dict[str, Dict[str, Any]] = {}
         for e in entries:
             k = str(e["key"])
             cell: Union[Dict[str, Any], bool, None] = parsed.get(k)
             if isinstance(cell, dict):
-                out[k] = bool(cell.get("translate", False))
+                out[k] = {
+                    "translate": bool(cell.get("translate", False)),
+                    "reason": str(cell.get("reason", "")) or "unspecified",
+                }
             elif isinstance(cell, bool):
-                out[k] = cell
+                out[k] = {"translate": cell, "reason": "legacy_bool"}
             else:
-                out[k] = False
+                out[k] = {"translate": False, "reason": "missing_verdict"}
         return out
 
     async def _ncs_gate_batch_with_recovery(
@@ -714,7 +792,7 @@ class OpenRouterProvider(BaseAIProvider):
         entries: List[Dict[str, Any]],
         *,
         source_lang: str,
-    ) -> Dict[str, bool]:
+    ) -> Dict[str, Dict[str, Any]]:
         """Parse gate JSON with token bump retries, then split batch on failure."""
         if not entries:
             return {}
@@ -746,7 +824,10 @@ class OpenRouterProvider(BaseAIProvider):
                 "NCS gate giving up on batch; defaulting to translate=false: %s",
                 last_err,
             )
-            return {str(e["key"]): False for e in entries}
+            return {
+                str(e["key"]): {"translate": False, "reason": "gate_parse_failed"}
+                for e in entries
+            }
 
         mid = len(entries) // 2
         left = entries[:mid]
@@ -755,7 +836,7 @@ class OpenRouterProvider(BaseAIProvider):
         right_rekeyed = [{**e, "key": str(i)} for i, e in enumerate(right)]
         left_out = await self._ncs_gate_batch_with_recovery(left_rekeyed, source_lang=source_lang)
         right_out = await self._ncs_gate_batch_with_recovery(right_rekeyed, source_lang=source_lang)
-        merged: Dict[str, bool] = {}
+        merged: Dict[str, Dict[str, Any]] = {}
         for i, e in enumerate(left):
             merged[str(e["key"])] = left_out[str(i)]
         for i, e in enumerate(right):
@@ -774,6 +855,9 @@ class OpenRouterProvider(BaseAIProvider):
         entries: List[Dict[str, Any]],
         *,
         source_lang: str,
-    ) -> Dict[str, bool]:
-        """LLM gate: whether each NCS string occurrence is player-facing."""
+    ) -> Dict[str, Dict[str, Any]]:
+        """LLM gate: whether each NCS string occurrence is player-facing.
+
+        Returns mapping ``key -> {"translate": bool, "reason": str}``.
+        """
         return await self._ncs_gate_batch_with_recovery(entries, source_lang=source_lang)

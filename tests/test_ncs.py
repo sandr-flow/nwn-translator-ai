@@ -3,6 +3,7 @@
 import struct
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -19,6 +20,7 @@ from nwn_translator.file_handlers.ncs_parser import (
     OP_JNZ,
     OP_RETN,
     OP_MOVSP,
+    OP_EQUAL,
     TYPE_INT,
     TYPE_STRING,
     parse_ncs,
@@ -36,6 +38,7 @@ from nwn_translator.extractors.ncs_extractor import (
     _is_likely_translatable,
     _contains_code_identifiers,
     _classify_from_source,
+    ncs_hard_veto_reason,
 )
 from nwn_translator.injectors.ncs_injector import NcsInjector
 
@@ -514,6 +517,17 @@ class TestStringFilter:
         assert not _contains_code_identifiers("Welcome to the tavern, stranger.")
         assert not _contains_code_identifiers("You're kidding me.")
 
+    def test_hard_veto_rejects_technical_ncs_literals(self):
+        assert ncs_hard_veto_reason("MY_FLAG_HEARTBEAT") == "upper_case_constant"
+        assert ncs_hard_veto_reason("nw_c2_default1") == "known_internal_prefix"
+        assert ncs_hard_veto_reason("Pull_K30_Monsters") == "underscore_identifier"
+        assert ncs_hard_veto_reason("DetermineClassToUse: invalid.") == "code_identifier"
+        assert (
+            ncs_hard_veto_reason("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            == "alphabet_dump"
+        )
+        assert ncs_hard_veto_reason("Welcome, adventurer!") is None
+
     def test_classify_from_source_player(self):
         nss = 'SpeakString("Hello, traveler!");'
         assert _classify_from_source("Hello, traveler!", nss) == "player"
@@ -572,6 +586,36 @@ class TestNcsExtractor:
         texts = {it.text for it in result.items}
         assert texts == {"First line.", "Second line."}
         assert all(it.metadata["confidence"] == "high" for it in result.items)
+
+    def test_int_compare_between_string_and_speak_does_not_flag_compare_nearby(self, tmp_path):
+        """Regression: int OP_EQUAL between a CONST string and SpeakString must
+        not be treated as a string-dispatch comparison.
+
+        Pattern from Penultima City's studentouch.nss:
+            if (isay == 0) {willsay = "Ow.";};
+            ...
+            SpeakString(willsay);
+        The int compare here is unrelated to the literal — flagging
+        ``compare_nearby`` would silently drop player-facing barks.
+        """
+        int_equal = struct.pack(">BB", OP_EQUAL, TYPE_INT)
+        path = _write_ncs(
+            tmp_path,
+            "test.ncs",
+            _consts("Ow."),
+            int_equal,
+            _action(39, 1),  # SpeakString
+            _retn(),
+        )
+        ncs = parse_ncs(path)
+        extractor = NcsExtractor()
+        result = extractor.extract(path, {"_ncs_file": ncs})
+        assert len(result.items) == 1
+        meta = result.items[0].metadata
+        bc = meta["bytecode_context"]
+        assert bc["compare_nearby"] is False
+        assert bc["next_action_name"] == "SpeakString"
+        assert meta["confidence"] == "high"
 
     def test_skip_internal_string(self, tmp_path):
         """String followed by GetObjectByTag ACTION should be skipped."""
@@ -767,6 +811,45 @@ class TestNcsInjector:
         )
         assert result.modified
         assert result.items_updated == 1
+
+    def test_inject_patch_failure_reports_ncs_diagnostic_metadata(self, tmp_path):
+        path = _write_ncs(
+            tmp_path,
+            "test.ncs",
+            _consts("Hello world!"),
+            _retn(),
+        )
+        ncs = parse_ncs(path)
+        const_instr = next(i for i in ncs.instructions if i.is_string_const)
+        item = TranslatableItem(
+            text="Hello world!",
+            item_id="test:inject",
+            location=str(path),
+            metadata={
+                "type": "ncs_string",
+                "offset": const_instr.offset,
+            },
+        )
+        injector = NcsInjector()
+        with patch(
+            "nwn_translator.injectors.ncs_injector.patch_ncs_string_replacements",
+            side_effect=NCSPatchError("validation failed"),
+        ):
+            result = injector.inject(
+                path,
+                {},
+                {},
+                {
+                    "ncs_extracted_items": [item],
+                    "ncs_translations_by_item_id": {item.item_id: "Translated text."},
+                },
+            )
+
+        assert not result.modified
+        assert result.items_updated == 0
+        assert result.metadata["ncs_patch_failed"] is True
+        assert result.metadata["error"] == "validation failed"
+        assert parse_ncs(path).instructions[0].string_value == "Hello world!"
 
     def test_inject_no_match(self, tmp_path):
         path = _write_ncs(

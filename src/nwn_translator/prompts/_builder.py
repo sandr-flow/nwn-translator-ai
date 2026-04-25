@@ -369,10 +369,10 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
     """
     return (
         f"You are analyzing {source_lang} texts from a Neverwinter Nights game module.\n"
-        "Extract ALL proper nouns and recurring nicknames you find: character names, "
-        "place names, organization names, unique named objects, and recurring epithets "
-        "or hyphenated terms used as forms of address (e.g. compound nicknames that "
-        "characters use to refer to someone).\n\n"
+        "Extract only high-confidence proper nouns visible in natural-language game text: "
+        "character names, place names, organization names, unique named objects, and "
+        "recurring epithets or hyphenated terms used as forms of address. Prefer "
+        "returning too few names over returning technical or uncertain labels.\n\n"
         'Return a single JSON object with one key "entities" whose value is '
         'an array of entity objects with "name" and "type" fields.\n'
         'Valid types: "character", "location", "organization", "item", '
@@ -381,7 +381,7 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
         f"in {source_lang}):\n\n"
         "Input:\n"
         '[0] "Leading a coach to Stout Village with farming equipment to deliver."\n'
-        '[1] "Gotta hand-carry some letters to the PassGate from the castle."\n'
+        '[1] "Gotta hand-carry some letters to the Western Gate from the castle."\n'
         '[2] "Hello! I can take you back to Penultima City, if you\'d like to leave."\n'
         "[3] \"I saw your ad posted by the Guild of Middlemen. You're looking for "
         'adventurer(s), yes?"\n'
@@ -392,22 +392,37 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
         "Output:\n"
         '{"entities": [\n'
         '  {"name": "Stout Village", "type": "location"},\n'
-        '  {"name": "PassGate", "type": "location"},\n'
+        '  {"name": "Western Gate", "type": "location"},\n'
         '  {"name": "Penultima City", "type": "location"},\n'
         '  {"name": "Guild of Middlemen", "type": "organization"},\n'
         '  {"name": "Magical Plot Fairy", "type": "character"},\n'
         '  {"name": "R. Freely", "type": "character"},\n'
         '  {"name": "staff-one", "type": "nickname"}\n'
         "]}\n\n"
+        "Negative examples that MUST return no entities:\n"
+        '[0] "DMFI Admin Server Wand"\n'
+        '[1] "ARCH_TARGET"\n'
+        '[2] "WILL_O_WISP"\n'
+        '[3] "BakersPlea"\n'
+        '[4] "Hello <FirstName>, choose <race>."\n'
+        'Output: {"entities": []}\n\n'
         "Rules:\n"
         "- Include proper nouns that are names of specific characters, places, "
         "organizations, or unique objects.\n"
         "- Include recurring compound nicknames or hyphenated terms used as forms "
         'of address (type: "nickname"). These must be translated consistently.\n'
+        "- Do NOT include placeholders or angle tokens such as <FirstName>, <FullName>, "
+        "<race>, <man/woman>, or <CustomToken:123>.\n"
+        "- Do NOT include acronyms, brands, system terms, engine/toolset terms, or utility "
+        "labels such as NWN, DMFI, D&D, AD&D, Bioware, or ARCH_TARGET.\n"
+        "- Do NOT include file names, resource references, script names, blueprint tags, "
+        "or labels that look like CamelCase identifiers, snake_case identifiers, "
+        "underscore constants, route labels, or wildcard patterns.\n"
         "- Do NOT include common game terms (sword, goblin, mine, chest, potion, etc.).\n"
         "- Do NOT include race or class names (dwarf, elf, wizard, halfling, etc.).\n"
         "- Do NOT include common words, adjectives, or generic phrases.\n"
-        '- If uncertain about the category, use "unknown".\n'
+        '- Use "unknown" only for a natural-language multi-word proper noun whose category '
+        "is genuinely unclear; otherwise omit uncertain candidates.\n"
         "- Each name should appear only once in your output (deduplicate across all input lines).\n"
         "- Preserve original spelling exactly as it appears in the text.\n"
         '- Return {"entities": []} if no proper nouns are found.\n'

@@ -19,6 +19,7 @@ from ..prompts._builder import (
     CONTENT_PROFILE_SHORT_LABEL,
 )
 from ..translation_logging import translation_log_writer_for_config
+from ..extractors.ncs_extractor import ncs_hard_veto_reason
 
 if TYPE_CHECKING:
     from ..glossary import Glossary
@@ -55,6 +56,8 @@ def _is_empty_after_sanitize(sanitized: str) -> bool:
 
 
 logger = logging.getLogger(__name__)
+
+_NCS_DIAGNOSTIC_SAMPLE_LIMIT = 50
 
 
 class TranslationManager:
@@ -93,6 +96,19 @@ class TranslationManager:
             "items_translated": 0,
             "cache_hits": 0,
             "errors": [],
+            "ncs_diagnostics": {
+                "total": 0,
+                "extracted": 0,
+                "approved": 0,
+                "skipped_hard_veto": 0,
+                "skipped_fail_closed": 0,
+                "translated": 0,
+                "timeout": 0,
+                "retry_recovered": 0,
+                "failed": 0,
+                "patch_failed": 0,
+                "samples": [],
+            },
         }
 
         # Global cache for this translation session
@@ -111,6 +127,73 @@ class TranslationManager:
         self._ncs_gate_approval: Dict[str, bool] = {}
         #: Shared per-item progress counter (set during ``translate_content``).
         self._active_item_progress: Optional[Any] = None
+
+    def _ncs_stats(self) -> Dict[str, Any]:
+        return self.stats.setdefault(
+            "ncs_diagnostics",
+            {
+                "total": 0,
+                "extracted": 0,
+                "approved": 0,
+                "skipped_hard_veto": 0,
+                "skipped_fail_closed": 0,
+                "translated": 0,
+                "timeout": 0,
+                "retry_recovered": 0,
+                "failed": 0,
+                "patch_failed": 0,
+                "samples": [],
+            },
+        )
+
+    @staticmethod
+    def _is_ncs_item(item: Any) -> bool:
+        return (getattr(item, "metadata", None) or {}).get("type") == "ncs_string"
+
+    def _record_ncs_diagnostic(
+        self,
+        item: Optional[Any],
+        *,
+        reason: str,
+        count_field: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Record one structured NCS diagnostic sample and optional counter."""
+        if item is None:
+            sample: Dict[str, Any] = {"reason": reason}
+        else:
+            meta = item.metadata or {}
+            loc = item.location or ""
+            sample = {
+                "file": Path(loc).name if loc else None,
+                "item_id": item.item_id,
+                "offset": meta.get("offset"),
+                "confidence": meta.get("confidence"),
+                "ncs_hint": meta.get("ncs_hint"),
+                "reason": reason,
+                "text_prefix": (item.text or "")[:120],
+            }
+        if error:
+            sample["error"] = error
+
+        with self._stats_lock:
+            ncs_stats = self._ncs_stats()
+            if count_field:
+                ncs_stats[count_field] = int(ncs_stats.get(count_field, 0)) + 1
+            samples = ncs_stats.setdefault("samples", [])
+            if len(samples) < _NCS_DIAGNOSTIC_SAMPLE_LIMIT:
+                samples.append(sample)
+
+        event = {"event": "ncs_diagnostic", **sample}
+        try:
+            self._log_writer.write(event)
+        except Exception as log_exc:
+            logger.debug("Failed to write NCS diagnostic event: %s", log_exc)
+
+    def _increment_ncs_count(self, field: str, by: int = 1) -> None:
+        with self._stats_lock:
+            ncs_stats = self._ncs_stats()
+            ncs_stats[field] = int(ncs_stats.get(field, 0)) + by
 
     def log_per_file_item(
         self,
@@ -160,66 +243,116 @@ class TranslationManager:
         return self.translation_cache.longest_prefix_match(sanitized, _MIN_PREFIX_LEN)
 
     def _ncs_item_passes_gate(self, item) -> bool:
-        if (item.metadata or {}).get("type") != "ncs_string":
+        if not self._is_ncs_item(item):
             return True
         return self._ncs_gate_approval.get(item.item_id or "", False)
 
+    # Max entries per LLM gate batch. Each entry ships a bounded nss_snippet
+    # (~2000 chars cap), so 20 entries stays well under the chat context window
+    # and keeps latency manageable; the provider splits further on parse fail.
+    _NCS_GATE_BATCH_SIZE = 20
+
     def _run_ncs_llm_gate(self, translation_items: List[dict]) -> None:
-        """Populate :attr:`_ncs_gate_approval` for all ``ncs_string`` items."""
+        """Populate :attr:`_ncs_gate_approval` for all ``ncs_string`` items.
+
+        Routing:
+        1. Hard-veto (see :func:`ncs_hard_veto_reason`) → reject deterministically.
+        2. ``config.skip_ncs_llm_gate`` → auto-approve (escape hatch for offline
+           runs and tests). Every other item — including high-confidence
+           ``SendMessageToPC`` dialogue — goes through the LLM gate so we catch
+           debug concatenations and engine traps the heuristics can miss.
+        """
         self._ncs_gate_approval.clear()
-        pending: List[dict] = []
+        pending: List[dict] = []  # items awaiting LLM verdict
         for itd in translation_items:
             item = itd["item"]
             meta = item.metadata or {}
             if meta.get("type") != "ncs_string":
                 continue
             iid = item.item_id or ""
-            if self.config.skip_ncs_llm_gate or not meta.get("needs_llm_gate", True):
+            hard_veto = ncs_hard_veto_reason(item.text)
+            if hard_veto:
+                self._ncs_gate_approval[iid] = False
+                self._record_ncs_diagnostic(
+                    item,
+                    reason=hard_veto,
+                    count_field="skipped_hard_veto",
+                )
+                continue
+            if self.config.skip_ncs_llm_gate:
                 self._ncs_gate_approval[iid] = True
-            else:
-                pending.append(itd)
+                with self._stats_lock:
+                    ncs_stats = self._ncs_stats()
+                    ncs_stats["approved"] = int(ncs_stats.get("approved", 0)) + 1
+                continue
+            pending.append(itd)
 
         if not pending:
             return
 
-        batches = [
-            pending[i : i + self._BATCH_SIZE] for i in range(0, len(pending), self._BATCH_SIZE)
-        ]
+        entries: List[Dict[str, Any]] = []
+        for i, itd in enumerate(pending):
+            item = itd["item"]
+            meta = item.metadata or {}
+            loc = item.location or ""
+            entries.append(
+                {
+                    "key": str(i),
+                    "text": item.text,
+                    "file": Path(loc).name if loc else "",
+                    "offset": meta.get("offset"),
+                    "hint": meta.get("ncs_hint", ""),
+                    "nss_snippet": meta.get("nss_snippet"),
+                    "bytecode_context": meta.get("bytecode_context"),
+                    "confidence": meta.get("confidence"),
+                    "source_class": meta.get("source_class"),
+                }
+            )
 
-        async def run_batches() -> None:
-            for batch in batches:
-                entries = []
-                for j, itd in enumerate(batch):
-                    item = itd["item"]
-                    meta = item.metadata or {}
-                    loc = item.location or ""
-                    file_name = Path(loc).name if loc else ""
-                    off = meta.get("offset")
-                    off_s = hex(off) if isinstance(off, int) else str(off)
-                    entries.append(
-                        {
-                            "key": str(j),
-                            "text": item.text,
-                            "file": file_name,
-                            "offset": off_s,
-                            "hint": str(meta.get("ncs_hint", "unknown")),
-                        }
-                    )
-                partial = await self.provider.classify_ncs_translate_gate_batch_async(
-                    entries,
-                    source_lang=self.config.source_lang,
-                )
-                for j, itd in enumerate(batch):
-                    iid = itd["item"].item_id or ""
-                    self._ncs_gate_approval[iid] = partial.get(str(j), False)
-
+        verdicts: Dict[str, Dict[str, Any]] = {}
         from ..async_utils import run_async
 
-        run_async(
-            run_batches(),
-            cleanup=self.provider.close_async_client,
-            timeout=self._RUN_ASYNC_TIMEOUT,
-        )
+        async def gate_all() -> Dict[str, Dict[str, Any]]:
+            merged: Dict[str, Dict[str, Any]] = {}
+            for start in range(0, len(entries), self._NCS_GATE_BATCH_SIZE):
+                chunk = entries[start : start + self._NCS_GATE_BATCH_SIZE]
+                rekeyed = [{**e, "key": str(j)} for j, e in enumerate(chunk)]
+                result = await self.provider.classify_ncs_translate_gate_batch_async(
+                    rekeyed, source_lang=self.config.source_lang
+                )
+                for j, e in enumerate(chunk):
+                    merged[e["key"]] = result.get(
+                        str(j), {"translate": False, "reason": "gate_missing_key"}
+                    )
+            return merged
+
+        try:
+            verdicts = run_async(gate_all(), cleanup=self.provider.close_async_client)
+        except Exception as exc:
+            logger.warning(
+                "NCS LLM gate failed for %d item(s): %s — defaulting to reject.",
+                len(pending),
+                exc,
+            )
+
+        for i, itd in enumerate(pending):
+            item = itd["item"]
+            iid = item.item_id or ""
+            cell = verdicts.get(str(i), {"translate": False, "reason": "gate_unavailable"})
+            if cell.get("translate"):
+                self._ncs_gate_approval[iid] = True
+                self._record_ncs_diagnostic(
+                    item,
+                    reason=f"gate_approved:{cell.get('reason', 'unspecified')}",
+                    count_field="approved",
+                )
+            else:
+                self._ncs_gate_approval[iid] = False
+                self._record_ncs_diagnostic(
+                    item,
+                    reason=f"gate_rejected:{cell.get('reason', 'unspecified')}",
+                    count_field="skipped_fail_closed",
+                )
 
     def translate_content(
         self,
@@ -262,6 +395,13 @@ class TranslationManager:
                     "handler": handler,
                 }
             )
+
+        ncs_item_count = sum(1 for itd in translation_items if self._is_ncs_item(itd["item"]))
+        if ncs_item_count:
+            with self._stats_lock:
+                ncs_stats = self._ncs_stats()
+                ncs_stats["total"] = int(ncs_stats.get("total", 0)) + ncs_item_count
+                ncs_stats["extracted"] = int(ncs_stats.get("extracted", 0)) + ncs_item_count
 
         self._run_ncs_llm_gate(translation_items)
 
@@ -308,6 +448,7 @@ class TranslationManager:
                 translations[item.text] = outcome.final_text
                 if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
                     self.ncs_translations_by_item_id[item.item_id] = outcome.final_text
+                    self._increment_ncs_count("translated")
                 with self._stats_lock:
                     self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
                 logger.debug("Cache hit for '%s…'", sanitized[:40])
@@ -490,13 +631,21 @@ class TranslationManager:
                     self._ITEM_TIMEOUT,
                     sanitized[:40],
                 )
-                result = TranslationResult(
-                    translated="",
-                    original=sanitized,
-                    success=False,
-                    error=f"Timeout after {self._ITEM_TIMEOUT}s",
-                    metadata={},
-                )
+                if self._is_ncs_item(item):
+                    self._record_ncs_diagnostic(
+                        item,
+                        reason="translation_timeout",
+                        count_field="timeout",
+                    )
+                    result = await self._retry_ncs_timeout_minimal(item_data)
+                else:
+                    result = TranslationResult(
+                        translated="",
+                        original=sanitized,
+                        success=False,
+                        error=f"Timeout after {self._ITEM_TIMEOUT}s",
+                        metadata={},
+                    )
             except Exception as e:
                 result = TranslationResult(
                     translated="",
@@ -508,6 +657,69 @@ class TranslationManager:
         if bump:
             self._async_bump(item_data)
         return result
+
+    def _build_ncs_minimal_retry_context(self, item: Any) -> str:
+        meta = item.metadata or {}
+        loc = item.location or ""
+        filename = Path(loc).name if loc else "<unknown>"
+        return (
+            "NCS timeout fallback. Translate only if this is player-visible script text. "
+            "Do not translate identifiers, tags, resrefs, variables, debug logs, or code. "
+            f"file={filename}; item_id={item.item_id}; offset={meta.get('offset')}; "
+            f"confidence={meta.get('confidence')}; hint={meta.get('ncs_hint')}."
+        )
+
+    async def _retry_ncs_timeout_minimal(self, item_data: dict) -> TranslationResult:
+        """Retry an approved NCS item once with minimal context and no glossary."""
+        item = item_data["item"]
+        sanitized = item_data["sanitized"]
+        content_profile = self._content_profile_for_item(item_data)
+        try:
+            retry_result = await asyncio.wait_for(
+                self.provider.translate_async(
+                    text=sanitized,
+                    source_lang=self.config.source_lang,
+                    target_lang=self.config.target_lang,
+                    context=self._build_ncs_minimal_retry_context(item),
+                    glossary_block=None,
+                    content_profile=content_profile,
+                ),
+                timeout=self._ITEM_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            self._record_ncs_diagnostic(
+                item,
+                reason="translation_timeout_retry_failed",
+                error=f"Timeout after {self._ITEM_TIMEOUT}s",
+            )
+            return TranslationResult(
+                translated="",
+                original=sanitized,
+                success=False,
+                error=f"Timeout after {self._ITEM_TIMEOUT}s",
+                metadata={},
+            )
+        except Exception as exc:
+            self._record_ncs_diagnostic(
+                item,
+                reason="translation_timeout_retry_failed",
+                error=str(exc),
+            )
+            return TranslationResult(
+                translated="",
+                original=sanitized,
+                success=False,
+                error=str(exc),
+                metadata={},
+            )
+
+        if retry_result.success:
+            self._record_ncs_diagnostic(
+                item,
+                reason="translation_timeout_retry_recovered",
+                count_field="retry_recovered",
+            )
+        return retry_result
 
     def _compose_translated_sanitized(
         self,
@@ -551,10 +763,13 @@ class TranslationManager:
             "StartHighlight, or </Start>, preserve that markup exactly after restoration. "
             "Translate only normal prose and text inside square brackets."
         )
+        parts.append(
+            "If the line contains dialog action markers like <<...>> or -...-, preserve "
+            "the surrounding markers exactly and translate only the inner text. Do not "
+            "invent new angle-bracket pseudo-tags such as <sir/madam>."
+        )
         if expected:
-            parts.append(
-                "Expected preserved artifacts after restoration: " + " | ".join(expected)
-            )
+            parts.append("Expected preserved artifacts after restoration: " + " | ".join(expected))
         if mismatch_report is not None and not mismatch_report.is_exact_match:
             parts.append(f"Previous mismatch type: {mismatch_report.mismatch_type}.")
             if mismatch_report.actual_sequence:
@@ -620,6 +835,7 @@ class TranslationManager:
 
         if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
             self.ncs_translations_by_item_id[item.item_id] = translated
+            self._increment_ncs_count("translated")
 
         item_filename = Path(item.location).name if item.location else source_filename
         log_entry = {
@@ -709,7 +925,23 @@ class TranslationManager:
                 use_full_output=True,
             ):
                 return True
-            mismatch_report = item_data.get("_token_mismatch_report", mismatch_report)
+            new_report = item_data.get("_token_mismatch_report", mismatch_report)
+            # Short-circuit: if the model deterministically reproduces the same
+            # mismatch (e.g. hallucinated <StartCheck> or dropped placeholder),
+            # further retries waste API calls. Skip straight to cleanup.
+            if (
+                mismatch_report is not None
+                and new_report is not None
+                and getattr(mismatch_report, "actual_sequence", None)
+                == getattr(new_report, "actual_sequence", None)
+            ):
+                logger.debug(
+                    "Token retry produced identical mismatch for %s; skipping remaining retries.",
+                    item_data["item"].item_id or item_data["item"].text[:40],
+                )
+                mismatch_report = new_report
+                break
+            mismatch_report = new_report
 
         return self._accept_translation_candidate(
             item_data,
@@ -1051,9 +1283,9 @@ class TranslationManager:
             item_data,
             translated_sanitized,
             translations,
-            source_filename=Path(item_data["item"].location).name
-            if item_data["item"].location
-            else None,
+            source_filename=(
+                Path(item_data["item"].location).name if item_data["item"].location else None
+            ),
             model=self.config.model,
             use_full_output=True,
         )
@@ -1086,6 +1318,13 @@ class TranslationManager:
         else:
             item = item_data["item"]
             error_msg = f"Translation failed for {item.item_id}: {result.error}"
+            if self._is_ncs_item(item):
+                self._record_ncs_diagnostic(
+                    item,
+                    reason="translation_failed",
+                    count_field="failed",
+                    error=result.error,
+                )
             with self._stats_lock:
                 self.stats["errors"].append(error_msg)
             logger.warning(error_msg)

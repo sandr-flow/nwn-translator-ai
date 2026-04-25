@@ -12,6 +12,7 @@ import pytest
 from src.nwn_translator.prompts import (
     build_dialog_system_prompt,
     build_dialog_system_prompt_parts,
+    build_entity_extraction_system_prompt,
     build_glossary_system_prompt,
     build_translation_system_prompt,
     build_translation_system_prompt_parts,
@@ -203,6 +204,27 @@ class TestGlossaryPrompt:
         prompt = build_glossary_system_prompt(lang)
         assert "Перин Изрик" not in prompt, f"Russian glossary leaked into {lang}"
         assert "Дрикси" not in prompt, f"Russian glossary leaked into {lang}"
+
+
+class TestEntityExtractionPrompt:
+    """Entity extraction prompt should discourage noisy glossary candidates."""
+
+    def test_prompt_rejects_technical_candidates(self):
+        prompt = build_entity_extraction_system_prompt("English")
+        assert "high-confidence proper nouns" in prompt
+        assert "placeholders" in prompt
+        assert "acronyms" in prompt
+        assert "CamelCase identifiers" in prompt
+        assert "snake_case identifiers" in prompt
+        assert "ARCH_TARGET" in prompt
+        assert "WILL_O_WISP" in prompt
+        assert "BakersPlea" in prompt
+        assert 'Output: {"entities": []}' in prompt
+
+    def test_passgate_not_positive_example(self):
+        prompt = build_entity_extraction_system_prompt("English")
+        assert "PassGate" not in prompt
+        assert "Western Gate" in prompt
 
 
 class TestStableVariableSplit:

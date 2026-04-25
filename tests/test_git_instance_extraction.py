@@ -12,17 +12,19 @@ from src.nwn_translator.injectors.git_injector import (
 
 class TestCollectGitStrings:
     def test_collects_placeable_loc_name_not_in_templates(self):
+        # Use a player-facing name: the .git filter (etape 3) now rejects
+        # code-like CamelCase labels such as "OnlyInGit" as resref-looking.
         gff = {
             "Placeable List": [
                 {
-                    "LocName": {"StrRef": -1, "Value": "OnlyInGit"},
+                    "LocName": {"StrRef": -1, "Value": "Old Wooden Chest"},
                     "Description": {"StrRef": -1, "Value": ""},
                 }
             ]
         }
         existing = {"TemplateName": "T"}
         found = collect_git_strings_missing_from_translations(gff, existing)
-        assert "OnlyInGit" in found
+        assert "Old Wooden Chest" in found
         assert "TemplateName" not in found
 
     def test_skips_strings_already_in_translation_map(self):

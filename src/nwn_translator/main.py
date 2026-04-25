@@ -31,6 +31,7 @@ from .file_handlers import (
 from .file_handlers.tlk_reader import parse_tlk, find_dialog_tlk, TLKFile
 from .extractors import get_extractor_for_file
 from .injectors import get_injector_for_content
+from .injectors.base import InjectedContent
 from .extractors.base import ExtractedContent, TranslatableItem
 from .injectors.git_injector import patch_git_file
 from .ai_providers import create_provider
@@ -39,6 +40,7 @@ from .translators.context_translator import ContextualTranslationManager
 from .context.world_context import WorldScanner, WorldContext
 from .context.entity_extractor import EntityExtractor
 from .glossary import Glossary, GlossaryBuilder
+from .translation_logging import translation_log_writer_for_config
 
 import threading
 import concurrent.futures
@@ -112,11 +114,11 @@ def inject_translations_into_file(
     ncs_translations_by_item_id: Optional[Dict[str, str]] = None,
     log_updates: bool = False,
     target_lang: Optional[str] = None,
-) -> None:
+) -> Optional[InjectedContent]:
     """Run the appropriate injector for *extracted* (shared by Phase C and rebuild)."""
     injector = get_injector_for_content(extracted.content_type)
     if not injector:
-        return
+        return None
     inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
     inject_metadata["module_text_encoding"] = module_string_encoding_for_target_lang(target_lang)
     if extracted.content_type == "ncs_script":
@@ -136,6 +138,7 @@ def inject_translations_into_file(
     result = injector.inject(file_path, parsed_data, translations, inject_metadata)
     if log_updates and result.modified:
         logger.info("Updated %s: %s items", file_path.name, result.items_updated)
+    return result
 
 
 class ModuleTranslator:
@@ -164,6 +167,19 @@ class ModuleTranslator:
             "files_processed": 0,
             "items_translated": 0,
             "errors": [],
+            "ncs_diagnostics": {
+                "total": 0,
+                "extracted": 0,
+                "approved": 0,
+                "skipped_hard_veto": 0,
+                "skipped_fail_closed": 0,
+                "translated": 0,
+                "timeout": 0,
+                "retry_recovered": 0,
+                "failed": 0,
+                "patch_failed": 0,
+                "samples": [],
+            },
         }
         self._stats_lock = threading.Lock()
 
@@ -436,7 +452,14 @@ class ModuleTranslator:
                         "injecting", completed_count, len(extracted_map), file_path.name
                     )
                 try:
-                    future.result()
+                    inject_result = future.result()
+                    if inject_result is not None and (inject_result.metadata or {}).get(
+                        "ncs_patch_failed"
+                    ):
+                        self._record_ncs_patch_failure(
+                            file_path,
+                            str((inject_result.metadata or {}).get("error", "")),
+                        )
                     with self._stats_lock:
                         self.stats["files_processed"] += 1
                 except Exception as e:
@@ -562,9 +585,9 @@ class ModuleTranslator:
         parsed_data: Dict[str, Any],
         extracted: ExtractedContent,
         all_translations: Dict[str, str],
-    ) -> None:
+    ) -> Optional[InjectedContent]:
         """Inject translations into a single file (Phase C)."""
-        inject_translations_into_file(
+        return inject_translations_into_file(
             file_path,
             parsed_data,
             extracted,
@@ -655,6 +678,42 @@ class ModuleTranslator:
                 f"Patched {total_patched} instance fields across {len(git_files)} .git files"
             )
 
+    def _record_ncs_patch_failure(self, file_path: Path, error: str) -> None:
+        sample = {
+            "file": file_path.name,
+            "reason": "patch_failed",
+            "error": error,
+        }
+        with self._stats_lock:
+            ncs_stats = self.stats.setdefault(
+                "ncs_diagnostics",
+                {
+                    "total": 0,
+                    "extracted": 0,
+                    "approved": 0,
+                    "skipped_hard_veto": 0,
+                    "skipped_fail_closed": 0,
+                    "translated": 0,
+                    "timeout": 0,
+                    "retry_recovered": 0,
+                    "failed": 0,
+                    "patch_failed": 0,
+                    "samples": [],
+                },
+            )
+            ncs_stats["patch_failed"] = int(ncs_stats.get("patch_failed", 0)) + 1
+            samples = ncs_stats.setdefault("samples", [])
+            if len(samples) < 50:
+                samples.append(sample)
+        try:
+            writer = translation_log_writer_for_config(
+                self.config.translation_log,
+                self.config.translation_log_writer,
+            )
+            writer.write({"event": "ncs_diagnostic", **sample})
+        except Exception as exc:
+            logger.debug("Failed to write NCS patch diagnostic event: %s", exc)
+
     def _sync_manager_stats(self, manager: "TranslationManager") -> None:
         """Merge delta from the shared TranslationManager stats into orchestrator stats.
 
@@ -666,6 +725,41 @@ class ModuleTranslator:
             errors_now = len(manager.stats["errors"])
             self.stats["items_translated"] += items_now - self._prev_items
             self.stats["errors"].extend(manager.stats["errors"][self._prev_errors :])
+            manager_ncs = manager.stats.get("ncs_diagnostics") or {}
+            if manager_ncs:
+                ncs_stats = self.stats.setdefault(
+                    "ncs_diagnostics",
+                    {
+                        "total": 0,
+                        "extracted": 0,
+                        "approved": 0,
+                        "skipped_hard_veto": 0,
+                        "skipped_fail_closed": 0,
+                        "translated": 0,
+                        "timeout": 0,
+                        "retry_recovered": 0,
+                        "failed": 0,
+                        "patch_failed": 0,
+                        "samples": [],
+                    },
+                )
+                for key in (
+                    "total",
+                    "extracted",
+                    "approved",
+                    "skipped_hard_veto",
+                    "skipped_fail_closed",
+                    "translated",
+                    "timeout",
+                    "retry_recovered",
+                    "failed",
+                ):
+                    ncs_stats[key] = int(ncs_stats.get(key, 0)) + int(manager_ncs.get(key, 0))
+                samples = ncs_stats.setdefault("samples", [])
+                for sample in manager_ncs.get("samples", []):
+                    if len(samples) >= 50:
+                        break
+                    samples.append(sample)
             self._prev_items = items_now
             self._prev_errors = errors_now
 

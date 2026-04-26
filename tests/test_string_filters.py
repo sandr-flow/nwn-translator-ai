@@ -3,10 +3,69 @@
 import pytest
 
 from src.nwn_translator.context.string_filters import (
+    classify_entity_candidate,
     classify_string,
+    is_generic_entity_label,
     is_valid_entity_name,
     should_skip_entity_source_text,
 )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Almraiven : A Trap to Spring",
+        "Forest of Mir : The Spirit of Volothamp",
+        "Bookworm : The Cloak of Almraiven",
+        "Almraiven : Bumps in the Night",
+    ],
+)
+def test_quest_hierarchy_label_dropped(name):
+    result = classify_entity_candidate(name, "quest")
+    assert result.decision == "drop"
+    assert result.reason == "quest_hierarchy_label"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Bejala",
+        "Gewia the Wererat",
+        "Tower of the Evelyn Society of Thinkers",
+        "Almraiven",
+    ],
+)
+def test_real_proper_names_not_dropped_as_quest_hierarchy(name):
+    result = classify_entity_candidate(name, "location")
+    assert result.decision != "drop" or result.reason != "quest_hierarchy_label"
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("Human Female", True),
+        ("Human Male", True),
+        ("Almraiven Resident", True),
+        ("Auren Shopper", True),
+        ("Halfling Female", True),
+        ("Tiefling Female", True),
+        ("Half-Elf Female", True),
+        ("Half-Orc Male", True),
+        ("Dwarven Female", True),
+        ("Elven Male", True),
+        ("Gnome Female", True),
+        ("Ogre Male", True),
+        ("Human Boy", True),
+        ("Human Girl", True),
+        ("[KC] Human Male", True),
+        ("[FOM] Halfling Female", True),
+        ("Gewia the Wererat", False),
+        ("Brynlo", False),
+        ("Diving Dolphin", False),
+    ],
+)
+def test_is_generic_entity_label(name, expected):
+    assert is_generic_entity_label(name) is expected
 
 
 @pytest.mark.parametrize(
@@ -66,6 +125,28 @@ def test_git_technical_code_like_source_text_skipped():
         "CastleExt1To2South",
         {"type": "trigger_name"},
     )
+
+
+@pytest.mark.parametrize(
+    "text,decision",
+    [
+        ("Rat 1", "drop"),
+        ("Food 5", "drop"),
+        ("Candle 003", "drop"),
+        ("Human Female", "deprioritize"),
+        ("Almraiven Resident", "deprioritize"),
+    ],
+)
+def test_candidate_prefilter_rejects_or_deprioritizes_generic_labels(text, decision):
+    assert classify_entity_candidate(text).decision == decision
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Brynlo", "Gewia", "Diving Dolphin", "The North Wall", "Mount Talath"],
+)
+def test_candidate_prefilter_keeps_specific_names(text):
+    assert classify_entity_candidate(text, "character").decision == "keep"
     assert not should_skip_entity_source_text(
         "To the Sewers",
         {"type": "trigger_name"},

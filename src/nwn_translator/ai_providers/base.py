@@ -73,6 +73,7 @@ class BaseAIProvider(ABC):
             **kwargs: Additional provider-specific parameters
         """
         self.player_gender = kwargs.pop("player_gender", "male")
+        self.metrics_recorder = kwargs.pop("metrics_recorder", None)
         self.api_key = api_key
         self.model = model or self.get_default_model()
         self._validate_api_key()

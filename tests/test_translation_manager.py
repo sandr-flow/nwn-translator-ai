@@ -578,6 +578,25 @@ class TestBatchDedupBySanitized:
         assert translations["Guard"] == "TR:Guard"
         assert translations["Captain"] == "TR:Captain"
 
+    def test_color_marker_only_string_skips_api(self):
+        text = (
+            "<c\u044f\u044f\u044f><c\u044f\u044f ><c\u044f \u044f><c \u044f\u044f>"
+            "<c\u044f  ><c \u044f ><c  \u044f>"
+        )
+        content = ExtractedContent(
+            content_type="item",
+            items=[TranslatableItem(text=text, item_id="COLORS_name")],
+            source_file=Path("invisobj.utp"),
+        )
+        provider = _make_provider({})
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(content)
+
+        assert result == {text: text}
+        provider.translate_async.assert_not_called()
+        provider.translate_batch_async.assert_not_called()
+
 
 class TestTokenMismatchRecovery:
     """Token/tag mismatches trigger retries and cleanup, not English fallback."""

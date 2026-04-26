@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Iterable, Literal, Set
+from typing import Dict, Iterable, List, Literal, Optional, Set
 
 # Unicode letters only (no digits, no underscore). Works for Latin, Cyrillic,
 # Turkish, Polish, Czech and the like under Python 3's default re.UNICODE.
@@ -220,3 +220,73 @@ def tokenize_corpus(texts: Iterable[str]) -> Set[str]:
         if t:
             out.update(tokenize(t))
     return out
+
+
+_HIERARCHY_SPLIT_RE = re.compile(r"\s+(?:[-|/>])\s+")
+_COMPOUND_FREQUENCY_THRESHOLD = 3
+
+
+def split_hierarchical(name: str) -> Optional[List[str]]:
+    """Return component parts of a hierarchical name like ``A - B - C``.
+
+    Returns ``None`` for names that are not hierarchical: single-component
+    names, compound nouns joined without surrounding spaces (``street-side``,
+    ``cul-de-sac``), or names whose components do not all start with an
+    uppercase letter.
+    """
+    if not name:
+        return None
+    parts = [p.strip() for p in _HIERARCHY_SPLIT_RE.split(str(name))]
+    if len(parts) < 2:
+        return None
+    if not all(p and p[0].isupper() for p in parts):
+        return None
+    return parts
+
+
+def common_hierarchy_components(
+    names: Iterable[str], threshold: int = _COMPOUND_FREQUENCY_THRESHOLD
+) -> Set[str]:
+    """Return casefolded components shared by many hierarchical names.
+
+    A component appearing in *threshold* or more hierarchical names is
+    classified as a common prefix/suffix and on its own is not enough to
+    consider a hierarchical entry relevant to a source corpus.
+    """
+    counts: Dict[str, int] = {}
+    for name in names:
+        parts = split_hierarchical(name)
+        if not parts:
+            continue
+        for part in parts:
+            key = part.casefold()
+            counts[key] = counts.get(key, 0) + 1
+    return {key for key, count in counts.items() if count >= threshold}
+
+
+def hierarchical_entry_passes(
+    name: str,
+    source_joined: str,
+    source_tokens: Set[str],
+    common: Set[str],
+) -> bool:
+    """Return True if a hierarchical *name* is evidenced by the source corpus.
+
+    The full name string winning by exact substring is always sufficient.
+    Otherwise at least one non-common component must appear as a literal
+    substring in the source corpus.  Names whose only matching component is
+    a common prefix shared with many other entries (e.g. the city name) never
+    pass; substring match on the whole component avoids the
+    ``Loom Avenue`` ↔ ``Dock Ward gates`` false positive that token-level
+    relevance would let through via the shared ``ward``/``gates`` magnet.
+    """
+    parts = split_hierarchical(name)
+    if not parts:
+        return True
+    folded_name = (name or "").casefold()
+    if folded_name and folded_name in source_joined:
+        return True
+    significant = [p for p in parts if p.casefold() not in common]
+    if not significant:
+        return False
+    return any(p.casefold() in source_joined for p in significant)

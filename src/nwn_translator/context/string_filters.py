@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import FrozenSet, Iterable, Optional
-
+from typing import FrozenSet, Iterable, Literal, Optional
 
 _PLACEHOLDER_RE = re.compile(r"^<[^<>\s]+>$")
 _ANY_PLACEHOLDER_RE = re.compile(r"<[^<>]+>")
@@ -23,6 +22,9 @@ _RESREF_RE = re.compile(r"^[a-z]{1,4}_[a-z0-9_]+$", re.IGNORECASE)
 _LETTER_RE = re.compile(r"[A-Za-z]")
 _WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 _SENTENCE_PUNCT_RE = re.compile(r"[,.!?;:\"'()[\]]")
+_NUMBERED_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z' -]{1,48}\s+\d{1,4}$")
+_ZERO_PADDED_NUMBER_RE = re.compile(r"\b\d{3,}\b")
+_QUEST_HIERARCHY_RE = re.compile(r"^[A-Z][\w'\- ]{1,40}\s+:\s+\S")
 
 _SYSTEM_TERMS: FrozenSet[str] = frozenset(
     {
@@ -55,6 +57,83 @@ _GIT_TECHNICAL_TYPES: FrozenSet[str] = frozenset(
     }
 )
 
+_RACE_TOKENS: FrozenSet[str] = frozenset(
+    {
+        "human",
+        "elf",
+        "elven",
+        "elvish",
+        "dwarf",
+        "dwarven",
+        "dwarvish",
+        "halfling",
+        "gnome",
+        "gnomish",
+        "tiefling",
+        "aasimar",
+        "orc",
+        "orcish",
+        "ogre",
+        "goblin",
+        "drow",
+        "kobold",
+        "githyanki",
+        "githzerai",
+        "half-elf",
+        "halfelf",
+        "half-orc",
+        "halforc",
+    }
+)
+
+
+_GENDER_TOKENS: FrozenSet[str] = frozenset(
+    {"male", "female", "man", "woman", "boy", "girl", "child"}
+)
+_BRACKETED_TAG_RE = re.compile(r"^\s*\[[A-Za-z0-9_]+\]\s+")
+
+
+def _is_race_token(word: str) -> bool:
+    return word.casefold() in _RACE_TOKENS
+
+
+def _is_gender_token(word: str) -> bool:
+    return word.casefold() in _GENDER_TOKENS
+
+
+_GENERIC_PERSON_LABELS: FrozenSet[str] = frozenset(
+    {
+        "human male",
+        "human female",
+        "commoner",
+        "patron",
+        "resident",
+        "shopper",
+        "sitter",
+        "guard",
+        "villager",
+        "merchant",
+    }
+)
+
+_COMMON_SINGLE_NOUNS: FrozenSet[str] = frozenset(
+    {
+        "armor",
+        "boat",
+        "candle",
+        "chest",
+        "display",
+        "food",
+        "kit",
+        "patron",
+        "rat",
+        "tree",
+    }
+)
+
+
+CandidateDecision = Literal["drop", "deprioritize", "keep"]
+
 
 @dataclass(frozen=True)
 class StringClassification:
@@ -86,6 +165,16 @@ class StringClassification:
     def primary_reason(self) -> str:
         """Stable first reason for logging/tests."""
         return sorted(self.reasons)[0] if self.reasons else ""
+
+
+@dataclass(frozen=True)
+class CandidateFilterResult:
+    """Deterministic entity/glossary candidate decision."""
+
+    decision: CandidateDecision
+    reason: str = ""
+    technical_score: int = 0
+    reasons: FrozenSet[str] = field(default_factory=frozenset)
 
 
 def classify_string(text: object) -> StringClassification:
@@ -184,6 +273,128 @@ def describe_rejection(name: object, category: Optional[str] = None) -> str:
     if (category or "").strip().lower() == "unknown":
         return "unknown_not_natural_multiword"
     return "invalid_entity_name"
+
+
+def classify_entity_candidate(
+    name: object,
+    category: Optional[str] = None,
+    *,
+    source: str = "",
+) -> CandidateFilterResult:
+    """Classify whether *name* may become a glossary/world-context anchor.
+
+    This does not decide whether the original string is translated.  It only
+    controls whether the string is allowed to seed entity context.
+    """
+    cls = classify_string(name)
+    if cls.empty:
+        return CandidateFilterResult("drop", "empty", 100, frozenset({"empty"}))
+    if cls.blocked:
+        return CandidateFilterResult(
+            "drop",
+            cls.primary_reason or "blocked",
+            90,
+            cls.reasons,
+        )
+
+    text = cls.text
+    lowered = text.casefold()
+    words = _words(text)
+    reasons = set()
+    technical_score = 0
+
+    if _NUMBERED_LABEL_RE.fullmatch(text):
+        reasons.add("numbered_generic_label")
+        technical_score += 80
+        return CandidateFilterResult(
+            "drop",
+            "numbered_generic_label",
+            technical_score,
+            frozenset(reasons),
+        )
+
+    if _QUEST_HIERARCHY_RE.match(text):
+        reasons.add("quest_hierarchy_label")
+        technical_score += 85
+        return CandidateFilterResult(
+            "drop",
+            "quest_hierarchy_label",
+            technical_score,
+            frozenset(reasons),
+        )
+
+    if lowered.startswith(("wp_", "dst_", "nw_")) or _RESREF_RE.fullmatch(text):
+        reasons.add("route_or_resref_label")
+        technical_score += 90
+        return CandidateFilterResult(
+            "drop", "route_or_resref_label", technical_score, frozenset(reasons)
+        )
+
+    if lowered in _GENERIC_PERSON_LABELS:
+        return CandidateFilterResult(
+            "deprioritize",
+            "generic_person_label",
+            40,
+            frozenset({"generic_person_label"}),
+        )
+
+    if len(words) == 1 and words[0].casefold() in _COMMON_SINGLE_NOUNS:
+        return CandidateFilterResult(
+            "deprioritize",
+            "single_common_noun",
+            30,
+            frozenset({"single_common_noun"}),
+        )
+
+    raw_text = _BRACKETED_TAG_RE.sub("", text)
+    raw_parts = raw_text.split()
+    if len(raw_parts) == 2 and _is_race_token(raw_parts[0]) and _is_gender_token(raw_parts[1]):
+        return CandidateFilterResult(
+            "deprioritize",
+            "generic_race_label",
+            35,
+            frozenset({"generic_race_label"}),
+        )
+
+    if lowered.endswith((" resident", " shopper", " sitter")):
+        return CandidateFilterResult(
+            "deprioritize",
+            "generic_role_with_place_prefix",
+            35,
+            frozenset({"generic_role_with_place_prefix"}),
+        )
+
+    if (category or "").strip().lower() == "unknown" and len(words) == 1:
+        return CandidateFilterResult(
+            "deprioritize",
+            "unknown_single_word",
+            20,
+            frozenset({"unknown_single_word"}),
+        )
+
+    return CandidateFilterResult("keep", "", technical_score, frozenset())
+
+
+_GENERIC_REASONS: FrozenSet[str] = frozenset(
+    {
+        "generic_person_label",
+        "generic_race_label",
+        "generic_role_with_place_prefix",
+    }
+)
+
+
+def is_generic_entity_label(name: object, category: Optional[str] = None) -> bool:
+    """Return True if *name* is a non-disambiguating generic label.
+
+    Generic labels (``Human Female``, ``Almraiven Resident``, ``dwarf merchant``)
+    are shared by many distinct NPCs.  In prompt selection they must be
+    admitted only by exact substring match on the name itself; tag/speaker
+    matches are not evidence because every Human-Female NPC would otherwise
+    pull in via a token co-occurrence.
+    """
+    result = classify_entity_candidate(name, category)
+    return result.decision == "deprioritize" and result.reason in _GENERIC_REASONS
 
 
 def _is_git_technical_type(meta_type: str) -> bool:

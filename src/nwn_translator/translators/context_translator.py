@@ -16,6 +16,7 @@ from ..context.dialog_formatter import DialogFormatter
 from ..context.world_context import WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode
 from ..json_utils import json_extract_first_object, strip_json_markdown_fences
+from ..telemetry import llm_phase
 from ..translation_logging import translation_log_writer_for_config
 from .token_handler import TokenHandler, sanitize_text
 
@@ -163,12 +164,13 @@ class ContextualTranslationManager:
             async def call_api(
                 sp: str, up: str, *, max_tokens: int = TRANSLATION_MAX_TOKENS
             ) -> str:
-                return await provider.complete_json_chat_async(
-                    sp,
-                    up,
-                    max_tokens=max_tokens,
-                    temperature=TRANSLATION_TEMPERATURE,
-                )
+                with llm_phase("dialog"):
+                    return await provider.complete_json_chat_async(
+                        sp,
+                        up,
+                        max_tokens=max_tokens,
+                        temperature=TRANSLATION_TEMPERATURE,
+                    )
 
             from ..async_utils import run_async
 

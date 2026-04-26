@@ -26,11 +26,13 @@ from ..config import (
     GLOSSARY_TEMPERATURE,
     ProgressCallback,
 )
+from ..telemetry import llm_phase
 from .string_filters import (
     describe_rejection,
     is_valid_entity_name,
     should_skip_entity_source_text,
 )
+from .entity_candidates import EntityCandidateRegistry
 
 if TYPE_CHECKING:
     from ..ai_providers.openrouter_provider import OpenRouterProvider
@@ -64,6 +66,34 @@ _VALID_CATEGORIES: Set[str] = {
 
 class EntityExtractor:
     """Find proper nouns embedded in TranslatableItem texts via LLM."""
+
+    def extract_candidates(
+        self,
+        items: List["TranslatableItem"],
+        provider: "OpenRouterProvider",
+        config: "TranslationConfig",
+        known_names: Set[str],
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> EntityCandidateRegistry:
+        """Return evidence-backed candidates discovered in item text bodies."""
+        registry = EntityCandidateRegistry()
+        for name, category in self.extract(
+            items,
+            provider,
+            config,
+            known_names,
+            progress_callback=progress_callback,
+        ):
+            context = _first_context_for_name(items, name)
+            registry.add(
+                name,
+                category=category,
+                source="entity_extractor",
+                resource="",
+                field="text",
+                context=context,
+            )
+        return registry
 
     def extract(
         self,
@@ -154,9 +184,7 @@ class EntityExtractor:
                 if not key or key in known_lower or key in seen_lower:
                     continue
                 if not is_valid_entity_name(clean_name, clean_category):
-                    rejected.append(
-                        (clean_name, describe_rejection(clean_name, clean_category))
-                    )
+                    rejected.append((clean_name, describe_rejection(clean_name, clean_category)))
                     continue
                 seen_lower.add(key)
                 out.append((clean_name, clean_category))
@@ -230,16 +258,17 @@ class EntityExtractor:
         t0 = time.monotonic()
         try:
             async with sem:
-                raw = await asyncio.wait_for(
-                    provider.complete_json_chat_async(
-                        system_prompt,
-                        user_prompt,
-                        max_tokens=GLOSSARY_MAX_TOKENS,
-                        temperature=GLOSSARY_TEMPERATURE,
-                        use_reasoning=False,
-                    ),
-                    timeout=GLOSSARY_LLM_TIMEOUT,
-                )
+                with llm_phase("entity_extraction"):
+                    raw = await asyncio.wait_for(
+                        provider.complete_json_chat_async(
+                            system_prompt,
+                            user_prompt,
+                            max_tokens=GLOSSARY_MAX_TOKENS,
+                            temperature=GLOSSARY_TEMPERATURE,
+                            use_reasoning=False,
+                        ),
+                        timeout=GLOSSARY_LLM_TIMEOUT,
+                    )
         except (TimeoutError, asyncio.TimeoutError, Exception) as exc:
             elapsed = time.monotonic() - t0
             logger.warning(
@@ -283,6 +312,18 @@ def _select_texts(items: List["TranslatableItem"]) -> List[str]:
         seen.add(text)
         out.append(text)
     return out
+
+
+def _first_context_for_name(items: List["TranslatableItem"], name: str) -> str:
+    """Return a short source snippet containing *name* when available."""
+    needle = (name or "").casefold()
+    if not needle:
+        return ""
+    for item in items:
+        text = item.text or ""
+        if needle in text.casefold():
+            return text.replace("\n", " ")[:240]
+    return ""
 
 
 def _batch_texts(texts: List[str], batch_size: int) -> List[List[str]]:

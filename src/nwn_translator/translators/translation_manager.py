@@ -9,7 +9,7 @@ import logging
 import re
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, cast
 
 from tqdm import tqdm
 
@@ -38,6 +38,62 @@ _NON_TRANSLATABLE_RE = re.compile(
     r"|\[\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]\]"
     r"|<<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>>"
     r"|<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>"
+)
+_NUMBERED_LABEL_FAMILY_RE = re.compile(
+    r"^(?P<base>[A-Z][A-Za-z']+(?: [A-Z][A-Za-z']+){0,4}) (?P<number>\d{1,4})$"
+)
+_NUMBER_PLACEHOLDER = "__NWN_NUMBER__"
+_NUMBERED_TEMPLATE_DENY_BASES = frozenset(
+    {
+        "Act",
+        "Chapter",
+        "Day",
+        "Level",
+        "Part",
+        "Quest",
+        "Rank",
+        "Year",
+    }
+)
+_NUMBERED_TEMPLATE_GENERIC_WORDS = frozenset(
+    {
+        "Awning",
+        "Banner",
+        "Barrel",
+        "Bed",
+        "Bench",
+        "Boarded",
+        "Boat",
+        "Book",
+        "Box",
+        "Candle",
+        "Chair",
+        "Chest",
+        "Container",
+        "Crate",
+        "Display",
+        "Door",
+        "Food",
+        "Flower",
+        "Guard",
+        "Human",
+        "Lamp",
+        "Lantern",
+        "Oak",
+        "Patron",
+        "Patch",
+        "Pipe",
+        "Plant",
+        "Qube",
+        "Rat",
+        "Resident",
+        "Shelf",
+        "Sign",
+        "Static",
+        "Table",
+        "Tree",
+        "Underdark",
+    }
 )
 
 
@@ -129,21 +185,24 @@ class TranslationManager:
         self._active_item_progress: Optional[Any] = None
 
     def _ncs_stats(self) -> Dict[str, Any]:
-        return self.stats.setdefault(
-            "ncs_diagnostics",
-            {
-                "total": 0,
-                "extracted": 0,
-                "approved": 0,
-                "skipped_hard_veto": 0,
-                "skipped_fail_closed": 0,
-                "translated": 0,
-                "timeout": 0,
-                "retry_recovered": 0,
-                "failed": 0,
-                "patch_failed": 0,
-                "samples": [],
-            },
+        return cast(
+            Dict[str, Any],
+            self.stats.setdefault(
+                "ncs_diagnostics",
+                {
+                    "total": 0,
+                    "extracted": 0,
+                    "approved": 0,
+                    "skipped_hard_veto": 0,
+                    "skipped_fail_closed": 0,
+                    "translated": 0,
+                    "timeout": 0,
+                    "retry_recovered": 0,
+                    "failed": 0,
+                    "patch_failed": 0,
+                    "samples": [],
+                },
+            ),
         )
 
     @staticmethod
@@ -327,9 +386,7 @@ class TranslationManager:
                         rekeyed, source_lang=self.config.source_lang
                     )
                 return {
-                    e["key"]: result.get(
-                        str(j), {"translate": False, "reason": "gate_missing_key"}
-                    )
+                    e["key"]: result.get(str(j), {"translate": False, "reason": "gate_missing_key"})
                     for j, e in enumerate(chunk)
                 }
 
@@ -342,9 +399,7 @@ class TranslationManager:
         try:
             # No overall timeout: large modules may need many minutes to gate.
             # Per-call timeouts and retries live in the provider layer.
-            verdicts = run_async(
-                gate_all(), cleanup=self.provider.close_async_client, timeout=None
-            )
+            verdicts = run_async(gate_all(), cleanup=self.provider.close_async_client, timeout=None)
         except Exception as exc:
             logger.warning(
                 "NCS LLM gate failed for %d item(s): %s — defaulting to reject.",
@@ -540,7 +595,7 @@ class TranslationManager:
     _BATCH_CALL_TIMEOUT: float = 180.0
     # Overall timeout (seconds) for async.gather of all items in one file.
     _GATHER_TIMEOUT: float = 600.0
-    # run_async outer timeout (slightly above _GATHER_TIMEOUT).
+    # Minimum run_async outer timeout. Large queues scale this up dynamically.
     _RUN_ASYNC_TIMEOUT: float = 660.0
     # Additional retries for token/tag mismatches after the first model answer.
     _TOKEN_RETRY_BUDGET: int = 2
@@ -602,6 +657,33 @@ class TranslationManager:
                 return CONTENT_PROFILE_DEFAULT
         return CONTENT_PROFILE_SHORT_LABEL
 
+    @staticmethod
+    def _numbered_template_for_item(item_data: dict) -> Optional[tuple[str, str]]:
+        """Return ``(template, number)`` for safe numbered short labels."""
+        item = item_data["item"]
+        item_type = (item.metadata or {}).get("type", "")
+        if item_type not in TranslationManager._BATCHABLE_TYPES:
+            return None
+        text = item_data["sanitized"]
+        if any(ch in text for ch in ".!?:;,\n\r"):
+            return None
+        match = _NUMBERED_LABEL_FAMILY_RE.fullmatch(text)
+        if not match:
+            return None
+        base = match.group("base")
+        if base in _NUMBERED_TEMPLATE_DENY_BASES:
+            return None
+        if not any(word in _NUMBERED_TEMPLATE_GENERIC_WORDS for word in base.split()):
+            return None
+        return f"{base} {_NUMBER_PLACEHOLDER}", match.group("number")
+
+    @staticmethod
+    def _restore_numbered_template(translated: str, number: str) -> Optional[str]:
+        """Restore the original number into a translated template result."""
+        if _NUMBER_PLACEHOLDER not in translated:
+            return None
+        return translated.replace(_NUMBER_PLACEHOLDER, number)
+
     def _async_bump(self, item_data: dict) -> None:
         """Per-item progress bump fired inside asyncio worker on completion."""
         progress = self._active_item_progress
@@ -611,6 +693,20 @@ class TranslationManager:
         loc = item.location or ""
         fn = Path(loc).name if loc else ""
         progress.bump(filename=fn)
+
+    @staticmethod
+    def _queued_call_timeout(
+        work_units: int,
+        per_call_timeout: float,
+        concurrency: int,
+    ) -> float:
+        """Return a queue-level timeout that accounts for semaphore waves."""
+        if work_units <= 0:
+            return 0.0
+        limit = max(1, int(concurrency))
+        waves = (work_units + limit - 1) // limit
+        slack = max(5.0, min(60.0, per_call_timeout * 0.5))
+        return waves * per_call_timeout + slack
 
     def _raise_if_cancelled(self) -> None:
         cb = self.config.cancel_check
@@ -1025,6 +1121,12 @@ class TranslationManager:
             else:
                 regular_short_items.append(d)
 
+        batches: List[List[dict]] = []
+        for i in range(0, len(very_short_items), self._BATCH_SIZE_VERY_SHORT):
+            batches.append(very_short_items[i : i + self._BATCH_SIZE_VERY_SHORT])
+        for i in range(0, len(regular_short_items), self._BATCH_SIZE):
+            batches.append(regular_short_items[i : i + self._BATCH_SIZE])
+
         async def run_all() -> tuple:
             limit = max(1, int(self.config.max_concurrent_requests))
             sem = asyncio.Semaphore(limit)
@@ -1032,24 +1134,30 @@ class TranslationManager:
             long_coros = [self._translate_one_async(sem, d) for d in long_items]
 
             # --- Batch translation for short items ---
-            batches: List[List[dict]] = []
-            for i in range(0, len(very_short_items), self._BATCH_SIZE_VERY_SHORT):
-                batches.append(very_short_items[i : i + self._BATCH_SIZE_VERY_SHORT])
-            for i in range(0, len(regular_short_items), self._BATCH_SIZE):
-                batches.append(regular_short_items[i : i + self._BATCH_SIZE])
-
             async def batch_one(batch: List[dict]) -> List[TranslationResult]:
                 # Deduplicate by sanitized text within the batch so repeated
                 # short strings (e.g. many identical tag-names in .git files)
                 # cost exactly one slot in the API payload. Results are
                 # replicated back to every duplicate in batch-order.
                 sanitized_to_unique_idx: Dict[str, int] = {}
+                numbered_template_by_sanitized: Dict[str, tuple[str, str]] = {}
                 unique_batch: List[dict] = []
                 for d in batch:
-                    san = d["sanitized"]
+                    template_info = self._numbered_template_for_item(d)
+                    if template_info is not None:
+                        template, number = template_info
+                        san = template
+                        numbered_template_by_sanitized[d["sanitized"]] = (template, number)
+                    else:
+                        san = d["sanitized"]
                     if san not in sanitized_to_unique_idx:
                         sanitized_to_unique_idx[san] = len(unique_batch)
-                        unique_batch.append(d)
+                        if template_info is not None:
+                            proxy = dict(d)
+                            proxy["sanitized"] = san
+                            unique_batch.append(proxy)
+                        else:
+                            unique_batch.append(d)
 
                 batch_items = [
                     TranslationItem(
@@ -1105,7 +1213,46 @@ class TranslationManager:
                         ]
                 # Replicate unique results back to every duplicate occurrence
                 # in the original batch order. Callers iterate zip(batch, results).
-                results = [unique_results[sanitized_to_unique_idx[d["sanitized"]]] for d in batch]
+                results: List[TranslationResult] = []
+                for d in batch:
+                    template_info = numbered_template_by_sanitized.get(d["sanitized"])
+                    lookup_key = template_info[0] if template_info is not None else d["sanitized"]
+                    source_result = unique_results[sanitized_to_unique_idx[lookup_key]]
+                    if template_info is None:
+                        results.append(source_result)
+                        continue
+                    _template, number = template_info
+                    if not source_result.success:
+                        results.append(
+                            TranslationResult(
+                                translated="",
+                                original=d["sanitized"],
+                                success=False,
+                                error=source_result.error,
+                                metadata=source_result.metadata,
+                            )
+                        )
+                        continue
+                    restored = self._restore_numbered_template(source_result.translated, number)
+                    if restored is None:
+                        results.append(
+                            TranslationResult(
+                                translated="",
+                                original=d["sanitized"],
+                                success=False,
+                                error="Numbered template placeholder missing in batch response",
+                                metadata=source_result.metadata,
+                            )
+                        )
+                    else:
+                        results.append(
+                            TranslationResult(
+                                translated=restored,
+                                original=d["sanitized"],
+                                success=True,
+                                metadata=source_result.metadata,
+                            )
+                        )
                 if len(unique_batch) < len(batch):
                     logger.debug(
                         "Batch dedup: %d items → %d unique sanitized",
@@ -1121,14 +1268,7 @@ class TranslationManager:
             batch_coros = [batch_one(b) for b in batches]
 
             try:
-                long_results = (
-                    await asyncio.wait_for(
-                        asyncio.gather(*long_coros),
-                        timeout=self._GATHER_TIMEOUT,
-                    )
-                    if long_coros
-                    else []
-                )
+                long_results = await asyncio.gather(*long_coros) if long_coros else []
             except asyncio.TimeoutError:
                 logger.error(
                     "Overall gather timeout (%.0fs) for %d long items",
@@ -1146,14 +1286,7 @@ class TranslationManager:
                 ]
 
             try:
-                batch_results_nested = (
-                    await asyncio.wait_for(
-                        asyncio.gather(*batch_coros),
-                        timeout=self._GATHER_TIMEOUT,
-                    )
-                    if batch_coros
-                    else []
-                )
+                batch_results_nested = await asyncio.gather(*batch_coros) if batch_coros else []
             except asyncio.TimeoutError:
                 logger.error(
                     "Overall gather timeout (%.0fs) for %d batch coros",
@@ -1180,10 +1313,18 @@ class TranslationManager:
 
         from ..async_utils import run_async
 
+        limit = max(1, int(self.config.max_concurrent_requests))
+        queue_timeout = (
+            self._queued_call_timeout(len(long_items), self._ITEM_TIMEOUT, limit)
+            + self._queued_call_timeout(len(batches), self._BATCH_CALL_TIMEOUT, limit)
+            + 60.0
+        )
+        run_timeout = max(self._RUN_ASYNC_TIMEOUT, queue_timeout)
+
         long_results, batch_results = run_async(
             run_all(),
             cleanup=self.provider.close_async_client,
-            timeout=self._RUN_ASYNC_TIMEOUT,
+            timeout=run_timeout,
         )
 
         if short_items:
@@ -1244,9 +1385,8 @@ class TranslationManager:
             sem = asyncio.Semaphore(limit)
 
             try:
-                return await asyncio.wait_for(
-                    asyncio.gather(*[self._translate_one_async(sem, d, bump=False) for d in items]),
-                    timeout=self._GATHER_TIMEOUT / 2,
+                return await asyncio.gather(
+                    *[self._translate_one_async(sem, d, bump=False) for d in items]
                 )
             except asyncio.TimeoutError:
                 logger.error(
@@ -1266,10 +1406,14 @@ class TranslationManager:
 
         from ..async_utils import run_async
 
+        limit = max(1, int(self.config.max_concurrent_requests))
         results = run_async(
             run_fallback(),
             cleanup=self.provider.close_async_client,
-            timeout=self._RUN_ASYNC_TIMEOUT / 2,
+            timeout=max(
+                self._RUN_ASYNC_TIMEOUT / 2,
+                self._queued_call_timeout(len(items), self._ITEM_TIMEOUT, limit) + 30.0,
+            ),
         )
 
         for item_data, result in zip(items, results):

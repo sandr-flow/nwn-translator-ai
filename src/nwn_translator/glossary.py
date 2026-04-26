@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set
 
@@ -22,6 +23,7 @@ from .config import (
     GLOSSARY_MAX_TOKENS,
     ProgressCallback,
 )
+from .telemetry import llm_phase
 from .translators.token_handler import sanitize_text
 
 if TYPE_CHECKING:
@@ -30,6 +32,9 @@ if TYPE_CHECKING:
     from .context.world_context import WorldContext as WorldContextType
 
 logger = logging.getLogger(__name__)
+
+GLOSSARY_MAX_ENTRIES = 40
+GLOSSARY_MAX_CHARS = 6000
 
 # Max names per single LLM request to stay within context/token limits.
 _BATCH_SIZE = 40
@@ -63,8 +68,10 @@ class Glossary:
             return ""
         if texts is None:
             entries = dict(self.entries)
+            text_list = None
         else:
-            entries = self._filter_entries_by_texts(texts)
+            text_list = [str(text) for text in texts if text]
+            entries = self._filter_entries_by_texts(text_list)
             if not entries:
                 return ""
         lines = [
@@ -74,7 +81,7 @@ class Glossary:
             "never substitute one name for another):",
         ]
         seen_translations: Set[str] = set()
-        for en in sorted(entries.keys(), key=str.lower):
+        for en in self._ordered_budgeted_keys(entries, text_list):
             tr = entries[en]
             tr_key = (tr or "").strip().casefold()
             if tr_key and tr_key in seen_translations:
@@ -84,18 +91,65 @@ class Glossary:
             lines.append(f'  * "{en}" → {tr}')
         return "\n".join(lines)
 
+    def _ordered_budgeted_keys(
+        self,
+        entries: Dict[str, str],
+        texts: Optional[Iterable[str]],
+    ) -> List[str]:
+        """Return deterministic keys ordered by relevance and prompt budget."""
+        if texts is None:
+            return sorted(entries.keys(), key=str.lower)
+        corpus = "\n".join(str(t) for t in texts or [] if t).casefold()
+
+        def score(key: str) -> tuple[int, str]:
+            key_folded = key.casefold()
+            exact = 1 if key_folded and key_folded in corpus else 0
+            token_count = len(key.split())
+            return (exact * 1000 + token_count, key.lower())
+
+        ordered = sorted(entries.keys(), key=lambda key: (-score(key)[0], key.lower()))
+        selected: List[str] = []
+        used_chars = 0
+        for key in ordered:
+            line_chars = len(key) + len(entries.get(key, "")) + 10
+            if selected and len(selected) >= GLOSSARY_MAX_ENTRIES:
+                break
+            if selected and used_chars + line_chars > GLOSSARY_MAX_CHARS:
+                break
+            selected.append(key)
+            used_chars += line_chars
+        return selected
+
     def _filter_entries_by_texts(self, texts: Iterable[str]) -> Dict[str, str]:
         """Return glossary entries whose keys are relevant to *texts*."""
-        from .context.relevance import is_relevant, tokenize_corpus
+        from .context.relevance import (
+            common_hierarchy_components,
+            hierarchical_entry_passes,
+            is_relevant,
+            tokenize_corpus,
+        )
+        from .context.string_filters import is_generic_entity_label
 
         source_tokens = tokenize_corpus(texts)
         if not source_tokens:
             return {}
-        return {
-            en: tr
-            for en, tr in self.entries.items()
-            if en and en.strip() and is_relevant(en, source_tokens)
-        }
+        source_joined = "\n".join(str(t) for t in texts if t).casefold()
+        common = common_hierarchy_components(self.entries.keys())
+
+        out: Dict[str, str] = {}
+        for en, tr in self.entries.items():
+            key = (en or "").strip()
+            if not key:
+                continue
+            if is_generic_entity_label(key):
+                if key.casefold() not in source_joined:
+                    continue
+            elif not is_relevant(key, source_tokens):
+                continue
+            if not hierarchical_entry_passes(key, source_joined, source_tokens, common):
+                continue
+            out[en] = tr
+        return out
 
     def seed_cache(self, cache: Any, *, preserve_tokens: bool) -> None:
         """Populate session translation cache so exact-match strings skip the API.
@@ -139,7 +193,10 @@ class GlossaryBuilder:
             logger.warning("Glossary building skipped: provider has no glossary/JSON chat API")
             return Glossary()
 
-        pairs = world_context.get_all_names()
+        if hasattr(world_context, "get_glossary_names"):
+            pairs = world_context.get_glossary_names()
+        else:
+            pairs = world_context.get_all_names()
         if not pairs:
             return Glossary()
 
@@ -438,22 +495,28 @@ class GlossaryBuilder:
             TimeoutError: If the LLM call does not complete in time.
         """
         if hasattr(provider, "complete_glossary_chat_async"):
-            coro = provider.complete_glossary_chat_async(
-                system_prompt,
-                user_prompt,
-                glossary_keys=keys_for_schema,
-                max_tokens=GLOSSARY_MAX_TOKENS,
-                temperature=GLOSSARY_TEMPERATURE,
+            with llm_phase("glossary"):
+                return await asyncio.wait_for(
+                    provider.complete_glossary_chat_async(
+                        system_prompt,
+                        user_prompt,
+                        glossary_keys=keys_for_schema,
+                        max_tokens=GLOSSARY_MAX_TOKENS,
+                        temperature=GLOSSARY_TEMPERATURE,
+                    ),
+                    timeout=GLOSSARY_LLM_TIMEOUT,
+                )
+        with llm_phase("glossary"):
+            return await asyncio.wait_for(
+                provider.complete_json_chat_async(
+                    system_prompt,
+                    user_prompt,
+                    max_tokens=GLOSSARY_MAX_TOKENS,
+                    temperature=GLOSSARY_FALLBACK_TEMPERATURE,
+                    use_reasoning=False,
+                ),
+                timeout=GLOSSARY_LLM_TIMEOUT,
             )
-        else:
-            coro = provider.complete_json_chat_async(
-                system_prompt,
-                user_prompt,
-                max_tokens=GLOSSARY_MAX_TOKENS,
-                temperature=GLOSSARY_FALLBACK_TEMPERATURE,
-                use_reasoning=False,
-            )
-        return await asyncio.wait_for(coro, timeout=GLOSSARY_LLM_TIMEOUT)
 
     @staticmethod
     def _build_system_prompt(target_lang: str) -> str:
@@ -461,6 +524,48 @@ class GlossaryBuilder:
         from .prompts import build_glossary_system_prompt
 
         return build_glossary_system_prompt(target_lang)
+
+    @staticmethod
+    def _load_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
+        """Load the first valid JSON object from a model response."""
+        decoder = json.JSONDecoder()
+        last_error: Optional[json.JSONDecodeError] = None
+
+        for match in re.finditer(r"\{", raw):
+            candidate = raw[match.start() :]
+            try:
+                data, _ = decoder.raw_decode(candidate)
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                continue
+            if isinstance(data, dict):
+                return data
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+        else:
+            if isinstance(data, dict):
+                return data
+
+        if last_error is not None:
+            logger.error("Failed to parse glossary JSON: %s", last_error)
+        return None
+
+    @staticmethod
+    def _glossary_key_variants(key: str) -> List[str]:
+        """Return normalized variants for matching model JSON keys."""
+        normalized = unicodedata.normalize("NFKC", str(key))
+        normalized = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        variants = [normalized] if normalized else []
+
+        bare = re.sub(r"\s*\([^)]*\)\s*$", "", normalized).strip()
+        if bare and bare not in variants:
+            variants.append(bare)
+
+        return variants
 
     @staticmethod
     def _parse_glossary_json(raw: str, expected_keys: Set[str]) -> Dict[str, str]:
@@ -471,12 +576,8 @@ class GlossaryBuilder:
         - Keys that include category suffixes (``"name (character)"``)
         - Stray whitespace in keys
         """
-        try:
-            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-            json_str = json_match.group(0) if json_match else raw
-            data = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse glossary JSON: %s", e)
+        data = GlossaryBuilder._load_first_json_object(raw)
+        if data is None:
             return {}
 
         if not isinstance(data, dict):
@@ -501,24 +602,26 @@ class GlossaryBuilder:
         # suffixes like " (character)", " (location)" that models may include
         # despite instructions to omit them.
         normalised_to_val: Dict[str, str] = {}
+        casefolded_to_val: Dict[str, str] = {}
         for k, v in data.items():
             if v is None:
                 continue
             sv = str(v).strip()
             if not sv:
                 continue
-            key = str(k).strip()
-            normalised_to_val[key] = sv
-            # Also store without trailing " (category)" so we can match bare names
-            bare = re.sub(r"\s*\([^)]*\)\s*$", "", key).strip()
-            if bare and bare != key:
-                normalised_to_val.setdefault(bare, sv)
+            for key in GlossaryBuilder._glossary_key_variants(str(k)):
+                normalised_to_val.setdefault(key, sv)
+                casefolded_to_val.setdefault(key.casefold(), sv)
 
         out: Dict[str, str] = {}
         for ek in expected_keys:
-            v = normalised_to_val.get(ek)
-            if v is None:
-                v = normalised_to_val.get(ek.strip())
+            v = None
+            for key in GlossaryBuilder._glossary_key_variants(ek):
+                v = normalised_to_val.get(key)
+                if v is None:
+                    v = casefolded_to_val.get(key.casefold())
+                if v is not None:
+                    break
             if v is None:
                 continue
             out[ek] = v

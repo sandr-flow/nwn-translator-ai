@@ -115,19 +115,19 @@ class TokenHandler:
     )
     RESTORED_ACTION_TAG_PATTERN = INLINE_TAG_PATTERN
 
-    INLINE_PLACEHOLDER_CORE_PATTERN = r"NWN_INLINE_[A-Za-z0-9_]+"
-    ENGINE_PLACEHOLDER_CORE_PATTERN = r"NWN_TOKEN_[A-Za-z0-9_]+"
+    INLINE_PLACEHOLDER_CORE_PATTERN = r"NWN_INLINE_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
+    ENGINE_PLACEHOLDER_CORE_PATTERN = r"NWN_TOKEN_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
     INLINE_PLACEHOLDER_PATTERN = re.compile(
-        r"(?:__(?P<core1>NWN_INLINE_[A-Za-z0-9_]+)__|\[\[(?P<core2>NWN_INLINE_[A-Za-z0-9_]+)\]\]|<<\[(?P<core3>NWN_INLINE_[A-Za-z0-9_]+)\]>>|<\[(?P<core4>NWN_INLINE_[A-Za-z0-9_]+)\]>)"
+        rf"(?:__(?P<core1>{INLINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{INLINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>)"
     )
     ENGINE_PLACEHOLDER_PATTERN = re.compile(
-        r"(?:__(?P<core1>NWN_TOKEN_[A-Za-z0-9_]+)__|\[\[(?P<core2>NWN_TOKEN_[A-Za-z0-9_]+)\]\]|<<\[(?P<core3>NWN_TOKEN_[A-Za-z0-9_]+)\]>>|<\[(?P<core4>NWN_TOKEN_[A-Za-z0-9_]+)\]>)"
+        rf"(?:__(?P<core1>{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)"
     )
     HELPER_PLACEHOLDER_NOISE_PATTERN = re.compile(
-        r"(?:__(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+__|\[\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]\]|<<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>>|<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>)"
+        rf"(?:__(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)"
     )
     HELPER_PLACEHOLDER_BARE_NOISE_PATTERN = re.compile(
-        r"[^\w\s]*(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+[^\w\s]*"
+        rf"[^\w\s]*(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})[^\w\s]*"
     )
 
     def __init__(self, preserve_standard_tokens: bool = True):

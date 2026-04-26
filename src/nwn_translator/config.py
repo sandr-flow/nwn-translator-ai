@@ -119,6 +119,7 @@ class TranslationConfig:
     input_file: Path = field(default_factory=Path)
     output_file: Optional[Path] = None
     translation_log: Optional[Path] = None
+    metrics_output: Optional[Path] = None
     #: Optional injected writer (e.g. for web/DB). If set, used instead of ``translation_log`` file.
     translation_log_writer: Optional[TranslationLogWriter] = None
 
@@ -164,6 +165,8 @@ class TranslationConfig:
             self.output_file = Path(self.output_file)
         if self.translation_log and isinstance(self.translation_log, str):
             self.translation_log = Path(self.translation_log)
+        if self.metrics_output and isinstance(self.metrics_output, str):
+            self.metrics_output = Path(self.metrics_output)
 
         if self.model is None:
             from .ai_providers.openrouter_provider import OpenRouterProvider

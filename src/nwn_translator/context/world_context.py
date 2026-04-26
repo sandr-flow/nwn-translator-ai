@@ -15,11 +15,16 @@ from ..file_handlers import read_gff
 from ..file_handlers.tlk_reader import TLKFile
 from ..extractors.base import extract_local_string
 from ..nwn_constants import race_label, gender_label
+from .entity_candidates import EntityCandidateRegistry
+from .string_filters import classify_entity_candidate, is_generic_entity_label
 
 if TYPE_CHECKING:
     from ..glossary import Glossary
 
 logger = logging.getLogger(__name__)
+
+WORLD_CONTEXT_MAX_ENTRIES = 30
+WORLD_CONTEXT_MAX_CHARS = 12000
 
 
 @dataclass
@@ -46,6 +51,7 @@ class WorldContext:
     #: Proper nouns discovered by :class:`EntityExtractor` in text bodies.
     #: Populated after Phase A, before glossary build.
     extracted_names: List[Tuple[str, str]] = field(default_factory=list)
+    candidates: EntityCandidateRegistry = field(default_factory=EntityCandidateRegistry)
 
     def get_all_names(self) -> List[Tuple[str, str]]:
         """Collect (name, category) pairs for glossary pre-translation.
@@ -82,6 +88,14 @@ class WorldContext:
 
         return out
 
+    def get_glossary_names(self) -> List[Tuple[str, str]]:
+        """Return curated/evidence-backed glossary candidates when available."""
+        if self.candidates:
+            pairs = self.candidates.glossary_pairs()
+            if pairs:
+                return pairs
+        return self.get_all_names()
+
     def to_prompt_block(
         self,
         glossary: Optional["Glossary"] = None,
@@ -103,15 +117,93 @@ class WorldContext:
         Returns:
             Formatted string containing necessary context.
         """
-        from .relevance import is_relevant, tokenize_corpus
+        from .relevance import (
+            common_hierarchy_components,
+            hierarchical_entry_passes,
+            is_relevant,
+            tokenize_corpus,
+        )
 
         source_tokens = tokenize_corpus(source_texts) if source_texts is not None else None
+        source_joined = "\n".join(str(t) for t in source_texts or [] if t).casefold()
 
-        def _keep(*candidates: str) -> bool:
+        all_hierarchy_names: List[str] = []
+        all_hierarchy_names.extend(self.areas.values())
+        all_hierarchy_names.extend(self.quests.values())
+        all_hierarchy_names.extend(self.items.values())
+        common_components = (
+            common_hierarchy_components(all_hierarchy_names)
+            if source_tokens is not None
+            else set()
+        )
+
+        def _keep(*candidates: str, category: str = "") -> bool:
             if source_tokens is None:
                 return True
             joined = " ".join(c for c in candidates if c)
-            return bool(joined) and is_relevant(joined, source_tokens)
+            if not joined:
+                return False
+            primary = candidates[0] if candidates else ""
+            if primary and is_generic_entity_label(primary, category):
+                # Generic labels (e.g. ``Human Female``, ``Almraiven Resident``)
+                # are shared across many indistinguishable NPCs. Even when the
+                # label happens to appear in the source as a descriptive phrase,
+                # admitting all carriers floods the prompt with noise without
+                # adding translation evidence — drop them entirely.
+                return False
+            if not is_relevant(joined, source_tokens):
+                return False
+            if primary:
+                if not hierarchical_entry_passes(
+                    primary, source_joined, source_tokens, common_components
+                ):
+                    return False
+            return True
+
+        def _score(name: str, tag: str, category: str) -> int:
+            if source_tokens is None:
+                return 0
+            filter_result = classify_entity_candidate(name, category)
+            if filter_result.decision == "drop":
+                return -1000
+            name_key = (name or "").casefold()
+            tag_key = (tag or "").casefold()
+            generic = is_generic_entity_label(name, category)
+            if generic:
+                if not (name_key and name_key in source_joined):
+                    return -1000
+                # Tag/speaker-id matches do not count as evidence for generics.
+                return 100
+            score = 0
+            if name_key and name_key in source_joined:
+                score += 1000
+            if tag_key and tag_key in source_joined:
+                score += 900
+            if filter_result.decision == "deprioritize":
+                score -= 500
+            return score
+
+        budget_remaining = {
+            "entries": WORLD_CONTEXT_MAX_ENTRIES,
+            "chars": WORLD_CONTEXT_MAX_CHARS,
+        }
+
+        def _budget_lines(scored_lines: List[Tuple[int, str]]) -> List[str]:
+            if source_tokens is None:
+                return [line for _score_value, line in scored_lines]
+            selected: List[str] = []
+            for _score_value, line in sorted(scored_lines, key=lambda x: (-x[0], x[1].lower())):
+                if _score_value < 0:
+                    continue
+                if budget_remaining["entries"] <= 0:
+                    break
+                next_chars = budget_remaining["chars"] - len(line) - 1
+                if selected and next_chars < 0:
+                    break
+                selected.append(line)
+                budget_remaining["entries"] -= 1
+                budget_remaining["chars"] = max(0, next_chars)
+            return selected
 
         lines = []
         lines.append("WORLD CONTEXT:")
@@ -125,11 +217,11 @@ class WorldContext:
                 return ""
             return f" [{lang_lbl}: {tr}]"
 
-        npc_lines: List[str] = []
+        npc_scored_lines: List[Tuple[int, str]] = []
         for tag, npc in sorted(self.npcs.items()):
             name_parts = [npc.first_name, npc.last_name]
             full_name = " ".join(p for p in name_parts if p).strip() or tag
-            if not _keep(full_name, tag):
+            if not _keep(full_name, tag, category="character"):
                 continue
             gloss = ""
             if full_name != tag:
@@ -149,34 +241,41 @@ class WorldContext:
             if desc:
                 npc_line += f" - {desc}"
 
-            npc_lines.append(npc_line)
+            npc_scored_lines.append((_score(full_name, tag, "character"), npc_line))
+        npc_lines = _budget_lines(npc_scored_lines)
         if npc_lines:
             lines.append("- KEY CHARACTERS IN THE GAME:")
             lines.extend(npc_lines)
 
-        area_lines = [
-            f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
-            for tag, name in sorted(self.areas.items())
-            if _keep(name, tag)
-        ]
+        area_lines = _budget_lines(
+            [
+                (_score(name, tag, "location"), f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
+                for tag, name in sorted(self.areas.items())
+                if _keep(name, tag, category="location")
+            ]
+        )
         if area_lines:
             lines.append("- LOCATIONS:")
             lines.extend(area_lines)
 
-        quest_lines = [
-            f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
-            for tag, name in sorted(self.quests.items())
-            if _keep(name, tag)
-        ]
+        quest_lines = _budget_lines(
+            [
+                (_score(name, tag, "quest"), f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
+                for tag, name in sorted(self.quests.items())
+                if _keep(name, tag, category="quest")
+            ]
+        )
         if quest_lines:
             lines.append("- QUESTS:")
             lines.extend(quest_lines)
 
-        item_lines = [
-            f"  * {name} (Tag: {tag}){_gloss_suffix(name)}"
-            for tag, name in sorted(self.items.items())
-            if _keep(name, tag)
-        ]
+        item_lines = _budget_lines(
+            [
+                (_score(name, tag, "item"), f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
+                for tag, name in sorted(self.items.items())
+                if _keep(name, tag, category="item")
+            ]
+        )
         if item_lines:
             lines.append("- KEY ITEMS:")
             lines.extend(item_lines)
@@ -332,6 +431,17 @@ class WorldScanner:
                 gender=gender_str,
                 conversation=conversation,
             )
+            full_name = " ".join(p for p in (first_name, last_name) if p).strip()
+            if full_name:
+                context.candidates.add(
+                    full_name,
+                    category="character",
+                    source="utc_name",
+                    resource=file_path.name,
+                    field="FirstName/LastName",
+                    context=desc,
+                    is_speaker_or_dialog_actor=bool(conversation),
+                )
             return True
         return False
 
@@ -359,6 +469,13 @@ class WorldScanner:
 
         if tag and name:
             context.areas[tag] = name
+            context.candidates.add(
+                name,
+                category="location",
+                source="are_name",
+                resource=file_path.name,
+                field="Name",
+            )
             return True
         return False
 
@@ -391,6 +508,13 @@ class WorldScanner:
             name = self._get_local_string(cat, "Name")
             if tag and name:
                 context.quests[tag] = name
+                context.candidates.add(
+                    name,
+                    category="quest",
+                    source="jrl_category",
+                    resource=file_path.name,
+                    field="Name",
+                )
                 added += 1
 
         return added
@@ -423,5 +547,12 @@ class WorldScanner:
         # For now, if it has a LocalizedName and Tag, add it.
         if tag and name:
             context.items[tag] = name
+            context.candidates.add(
+                name,
+                category="item",
+                source="uti_name",
+                resource=file_path.name,
+                field="LocalizedName",
+            )
             return True
         return False

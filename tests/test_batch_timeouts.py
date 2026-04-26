@@ -136,6 +136,30 @@ class TestGlossaryPartialFailure:
         result = run_async(run_test(), timeout=10.0)
         assert result == {"Perin": "Перин", "Dark Forest": "Тёмный Лес"}
 
+    def test_parse_glossary_json_matches_normalized_short_key(self):
+        """Short keys must survive invisible whitespace/category quirks."""
+        from src.nwn_translator.glossary import GlossaryBuilder
+
+        result = GlossaryBuilder._parse_glossary_json(
+            '{"Kit": "\\u041d\\u0430\\u0431\\u043e\\u0440"}',
+            {"Kit\u200b (item)"},
+        )
+
+        assert result == {"Kit\u200b (item)": "\u041d\u0430\u0431\u043e\u0440"}
+
+    def test_parse_glossary_json_uses_first_valid_object(self):
+        """Trailing prose/examples after JSON must not poison parsing."""
+        from src.nwn_translator.glossary import GlossaryBuilder
+
+        raw = (
+            'Here is the translation:\n{"Kit": "\\u041d\\u0430\\u0431\\u043e\\u0440"}\n'
+            'Example format: {"Other": "Value"}'
+        )
+
+        result = GlossaryBuilder._parse_glossary_json(raw, {"Kit"})
+
+        assert result == {"Kit": "\u041d\u0430\u0431\u043e\u0440"}
+
     def test_echoback_detection_retries_untranslated(self):
         """Echo-backs (value == key) must be excluded and retried."""
         import json
@@ -276,3 +300,56 @@ class TestTranslationManagerTimeouts:
         assert result == {}
         stats = manager.get_statistics()
         assert stats["total_errors"] >= 1
+
+    def test_queued_long_items_are_not_limited_by_fixed_outer_timeout(self):
+        """The outer run_async timeout must scale with queued semaphore work."""
+        from src.nwn_translator.ai_providers.base import TranslationResult
+        from src.nwn_translator.config import TranslationConfig
+        from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+        from src.nwn_translator.translators.translation_manager import TranslationManager
+
+        config = TranslationConfig(
+            api_key="test-key",
+            model="test-model",
+            source_lang="english",
+            target_lang="russian",
+            input_file=Path("test.mod"),
+            max_concurrent_requests=1,
+        )
+
+        provider = Mock()
+
+        async def slow_translate(
+            text,
+            source_lang,
+            target_lang,
+            context=None,
+            glossary_block=None,
+            content_profile=None,
+        ):
+            await asyncio.sleep(0.05)
+            return TranslationResult(translated=f"TR:{text}", original=text, success=True)
+
+        provider.translate_async = AsyncMock(side_effect=slow_translate)
+        provider.close_async_client = AsyncMock()
+
+        manager = TranslationManager(config, provider)
+        manager._ITEM_TIMEOUT = 1.0
+        manager._RUN_ASYNC_TIMEOUT = 0.08
+
+        items = [
+            TranslatableItem(
+                text=f"This is a deliberately long line queued behind the semaphore {i}.",
+                item_id=f"test:{i}",
+            )
+            for i in range(3)
+        ]
+        content = ExtractedContent(
+            content_type="item",
+            items=items,
+            source_file=Path("test.uti"),
+        )
+
+        result = manager.translate_content(content)
+
+        assert result == {item.text: f"TR:{item.text}" for item in items}

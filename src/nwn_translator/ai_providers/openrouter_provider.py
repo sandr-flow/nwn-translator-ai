@@ -12,6 +12,7 @@ import logging
 import re
 import threading
 import asyncio
+import time
 from typing import Any, Dict, List, NoReturn, Optional, Union, cast
 
 import httpx
@@ -48,6 +49,13 @@ from ..config import (
     parse_reasoning_effort,
 )
 from ..race_dictionary import match_race_terms
+from ..telemetry import (
+    LLMRequestMetric,
+    current_llm_phase,
+    estimate_tokens,
+    split_system_prompt_chars,
+    usage_tokens,
+)
 
 #: Exception types that should trigger automatic retry with exponential backoff.
 _RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError)
@@ -134,6 +142,65 @@ class OpenRouterProvider(BaseAIProvider):
             "HTTP-Referer": self.site_url,
             "X-Title": self.site_name,
         }
+
+    def _record_llm_metric(
+        self,
+        *,
+        phase: str,
+        system_prompt: Any,
+        user_prompt: str,
+        batch_size: int,
+        latency_ms: int,
+        success: bool,
+        response: Any = None,
+        error: Optional[BaseException] = None,
+        world_context_chars: int = 0,
+        glossary_chars: int = 0,
+        retry_count: int = 0,
+        parse_recovery: Optional[str] = None,
+    ) -> None:
+        """Record one request-level metric when telemetry is configured."""
+        recorder = getattr(self, "metrics_recorder", None)
+        if recorder is None:
+            return
+        stable_chars, variable_chars = split_system_prompt_chars(system_prompt)
+        user_chars = len(user_prompt or "")
+        prompt_chars = stable_chars + variable_chars + user_chars
+        usage_in, usage_out = usage_tokens(response)
+        raw_out = ""
+        if response is not None:
+            try:
+                raw_out = (response.choices[0].message.content or "").strip()
+            except Exception:
+                raw_out = ""
+        metric = LLMRequestMetric(
+            request_id=recorder.next_request_id(),
+            phase=phase,
+            provider=self.get_provider_name(),
+            model=self.model,
+            batch_size=batch_size,
+            stable_chars=stable_chars,
+            variable_chars=variable_chars,
+            user_chars=user_chars,
+            world_context_chars=world_context_chars,
+            glossary_chars=glossary_chars,
+            prompt_chars=prompt_chars,
+            estimated_input_tokens=(
+                int(usage_in) if usage_in is not None else estimate_tokens(prompt_chars)
+            ),
+            estimated_output_tokens=(
+                int(usage_out) if usage_out is not None else estimate_tokens(len(raw_out))
+            ),
+            usage_input_tokens=usage_in,
+            usage_output_tokens=usage_out,
+            latency_ms=latency_ms,
+            retry_count=retry_count,
+            timeout=isinstance(error, APITimeoutError),
+            parse_recovery=parse_recovery,
+            success=success,
+            error=str(error) if error is not None else None,
+        )
+        recorder.record(metric)
 
     @property
     def async_client(self) -> AsyncOpenAI:
@@ -313,6 +380,7 @@ class OpenRouterProvider(BaseAIProvider):
             system_content = self.make_system_message_content(stable, variable)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
+            t0 = time.monotonic()
             response = self._chat_completions_create_sync(
                 model=self.model,
                 messages=[
@@ -322,6 +390,16 @@ class OpenRouterProvider(BaseAIProvider):
                 temperature=TRANSLATION_TEMPERATURE,
                 max_tokens=TRANSLATION_MAX_TOKENS,
                 response_format={"type": "json_object"},
+            )
+            self._record_llm_metric(
+                phase=current_llm_phase("generic_single"),
+                system_prompt=system_content,
+                user_prompt=user_prompt,
+                batch_size=1,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                success=True,
+                response=response,
+                glossary_chars=len(gb),
             )
 
             raw_response = (response.choices[0].message.content or "").strip()
@@ -383,6 +461,7 @@ class OpenRouterProvider(BaseAIProvider):
             system_content = self.make_system_message_content(stable, variable)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
+            t0 = time.monotonic()
             response = await self._chat_completions_create_async(
                 model=self.model,
                 messages=[
@@ -392,6 +471,16 @@ class OpenRouterProvider(BaseAIProvider):
                 temperature=TRANSLATION_TEMPERATURE,
                 max_tokens=TRANSLATION_MAX_TOKENS,
                 response_format={"type": "json_object"},
+            )
+            self._record_llm_metric(
+                phase=current_llm_phase("generic_single"),
+                system_prompt=system_content,
+                user_prompt=user_prompt,
+                batch_size=1,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                success=True,
+                response=response,
+                glossary_chars=len(gb),
             )
 
             raw_response = (response.choices[0].message.content or "").strip()
@@ -429,6 +518,10 @@ class OpenRouterProvider(BaseAIProvider):
         temperature: float,
         response_format: dict,
         use_reasoning: bool = True,
+        phase: Optional[str] = None,
+        batch_size: int = 1,
+        world_context_chars: int = 0,
+        glossary_chars: int = 0,
     ) -> str:
         """One chat completion with forced JSON-style ``response_format`` (no retries).
 
@@ -436,6 +529,7 @@ class OpenRouterProvider(BaseAIProvider):
         (the latter produced by :meth:`BaseAIProvider.make_system_message_content`
         when prompt caching is in effect).
         """
+        t0 = time.monotonic()
         try:
             response = await self._chat_completions_create_async(
                 model=self.model,
@@ -449,8 +543,30 @@ class OpenRouterProvider(BaseAIProvider):
                 stream=False,
                 use_reasoning=use_reasoning,
             )
+            self._record_llm_metric(
+                phase=phase or current_llm_phase("generic_batch"),
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                batch_size=batch_size,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                success=True,
+                response=response,
+                world_context_chars=world_context_chars,
+                glossary_chars=glossary_chars,
+            )
             return (response.choices[0].message.content or "").strip()
-        except (RateLimitError, APIConnectionError, APITimeoutError):
+        except (RateLimitError, APIConnectionError, APITimeoutError) as exc:
+            self._record_llm_metric(
+                phase=phase or current_llm_phase("generic_batch"),
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                batch_size=batch_size,
+                latency_ms=int((time.monotonic() - t0) * 1000),
+                success=False,
+                error=exc,
+                world_context_chars=world_context_chars,
+                glossary_chars=glossary_chars,
+            )
             raise
         except OpenRouterError:
             raise
@@ -513,6 +629,8 @@ class OpenRouterProvider(BaseAIProvider):
             temperature=temperature,
             response_format={"type": "json_object"},
             use_reasoning=False,
+            phase=current_llm_phase("glossary"),
+            batch_size=len(glossary_keys),
         )
 
     @retry(
@@ -598,6 +716,9 @@ class OpenRouterProvider(BaseAIProvider):
                 max_tokens=TRANSLATION_MAX_TOKENS,
                 temperature=TRANSLATION_TEMPERATURE,
                 response_format={"type": "json_object"},
+                phase=current_llm_phase("generic_batch"),
+                batch_size=len(items),
+                glossary_chars=len(gb),
             )
 
             # Strip markdown fences if present
@@ -674,18 +795,18 @@ class OpenRouterProvider(BaseAIProvider):
             "(`high` + `player` = probable player-facing, but VERIFY).\n"
             "\n"
             "## Rules — output `translate: false` when ANY of these hold\n"
-            "1. The literal appears as `== \"X\"`, `!= \"X\"`, `\"X\" ==`, `\"X\" !=` "
+            '1. The literal appears as `== "X"`, `!= "X"`, `"X" ==`, `"X" !=` '
             "in nss_snippet, OR bytecode_context.compare_nearby is true. "
             "These are dispatch keys — translating breaks the script silently. "
             "Classic trap: DMFI voice commands like `.loc`, `.dm`, "
             "`animal empathy`, `Craft Armor`, `Open Lock` compared against "
             "`sChat`, `sCommand`, `sSpeakString`.\n"
-            "2. Used as a tag/resref argument: `GetObjectByTag(\"X\")`, "
-            "`GetWaypointByTag(\"X\")`, `CreateObject(..., \"X\", ...)`, "
-            "`GetNearestObjectByTag`, `StartNewModule(\"X\")`, "
-            "`ExecuteScript(\"X\", ...)`.\n"
-            "3. Local-variable name argument: `GetLocalInt(oObj, \"X\")`, "
-            "`SetLocalString(..., \"X\", ...)`, `GetLocalObject`, "
+            '2. Used as a tag/resref argument: `GetObjectByTag("X")`, '
+            '`GetWaypointByTag("X")`, `CreateObject(..., "X", ...)`, '
+            '`GetNearestObjectByTag`, `StartNewModule("X")`, '
+            '`ExecuteScript("X", ...)`.\n'
+            '3. Local-variable name argument: `GetLocalInt(oObj, "X")`, '
+            '`SetLocalString(..., "X", ...)`, `GetLocalObject`, '
             "`DeleteLocalInt`, and any `*Local*` family call — the string "
             "names a variable, never player text.\n"
             "4. Looks like an identifier: `snake_case`, `UPPER_SNAKE`, "
@@ -695,11 +816,11 @@ class OpenRouterProvider(BaseAIProvider):
             "are usually debug fragments concatenated into a larger message.\n"
             "5. Debug scaffolding: `PrintString`, `SendMessageToAllDMs`, "
             "`WriteTimestampedLogEntry`, or obvious developer text like "
-            "`\"Module Leadership = \"` used as a `+ IntToString(x)` prefix. "
-            "`SendMessageToPC(oPC, \"X = \" + IntToString(...))` is DM/debug, "
+            '`"Module Leadership = "` used as a `+ IntToString(x)` prefix. '
+            '`SendMessageToPC(oPC, "X = " + IntToString(...))` is DM/debug, '
             "not in-character dialogue — still false.\n"
-            "6. Format/template fragments: trailing `\" = \"`, `\": \"`, empty-ish "
-            "punctuation-only strings, separator runs (`\"****\"`, `\"----\"`).\n"
+            '6. Format/template fragments: trailing `" = "`, `": "`, empty-ish '
+            'punctuation-only strings, separator runs (`"****"`, `"----"`).\n'
             "\n"
             "## Rules — output `translate: true` when ALL these hold\n"
             "- The literal is natural-language text in the source language.\n"
@@ -709,9 +830,9 @@ class OpenRouterProvider(BaseAIProvider):
             "in dialog), `SetDescription`, or `SendMessageToPC` carrying an "
             "actual sentence, not a debug concatenation.\n"
             "- It is a full or near-full utterance, not a fragment glued to "
-            "variables. Short barks (`\"Help!\"`, `\"Mommy.\"`, "
-            "`\"I'm okay, sir.\"`) count as dialogue; approve them.\n"
-            "- Informal or broken in-character English (`\"Oi, ye git!\"`) is "
+            'variables. Short barks (`"Help!"`, `"Mommy."`, '
+            '`"I\'m okay, sir."`) count as dialogue; approve them.\n'
+            '- Informal or broken in-character English (`"Oi, ye git!"`) is '
             "still dialogue — approve.\n"
             "\n"
             "## When nss_snippet is missing\n"
@@ -722,8 +843,8 @@ class OpenRouterProvider(BaseAIProvider):
             "unmistakably a sentence.\n"
             "\n"
             "## Output format\n"
-            "Return ONLY a JSON object. Keys match input keys (`\"0\"`, `\"1\"`, …). "
-            "Each value: `{\"translate\": true|false, \"reason\": \"<short tag>\"}`. "
+            'Return ONLY a JSON object. Keys match input keys (`"0"`, `"1"`, …). '
+            'Each value: `{"translate": true|false, "reason": "<short tag>"}`. '
             "`reason` is a short machine-readable tag like `compare_target`, "
             "`tag_arg`, `var_name`, `identifier_like`, `debug_concat`, "
             "`player_speakstring`, `player_sendmessage`, `player_floatingtext`, "
@@ -807,6 +928,8 @@ class OpenRouterProvider(BaseAIProvider):
                     max_tokens=max_tok,
                     temperature=0.15,
                     response_format={"type": "json_object"},
+                    phase="ncs_gate",
+                    batch_size=len(entries),
                 )
                 return self._parse_ncs_gate_raw(raw, entries)
             except json.JSONDecodeError as err:
@@ -825,8 +948,7 @@ class OpenRouterProvider(BaseAIProvider):
                 last_err,
             )
             return {
-                str(e["key"]): {"translate": False, "reason": "gate_parse_failed"}
-                for e in entries
+                str(e["key"]): {"translate": False, "reason": "gate_parse_failed"} for e in entries
             }
 
         mid = len(entries) // 2

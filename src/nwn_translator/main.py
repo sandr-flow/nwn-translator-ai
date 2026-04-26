@@ -39,7 +39,10 @@ from .translators.translation_manager import TranslationManager
 from .translators.context_translator import ContextualTranslationManager
 from .context.world_context import WorldScanner, WorldContext
 from .context.entity_extractor import EntityExtractor
+from .context.entity_candidates import EntityCandidateRegistry
 from .glossary import Glossary, GlossaryBuilder
+from .glossary_curator import GlossaryCurator
+from .telemetry import RunMetricsRecorder
 from .translation_logging import translation_log_writer_for_config
 
 import threading
@@ -153,6 +156,7 @@ class ModuleTranslator:
         self.config = config
         self.temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self.extract_dir: Optional[Path] = None
+        self.metrics_recorder = RunMetricsRecorder()
 
         # Create AI provider
         self.provider = create_provider(
@@ -160,6 +164,7 @@ class ModuleTranslator:
             config.model,
             player_gender=config.player_gender,
             reasoning_effort=config.reasoning_effort,
+            metrics_recorder=self.metrics_recorder,
         )
 
         # Statistics
@@ -227,7 +232,9 @@ class ModuleTranslator:
 
         if not translatable_files:
             logger.warning("No translatable files found!")
-            return self._resolve_output_path(extract_dir)
+            output_path = self._resolve_output_path(extract_dir)
+            self._write_metrics(output_path)
+            return output_path
 
         # Session GFF cache (world scan + translation + .git)
         self._gff_cache = {}
@@ -312,22 +319,32 @@ class ModuleTranslator:
             if self.config.progress_callback:
                 self.config.progress_callback("scanning", 0, 1, "Extracting entities from text…")
             all_items: List[TranslatableItem] = []
+            extracted_contents: List[ExtractedContent] = []
             for _fp, (_pd, extracted, _ext) in extracted_map.items():
                 all_items.extend(extracted.items)
+                extracted_contents.append(extracted)
 
             known_names = {name for name, _cat in self.world_context.get_all_names()}
-            extracted_entities = EntityExtractor().extract(
+            extracted_registry = EntityCandidateRegistry.from_extracted_content(extracted_contents)
+            self.world_context.candidates.extend(extracted_registry.values())
+
+            llm_registry = EntityExtractor().extract_candidates(
                 all_items,
                 self.provider,
                 self.config,
                 known_names,
                 progress_callback=self.config.progress_callback,
             )
-            if extracted_entities:
-                self.world_context.extracted_names = extracted_entities
+            self.world_context.candidates.extend(llm_registry.values())
+            self.world_context.extracted_names = llm_registry.glossary_pairs()
+            if self.world_context.candidates:
+                self.metrics_recorder.increment(
+                    "entity_candidates.raw",
+                    len(self.world_context.candidates.values()),
+                )
                 logger.info(
-                    "Entity extraction added %d proper noun(s) to glossary input",
-                    len(extracted_entities),
+                    "Entity candidate collection produced %d candidate(s)",
+                    len(self.world_context.candidates.values()),
                 )
 
         # Step 2.8: Build glossary (now includes text-extracted names).
@@ -335,6 +352,18 @@ class ModuleTranslator:
             if self.config.progress_callback:
                 self.config.progress_callback("scanning", 0, 1, "Building glossary...")
             try:
+                GlossaryCurator().curate(
+                    self.world_context.candidates,
+                    self.provider,
+                    self.config,
+                    progress_callback=self.config.progress_callback,
+                )
+                curated_counts: Dict[str, int] = {}
+                for candidate in self.world_context.candidates.values():
+                    key = f"entity_candidates.{candidate.curation_decision}"
+                    curated_counts[key] = curated_counts.get(key, 0) + 1
+                for key, value in curated_counts.items():
+                    self.metrics_recorder.increment(key, value)
                 self.glossary = GlossaryBuilder().build(
                     self.world_context,
                     self.provider,
@@ -481,6 +510,7 @@ class ModuleTranslator:
 
         output_path = self._resolve_output_path(extract_dir)
         create_mod_from_directory(extract_dir, output_path, self.config.input_file)
+        self._write_metrics(output_path)
 
         logger.info(f"Translation complete: {output_path}")
         self._log_summary()
@@ -771,6 +801,22 @@ class ModuleTranslator:
 
         return output_path
 
+    def _metrics_output_path(self, output_path: Path) -> Path:
+        """Return the metrics JSON path for this run."""
+        if self.config.metrics_output is not None:
+            return self.config.metrics_output
+        return output_path.with_suffix(output_path.suffix + ".metrics.json")
+
+    def _write_metrics(self, output_path: Path) -> None:
+        """Persist request-level metrics and attach summary to in-memory stats."""
+        summary = self.metrics_recorder.summary()
+        with self._stats_lock:
+            self.stats["metrics"] = summary
+        try:
+            self.metrics_recorder.write_json(self._metrics_output_path(output_path))
+        except Exception as exc:
+            logger.debug("Failed to write run metrics: %s", exc)
+
     def _cleanup(self) -> None:
         """Clean up temporary files."""
         if self.temp_dir:
@@ -805,6 +851,7 @@ class ModuleTranslator:
         """
         return {
             **self.stats,
+            "metrics": self.metrics_recorder.summary(),
             "total_errors": len(self.stats["errors"]),
         }
 

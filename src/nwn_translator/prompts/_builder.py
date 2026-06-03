@@ -22,7 +22,10 @@ from .examples import get_examples
 #: changing behaviour for dialog/description calls.
 CONTENT_PROFILE_DEFAULT = "default"
 CONTENT_PROFILE_SHORT_LABEL = "short_label"
-_VALID_CONTENT_PROFILES = frozenset({CONTENT_PROFILE_DEFAULT, CONTENT_PROFILE_SHORT_LABEL})
+CONTENT_PROFILE_SCRIPT_MESSAGE = "script_message"
+_VALID_CONTENT_PROFILES = frozenset(
+    {CONTENT_PROFILE_DEFAULT, CONTENT_PROFILE_SHORT_LABEL, CONTENT_PROFILE_SCRIPT_MESSAGE}
+)
 
 # ---------------------------------------------------------------------------
 # Static glossary-usage rules (always included in STABLE prefix so providers
@@ -219,6 +222,24 @@ def _build_short_label_profile_rules(target_lang: str) -> str:
     )
 
 
+def _build_script_message_profile_rules(target_lang: str, gender: str) -> str:
+    """Compact RULES body for short player-visible NCS script messages."""
+    return (
+        "RULES:\n"
+        "1. Translate player-visible script messages naturally. Preserve meaning, tone, "
+        "formatting, line breaks, punctuation, and special characters.\n"
+        f"2. {_token_preservation_rule()}"
+        "3. Translate only natural-language text shown to the player. Never translate, "
+        "rename, or rewrite identifiers, tags, resrefs, variables, script names, debug "
+        "logs, constants, or code-like fragments.\n"
+        "4. The translated text MUST be grammatically correct and must fit as a short "
+        "in-game message.\n"
+        f"5. {_proper_names_rules(target_lang)}"
+        f"6. {_player_gender_rule(gender)}"
+        f"{_GLOSSARY_RULE_TRANSLATION_SHORT}"
+    )
+
+
 def build_translation_system_prompt_parts(
     target_lang: str,
     gender: str,
@@ -241,13 +262,16 @@ def build_translation_system_prompt_parts(
     bodies (Phase 3.4 — dynamic few-shot).  It MUST depend only on the
     content-type mix of the caller's batch; otherwise cache hits are lost.
     Valid values: :data:`CONTENT_PROFILE_DEFAULT`,
-    :data:`CONTENT_PROFILE_SHORT_LABEL`.
+    :data:`CONTENT_PROFILE_SHORT_LABEL`,
+    :data:`CONTENT_PROFILE_SCRIPT_MESSAGE`.
     """
     if content_profile not in _VALID_CONTENT_PROFILES:
         content_profile = CONTENT_PROFILE_DEFAULT
 
     if content_profile == CONTENT_PROFILE_SHORT_LABEL:
         rules_body = _build_short_label_profile_rules(target_lang)
+    elif content_profile == CONTENT_PROFILE_SCRIPT_MESSAGE:
+        rules_body = _build_script_message_profile_rules(target_lang, gender)
     else:
         rules_body = _build_default_profile_rules(target_lang, gender)
 

@@ -699,7 +699,8 @@ class OpenRouterProvider(BaseAIProvider):
         # Build the batch payload with optional type hints from metadata
         batch_input: dict = {}
         for i, item in enumerate(items):
-            hint = (item.metadata or {}).get("type", "")
+            meta = item.metadata or {}
+            hint = meta.get("hint") or meta.get("ncs_hint") or meta.get("type", "")
             if hint:
                 batch_input[str(i)] = {"text": item.original, "hint": hint}
             else:

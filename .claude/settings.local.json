@@ -10,7 +10,11 @@
       "WebFetch(domain:github.com)",
       "Bash(.venv/Scripts/python.exe:*)",
       "Bash(ls D:\\\\Projects\\\\nwn-modules-translator\\\\src\\\\nwn_translator\\\\prompts*)",
-      "Bash(ls D:/Projects/nwn-modules-translator/*.log D:/Projects/nwn-modules-translator/*.txt)"
+      "Bash(ls D:/Projects/nwn-modules-translator/*.log D:/Projects/nwn-modules-translator/*.txt)",
+      "Bash(cp \"C:/Users/sadsk/AppData/Local/Temp/nwn_extract_81c268wg/studentouch.nss\" /tmp/)",
+      "Bash(cp \"C:/Users/sadsk/AppData/Local/Temp/nwn_extract_81c268wg/studentwhine.nss\" /tmp/)",
+      "Bash(cp \"C:/Users/sadsk/AppData/Local/Temp/nwn_extract_81c268wg/payneattack.nss\" /tmp/)",
+      "Read(//d/tmp/**)"
     ]
   }
 }

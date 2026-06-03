@@ -16,6 +16,7 @@ from tqdm import tqdm
 from ..config import TranslationCancelled, TranslationConfig
 from ..prompts._builder import (
     CONTENT_PROFILE_DEFAULT,
+    CONTENT_PROFILE_SCRIPT_MESSAGE,
     CONTENT_PROFILE_SHORT_LABEL,
 )
 from ..translation_logging import translation_log_writer_for_config
@@ -301,6 +302,15 @@ class TranslationManager:
         """
         return self.translation_cache.longest_prefix_match(sanitized, _MIN_PREFIX_LEN)
 
+    def _translation_cache_key_for_item_data(self, item_data: dict) -> str:
+        """Return the session-cache key for one translation item."""
+        item = item_data["item"]
+        sanitized = str(item_data.get("_original_sanitized") or item_data["sanitized"])
+        if self._is_ncs_item(item):
+            meta = item.metadata or {}
+            return f"ncs:{meta.get('ncs_hint') or ''}:{sanitized}"
+        return sanitized
+
     def _ncs_item_passes_gate(self, item) -> bool:
         if not self._is_ncs_item(item):
             return True
@@ -512,9 +522,10 @@ class TranslationManager:
                 continue
 
             # Cache hit?
-            if sanitized in self.translation_cache:
+            cache_key = self._translation_cache_key_for_item_data(item_data)
+            if cache_key in self.translation_cache:
                 outcome = handler.finalize_translation(
-                    self.translation_cache[sanitized],
+                    self.translation_cache[cache_key],
                     allow_cleanup=True,
                 )
                 translations[item.text] = outcome.final_text
@@ -529,7 +540,7 @@ class TranslationManager:
                 continue
 
             # Prefix-cache hit (journal entries that extend earlier text)
-            prefix_match = self._find_cached_prefix(sanitized)
+            prefix_match = None if self._is_ncs_item(item) else self._find_cached_prefix(sanitized)
             if prefix_match is not None:
                 prefix_key, prefix_translation = prefix_match
                 # Only the new tail needs translating — queue it
@@ -588,6 +599,12 @@ class TranslationManager:
     # Larger batch size for very short items (<= 20 chars) — mostly tag names
     # and one-word labels where per-item prompt overhead dominates cost.
     _BATCH_SIZE_VERY_SHORT = 30
+    # NCS batch sizes by sanitized string length. Single-line strings at or
+    # above 100 chars keep the existing individual translation path.
+    _NCS_BATCH_SHORT_THRESHOLD = 50
+    _NCS_BATCH_MAX_LENGTH = 100
+    _NCS_BATCH_SIZE_SHORT = 20
+    _NCS_BATCH_SIZE_MEDIUM = 10
 
     # Timeout (seconds) for a single async translation call.
     _ITEM_TIMEOUT: float = 120.0
@@ -628,6 +645,28 @@ class TranslationManager:
         return item_type in TranslationManager._BATCHABLE_TYPES
 
     @staticmethod
+    def _is_ncs_batchable(item_data: dict) -> bool:
+        """Return whether an approved NCS item can use the NCS batch path."""
+        item = item_data["item"]
+        if not TranslationManager._is_ncs_item(item):
+            return False
+        sanitized = item_data["sanitized"]
+        return "\n" not in sanitized and len(sanitized) < TranslationManager._NCS_BATCH_MAX_LENGTH
+
+    @staticmethod
+    def _ncs_batch_size_for(item_data: dict) -> int:
+        """Return the configured NCS batch size for one item."""
+        if len(item_data["sanitized"]) < TranslationManager._NCS_BATCH_SHORT_THRESHOLD:
+            return TranslationManager._NCS_BATCH_SIZE_SHORT
+        return TranslationManager._NCS_BATCH_SIZE_MEDIUM
+
+    @staticmethod
+    def _ncs_dedup_key(item_data: dict) -> tuple[str, str]:
+        """Deduplicate NCS batch payloads by text plus script role hint."""
+        meta = item_data["item"].metadata or {}
+        return item_data["sanitized"], str(meta.get("ncs_hint") or "")
+
+    @staticmethod
     def _content_profile_for_item(item_data: dict) -> str:
         """Deterministic profile for a single item (Phase 3.4).
 
@@ -637,6 +676,8 @@ class TranslationManager:
         """
         item = item_data["item"]
         item_type = (item.metadata or {}).get("type", "")
+        if item_type == "ncs_string":
+            return CONTENT_PROFILE_SCRIPT_MESSAGE
         if item_type in TranslationManager._BATCHABLE_TYPES:
             return CONTENT_PROFILE_SHORT_LABEL
         return CONTENT_PROFILE_DEFAULT
@@ -651,6 +692,8 @@ class TranslationManager:
         """
         if not batch:
             return CONTENT_PROFILE_DEFAULT
+        if all(TranslationManager._is_ncs_item(d["item"]) for d in batch):
+            return CONTENT_PROFILE_SCRIPT_MESSAGE
         for d in batch:
             item_type = (d["item"].metadata or {}).get("type", "")
             if item_type not in TranslationManager._BATCHABLE_TYPES:
@@ -851,7 +894,7 @@ class TranslationManager:
         if prefix_translation is not None and original_sanitized is not None:
             return prefix_translation + translated_sanitized, original_sanitized
 
-        return translated_sanitized, full_sanitized
+        return translated_sanitized, self._translation_cache_key_for_item_data(item_data)
 
     def _build_token_retry_context(
         self,
@@ -1107,8 +1150,10 @@ class TranslationManager:
             for d in passthrough_items:
                 self._apply_passthrough(d, translations)
 
-        short_items = [d for d in real_items if self._is_short_item(d)]
-        long_items = [d for d in real_items if not self._is_short_item(d)]
+        ncs_batch_items = [d for d in real_items if self._is_ncs_batchable(d)]
+        regular_items = [d for d in real_items if not self._is_ncs_batchable(d)]
+        short_items = [d for d in regular_items if self._is_short_item(d)]
+        long_items = [d for d in regular_items if not self._is_short_item(d)]
 
         # Phase 3.5 — adaptive batch size: very short (<=20 chars) items carry
         # so little payload that per-batch prompt overhead dominates; group
@@ -1342,6 +1387,13 @@ class TranslationManager:
                 len(long_items),
             )
 
+        if ncs_batch_items:
+            self._translate_ncs_batches(
+                ncs_batch_items,
+                translations,
+                source_filename=source_filename,
+            )
+
         # Reorder the item list to match the flattened batch_results ordering
         # (very-short batches first, then regular-short batches).
         ordered_short_items = very_short_items + regular_short_items
@@ -1371,6 +1423,317 @@ class TranslationManager:
             self._translate_individual_fallback(
                 retry_items, translations, source_filename=source_filename
             )
+
+    async def _translate_ncs_batch_with_recovery(
+        self,
+        sem: asyncio.Semaphore,
+        batch: List[dict],
+    ) -> List[TranslationResult]:
+        """Translate one NCS batch, splitting all-failed batches recursively."""
+        if not batch:
+            return []
+
+        dedup_index: Dict[tuple[str, str], int] = {}
+        unique_batch: List[dict] = []
+        for d in batch:
+            key = self._ncs_dedup_key(d)
+            if key not in dedup_index:
+                dedup_index[key] = len(unique_batch)
+                unique_batch.append(d)
+
+        batch_items = []
+        for d in unique_batch:
+            item = d["item"]
+            meta = item.metadata or {}
+            ncs_hint = str(meta.get("ncs_hint") or "")
+            batch_items.append(
+                TranslationItem(
+                    original=d["sanitized"],
+                    context=item.context,
+                    metadata={
+                        **meta,
+                        "type": "ncs_string",
+                        "hint": ncs_hint,
+                        "ncs_hint": ncs_hint,
+                    },
+                )
+            )
+
+        glossary_block = self._glossary_block_for_texts(d["sanitized"] for d in unique_batch)
+
+        async with sem:
+            self._raise_if_cancelled()
+            try:
+                unique_results = await asyncio.wait_for(
+                    self.provider.translate_batch_async(
+                        items=batch_items,
+                        source_lang=self.config.source_lang,
+                        target_lang=self.config.target_lang,
+                        glossary_block=glossary_block,
+                        content_profile=CONTENT_PROFILE_SCRIPT_MESSAGE,
+                    ),
+                    timeout=self._BATCH_CALL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                unique_results = [
+                    TranslationResult(
+                        translated="",
+                        original=bi.original,
+                        success=False,
+                        error=f"NCS batch timeout after {self._BATCH_CALL_TIMEOUT}s",
+                        metadata={},
+                    )
+                    for bi in batch_items
+                ]
+            except Exception as exc:
+                unique_results = [
+                    TranslationResult(
+                        translated="",
+                        original=bi.original,
+                        success=False,
+                        error=str(exc),
+                        metadata={},
+                    )
+                    for bi in batch_items
+                ]
+
+        if len(unique_results) < len(unique_batch):
+            unique_results = [
+                *unique_results,
+                *[
+                    TranslationResult(
+                        translated="",
+                        original=batch_items[i].original,
+                        success=False,
+                        error="Missing translation result in NCS batch response",
+                        metadata={},
+                    )
+                    for i in range(len(unique_results), len(unique_batch))
+                ],
+            ]
+        elif len(unique_results) > len(unique_batch):
+            unique_results = unique_results[: len(unique_batch)]
+
+        if (
+            unique_results
+            and all(not result.success for result in unique_results)
+            and len(batch) > 1
+        ):
+            mid = len(batch) // 2
+            left = await self._translate_ncs_batch_with_recovery(sem, batch[:mid])
+            right = await self._translate_ncs_batch_with_recovery(sem, batch[mid:])
+            return left + right
+
+        results: List[TranslationResult] = []
+        for d in batch:
+            source_result = unique_results[dedup_index[self._ncs_dedup_key(d)]]
+            results.append(
+                TranslationResult(
+                    translated=source_result.translated,
+                    original=d["sanitized"],
+                    success=source_result.success,
+                    error=source_result.error,
+                    metadata=source_result.metadata,
+                )
+            )
+
+        if len(unique_batch) < len(batch):
+            logger.debug(
+                "NCS batch dedup: %d items -> %d unique sanitized/hint pairs",
+                len(batch),
+                len(unique_batch),
+            )
+        return results
+
+    async def _translate_ncs_minimal_async(
+        self,
+        sem: asyncio.Semaphore,
+        item_data: dict,
+    ) -> TranslationResult:
+        """Retry one failed NCS batch item with minimal single-item context."""
+        item = item_data["item"]
+        sanitized = item_data["sanitized"]
+        async with sem:
+            self._raise_if_cancelled()
+            try:
+                return await asyncio.wait_for(
+                    self.provider.translate_async(
+                        text=sanitized,
+                        source_lang=self.config.source_lang,
+                        target_lang=self.config.target_lang,
+                        context=self._build_ncs_minimal_retry_context(item),
+                        glossary_block=None,
+                        content_profile=CONTENT_PROFILE_SCRIPT_MESSAGE,
+                    ),
+                    timeout=self._ITEM_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                return TranslationResult(
+                    translated="",
+                    original=sanitized,
+                    success=False,
+                    error=f"NCS minimal fallback timeout after {self._ITEM_TIMEOUT}s",
+                    metadata={},
+                )
+            except Exception as exc:
+                return TranslationResult(
+                    translated="",
+                    original=sanitized,
+                    success=False,
+                    error=str(exc),
+                    metadata={},
+                )
+
+    def _translate_ncs_batches(
+        self,
+        items: List[dict],
+        translations: Dict[str, str],
+        source_filename: Optional[str] = None,
+    ) -> None:
+        """Translate approved short NCS strings in dynamic JSON batches."""
+        short_items = [
+            d for d in items if self._ncs_batch_size_for(d) == self._NCS_BATCH_SIZE_SHORT
+        ]
+        medium_items = [
+            d for d in items if self._ncs_batch_size_for(d) == self._NCS_BATCH_SIZE_MEDIUM
+        ]
+
+        batches: List[List[dict]] = []
+        for i in range(0, len(short_items), self._NCS_BATCH_SIZE_SHORT):
+            batches.append(short_items[i : i + self._NCS_BATCH_SIZE_SHORT])
+        for i in range(0, len(medium_items), self._NCS_BATCH_SIZE_MEDIUM):
+            batches.append(medium_items[i : i + self._NCS_BATCH_SIZE_MEDIUM])
+
+        async def run_batches() -> List[TranslationResult]:
+            limit = max(1, int(self.config.max_concurrent_requests))
+            sem = asyncio.Semaphore(limit)
+            nested = await asyncio.gather(
+                *[self._translate_ncs_batch_with_recovery(sem, batch) for batch in batches]
+            )
+            return [result for group in nested for result in group]
+
+        from ..async_utils import run_async
+
+        limit = max(1, int(self.config.max_concurrent_requests))
+        run_timeout = max(
+            self._RUN_ASYNC_TIMEOUT,
+            self._queued_call_timeout(len(batches), self._BATCH_CALL_TIMEOUT, limit) + 60.0,
+        )
+        batch_results = run_async(
+            run_batches(),
+            cleanup=self.provider.close_async_client,
+            timeout=run_timeout,
+        )
+
+        ordered_items = short_items + medium_items
+        failed_items: List[dict] = []
+        failed_results: List[TranslationResult] = []
+        for item_data, result in zip(ordered_items, batch_results):
+            if result.success:
+                self._process_translation_result(
+                    item_data,
+                    result,
+                    translations,
+                    source_filename=source_filename,
+                )
+                self._async_bump(item_data)
+                continue
+            failed_items.append(item_data)
+            failed_results.append(result)
+
+        if failed_items:
+            fallback_results = self._translate_ncs_batch_failures_minimal(
+                failed_items,
+                failed_results,
+            )
+            for item_data, result in zip(failed_items, fallback_results):
+                self._process_translation_result(
+                    item_data,
+                    result,
+                    translations,
+                    source_filename=source_filename,
+                )
+                self._async_bump(item_data)
+
+        logger.info(
+            "Batch-translated %d NCS items (%d <50 chars + %d 50-99 chars) in %d batch(es)",
+            len(items),
+            len(short_items),
+            len(medium_items),
+            len(batches),
+        )
+
+    def _translate_ncs_batch_failures_minimal(
+        self,
+        items: List[dict],
+        failed_results: List[TranslationResult],
+    ) -> List[TranslationResult]:
+        """Retry failed NCS batch items individually with minimal context."""
+        retry_by_key: Dict[tuple[str, str], dict] = {}
+        timeout_keys: set[tuple[str, str]] = set()
+        for item_data, result in zip(items, failed_results):
+            key = self._ncs_dedup_key(item_data)
+            retry_by_key.setdefault(key, item_data)
+            if result.error and "timeout" in result.error.lower():
+                timeout_keys.add(key)
+
+        retry_items = list(retry_by_key.values())
+        for item_data in retry_items:
+            key = self._ncs_dedup_key(item_data)
+            if key in timeout_keys:
+                self._record_ncs_diagnostic(
+                    item_data["item"],
+                    reason="translation_timeout",
+                    count_field="timeout",
+                )
+
+        async def run_fallback() -> List[TranslationResult]:
+            limit = max(1, int(self.config.max_concurrent_requests))
+            sem = asyncio.Semaphore(limit)
+            return await asyncio.gather(
+                *[self._translate_ncs_minimal_async(sem, item_data) for item_data in retry_items]
+            )
+
+        from ..async_utils import run_async
+
+        limit = max(1, int(self.config.max_concurrent_requests))
+        retry_results = run_async(
+            run_fallback(),
+            cleanup=self.provider.close_async_client,
+            timeout=max(
+                self._RUN_ASYNC_TIMEOUT / 2,
+                self._queued_call_timeout(len(retry_items), self._ITEM_TIMEOUT, limit) + 30.0,
+            ),
+        )
+
+        results_by_key = dict(zip(retry_by_key.keys(), retry_results))
+        out: List[TranslationResult] = []
+        for item_data in items:
+            result = results_by_key[self._ncs_dedup_key(item_data)]
+            key = self._ncs_dedup_key(item_data)
+            if key in timeout_keys:
+                if result.success:
+                    self._record_ncs_diagnostic(
+                        item_data["item"],
+                        reason="translation_timeout_retry_recovered",
+                        count_field="retry_recovered",
+                    )
+                else:
+                    self._record_ncs_diagnostic(
+                        item_data["item"],
+                        reason="translation_timeout_retry_failed",
+                        error=result.error,
+                    )
+            out.append(
+                TranslationResult(
+                    translated=result.translated,
+                    original=item_data["sanitized"],
+                    success=result.success,
+                    error=result.error,
+                    metadata=result.metadata,
+                )
+            )
+        return out
 
     def _translate_individual_fallback(
         self,

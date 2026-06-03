@@ -17,6 +17,7 @@ from src.nwn_translator.prompts import (
     build_translation_system_prompt,
     build_translation_system_prompt_parts,
 )
+from src.nwn_translator.prompts._builder import CONTENT_PROFILE_SCRIPT_MESSAGE
 from src.nwn_translator.prompts.examples import get_examples, _LANG_MODULE_MAP
 
 ALL_LANGS = list(_LANG_MODULE_MAP.keys())
@@ -144,6 +145,18 @@ class TestTranslationPrompt:
     def test_gender_in_prompt(self, gender: str):
         prompt = build_translation_system_prompt("polish", gender)
         assert gender in prompt
+
+    def test_script_message_profile_contains_ncs_safety_rules(self):
+        stable, variable = build_translation_system_prompt_parts(
+            "russian",
+            "male",
+            content_profile=CONTENT_PROFILE_SCRIPT_MESSAGE,
+        )
+
+        assert variable == ""
+        assert "player-visible script messages" in stable
+        assert "Never translate, rename, or rewrite identifiers" in stable
+        assert "debug logs" in stable
 
 
 class TestDialogPrompt:

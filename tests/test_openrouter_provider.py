@@ -1,10 +1,12 @@
 """Tests for OpenRouterProvider."""
 
+import json
 from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from openai import BadRequestError
 
+from src.nwn_translator.async_utils import run_async
 from src.nwn_translator.ai_providers.openrouter_provider import (
     OpenRouterProvider,
     OpenRouterError,
@@ -166,6 +168,43 @@ class TestOpenRouterTranslate:
         assert mock_client.chat.completions.create.call_count == 2
         second = mock_client.chat.completions.create.call_args_list[1].kwargs
         assert "extra_body" not in second
+
+
+class TestOpenRouterBatchTranslate:
+    """Verify batch payload construction."""
+
+    def test_batch_payload_prefers_hint_and_ncs_hint_over_type(self):
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            provider = OpenRouterProvider(api_key=FAKE_KEY)
+        captured = {}
+
+        async def complete(system_content, user_prompt, **kwargs):
+            captured["user_prompt"] = user_prompt
+            return '{"0": "Первая", "1": "Вторая", "2": "Третья"}'
+
+        provider._chat_completion_json_async = complete
+        items = [
+            TranslationItem(
+                original="First",
+                metadata={"type": "ncs_string", "ncs_hint": "SpeakString"},
+            ),
+            TranslationItem(
+                original="Second",
+                metadata={"type": "ncs_string", "hint": "SetCustomToken"},
+            ),
+            TranslationItem(original="Third", metadata={"type": "item_name"}),
+        ]
+
+        result = run_async(
+            provider.translate_batch_async(items, "english", "russian"),
+            timeout=5.0,
+        )
+
+        assert [r.translated for r in result] == ["Первая", "Вторая", "Третья"]
+        payload = json.loads(captured["user_prompt"].split("\n\n", 1)[1])
+        assert payload["0"]["hint"] == "SpeakString"
+        assert payload["1"]["hint"] == "SetCustomToken"
+        assert payload["2"]["hint"] == "item_name"
 
 
 class TestCreateProvider:

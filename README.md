@@ -4,6 +4,19 @@
 
 Веб-инструмент и Python-библиотека для перевода модулей Neverwinter Nights / NWN:EE через OpenAI-compatible AI providers. Сейчас поддерживаются OpenRouter и POLZA.AI; провайдер выбирается автоматически по префиксу API-ключа.
 
+## Как это работает
+
+Перевод проходит как конвейер из последовательных этапов:
+
+1. **Распаковка** архива `.mod`/`.erf`/`.hak` и поиск переводимых ресурсов (GFF и скомпилированные NCS-скрипты).
+2. **World-context** — скан NPC, областей, квестов и собственных имён для согласованности перевода.
+3. **Глоссарий** — сбор и курирование терминологии, которая затем подставляется в промпты.
+4. **Перевод** — диалоги переводятся контекстно (с учётом ветвления), остальные строки — батчами; NWN-токены и inline-теги защищаются плейсхолдерами.
+5. **Инъекция** — байтовый patch строк обратно в GFF/NCS без полной пересборки бинарных ресурсов.
+6. **Пересборка** нового архива.
+
+Эти этапы можно запускать по отдельности через `scripts/stage.py` (см. ниже).
+
 ## Возможности
 
 - Перевод `.mod`, `.erf` и `.hak` архивов NWN.
@@ -13,6 +26,7 @@
 - Байтовый patch GFF/NCS строк без полной пересборки бинарных GFF ресурсов.
 - Поддержка `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, `.ncs`.
 - Rebuild после ручного редактирования переводов в web-редакторе.
+- Изолированный запуск отдельных этапов пайплайна (`scripts/stage.py`): world-context, извлечение, сущности, глоссарий, перевод, инъекция и сборка — для отладки и оценки качества без полного цикла.
 - SQLite-хранилище задач для web UI, чтобы долгие переводы переживали reconnect.
 - Docker-конфигурация для production-развёртывания.
 
@@ -122,15 +136,34 @@ NWN_WEB_PORT=8000
 
 Модель задаётся через параметры web/API или `TranslationConfig(model=...)`; отдельная переменная `NWN_TRANSLATE_MODEL` в актуальном коде не читается.
 
-## Диагностика
+## Этапы пайплайна и диагностика
 
-В `scripts/` есть один универсальный диагностический инструмент:
+`scripts/stage.py` — раннер, выполняющий один этап пайплайна изолированно. Каждый этап читает входные артефакты (`--from`) и пишет выходные (`--out`); каталог распаковки (`--extract-dir`) переиспользуется между этапами, поэтому детерминированные этапы перечитывают его с диска, а LLM-этапы (`entities`, `glossary`, `translate`) можно запускать отдельно против реального API и проверять/править их вывод перед следующим этапом. Этапы: `unpack`, `worldscan`, `extract`, `entities`, `glossary`, `translate`, `inject`, `repack`, а также `all` для полного прогона.
+
+```bash
+# Распаковать архив и сохранить каталог распаковки
+python scripts/stage.py unpack module.mod --out work
+
+# Построить только глоссарий (реальный API) из сохранённого world-context
+python scripts/stage.py glossary --extract-dir work/extract --from work --out work
+
+# Перевести только NCS-скрипты
+python scripts/stage.py translate --extract-dir work/extract --from work --out work --only-ext .ncs
+
+# Инжектить сохранённые переводы и собрать модуль (без вызовов LLM)
+python scripts/stage.py inject --extract-dir work/extract --from work
+python scripts/stage.py repack --extract-dir work/extract --out work
+```
+
+`scripts/dump_gff_strings.py` — извлечение всех CExoLocString из GFF-файла или ресурса модуля:
 
 ```bash
 python scripts/dump_gff_strings.py file path/to/file.utc
 python scripts/dump_gff_strings.py file path/to/file.utc --compare path/to/original.utc
 python scripts/dump_gff_strings.py module path/to/module.mod talias.utc drixie.dlg
 ```
+
+Дополнительные исследовательские скрипты: `dump_context_glossary.py` (world-context и глоссарий без перевода) и `run_ncs_translation_compare.py` (сравнение batch- и single-режимов перевода NCS).
 
 ## Разработка
 

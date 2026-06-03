@@ -4,6 +4,19 @@
 
 Web tool and Python library for translating Neverwinter Nights / NWN:EE modules through OpenAI-compatible AI providers. The current providers are OpenRouter and POLZA.AI; provider selection is automatic from the API key prefix.
 
+## How it works
+
+Translation runs as a pipeline of sequential stages:
+
+1. **Unpack** the `.mod`/`.erf`/`.hak` archive and find translatable resources (GFF and compiled NCS scripts).
+2. **World context** — scan NPCs, areas, quests, and proper nouns for consistent translation.
+3. **Glossary** — collect and curate terminology that is then injected into prompts.
+4. **Translate** — dialogs are translated contextually (aware of branching), other strings in batches; NWN tokens and inline tags are protected with placeholders.
+5. **Inject** — byte-level patching of strings back into GFF/NCS without fully rewriting binary resources.
+6. **Repack** the new archive.
+
+These stages can be run individually via `scripts/stage.py` (see below).
+
 ## Features
 
 - Translation of NWN `.mod`, `.erf`, and `.hak` archives.
@@ -13,6 +26,7 @@ Web tool and Python library for translating Neverwinter Nights / NWN:EE modules 
 - Byte-level GFF/NCS string patching without fully rewriting binary GFF resources.
 - Support for `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, and `.ncs`.
 - Rebuild flow after manual translation edits in the web editor.
+- Isolated execution of individual pipeline stages (`scripts/stage.py`): world context, extraction, entities, glossary, translation, injection, and repack — for debugging and quality evaluation without the full run.
 - SQLite-backed web tasks so long-running translations survive reconnects.
 - Docker setup for production deployment.
 
@@ -122,15 +136,34 @@ NWN_WEB_PORT=8000
 
 The model is selected through web/API parameters or `TranslationConfig(model=...)`; the current code does not read a separate `NWN_TRANSLATE_MODEL` environment variable.
 
-## Diagnostics
+## Pipeline stages and diagnostics
 
-`scripts/` contains one reusable diagnostic helper:
+`scripts/stage.py` runs a single pipeline stage in isolation. Each stage reads its input artifacts (`--from`) and writes its outputs (`--out`); the extraction directory (`--extract-dir`) is reused between stages, so deterministic stages re-parse it from disk while the LLM stages (`entities`, `glossary`, `translate`) can be run alone against the real API and their output inspected or hand-edited before the next stage. Stages: `unpack`, `worldscan`, `extract`, `entities`, `glossary`, `translate`, `inject`, `repack`, plus `all` for a full run.
+
+```bash
+# Unpack the archive and keep the extraction directory
+python scripts/stage.py unpack module.mod --out work
+
+# Build only the glossary (real API) from a saved world context
+python scripts/stage.py glossary --extract-dir work/extract --from work --out work
+
+# Translate only NCS scripts
+python scripts/stage.py translate --extract-dir work/extract --from work --out work --only-ext .ncs
+
+# Inject saved translations and repack the module (no LLM calls)
+python scripts/stage.py inject --extract-dir work/extract --from work
+python scripts/stage.py repack --extract-dir work/extract --out work
+```
+
+`scripts/dump_gff_strings.py` dumps all CExoLocString fields from a GFF file or module resource:
 
 ```bash
 python scripts/dump_gff_strings.py file path/to/file.utc
 python scripts/dump_gff_strings.py file path/to/file.utc --compare path/to/original.utc
 python scripts/dump_gff_strings.py module path/to/module.mod talias.utc drixie.dlg
 ```
+
+Additional research scripts: `dump_context_glossary.py` (world context and glossary without translation) and `run_ncs_translation_compare.py` (batch vs single NCS translation routing).
 
 ## Development
 

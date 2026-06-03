@@ -37,6 +37,9 @@ frontend/dist/
 diff_output.txt
 project-tree.txt
 
+# Local planning docs
+plans/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -21,6 +21,7 @@ from ..config import (
     module_string_encoding_for_target_lang,
 )
 from ..main import ModuleTranslator, run_translation_pipeline
+
 # ``ModuleTranslator`` stays imported here for test monkeypatch compatibility.
 from .database import SqliteTranslationLogWriter, create_task_row, update_task_row, get_db
 

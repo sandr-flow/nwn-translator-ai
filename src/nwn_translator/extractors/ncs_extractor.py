@@ -273,10 +273,7 @@ def _classify_by_action_context(
     window = min(_ACTION_SCAN_WINDOW, len(instructions) - instr_index - 1)
     for i in range(1, window + 1):
         next_instr = instructions[instr_index + i]
-        if (
-            next_instr.opcode in (OP_EQUAL, OP_NEQUAL)
-            and next_instr.type_byte == TYPE_STRING
-        ):
+        if next_instr.opcode in (OP_EQUAL, OP_NEQUAL) and next_instr.type_byte == TYPE_STRING:
             return "internal"
         if next_instr.is_action and next_instr.action_routine is not None:
             routine = next_instr.action_routine
@@ -429,10 +426,7 @@ def _bytecode_context(
         next_instr = instructions[instr_index + i]
         # Only string-typed comparisons matter — int/float compares (e.g. loop
         # counters) downstream of the literal don't make it a dispatch key.
-        if (
-            next_instr.opcode in (OP_EQUAL, OP_NEQUAL)
-            and next_instr.type_byte == TYPE_STRING
-        ):
+        if next_instr.opcode in (OP_EQUAL, OP_NEQUAL) and next_instr.type_byte == TYPE_STRING:
             context["compare_nearby"] = True
             context["distance"] = i
             return context

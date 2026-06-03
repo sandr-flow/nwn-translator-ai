@@ -275,7 +275,7 @@ class GitExtractor(BaseExtractor):
         if not isinstance(field_obj, dict):
             return
         text = self._extract_text_from_local_string(field_obj)
-        if not should_translate_git_string(text, meta_type):
+        if text is None or not should_translate_git_string(text, meta_type):
             return
         items.append(
             TranslatableItem(

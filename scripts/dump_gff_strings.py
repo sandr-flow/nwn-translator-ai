@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from nwn_translator.file_handlers.erf_reader import ERFReader
 
-
 _CEXOLOCSTRING_TYPE = 12
 _GFF_HEADER_SIZE = 56
 
@@ -90,7 +89,7 @@ def dump_gff_bytes(data: bytes, name: str, compare_data: bytes | None = None) ->
         label = labels[label_index] if label_index < len(labels) else f"<idx_{label_index}>"
         absolute_offset = field_data_offset + data_or_offset
 
-        print(f"\n--- Field #{field_index}: \"{label}\" ---")
+        print(f'\n--- Field #{field_index}: "{label}" ---')
         print(f"  Record @ {record_offset} (0x{record_offset:08X})")
         print(f"  DataOffset: {data_or_offset} -> abs {absolute_offset} (0x{absolute_offset:08X})")
 
@@ -169,7 +168,9 @@ def _build_parser() -> argparse.ArgumentParser:
     file_parser.add_argument("path", type=Path)
     file_parser.add_argument("--compare", type=Path, default=None)
 
-    module_parser = subparsers.add_parser("module", help="Dump one or more resources from a .mod/.erf")
+    module_parser = subparsers.add_parser(
+        "module", help="Dump one or more resources from a .mod/.erf"
+    )
     module_parser.add_argument("module_path", type=Path)
     module_parser.add_argument("resources", nargs="+")
     return parser

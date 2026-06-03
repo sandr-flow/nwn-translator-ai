@@ -19,7 +19,6 @@ import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -33,6 +32,7 @@ from nwn_translator.extractors.base import ExtractedContent
 from nwn_translator.glossary import Glossary, GlossaryBuilder
 from nwn_translator.glossary_curator import GlossaryCurator
 from nwn_translator.main import ModuleTranslator
+from nwn_translator.pipeline.artifacts import candidate_to_dict, world_context_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -213,39 +213,6 @@ def run_context_glossary_stage(config: TranslationConfig) -> tuple[ModuleTransla
     return translator, extracted_map
 
 
-def _candidate_to_dict(candidate: Any) -> Dict[str, Any]:
-    """Serialize an EntityCandidate to JSON-friendly data."""
-    return {
-        "name": candidate.name,
-        "normalized_name": candidate.normalized_name,
-        "category": candidate.category,
-        "frequency": candidate.frequency,
-        "contexts": list(candidate.contexts),
-        "sources": candidate.sources,
-        "resources": candidate.resources,
-        "is_speaker_or_dialog_actor": candidate.is_speaker_or_dialog_actor,
-        "technical_score": candidate.technical_score,
-        "priority": candidate.priority,
-        "curation_decision": candidate.curation_decision,
-        "curation_reason": candidate.curation_reason,
-        "alias_of": candidate.alias_of,
-        "evidence": [asdict(ev) for ev in candidate.evidence],
-    }
-
-
-def _world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, Any]:
-    """Serialize the world context registry."""
-    if world_context is None:
-        return {}
-    return {
-        "npcs": {tag: asdict(npc) for tag, npc in sorted(world_context.npcs.items())},
-        "areas": dict(sorted(world_context.areas.items())),
-        "quests": dict(sorted(world_context.quests.items())),
-        "items": dict(sorted(world_context.items.items())),
-        "extracted_names": list(world_context.extracted_names),
-    }
-
-
 def _decision_counts(world_context: Optional[WorldContext]) -> Dict[str, int]:
     """Return counts by curation decision."""
     if world_context is None:
@@ -317,11 +284,11 @@ def write_artifacts(
     }
 
     artifacts["candidates"].write_text(
-        json.dumps([_candidate_to_dict(c) for c in candidates], ensure_ascii=False, indent=2),
+        json.dumps([candidate_to_dict(c) for c in candidates], ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     artifacts["world_context_json"].write_text(
-        json.dumps(_world_context_to_dict(world_context), ensure_ascii=False, indent=2),
+        json.dumps(world_context_to_dict(world_context), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     artifacts["world_context_text"].write_text(world_context_text, encoding="utf-8")

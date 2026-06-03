@@ -132,9 +132,7 @@ class WorldContext:
         all_hierarchy_names.extend(self.quests.values())
         all_hierarchy_names.extend(self.items.values())
         common_components = (
-            common_hierarchy_components(all_hierarchy_names)
-            if source_tokens is not None
-            else set()
+            common_hierarchy_components(all_hierarchy_names) if source_tokens is not None else set()
         )
 
         def _keep(*candidates: str, category: str = "") -> bool:

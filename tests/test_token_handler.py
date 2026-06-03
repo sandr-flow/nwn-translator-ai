@@ -9,7 +9,6 @@ from src.nwn_translator.translators.token_handler import (
     sanitize_text,
 )
 
-
 INLINE_PLACEHOLDER_RE = re.compile(r"__NWN_INLINE_[A-Za-z0-9_]+__")
 TOKEN_PLACEHOLDER_RE = re.compile(r"__NWN_TOKEN_[A-Za-z0-9_]+__")
 
@@ -68,7 +67,9 @@ class TestTokenHandler:
         inline_wrapped = [
             f"<<[{match[2:-2]}]>>" for match in INLINE_PLACEHOLDER_RE.findall(sanitized)
         ]
-        token_wrapped = [f"<<[{match[2:-2]}]>>" for match in TOKEN_PLACEHOLDER_RE.findall(sanitized)]
+        token_wrapped = [
+            f"<<[{match[2:-2]}]>>" for match in TOKEN_PLACEHOLDER_RE.findall(sanitized)
+        ]
         translated = f"{inline_wrapped[0]}[Машет]{inline_wrapped[1]} Привет {token_wrapped[0]}."
         restored = restore_text(translated, handler)
         assert restored == "<StartAction>[Машет]</Start> Привет <FirstName>."

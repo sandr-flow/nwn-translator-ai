@@ -19,6 +19,7 @@ def _module_text_encoding(metadata: Optional[Dict[str, Any]]) -> str:
 
 class DialogInjector(BaseInjector):
     """Injector for dialog (.dlg) files."""
+
     SUPPORTED_TYPES = ["dialog"]
 
     def inject(
@@ -105,6 +106,7 @@ class DialogInjector(BaseInjector):
 
 class JournalInjector(BaseInjector):
     """Injector for journal (.jrl) files."""
+
     SUPPORTED_TYPES = ["journal"]
 
     def inject(

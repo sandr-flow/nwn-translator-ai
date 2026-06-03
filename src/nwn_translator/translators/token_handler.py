@@ -109,9 +109,7 @@ class TokenHandler:
         r"|<[^<>\r\n]+>"
     )
     TOKEN_LIKE_FRAGMENT_PATTERN = re.compile(
-        r"</?Start[A-Za-z]*>"
-        r"|<[A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*>"
-        r"|<[^<>\r\n]+>"
+        r"</?Start[A-Za-z]*>" r"|<[A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*>" r"|<[^<>\r\n]+>"
     )
     RESTORED_ACTION_TAG_PATTERN = INLINE_TAG_PATTERN
 
@@ -482,7 +480,9 @@ class TokenHandler:
 
     def _classify_artifact(self, raw: str) -> Tuple[Optional[str], str]:
         """Classify one raw artifact candidate from the original text."""
-        return self._classify_artifact_static(raw, preserve_standard_tokens=self.preserve_standard_tokens)
+        return self._classify_artifact_static(
+            raw, preserve_standard_tokens=self.preserve_standard_tokens
+        )
 
     @classmethod
     def _classify_artifact_static(

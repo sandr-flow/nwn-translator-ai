@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
@@ -11,27 +10,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from nwn_translator.context.world_context import NPCInfo, WorldContext
+from nwn_translator.context.world_context import WorldContext
 from nwn_translator.glossary import Glossary
+from nwn_translator.pipeline import artifacts as pipeline_artifacts
 
 EXAMPLE = ROOT / "Almraiven full translate" / "big glossary issue example.txt"
 
 
 def load_glossary(artifacts: Path) -> Glossary:
-    entries = json.loads((artifacts / "glossary.json").read_text(encoding="utf-8"))
-    return Glossary(entries=entries)
+    return pipeline_artifacts.load_glossary(artifacts / "glossary.json")
 
 
 def load_world_context(artifacts: Path) -> WorldContext:
-    data = json.loads((artifacts / "world_context.json").read_text(encoding="utf-8"))
-    wc = WorldContext()
-    for tag, npc in data.get("npcs", {}).items():
-        wc.npcs[tag] = NPCInfo(**npc)
-    wc.areas = dict(data.get("areas", {}))
-    wc.quests = dict(data.get("quests", {}))
-    wc.items = dict(data.get("items", {}))
-    wc.extracted_names = [tuple(p) for p in data.get("extracted_names", [])]
-    return wc
+    return pipeline_artifacts.load_world_context(artifacts / "world_context.json")
 
 
 def extract_dialog_lines() -> list[str]:

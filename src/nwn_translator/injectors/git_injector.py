@@ -7,6 +7,7 @@ whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
 
 import logging
 import re
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -270,9 +271,7 @@ def collect_git_strings_missing_from_translations(
                 field_names,
                 found,
                 existing_translations,
-                lambda field_name, list_key=list_key: _meta_type_for_instance_field(
-                    list_key, field_name
-                ),
+                partial(_meta_type_for_instance_field, list_key),
             )
             if list_key == "StoreList":
                 _collect_strings_from_store_tree(instance, found, existing_translations)

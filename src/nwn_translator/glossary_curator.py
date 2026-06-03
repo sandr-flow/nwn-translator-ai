@@ -68,7 +68,7 @@ class GlossaryCurator:
                 max(1, min(3, int(getattr(config, "max_concurrent_requests", 3))))
             )
 
-            async def run_one(idx: int, batch: List[EntityCandidate]):
+            async def run_one(idx: int, batch: List[EntityCandidate]) -> Dict[str, Dict[str, Any]]:
                 async with sem:
                     if progress_callback:
                         progress_callback(
@@ -79,7 +79,10 @@ class GlossaryCurator:
                         )
                     return await self._curate_batch(provider, config, batch)
 
-            return await asyncio.gather(*[run_one(i, batch) for i, batch in enumerate(batches)])
+            gathered: List[Dict[str, Dict[str, Any]]] = await asyncio.gather(
+                *[run_one(i, batch) for i, batch in enumerate(batches)]
+            )
+            return gathered
 
         try:
             results = run_async(
@@ -91,8 +94,8 @@ class GlossaryCurator:
             logger.warning("Glossary curation failed; using deterministic decisions: %s", exc)
             return registry
 
-        for result in results:
-            for name, decision in result.items():
+        for batch_result in results:
+            for name, decision in batch_result.items():
                 registry.mark_curated(
                     name,
                     decision=str(decision.get("decision", "keep")),

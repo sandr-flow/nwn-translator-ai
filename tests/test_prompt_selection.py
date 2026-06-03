@@ -123,16 +123,13 @@ def test_glossary_drops_compound_entries_without_significant_match():
     """Hierarchical glossary keys must require all non-common components to
     match the source, not just the shared prefix."""
     entries = {
-        f"Almraiven - District {idx} - Street {idx}": f"Алмрайвен {idx}"
-        for idx in range(20)
+        f"Almraiven - District {idx} - Street {idx}": f"Алмрайвен {idx}" for idx in range(20)
     }
     entries["Almraiven"] = "Алмрайвен"
     entries["Almraiven - Dock Ward - Rosetyl Street"] = "Алмрайвен — Док — Розетил"
     glossary = Glossary(entries=entries)
 
-    block = glossary.to_prompt_block(
-        texts=["I have lived in Almraiven all my life."]
-    )
+    block = glossary.to_prompt_block(texts=["I have lived in Almraiven all my life."])
 
     assert '"Almraiven"' in block
     # None of the hierarchical entries share specific districts with the

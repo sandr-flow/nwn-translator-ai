@@ -184,30 +184,60 @@ class ERFReader:
         77: ".ids",  # Identifier
         78: ".bwd",  # Data
         79: ".bwm",  # Walkmesh
+        # Canonical Aurora resource type IDs (nwn.h / xoreos FileType). Real
+        # NWN / NWN:EE modules use this 20xx range for game resources.
+        2002: ".res",  # Generic resource
         2009: ".nss",  # Script source
         2010: ".ncs",  # Compiled script
-        2012: ".are",  # Area static
-        2013: ".set",  # Tileset info
+        2011: ".mod",  # Module
+        2012: ".are",  # Area
+        2013: ".set",  # Tileset
         2014: ".ifo",  # Module info
         2015: ".bic",  # Character
         2016: ".wok",  # Walkmesh
-        2017: ".2da",  # 2D Array
+        2017: ".2da",  # 2D array
+        2018: ".tlk",  # Talk table
         2022: ".txi",  # Texture info
         2023: ".git",  # Area instance
+        2024: ".bti",  # Item blueprint (palette)
         2025: ".uti",  # Item
+        2026: ".btc",  # Creature blueprint (palette)
         2027: ".utc",  # Creature
         2029: ".dlg",  # Dialogue
-        2032: ".uts",  # Sound
-        2035: ".uts",  # Sound (alt)
+        2030: ".itp",  # Palette
+        2031: ".btt",  # Trigger blueprint (palette)
+        2032: ".utt",  # Trigger
+        2033: ".dds",  # Compressed texture
+        2034: ".bts",  # Sound blueprint (palette)
+        2035: ".uts",  # Sound
+        2036: ".ltr",  # Letter combo probability
+        2037: ".gff",  # Generic GFF
         2038: ".fac",  # Faction
+        2039: ".bte",  # Encounter blueprint (palette)
         2040: ".ute",  # Encounter
-        2042: ".utm",  # Store
+        2041: ".btd",  # Door blueprint (palette)
+        2042: ".utd",  # Door
+        2043: ".btp",  # Placeable blueprint (palette)
         2044: ".utp",  # Placeable
-        2045: ".ncs",  # Script (alt)
-        2047: ".gui",  # GUI
-        2052: ".css",  # Client script
+        2045: ".dft",  # Default values
+        2046: ".gic",  # Area comments
+        2047: ".gui",  # GUI layout
+        2048: ".css",  # Conversation script (compiled)
+        2049: ".ccs",  # Conversation script (source)
+        2050: ".btm",  # Store blueprint (palette)
+        2051: ".utm",  # Store
+        2052: ".dwk",  # Door walkmesh
+        2053: ".pwk",  # Placeable walkmesh
+        2054: ".btg",  # Waypoint blueprint (palette)
+        2055: ".utg",  # Waypoint blueprint
         2056: ".jrl",  # Journal
+        2057: ".sav",  # Saved game
         2058: ".utw",  # Waypoint
+        2059: ".4pc",  # 4-bit texture
+        2060: ".ssf",  # Sound set
+        2064: ".ndb",  # Script debugger file
+        2065: ".ptm",  # Plot manager / instance
+        2066: ".ptt",  # Plot wizard blueprint
     }
 
     def __init__(self, file_path: Path, progress_callback: ProgressCallback = None):

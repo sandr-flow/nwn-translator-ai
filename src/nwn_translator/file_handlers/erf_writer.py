@@ -303,7 +303,10 @@ def create_mod_from_directory(
                 type_overrides[filename] = entry.res_type
             reader.cleanup()
         except Exception as exc:
-            logger.warning("Could not read original mod for metadata: %s", exc)
+            logger.error("Could not read original mod for metadata: %s", exc)
+            raise ERFWriterError(
+                f"Failed to read resource types from original module {original_mod}: {exc}"
+            ) from exc
 
     writer = ERFWriter(output_path, type_overrides=type_overrides)
     writer.add_directory(input_dir)

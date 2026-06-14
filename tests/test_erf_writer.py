@@ -12,6 +12,7 @@ import pytest
 
 from src.nwn_translator.file_handlers.erf_writer import ERFWriter, ERFWriterError
 from src.nwn_translator.file_handlers.erf_reader import ERFEntry, ERFReader, ERFHeader
+from src.nwn_translator.config import TRANSLATABLE_TYPES
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -289,3 +290,63 @@ class TestERFWriterRoundTrip:
         entry = ERFEntry("resource", 0, 6789, 0, 12)
 
         assert reader.detect_type_from_header(entry) == expected_ext
+
+
+# ---------------------------------------------------------------------------
+# Canonical resource type-id table
+# ---------------------------------------------------------------------------
+
+# Canonical Aurora IDs (nwn.h / xoreos) for the game resource types we touch.
+# These were historically wrong (.uts duplicated, .utt/.utd/.utm absent).
+_CANONICAL_IDS = {
+    2010: ".ncs",
+    2012: ".are",
+    2014: ".ifo",
+    2023: ".git",
+    2025: ".uti",
+    2027: ".utc",
+    2029: ".dlg",
+    2032: ".utt",
+    2035: ".uts",
+    2040: ".ute",
+    2042: ".utd",
+    2044: ".utp",
+    2051: ".utm",
+    2056: ".jrl",
+}
+
+
+class TestCanonicalResourceTypes:
+    """C-spec: ERFReader.RESOURCE_TYPES must match canonical Aurora IDs."""
+
+    @pytest.mark.parametrize("res_id, ext", sorted(_CANONICAL_IDS.items()))
+    def test_reader_table_matches_canonical(self, res_id, ext):
+        assert ERFReader.RESOURCE_TYPES.get(res_id) == ext
+
+    def test_no_duplicate_extension_in_canonical_range(self):
+        """Within the 20xx range each extension maps to exactly one ID."""
+        canonical = {rid: ext for rid, ext in ERFReader.RESOURCE_TYPES.items() if rid >= 2000}
+        seen: dict = {}
+        for rid, ext in canonical.items():
+            assert ext not in seen, f"{ext} duplicated: {seen.get(ext)} and {rid}"
+            seen[ext] = rid
+
+    @pytest.mark.parametrize("ext", sorted(TRANSLATABLE_TYPES))
+    def test_translatable_ext_round_trips_to_canonical_id(self, ext):
+        """Each translatable ext inverts to a 20xx ID that maps back to the ext."""
+        res_id = ERFWriter.RESOURCE_TYPE_IDS.get(ext)
+        assert res_id is not None and res_id >= 2000
+        assert ERFReader.RESOURCE_TYPES[res_id] == ext
+
+    @pytest.mark.parametrize(
+        "signature, ext, expected_id",
+        [
+            (b"UTT ", ".utt", 2032),
+            (b"UTD ", ".utd", 2042),
+            (b"UTM ", ".utm", 2051),
+        ],
+    )
+    def test_writer_emits_canonical_id_without_overrides(self, signature, ext, expected_id):
+        """Writing a translatable resource without overrides yields the canonical ID."""
+        entries = _write_and_read({f"blueprint{ext}": signature + b"V3.2" + b"\x00" * 8})
+        assert entries[0].res_type == expected_id

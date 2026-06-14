@@ -32,7 +32,7 @@ archives.
 | File | Run | What it pins |
 |---|---|---|
 | `test_parse_all.py` | V2.1 | Every GFF/NCS resource parses without raising; NCS preamble `T` matches file size. |
-| `test_identity_roundtrip.py` | V2.2 | `extract → repack` (no translation) is byte-identical: same resources, type IDs, bytes. |
+| `test_identity_roundtrip.py` | V2.2 | `extract → repack` (no translation) is byte-identical: same resources, type IDs, bytes. A second case repacks with overrides disabled, so type IDs come from the canonical table alone. |
 | `test_noop_patch.py` | V2.3 | Injecting `{original: original}` changes no bytes. |
 | `test_mock_translate.py` | V2.4 | Full pipeline with a deterministic marker provider; output reads back, GFF fields carry the marker, every `.ncs` reparses with a correct `T`. |
 
@@ -45,7 +45,7 @@ world-context / glossary / contextual-dialog subsystems stay out of the loop.
 | Run | Result | Notes |
 |---|---|---|
 | V2.1 parse-all | **pass** 5/5 | Parser never raises across the corpus. C1 is latent here: with an unknown/under-sized opcode the parser falls back to a 2-byte instruction instead of raising, so a desync rarely surfaces as an exception, and `T == file size` is a pure input-integrity check. C1 is caught downstream in V2.4. |
-| V2.2 identity round-trip | **pass** 5/5 | ERF read/write is byte-faithful. C3's wrong type-id table is masked by `type_overrides` from the source module; M-W8 does not corrupt these modules' descriptions. |
+| V2.2 identity round-trip | **pass** 5/5 (both cases) | ERF read/write is byte-faithful, including type IDs from the canonical table with overrides disabled. (Previously the wrong type-id table was only masked by `type_overrides`.) M-W8 does not corrupt these modules' descriptions. |
 | V2.3 no-op patch | **pass** 5/5 | Injectors skip identical text, so a no-op truly changes nothing. |
 | V2.4 mock-translate | **xfail** (one known issue) | C1+C2 fixed; one token edge remains — see below. |
 

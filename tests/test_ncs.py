@@ -14,6 +14,10 @@ from nwn_translator.file_handlers.ncs_parser import (
     NCSParseError,
     OP_ACTION,
     OP_CONST,
+    OP_CPDOWNSP,
+    OP_CPTOPSP,
+    OP_CPDOWNBP,
+    OP_CPTOPBP,
     OP_JMP,
     OP_JSR,
     OP_JZ,
@@ -21,6 +25,7 @@ from nwn_translator.file_handlers.ncs_parser import (
     OP_RETN,
     OP_MOVSP,
     OP_EQUAL,
+    OP_NEQUAL,
     TYPE_INT,
     TYPE_STRING,
     parse_ncs,
@@ -208,6 +213,77 @@ class TestNCSParser:
         assert len(strings) == 2
         assert strings[0].string_value == "Hello"
         assert strings[1].string_value == "World"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Opcode argument sizes (C1 regression)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _cp_offset_size(opcode: int, offset: int, size: int) -> bytes:
+    """CPDOWNSP/CPTOPSP/CPDOWNBP/CPTOPBP: int32 stack offset + uint16 size (6 arg bytes)."""
+    return struct.pack(">BB", opcode, 0x01) + struct.pack(">i", offset) + struct.pack(">H", size)
+
+
+def _eq_struct(opcode: int, size: int) -> bytes:
+    """EQUAL/NEQUAL comparing two structures (type 0x24): trailing uint16 size."""
+    return struct.pack(">BB", opcode, 0x24) + struct.pack(">H", size)
+
+
+class TestNCSOpcodeArgSizes:
+    """C1: copy opcodes carry int32+uint16 (6 bytes); struct compares carry +2."""
+
+    def test_cpdownsp_canonical_sequence(self):
+        """``01 01 FF FF FF FC 00 04`` is one CPDOWNSP, not CPDOWNSP + garbage."""
+        data = _header() + bytes.fromhex("0101FFFFFFFC0004")
+        ncs = parse_ncs_bytes(data)
+        assert len(ncs.instructions) == 1
+        instr = ncs.instructions[0]
+        assert instr.opcode == OP_CPDOWNSP
+        assert instr.size == 8  # 2 header + 6 args
+        assert instr.offset == 8
+
+    @pytest.mark.parametrize(
+        "opcode",
+        [OP_CPDOWNSP, OP_CPTOPSP, OP_CPDOWNBP, OP_CPTOPBP],
+    )
+    def test_copy_opcodes_consume_six_arg_bytes(self, opcode):
+        """Each copy opcode must consume 8 total bytes so the next instr aligns."""
+        data = _header() + _cp_offset_size(opcode, -4, 4) + _retn()
+        ncs = parse_ncs_bytes(data)
+        assert len(ncs.instructions) == 2
+        assert ncs.instructions[0].opcode == opcode
+        assert ncs.instructions[0].size == 8
+        assert ncs.instructions[1].opcode == OP_RETN
+        assert ncs.instructions[1].offset == 16
+
+    def test_assignment_then_string_const_offset(self):
+        """A CPDOWNSP assignment followed by a string const: string at right offset."""
+        data = _header() + _cp_offset_size(OP_CPDOWNSP, -4, 4) + _consts("Ow.") + _retn()
+        ncs = parse_ncs_bytes(data)
+        strings = ncs.string_constants
+        assert len(strings) == 1
+        assert strings[0].string_value == "Ow."
+        assert strings[0].offset == 16  # 8 header + 8-byte CPDOWNSP
+
+    @pytest.mark.parametrize("opcode", [OP_EQUAL, OP_NEQUAL])
+    def test_struct_compare_carries_trailing_size(self, opcode):
+        """EQUAL/NEQUAL with type 0x24 consume a uint16 size; next instr aligns."""
+        data = _header() + _eq_struct(opcode, 8) + _retn()
+        ncs = parse_ncs_bytes(data)
+        assert len(ncs.instructions) == 2
+        assert ncs.instructions[0].opcode == opcode
+        assert ncs.instructions[0].size == 4  # 2 header + 2 args
+        assert ncs.instructions[1].opcode == OP_RETN
+        assert ncs.instructions[1].offset == 12
+
+    def test_non_struct_equal_has_no_args(self):
+        """EQUAL on non-struct types (e.g. int 0x03) still carries zero arg bytes."""
+        data = _header() + struct.pack(">BB", OP_EQUAL, TYPE_INT) + _retn()
+        ncs = parse_ncs_bytes(data)
+        assert len(ncs.instructions) == 2
+        assert ncs.instructions[0].size == 2
+        assert ncs.instructions[1].opcode == OP_RETN
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -425,6 +501,59 @@ class TestNCSPatcher:
         vals = [i.string_value for i in ncs2.instructions if i.is_string_const]
         assert vals.count("FirstOnly") == 1
         assert vals.count("Same") == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Patcher: NWN:EE size field (C2 regression)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _ee_file(body: bytes) -> bytes:
+    """Wrap *body* with the NCS banner + NWN:EE 0x42 size preamble."""
+    total = len(NCS_HEADER) + 5 + len(body)
+    return NCS_HEADER + struct.pack(">BI", 0x42, total) + body
+
+
+def _read_size_field(data: bytes) -> int:
+    """Read the BE uint32 ``T`` size field at offset 9."""
+    return struct.unpack_from(">I", data, 9)[0]
+
+
+class TestNCSPatcherSizeField:
+    """C2: the NWN:EE preamble size field ``T`` must track the patched length."""
+
+    def test_lengthening_updates_size_field(self, tmp_path):
+        path = tmp_path / "ee.ncs"
+        path.write_bytes(_ee_file(_consts("Hi") + _retn()))
+        n = patch_ncs_string_replacements(path, [(13, "Hi", "Hello there")], "cp1252")
+        assert n == 1
+        out = path.read_bytes()
+        assert _read_size_field(out) == len(out)
+
+    def test_shortening_updates_size_field(self, tmp_path):
+        path = tmp_path / "ee.ncs"
+        path.write_bytes(_ee_file(_consts("Hello there") + _retn()))
+        patch_ncs_string_replacements(path, [(13, "Hello there", "Hi")], "cp1252")
+        out = path.read_bytes()
+        assert _read_size_field(out) == len(out)
+
+    def test_same_length_leaves_size_field_untouched(self, tmp_path):
+        data = _ee_file(_consts("Hi") + _retn())
+        path = tmp_path / "ee.ncs"
+        path.write_bytes(data)
+        before = _read_size_field(data)
+        patch_ncs_string_replacements(path, [(13, "Hi", "Yo")], "cp1252")
+        out = path.read_bytes()
+        assert _read_size_field(out) == before == len(out)
+
+    def test_non_ee_script_size_offset_not_clobbered(self, tmp_path):
+        """No 0x42 preamble: byte 9 is real instruction data — leave it alone."""
+        path = tmp_path / "old.ncs"
+        path.write_bytes(NCS_HEADER + _consts("Hi") + _retn())
+        patch_ncs_string_replacements(path, [(8, "Hi", "Hello there")], "cp1252")
+        out = path.read_bytes()
+        ncs = parse_ncs_bytes(out)  # must still reparse cleanly
+        assert [i.string_value for i in ncs.string_constants] == ["Hello there"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

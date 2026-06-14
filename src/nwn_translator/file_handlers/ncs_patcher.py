@@ -32,6 +32,12 @@ from .gff_patcher import sanitize_for_module_encoding
 
 logger = logging.getLogger(__name__)
 
+# NWN:EE preamble after the 8-byte "NCS V1.0" banner: 0x42 + BE uint32 total
+# script size (field ``T``). Bytes 9-12 hold the size; it must match the file
+# length, so any length-changing patch has to rewrite it (see ncs_parser).
+_NCS_EE_SIZE_OPCODE = 0x42
+_NCS_EE_SIZE_FIELD_OFFSET = 9
+
 
 class NCSPatchError(Exception):
     """Raised when NCS patching fails."""
@@ -161,6 +167,16 @@ def _apply_instruction_patches(
     for instr in instructions:
         if instr.jump_offset is not None:
             struct.pack_into(">i", data, instr.offset + 2, instr.jump_offset)
+
+    # The total size changed; rewrite the NWN:EE preamble size field ``T`` so
+    # the engine reads the right code length. Guard on the preamble being
+    # present — older scripts have instruction bytes at this offset.
+    if (
+        len(data) != len(original_bytes)
+        and len(data) >= _NCS_EE_SIZE_FIELD_OFFSET + 4
+        and data[8] == _NCS_EE_SIZE_OPCODE
+    ):
+        struct.pack_into(">I", data, _NCS_EE_SIZE_FIELD_OFFSET, len(data))
 
     try:
         validated = parse_ncs_bytes(bytes(data))

@@ -91,8 +91,8 @@ JUMP_OPCODES = frozenset({OP_JMP, OP_JSR, OP_JZ, OP_JNZ})
 # Most opcodes have 0 extra bytes (header-only = 2 bytes total).
 # This dict lists exceptions.
 _OPCODE_ARG_SIZES: Dict[int, int] = {
-    OP_CPDOWNSP: 4,  # int32: stack offset + size
-    OP_CPTOPSP: 4,  # int32: stack offset + size
+    OP_CPDOWNSP: 6,  # int32 stack offset + uint16 size
+    OP_CPTOPSP: 6,  # int32 stack offset + uint16 size
     OP_ACTION: 3,  # uint16 routine number + uint8 arg count
     OP_MOVSP: 4,  # int32: displacement
     OP_STORE_STATEALL: 4,  # int32 (obsolete, but may appear)
@@ -103,12 +103,19 @@ _OPCODE_ARG_SIZES: Dict[int, int] = {
     OP_DECISP: 4,  # int32
     OP_INCISP: 4,  # int32
     OP_JNZ: 4,  # int32: relative offset
-    OP_CPDOWNBP: 4,  # int32
-    OP_CPTOPBP: 4,  # int32
+    OP_CPDOWNBP: 6,  # int32 stack offset + uint16 size
+    OP_CPTOPBP: 6,  # int32 stack offset + uint16 size
     OP_DECIBP: 4,  # int32
     OP_INCIBP: 4,  # int32
     OP_STORE_STATE: 8,  # int32 BP size + int32 stack size
 }
+
+# EQUAL/NEQUAL normally have no argument bytes, EXCEPT when comparing two engine
+# structures (type qualifier 0x24, "TT"): those carry a trailing uint16 giving
+# the structure size to compare. Missing this desyncs the instruction stream.
+_STRUCT_COMPARE_TYPE = 0x24
+_STRUCT_COMPARE_OPCODES = frozenset({OP_EQUAL, OP_NEQUAL})
+_STRUCT_COMPARE_ARG_SIZE = 2
 
 # CONST arg sizes by type qualifier (TYPE_STRING is variable-length)
 _CONST_ARG_SIZES: Dict[int, int] = {
@@ -233,6 +240,8 @@ def _parse_instruction(data: bytes, offset: int) -> NCSInstruction:
         else:
             # Unknown CONST type -- try 4 bytes (most common)
             arg_size = 4
+    elif opcode in _STRUCT_COMPARE_OPCODES and type_byte == _STRUCT_COMPARE_TYPE:
+        arg_size = _STRUCT_COMPARE_ARG_SIZE  # struct/struct compare: trailing uint16 size
     elif opcode in _OPCODE_ARG_SIZES:
         arg_size = _OPCODE_ARG_SIZES[opcode]
     else:

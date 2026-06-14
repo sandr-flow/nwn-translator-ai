@@ -1000,9 +1000,7 @@ class TranslationManager:
             "context": item.context,
             "model": model or self.config.model,
             "file": item_filename,
-            "item_id": (
-                item.item_id if (item.metadata or {}).get("type") == "ncs_string" else None
-            ),
+            "item_id": item.item_id,
         }
         try:
             self._log_writer.write(log_entry)

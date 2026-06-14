@@ -293,34 +293,28 @@ class PipelineState:
     def _log_per_file_translations(
         self,
         extracted_map: ExtractedMap,
-        dialog_files: List[Path],
         all_translations: Dict[str, str],
         manager: "TranslationManager",
     ) -> None:
-        """Write per-file JSONL entries for non-dialog items.
+        """Write per-(file, item_id) translation rows for the web editor.
 
-        Dialog files are already logged inside ContextualTranslationManager.
-        For non-dialog files the TranslationManager logs only unique items
-        (one entry per deduplicated text).  This method adds entries for
-        every (file, item) pair so the web editor can group by source file.
+        The TranslationManager logs only unique items (one entry per
+        deduplicated text); this method adds an entry for every (file, item_id)
+        pair — including dialogs — so the editor groups by source file and each
+        item is independently addressable at rebuild time.
         """
         already_logged: Set[Tuple[str, str]] = set()
 
         for file_path, (_gff, extracted, file_ext) in extracted_map.items():
-            if file_path in dialog_files:
-                continue
             for item in extracted.items:
-                if not item.has_text():
+                if not item.has_text() or not item.item_id:
                     continue
                 translated = all_translations.get(item.text)
                 if translated is None and (item.metadata or {}).get("type") == "ncs_string":
-                    translated = manager.ncs_translations_by_item_id.get(item.item_id or "")
+                    translated = manager.ncs_translations_by_item_id.get(item.item_id)
                 if translated is None:
                     continue
-                if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
-                    log_key: Tuple[str, str] = (file_path.name, item.item_id)
-                else:
-                    log_key = (file_path.name, item.text)
+                log_key = (file_path.name, item.item_id)
                 if log_key in already_logged:
                     continue
                 already_logged.add(log_key)
@@ -329,9 +323,7 @@ class PipelineState:
                     translated=translated,
                     context=item.context,
                     source_filename=file_path.name,
-                    item_id=(
-                        item.item_id if (item.metadata or {}).get("type") == "ncs_string" else None
-                    ),
+                    item_id=item.item_id,
                 )
 
     def _patch_git_files(
@@ -711,7 +703,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
     logger.info("Phase B complete: %d translations collected", len(all_translations))
 
     # Write per-file log entries so the web editor groups by source file.
-    state._log_per_file_translations(extracted_map, dialog_files, all_translations, manager)
+    state._log_per_file_translations(extracted_map, all_translations, manager)
 
     return all_translations
 

@@ -31,9 +31,8 @@ from ..ai_providers import (
 from .deps import web_task_manager
 from .database import (
     delete_task_row,
-    get_ncs_translation_map_by_task,
+    get_item_translation_map_by_task,
     get_task_row,
-    get_translation_map_by_task,
     get_translations_by_task,
     list_tasks_by_token,
     update_task_row,
@@ -440,7 +439,13 @@ async def get_translations(
             seen[filename] = set()
         if original not in seen[filename]:
             seen[filename].add(original)
-            groups[filename].append(TranslationItem(original=original, translated=translated))
+            groups[filename].append(
+                TranslationItem(
+                    original=original,
+                    translated=translated,
+                    item_id=entry.get("item_id") or "",
+                )
+            )
             if original not in text_to_files:
                 text_to_files[original] = []
             text_to_files[original].append(filename)
@@ -471,20 +476,11 @@ async def rebuild_task(
             detail="Извлечённые файлы модуля недоступны (возможно, были очищены)",
         )
 
-    # Build full translation map from SQLite, then apply user overrides
-    all_translations = get_translation_map_by_task(task_id)
-    ncs_by_item_id = get_ncs_translation_map_by_task(task_id)
-    all_translations.update(body.translations)
-
-    if body.translations:
-        for row in get_translations_by_task(task_id):
-            iid = row.get("item_id")
-            file = row.get("file") or ""
-            if not iid or not file.lower().endswith(".ncs"):
-                continue
-            orig = row.get("original")
-            if orig in body.translations:
-                ncs_by_item_id[iid] = body.translations[orig]
+    # Build the per-(file, item_id) translation map from SQLite, then apply the
+    # user's edits on top — each edit targets exactly one (file, item_id).
+    translations_by_item_id = get_item_translation_map_by_task(task_id)
+    for edit in body.edits:
+        translations_by_item_id.setdefault(edit.file, {})[edit.item_id] = edit.translated
 
     extract_dir = Path(task.extract_dir)
     output_path = task.result_path
@@ -502,11 +498,10 @@ async def rebuild_task(
         await asyncio.to_thread(
             rebuild_module,
             extract_dir,
-            all_translations,
+            translations_by_item_id,
             output_path,
             original_mod_path=original_mod_path,
             target_lang=rebuild_target_lang,
-            ncs_translations_by_item_id=ncs_by_item_id,
         )
     except Exception as e:
         logger.exception("Rebuild failed for task %s", task.task_id)

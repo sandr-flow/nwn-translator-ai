@@ -337,11 +337,11 @@ export function useTranslation() {
     t.step = "editing";
   }
 
-  async function rebuildWithEdits(editedTranslations) {
+  async function rebuildWithEdits(edits) {
     if (!t.taskId) return;
     t.rebuilding = true;
     try {
-      const data = await postRebuild(t.taskId, editedTranslations, t.targetLang);
+      const data = await postRebuild(t.taskId, edits, t.targetLang);
       t.resultFilename = data.result_filename ?? t.resultFilename;
       t.step = "done";
     } finally {

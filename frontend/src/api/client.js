@@ -94,8 +94,8 @@ export async function fetchTranslations(taskId) {
   return fetchJson(`/api/tasks/${taskId}/translations`);
 }
 
-export async function postRebuild(taskId, translations, targetLang) {
-  const payload = { translations };
+export async function postRebuild(taskId, edits, targetLang) {
+  const payload = { edits };
   if (targetLang != null && String(targetLang).trim()) {
     payload.target_lang = String(targetLang).trim();
   }

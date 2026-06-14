@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS translations (
     file       TEXT,
     item_id    TEXT,
 
-    UNIQUE(task_id, file, original)
+    UNIQUE(task_id, file, item_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_translations_task_id ON translations(task_id);
@@ -73,6 +73,36 @@ def _migrate(conn: sqlite3.Connection) -> None:
     tr_cols = {row[1] for row in cur_tr.fetchall()}
     if "item_id" not in tr_cols:
         conn.execute("ALTER TABLE translations ADD COLUMN item_id TEXT")
+
+    _migrate_translations_unique_key(conn)
+
+
+def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
+    """Rebuild ``translations`` if it still uses the old UNIQUE(task_id, file, original).
+
+    Addressing edits by ``item_id`` requires the row identity to be
+    ``(task_id, file, item_id)`` so two identical originals in the same file no
+    longer collapse into one row.
+    """
+    target = ["task_id", "file", "item_id"]
+    for idx in conn.execute("PRAGMA index_list(translations)").fetchall():
+        name, is_unique = idx[1], idx[2]
+        if not is_unique:
+            continue
+        cols = [row[2] for row in conn.execute(f"PRAGMA index_info({name})").fetchall()]
+        if cols == target:
+            return  # already migrated
+
+    conn.execute("ALTER TABLE translations RENAME TO translations_old")
+    conn.executescript(_SCHEMA)
+    conn.execute(
+        "INSERT OR IGNORE INTO translations "
+        "(task_id, original, translated, context, model, file, item_id) "
+        "SELECT task_id, original, translated, context, model, file, item_id "
+        "FROM translations_old"
+    )
+    conn.execute("DROP TABLE translations_old")
+    logger.info("Migrated translations table to UNIQUE(task_id, file, item_id)")
 
 
 def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -237,6 +267,25 @@ def get_ncs_translation_map_by_task(task_id: str) -> Dict[str, str]:
         (task_id,),
     )
     return {row[0]: row[1] for row in cur.fetchall()}
+
+
+def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
+    """Return ``{file: {item_id: translated}}`` for rows that carry an ``item_id``.
+
+    This is the addressing used by rebuild: a translation is identified by its
+    source file plus the stable per-file ``item_id`` the extractor assigned, so
+    identical originals in different files (or different nodes) stay distinct.
+    """
+    db = get_db()
+    cur = db.execute(
+        "SELECT file, item_id, translated FROM translations "
+        "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
+        (task_id,),
+    )
+    result: Dict[str, Dict[str, str]] = {}
+    for file, item_id, translated in cur.fetchall():
+        result.setdefault(file or "", {})[item_id] = translated
+    return result
 
 
 def get_translation_map_by_task(task_id: str) -> Dict[str, str]:

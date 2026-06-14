@@ -89,7 +89,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not realdata'"
+markers = [
+    "realdata: end-to-end checks against the local real-module corpus (test_corpus/, path via NWN_TEST_CORPUS). Deselected by default; run with `pytest -m realdata`.",
+]
 
 [tool.coverage.run]
 source = ["src"]

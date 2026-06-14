@@ -133,6 +133,7 @@ The key consequence of injection: extractors must preserve `_record_offsets` on 
 
 ## Test expectations
 
-- `tests/` uses pytest with `addopts = "-v --tb=short"` from `pyproject.toml`.
+- `tests/` uses pytest with `addopts = "-v --tb=short -m 'not realdata'"` from `pyproject.toml`.
 - Many tests construct parsed-GFF dicts by hand; do not depend on `check_this/` fixtures for automated tests.
+- `tests/realdata/` holds opt-in end-to-end checks against a local module corpus (`test_corpus/`, gitignored; path via `NWN_TEST_CORPUS`). They carry the `realdata` marker and are **deselected by default**; run with `pytest -m realdata`. They skip cleanly when the corpus is absent. See `tests/realdata/README.md` for the four runs (parse-all, identity round-trip, no-op patch, mock-translate) and the current known-issues baseline.
 - When changing extractor/injector behaviour, add focused regression tests that cover both the positive extraction/patching case and internal-tag negative cases where relevant. Treat these regression tests as the verification step for the change (see "Goal-driven execution").

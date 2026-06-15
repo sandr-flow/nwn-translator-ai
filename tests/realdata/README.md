@@ -66,3 +66,20 @@ world-context / glossary / contextual-dialog subsystems stay out of the loop.
 
 When M-T2/H7 closes, V2.4 turns green: remove the `xfail` marker on
 `test_mock_translate_roundtrip` and, if desired, tighten it to `strict=True`.
+
+### H6 batch-dedup metric (Almraiven, mock-translate)
+
+Placeholder nonces are now derived from the source text instead of a random
+`secrets.token_hex(4)`, so two equal token-bearing strings sanitize identically
+and collapse to one batch entry / API call. Measured on Almraiven (the
+`Deduplicated N items down to M unique texts` log line):
+
+| | Items | Unique texts |
+|---|---|---|
+| Before (random nonce) | 35833 | 17626 |
+| After (deterministic nonce) | 35833 | **16247** |
+
+−1379 unique batch entries (~7.8%) = that many fewer paid LLM calls on this one
+module. To reproduce a before/after on an older commit, run the worktree's own
+source via `PYTHONPATH=<worktree>/src` — the editable install otherwise imports
+the main tree.

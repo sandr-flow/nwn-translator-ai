@@ -246,3 +246,30 @@ class TestCleanupPath:
         assert result.used_cleanup
         assert "<sir/madam>" not in result.final_text
         assert "Good evening" in result.final_text
+
+
+class TestDeterministicNonce:
+    """Identical token-bearing text must sanitize identically (cache/dedup reuse)."""
+
+    def test_same_text_with_token_sanitizes_identically(self):
+        text = "Greetings, <FirstName>!"
+        a, _ = sanitize_text(text)
+        b, _ = sanitize_text(text)
+        assert a == b
+        assert TOKEN_PLACEHOLDER_RE.search(a)
+
+    def test_same_handler_reused_is_deterministic(self):
+        handler = TokenHandler()
+        first = handler.sanitize("Hello <FirstName>").sanitized_text
+        second = handler.sanitize("Hello <FirstName>").sanitized_text
+        assert first == second
+
+    def test_different_text_gets_different_nonce(self):
+        a, _ = sanitize_text("Hello <FirstName>")
+        b, _ = sanitize_text("Goodbye <FirstName>")
+        assert a != b
+
+    def test_roundtrip_still_restores(self):
+        text = "Hello <FirstName>, welcome <StartAction>[wave]</Start>"
+        sanitized, handler = sanitize_text(text)
+        assert restore_text(sanitized, handler) == text

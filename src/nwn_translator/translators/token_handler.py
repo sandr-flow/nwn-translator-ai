@@ -10,8 +10,8 @@ clean up mismatched artifacts while keeping the translated prose.
 
 from __future__ import annotations
 
+import hashlib
 import re
-import secrets
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -138,7 +138,7 @@ class TokenHandler:
         self._placeholder_to_artifact: Dict[str, PreservedArtifact] = {}
         self._inline_core_map: Dict[str, str] = {}
         self._token_core_map: Dict[str, str] = {}
-        self._nonce = secrets.token_hex(4)
+        self._nonce = ""
         self._artifact_counter = 0
 
     def sanitize(self, text: str) -> SanitizedText:
@@ -150,6 +150,7 @@ class TokenHandler:
 
         self.clear()
         self.original_text = text
+        self._nonce = self._deterministic_nonce(text)
         result = SanitizedText(sanitized_text=text)
         parts: List[str] = []
         last_end = 0
@@ -352,7 +353,7 @@ class TokenHandler:
         self._placeholder_to_artifact.clear()
         self._inline_core_map.clear()
         self._token_core_map.clear()
-        self._nonce = secrets.token_hex(4)
+        self._nonce = ""
         self._artifact_counter = 0
 
     def get_token_count(self) -> int:
@@ -442,6 +443,17 @@ class TokenHandler:
         normalized = re.sub(r"\( ", "(", normalized)
         normalized = re.sub(r" \)", ")", normalized)
         return normalized.strip()
+
+    @staticmethod
+    def _deterministic_nonce(text: str) -> str:
+        """Derive the placeholder nonce from the source text.
+
+        Identical input text yields identical placeholders, so two equal strings
+        sanitize to the same form and share one session-cache / dedup key (and one
+        paid LLM call). Different texts get different nonces. Per-artifact
+        uniqueness within a single string is handled by ``_artifact_counter``.
+        """
+        return hashlib.blake2s(text.encode("utf-8"), digest_size=4).hexdigest()
 
     def _make_placeholder(self, kind: str) -> str:
         """Build one opaque placeholder for a preserved artifact."""

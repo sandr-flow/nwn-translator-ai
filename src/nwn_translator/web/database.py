@@ -157,21 +157,22 @@ def create_task_row(
     model: Optional[str] = None,
 ) -> None:
     db = get_db()
-    db.execute(
-        "INSERT INTO tasks (task_id, client_token, client_ip, created_at, input_filename, target_lang, source_lang, model) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            task_id,
-            client_token,
-            client_ip,
-            created_at,
-            input_filename,
-            target_lang,
-            source_lang,
-            model,
-        ),
-    )
-    db.commit()
+    with _lock:
+        db.execute(
+            "INSERT INTO tasks (task_id, client_token, client_ip, created_at, input_filename, target_lang, source_lang, model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id,
+                client_token,
+                client_ip,
+                created_at,
+                input_filename,
+                target_lang,
+                source_lang,
+                model,
+            ),
+        )
+        db.commit()
 
 
 def update_task_row(task_id: str, **fields: Any) -> None:
@@ -193,15 +194,17 @@ def update_task_row(task_id: str, **fields: Any) -> None:
     cols = ", ".join(f"{k} = ?" for k in fields)
     vals = list(fields.values()) + [task_id]
     db = get_db()
-    db.execute(f"UPDATE tasks SET {cols} WHERE task_id = ?", vals)  # noqa: S608
-    db.commit()
+    with _lock:
+        db.execute(f"UPDATE tasks SET {cols} WHERE task_id = ?", vals)  # noqa: S608
+        db.commit()
 
 
 def get_task_row(task_id: str) -> Optional[Dict[str, Any]]:
     db = get_db()
-    db.row_factory = sqlite3.Row
-    cur = db.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
-    row = cur.fetchone()
+    with _lock:
+        cur = db.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
+        cur.row_factory = sqlite3.Row
+        row = cur.fetchone()
     if row is None:
         return None
     return dict(row)
@@ -209,20 +212,23 @@ def get_task_row(task_id: str) -> Optional[Dict[str, Any]]:
 
 def list_tasks_by_token(client_token: str) -> List[Dict[str, Any]]:
     db = get_db()
-    db.row_factory = sqlite3.Row
-    cur = db.execute(
-        "SELECT * FROM tasks WHERE client_token = ? ORDER BY created_at DESC",
-        (client_token,),
-    )
-    return [dict(r) for r in cur.fetchall()]
+    with _lock:
+        cur = db.execute(
+            "SELECT * FROM tasks WHERE client_token = ? ORDER BY created_at DESC",
+            (client_token,),
+        )
+        cur.row_factory = sqlite3.Row
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 def delete_task_row(task_id: str) -> bool:
     """Delete a task (CASCADE deletes translations). Returns True if row existed."""
     db = get_db()
-    cur = db.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
-    db.commit()
-    return cur.rowcount > 0
+    with _lock:
+        cur = db.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
+        db.commit()
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------
@@ -240,12 +246,13 @@ def insert_translation(
     item_id: Optional[str] = None,
 ) -> None:
     db = get_db()
-    db.execute(
-        "INSERT OR REPLACE INTO translations (task_id, original, translated, context, model, file, item_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (task_id, original, translated, context, model, file, item_id),
-    )
-    db.commit()
+    with _lock:
+        db.execute(
+            "INSERT OR REPLACE INTO translations (task_id, original, translated, context, model, file, item_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (task_id, original, translated, context, model, file, item_id),
+        )
+        db.commit()
 
 
 def update_translation_text(task_id: str, file: str, item_id: str, translated: str) -> None:
@@ -255,32 +262,37 @@ def update_translation_text(task_id: str, file: str, item_id: str, translated: s
     an in-place update that preserves the original text and keeps row identity stable.
     """
     db = get_db()
-    db.execute(
-        "UPDATE translations SET translated = ? WHERE task_id = ? AND file = ? AND item_id = ?",
-        (translated, task_id, file, item_id),
-    )
-    db.commit()
+    with _lock:
+        db.execute(
+            "UPDATE translations SET translated = ? WHERE task_id = ? AND file = ? AND item_id = ?",
+            (translated, task_id, file, item_id),
+        )
+        db.commit()
 
 
 def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
     db = get_db()
-    db.row_factory = sqlite3.Row
-    cur = db.execute(
-        "SELECT original, translated, context, model, file, item_id FROM translations WHERE task_id = ?",
-        (task_id,),
-    )
-    return [dict(r) for r in cur.fetchall()]
+    with _lock:
+        cur = db.execute(
+            "SELECT original, translated, context, model, file, item_id FROM translations WHERE task_id = ?",
+            (task_id,),
+        )
+        cur.row_factory = sqlite3.Row
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_ncs_translation_map_by_task(task_id: str) -> Dict[str, str]:
     """Return ``{item_id: translated}`` for rows that have a non-empty ``item_id``."""
     db = get_db()
-    cur = db.execute(
-        "SELECT item_id, translated FROM translations "
-        "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
-        (task_id,),
-    )
-    return {row[0]: row[1] for row in cur.fetchall()}
+    with _lock:
+        cur = db.execute(
+            "SELECT item_id, translated FROM translations "
+            "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
+            (task_id,),
+        )
+        rows = cur.fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
 def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
@@ -291,13 +303,15 @@ def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
     identical originals in different files (or different nodes) stay distinct.
     """
     db = get_db()
-    cur = db.execute(
-        "SELECT file, item_id, translated FROM translations "
-        "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
-        (task_id,),
-    )
+    with _lock:
+        cur = db.execute(
+            "SELECT file, item_id, translated FROM translations "
+            "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
+            (task_id,),
+        )
+        rows = cur.fetchall()
     result: Dict[str, Dict[str, str]] = {}
-    for file, item_id, translated in cur.fetchall():
+    for file, item_id, translated in rows:
         result.setdefault(file or "", {})[item_id] = translated
     return result
 
@@ -305,11 +319,13 @@ def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
 def get_translation_map_by_task(task_id: str) -> Dict[str, str]:
     """Return {original: translated} mapping for all translations in a task."""
     db = get_db()
-    cur = db.execute(
-        "SELECT original, translated FROM translations WHERE task_id = ?",
-        (task_id,),
-    )
-    return {row[0]: row[1] for row in cur.fetchall()}
+    with _lock:
+        cur = db.execute(
+            "SELECT original, translated FROM translations WHERE task_id = ?",
+            (task_id,),
+        )
+        rows = cur.fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
 # ---------------------------------------------------------------------------

@@ -252,7 +252,6 @@ def test_rebuild_endpoint_edits_one_of_two_identical_originals(rebuild_client) -
     assert _first_name(extract_dir / "b.utc") == "Гоблин"
 
     # Idempotent: re-sending the same edits reproduces the same result.
-    # (Persisting edits so a *no-edit* rebuild stays stable is the next task.)
     resp2 = client.post(
         f"/api/tasks/{task_id}/rebuild",
         json={
@@ -263,3 +262,93 @@ def test_rebuild_endpoint_edits_one_of_two_identical_originals(rebuild_client) -
     assert resp2.status_code == 200, resp2.text
     assert _first_name(extract_dir / "a.utc") == "Гоблин-А"
     assert _first_name(extract_dir / "b.utc") == "Гоблин"
+
+
+# ---------------------------------------------------------------------------
+# Edits persist across rebuilds (C4b)
+# ---------------------------------------------------------------------------
+
+
+def _seed_completed_task(tmp_path: Path, extract_dir: Path, creatures: dict[str, str]) -> str:
+    """Create a completed task with one translation row per creature file."""
+    task_id = str(uuid.uuid4())
+    db.create_task_row(
+        task_id=task_id,
+        client_token="tok",
+        client_ip="1.1.1.1",
+        created_at=1.0,
+        input_filename="in.mod",
+        target_lang="russian",
+    )
+    db.update_task_row(
+        task_id,
+        status="completed",
+        extract_dir=str(extract_dir),
+        result_path=str(tmp_path / "out.mod"),
+        input_path=str(tmp_path / "missing.mod"),
+    )
+    for fname, (tag, name) in creatures.items():  # type: ignore[misc]
+        _write_creature(extract_dir / fname, tag, name)
+        db.insert_translation(
+            task_id=task_id,
+            original=name,
+            translated=name,
+            file=fname,
+            item_id=f"{tag}_first_name",
+        )
+    return task_id
+
+
+def test_rebuild_persists_edit_to_translations(rebuild_client) -> None:
+    """After a rebuild, GET /translations reflects the edited value."""
+    client, tmp_path = rebuild_client
+    extract_dir = tmp_path / "ex"
+    extract_dir.mkdir()
+    task_id = _seed_completed_task(tmp_path, extract_dir, {"a.utc": ("GOBLIN", "Гоблин")})
+
+    resp = client.post(
+        f"/api/tasks/{task_id}/rebuild",
+        json={
+            "edits": [{"file": "a.utc", "item_id": "GOBLIN_first_name", "translated": "Гоблин-А"}],
+            "target_lang": "russian",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    data = client.get(f"/api/tasks/{task_id}/translations").json()
+    item = data["files"][0]["items"][0]
+    assert item["translated"] == "Гоблин-А"
+    assert item["item_id"] == "GOBLIN_first_name"
+
+
+def test_two_sequential_rebuilds_keep_both_edits(rebuild_client) -> None:
+    """A second rebuild editing only file B must not revert file A's earlier edit."""
+    client, tmp_path = rebuild_client
+    extract_dir = tmp_path / "ex"
+    extract_dir.mkdir()
+    task_id = _seed_completed_task(
+        tmp_path, extract_dir, {"a.utc": ("GOBLIN", "Гоблин"), "b.utc": ("ORC", "Орк")}
+    )
+
+    # First rebuild edits A only.
+    r1 = client.post(
+        f"/api/tasks/{task_id}/rebuild",
+        json={
+            "edits": [{"file": "a.utc", "item_id": "GOBLIN_first_name", "translated": "Гоблин!"}]
+        },
+    )
+    assert r1.status_code == 200, r1.text
+
+    # Second rebuild edits B only — A's edit is persisted, so it stays put.
+    r2 = client.post(
+        f"/api/tasks/{task_id}/rebuild",
+        json={"edits": [{"file": "b.utc", "item_id": "ORC_first_name", "translated": "Орк!"}]},
+    )
+    assert r2.status_code == 200, r2.text
+
+    assert _first_name(extract_dir / "a.utc") == "Гоблин!"
+    assert _first_name(extract_dir / "b.utc") == "Орк!"
+
+    data = client.get(f"/api/tasks/{task_id}/translations").json()
+    by_file = {f["filename"]: f["items"][0]["translated"] for f in data["files"]}
+    assert by_file == {"a.utc": "Гоблин!", "b.utc": "Орк!"}

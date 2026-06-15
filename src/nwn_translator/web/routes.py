@@ -36,6 +36,7 @@ from .database import (
     get_translations_by_task,
     list_tasks_by_token,
     update_task_row,
+    update_translation_text,
 )
 from .schemas import (
     ConfigResponse,
@@ -506,6 +507,11 @@ async def rebuild_task(
     except Exception as e:
         logger.exception("Rebuild failed for task %s", task.task_id)
         raise HTTPException(status_code=500, detail=f"Ошибка сборки: {e}")
+
+    # Persist the edits so a later editor session reads the current values and a
+    # subsequent no-edit rebuild does not revert them with a stale snapshot.
+    for edit in body.edits:
+        update_translation_text(task_id, edit.file, edit.item_id, edit.translated)
 
     import time
 

@@ -248,6 +248,20 @@ def insert_translation(
     db.commit()
 
 
+def update_translation_text(task_id: str, file: str, item_id: str, translated: str) -> None:
+    """Persist an editor edit: set ``translated`` for one ``(task_id, file, item_id)``.
+
+    The row already exists (the editor loads originals from this table), so this is
+    an in-place update that preserves the original text and keeps row identity stable.
+    """
+    db = get_db()
+    db.execute(
+        "UPDATE translations SET translated = ? WHERE task_id = ? AND file = ? AND item_id = ?",
+        (translated, task_id, file, item_id),
+    )
+    db.commit()
+
+
 def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
     db = get_db()
     db.row_factory = sqlite3.Row

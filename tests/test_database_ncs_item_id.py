@@ -131,3 +131,35 @@ def test_concurrent_access_is_serialized(isolated_db: None) -> None:
 
     assert errors == []
     assert len(db.list_tasks_by_token("tok")) == 12 * 40
+
+
+def test_startup_reconciles_unfinished_tasks(isolated_db: None) -> None:
+    """A non-terminal row left by a dead worker becomes ``interrupted`` on init.
+
+    Regression: after a restart, ``running``/``extracting`` rows had no worker but
+    the status endpoint kept reporting them as running forever.
+    """
+    from nwn_translator.web.task_manager import TaskManager
+
+    db.create_task_row("alive", "tok", "127.0.0.1", 1.0, "m.mod")
+    db.update_task_row("alive", status="extracting")  # non-terminal -> interrupted
+    db.create_task_row("done", "tok", "127.0.0.1", 2.0, "m.mod")
+    db.update_task_row("done", status="completed")  # terminal -> untouched
+
+    tm = TaskManager(db_connection=db.get_db())
+
+    # DB row flipped to a terminal status; the completed row is left alone.
+    assert db.get_task_row("alive")["status"] == "interrupted"
+    assert db.get_task_row("done")["status"] == "completed"
+
+    # The interrupted task is registered in memory and counts as finished;
+    # the already-terminal one is not reloaded into memory.
+    interrupted = tm.get("alive")
+    assert interrupted is not None and interrupted.status == "interrupted"
+    assert interrupted.is_finished()
+    assert tm.get("done") is None
+
+    # TTL purge picks the interrupted task up like any other finished task.
+    tm.task_ttl_seconds = -1
+    tm.purge_expired()
+    assert tm.get("alive") is None

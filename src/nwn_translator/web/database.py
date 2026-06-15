@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+#: Statuses a task can no longer leave. ``interrupted`` marks a task whose
+#: worker died (process restart) so it stops looking forever-running.
+TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted")
+
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS tasks (
     task_id        TEXT PRIMARY KEY,
@@ -216,6 +220,25 @@ def list_tasks_by_token(client_token: str) -> List[Dict[str, Any]]:
         cur = db.execute(
             "SELECT * FROM tasks WHERE client_token = ? ORDER BY created_at DESC",
             (client_token,),
+        )
+        cur.row_factory = sqlite3.Row
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_unfinished_task_rows() -> List[Dict[str, Any]]:
+    """Return task rows still in a non-terminal state.
+
+    Used at startup to reconcile tasks whose worker died: anything not in
+    :data:`TERMINAL_STATUSES` (``pending``/``extracting``/``translating``/…) has
+    no live worker after a restart and must be flipped to ``interrupted``.
+    """
+    placeholders = ", ".join("?" for _ in TERMINAL_STATUSES)
+    db = get_db()
+    with _lock:
+        cur = db.execute(
+            f"SELECT * FROM tasks WHERE status NOT IN ({placeholders})",  # noqa: S608
+            TERMINAL_STATUSES,
         )
         cur.row_factory = sqlite3.Row
         rows = cur.fetchall()

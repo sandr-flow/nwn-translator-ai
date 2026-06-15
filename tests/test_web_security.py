@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 
 import pytest
@@ -107,3 +108,63 @@ def test_cors_explicit_origin_is_allowed(isolated_app, monkeypatch: pytest.Monke
         resp = client.get("/api/health", headers={"Origin": "https://trusted.example"})
     assert resp.status_code == 200
     assert resp.headers.get("access-control-allow-origin") == "https://trusted.example"
+
+
+# ---------------------------------------------------------------------------
+# Task routes enforce client_token ownership
+# ---------------------------------------------------------------------------
+
+
+def _seed_task(owner: str, status: str = "completed") -> str:
+    task_id = str(uuid.uuid4())
+    db.create_task_row(
+        task_id=task_id,
+        client_token=owner,
+        client_ip="1.1.1.1",
+        created_at=1.0,
+        input_filename="m.mod",
+        target_lang="russian",
+    )
+    db.update_task_row(task_id, status=status)
+    return task_id
+
+
+def _task_routes(task_id: str):
+    """The six per-task routes that must verify ownership: (method, path, kwargs)."""
+    base = f"/api/tasks/{task_id}"
+    return [
+        ("get", f"{base}/status", {}),
+        ("get", f"{base}/progress", {}),
+        ("get", f"{base}/download", {}),
+        ("get", f"{base}/log", {}),
+        ("get", f"{base}/translations", {}),
+        ("post", f"{base}/rebuild", {"json": {"edits": []}}),
+    ]
+
+
+def test_task_routes_reject_foreign_and_missing_token(isolated_app) -> None:
+    with isolated_app() as client:
+        task_id = _seed_task(owner="owner-tok")
+        for method, path, kwargs in _task_routes(task_id):
+            wrong = client.request(method, path, headers={"X-Client-Token": "intruder"}, **kwargs)
+            assert wrong.status_code == 403, f"{method} {path} with foreign token"
+            none = client.request(method, path, **kwargs)
+            assert none.status_code == 403, f"{method} {path} with no token"
+
+
+def test_task_routes_allow_owner(isolated_app) -> None:
+    with isolated_app() as client:
+        task_id = _seed_task(owner="owner-tok")
+        headers = {"X-Client-Token": "owner-tok"}
+        for method, path, kwargs in _task_routes(task_id):
+            # The ownership gate must pass; downstream preconditions may yield
+            # 200/400/404, but never 403.
+            resp = client.request(method, path, headers=headers, **kwargs)
+            assert resp.status_code != 403, f"{method} {path} denied owner ({resp.status_code})"
+
+
+def test_ownerless_task_is_accessible_without_token(isolated_app) -> None:
+    with isolated_app() as client:
+        task_id = _seed_task(owner="")
+        resp = client.get(f"/api/tasks/{task_id}/status")
+        assert resp.status_code == 200

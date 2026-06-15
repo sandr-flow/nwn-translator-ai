@@ -202,6 +202,8 @@ def rebuild_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     set_task_manager(TaskManager(workspace_root=tmp_path / "tasks"))
     app = create_app()
     with TestClient(app) as c:
+        # All seeded tasks below are owned by "tok"; act as that owner.
+        c.headers["X-Client-Token"] = "tok"
         yield c, tmp_path
     set_task_manager(None)
     db.close_db()

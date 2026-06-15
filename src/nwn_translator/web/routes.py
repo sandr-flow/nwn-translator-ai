@@ -287,16 +287,37 @@ def _task_or_404(task_id: str, tm: TaskManager) -> TranslationTask:
     return task
 
 
+def require_task_owner(
+    task_id: str,
+    request: Request,
+    tm: TaskManager = Depends(web_task_manager),
+) -> TranslationTask:
+    """Resolve a task and enforce that the caller owns it.
+
+    When the task has an owner (non-empty ``client_token``), the request's
+    ``X-Client-Token`` must match it, otherwise access is denied. Tasks without
+    an owner stay accessible (legacy rows / tokenless creation).
+
+    Raises:
+        HTTPException: 400/404 from :func:`_task_or_404`; 403 if the token does
+        not match the task owner.
+    """
+    task = _task_or_404(task_id, tm)
+    owner = (task.client_token or "").strip()
+    if owner and _client_token(request) != owner:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
+    return task
+
+
 @router.get("/tasks/{task_id}/status", response_model=TaskStatusResponse)
 async def task_status(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> TaskStatusResponse:
     """Return a JSON snapshot of the current task state."""
-    task = _task_or_404(task_id, tm)
     result_name = task.result_path.name if task.result_path else None
     target_lang = task.target_lang
     if not target_lang:
-        row = get_task_row(task_id)
+        row = get_task_row(task.task_id)
         if row:
             target_lang = row.get("target_lang")
     return TaskStatusResponse(
@@ -314,10 +335,9 @@ async def task_status(
 
 @router.get("/tasks/{task_id}/progress")
 async def task_progress(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> StreamingResponse:
     """Server-Sent Events stream of progress updates."""
-    task = _task_or_404(task_id, tm)
 
     async def event_stream():
         # Send current snapshot first
@@ -380,10 +400,9 @@ async def task_progress(
 
 @router.get("/tasks/{task_id}/download")
 async def download_result(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> FileResponse:
     """Download the translated module file for a completed task."""
-    task = _task_or_404(task_id, tm)
     if task.status != "completed" or not task.result_path or not task.result_path.is_file():
         raise HTTPException(status_code=400, detail="Файл результата ещё не готов")
     return FileResponse(
@@ -395,11 +414,10 @@ async def download_result(
 
 @router.get("/tasks/{task_id}/log")
 async def download_log(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> StreamingResponse:
     """Download the translation log as JSONL (generated from SQLite)."""
-    _task_or_404(task_id, tm)
-    rows = get_translations_by_task(task_id)
+    rows = get_translations_by_task(task.task_id)
     if not rows:
         raise HTTPException(status_code=404, detail="Лог недоступен")
 
@@ -416,12 +434,10 @@ async def download_log(
 
 @router.get("/tasks/{task_id}/translations", response_model=TranslationsResponse)
 async def get_translations(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> TranslationsResponse:
     """Return structured translation data grouped by source file for the editor."""
-    _task_or_404(task_id, tm)  # validate exists
-
-    rows = get_translations_by_task(task_id)
+    rows = get_translations_by_task(task.task_id)
     if not rows:
         return TranslationsResponse(files=[])
 
@@ -465,10 +481,9 @@ async def get_translations(
 async def rebuild_task(
     task_id: str,
     body: RebuildRequest,
-    tm: TaskManager = Depends(web_task_manager),
+    task: TranslationTask = Depends(require_task_owner),
 ) -> RebuildResponse:
     """Rebuild the .mod file with edited translations (no LLM calls)."""
-    task = _task_or_404(task_id, tm)
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="Задача ещё не завершена")
     if not task.extract_dir or not Path(task.extract_dir).is_dir():

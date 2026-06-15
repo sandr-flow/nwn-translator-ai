@@ -133,6 +133,48 @@ class TestTokenHandler:
         assert finalized.exact_valid
         assert finalized.final_text == "-отдать ему письмо-"
 
+    def test_dash_action_protects_nested_engine_token(self):
+        """Regression (H7): a token inside a dash marker is hidden from the LLM.
+
+        Previously the dash body was emitted verbatim, so ``<FirstName>`` in
+        ``-glances at <FirstName>-`` reached the model unprotected and was not
+        tracked for validation.
+        """
+        handler = TokenHandler()
+        result = handler.sanitize("-glances at <FirstName>-")
+        assert "<FirstName>" not in result.sanitized_text
+        assert [a.original for a in result.artifacts] == ["-", "<FirstName>", "-"]
+
+        token_placeholder = next(
+            r.placeholder for r in result.replacements if r.original == "<FirstName>"
+        )
+        markers = [r.placeholder for r in result.replacements if r.original == "-"]
+        finalized = handler.finalize_translation(
+            f"{markers[0]}смотрит на {token_placeholder}{markers[1]}"
+        )
+        assert finalized.exact_valid
+        assert finalized.final_text == "-смотрит на <FirstName>-"
+
+    def test_dash_action_protects_nested_inline_tag(self):
+        handler = TokenHandler()
+        result = handler.sanitize("-<StartHighlight>aside</Start>-")
+        assert [a.original for a in result.artifacts] == [
+            "-",
+            "<StartHighlight>",
+            "</Start>",
+            "-",
+        ]
+
+    def test_dash_action_validation_catches_dropped_nested_token(self):
+        """A nested token corrupted by the model fails exact validation."""
+        handler = TokenHandler()
+        result = handler.sanitize("-glances at <FirstName>-")
+        markers = [r.placeholder for r in result.replacements if r.original == "-"]
+        # Model dropped the engine-token placeholder entirely.
+        report = handler.validate_text(handler.restore(f"{markers[0]}смотрит{markers[1]}"))
+        assert not report.is_exact_match
+        assert "<FirstName>" in report.missing
+
 
 class TestTokenValidator:
     """Tests for exact preserved-artifact validation."""

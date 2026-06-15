@@ -189,6 +189,7 @@ class TokenHandler:
                     kind="dash_action_marker",
                     structural_role="opening",
                 )
+                protected_inner = self._protect_nested_artifacts(result, inner, match.start() + 1)
                 closing = self._add_protected_artifact(
                     result,
                     "-",
@@ -198,7 +199,7 @@ class TokenHandler:
                 )
                 parts.append(text[last_end : match.start()])
                 parts.append(opening)
-                parts.append(inner)
+                parts.append(protected_inner)
                 parts.append(closing)
                 last_end = match.end()
                 continue
@@ -344,6 +345,37 @@ class TokenHandler:
         )
         return placeholder
 
+    def _protect_nested_artifacts(
+        self, result: SanitizedText, inner: str, base_position: int
+    ) -> str:
+        """Protect engine tokens and inline tags nested inside an action marker.
+
+        An action body (for example ``glances at <FirstName>`` inside
+        ``-glances at <FirstName>-``) is otherwise emitted verbatim, so a nested
+        token would reach the LLM unprotected and escape validation. Replace each
+        classifiable fragment with a placeholder anchored at its absolute position
+        in the original text, and return the rebuilt body.
+        """
+        parts: List[str] = []
+        last_end = 0
+        for match in self.TOKEN_LIKE_FRAGMENT_PATTERN.finditer(inner):
+            raw = match.group(0)
+            kind, structural_role = self._classify_artifact(raw)
+            if kind is None:
+                continue
+            placeholder = self._add_protected_artifact(
+                result,
+                raw,
+                base_position + match.start(),
+                kind=kind,
+                structural_role=structural_role,
+            )
+            parts.append(inner[last_end : match.start()])
+            parts.append(placeholder)
+            last_end = match.end()
+        parts.append(inner[last_end:])
+        return "".join(parts)
+
     def clear(self) -> None:
         """Clear handler state and reset placeholder counters."""
         self.original_text = ""
@@ -397,6 +429,20 @@ class TokenHandler:
                         structural_role="opening",
                     )
                 )
+                inner = raw[1:-1]
+                for inner_match in cls.TOKEN_LIKE_FRAGMENT_PATTERN.finditer(inner):
+                    inner_raw = inner_match.group(0)
+                    inner_kind, inner_role = cls._classify_artifact_static(inner_raw)
+                    if inner_kind is None:
+                        continue
+                    artifacts.append(
+                        PreservedArtifact(
+                            kind=inner_kind,
+                            original=inner_raw,
+                            position=match.start() + 1 + inner_match.start(),
+                            structural_role=inner_role,
+                        )
+                    )
                 artifacts.append(
                     PreservedArtifact(
                         kind="dash_action_marker",

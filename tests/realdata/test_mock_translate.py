@@ -50,9 +50,10 @@ def _declared_ncs_size(raw: bytes) -> int | None:
 # KNOWN ISSUE: C1 (NCS opcode arg sizes) and C2 (NCS preamble ``T``) are fixed
 # and the corpus NCS now reparse with a correct ``T``. The remaining failure is
 # a dialog string made entirely of inline tags (``<StartHighlight>...</Start>``)
-# that loses its marker through the token-protection path (M-T2 / H7). Remove
-# this marker once M-T2/H7 closes; tighten to strict afterwards.
-@pytest.mark.xfail(reason="known-issue: M-T2/H7 token edge loses marker", strict=False)
+# that loses its marker somewhere in the pipeline (it round-trips fine through
+# TokenHandler in isolation). See tests/realdata/README.md. Remove this marker
+# once that field is fixed; tighten to strict afterwards.
+@pytest.mark.xfail(reason="known-issue: inline-tag-only string loses marker", strict=False)
 def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
     out_path = tmp_path / "translated.mod"
     config = TranslationConfig(

@@ -59,12 +59,20 @@ world-context / glossary / contextual-dialog subsystems stay out of the loop.
 - **C2 (fixed)** — the NCS patcher now rewrites the preamble size field `T` after
   a length-changing splice. On LES LIONS DIFFAMES this closed all 142/1092 stale
   `T` failures; output `.ncs` now reparse with `T == file size`.
-- **M-T2 / H7 (open)** — one dialog string made entirely of inline tags
-  (`<StartHighlight>Partir</Start>`) loses its marker through the
-  token-protection path: 1/8473 GFF fields on that module. This is the only
-  remaining V2.4 failure and keeps the test `xfail`.
+- **H7 (fixed)** — engine tokens and inline tags nested inside a dash action
+  marker (`-glances at <FirstName>-`) are now protected before the LLM call and
+  tracked for validation, so corruption inside a marker is caught. This was a
+  distinct token edge; it does not touch this module's remaining failure (no
+  dash marker is involved) and does not change its marker count.
+- **inline-tag-only field (open)** — one dialog string made entirely of inline
+  tags (`<StartHighlight>Partir</Start>` in `malt.dlg`) loses its marker:
+  1/8473 GFF fields on that module. The string round-trips correctly through
+  `TokenHandler` in isolation (the restored text keeps the prepended marker), so
+  the loss happens elsewhere in the pipeline (extraction/batch/injection), not in
+  the token-protection roundtrip itself. Root cause is not yet pinned to a plan
+  item; this is the only remaining V2.4 failure and keeps the test `xfail`.
 
-When M-T2/H7 closes, V2.4 turns green: remove the `xfail` marker on
+When that field is fixed, V2.4 turns green: remove the `xfail` marker on
 `test_mock_translate_roundtrip` and, if desired, tighten it to `strict=True`.
 
 ### H6 batch-dedup metric (Almraiven, mock-translate)

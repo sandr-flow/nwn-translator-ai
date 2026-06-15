@@ -8,7 +8,8 @@ services:
       - "8000"
     environment:
       NWN_WEB_TASK_ROOT: /data/tasks
-      NWN_WEB_CORS_ORIGINS: "*"
+      # No CORS: nginx serves the SPA and proxies /api on the same origin.
+      # Set NWN_WEB_CORS_ORIGINS to an explicit origin list only for cross-origin setups.
     volumes:
       - nwn_tasks:/data/tasks
 

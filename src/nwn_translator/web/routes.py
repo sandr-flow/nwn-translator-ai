@@ -660,8 +660,16 @@ async def list_models() -> ModelsResponse:
 
 @router.get("/config", response_model=ConfigResponse)
 async def get_config() -> ConfigResponse:
-    """Return server-side defaults: API key from env (if set) and default model."""
-    api_key = os.environ.get("NWN_TRANSLATE_API_KEY", "").strip() or None
+    """Return server-side defaults for the UI: default model and, only on a local
+    run, the server's ``.env`` API key for autofill.
+
+    The key is exposed solely in local mode (the process bound to loopback by
+    ``python -m nwn_translator.web``). A deployed/exposed instance never hands it
+    out — this is a BYOK product, so remote users supply their own key.
+    """
+    api_key = None
+    if os.environ.get("NWN_WEB_LOCAL_MODE") == "1":
+        api_key = os.environ.get("NWN_TRANSLATE_API_KEY", "").strip() or None
     return ConfigResponse(
         api_key=api_key,
         default_model=OpenRouterProvider.DEFAULT_MODEL,

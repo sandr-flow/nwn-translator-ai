@@ -119,7 +119,7 @@ Primary environment variables:
 | `NWN_WEB_HOST` | Web server host | `127.0.0.1` |
 | `NWN_WEB_PORT` | Web server port | `8000` |
 | `NWN_WEB_RELOAD` | Backend auto-reload in development | disabled |
-| `NWN_WEB_CORS_ORIGINS` | Comma-separated allowed CORS origins | `*` |
+| `NWN_WEB_CORS_ORIGINS` | Comma-separated allowed CORS origins (or `*`) | empty (cross-origin denied) |
 | `NWN_WEB_STATIC_DIR` | Production SPA static directory | unset |
 | `NWN_WEB_TASK_ROOT` | Web task workspace root | `workspace/web` |
 | `NWN_WEB_DB_PATH` | SQLite task database path | `workspace/web/translations.db` |
@@ -135,6 +135,18 @@ NWN_WEB_PORT=8000
 ```
 
 The model is selected through web/API parameters or `TranslationConfig(model=...)`; the current code does not read a separate `NWN_TRANSLATE_MODEL` environment variable.
+
+### API key and BYOK
+
+The product is **BYOK (Bring Your Own Key)**: in the web UI each user enters their own API key,
+and `POST /api/translate` always requires the key from the client. The server does **not** hand
+its `NWN_TRANSLATE_API_KEY` to the browser.
+
+The one exception is a local single-user run: when `python -m nwn_translator.web` binds to
+loopback (`NWN_WEB_HOST` defaults to `127.0.0.1`) it enables local mode, and `/api/config`
+returns the `.env` key so the UI can autofill the field. Any non-local launch (binding to
+`0.0.0.0`, Docker, an instance behind nginx) does not enable that mode, so the `.env` key never
+leaves the server.
 
 ## Pipeline stages and diagnostics
 

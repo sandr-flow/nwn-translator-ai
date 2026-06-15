@@ -164,7 +164,8 @@ class Glossary:
                 str(original_en).strip(),
                 preserve_tokens=preserve_tokens,
             )
-            cache[sanitized] = translated
+            # Seed as exact-match only: glossary terms must not seed prefix matches.
+            cache.set_exact(sanitized, translated)
 
 
 class GlossaryBuilder:

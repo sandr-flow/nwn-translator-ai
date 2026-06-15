@@ -136,3 +136,23 @@ class TestGlossaryFilterByBatch:
         m_pos = block.find('"Morin"')
         z_pos = block.find('"Zephyr"')
         assert 0 < a_pos < m_pos < z_pos
+
+
+class TestSeedCacheExcludedFromPrefix:
+    """Glossary seeds must be exact-match only, never prefix-match bases (H8)."""
+
+    def test_seed_entry_exact_match_but_not_prefix(self):
+        from src.nwn_translator.translators.prefix_translation_cache import (
+            PrefixAwareTranslationCache,
+        )
+        from src.nwn_translator.translators.translation_manager import _MIN_PREFIX_LEN
+
+        term = "Crimson Brotherhood of Bane"  # >= _MIN_PREFIX_LEN
+        g = Glossary(entries={term: "Багровое братство Бейна"})
+        cache = PrefixAwareTranslationCache()
+        g.seed_cache(cache, preserve_tokens=True)
+
+        # Exact lookup of the seeded term still works.
+        assert cache[term] == "Багровое братство Бейна"
+        # But the seed never starts a prefix match for a longer sentence.
+        assert cache.longest_prefix_match(term + ", an ancient cult", _MIN_PREFIX_LEN) is None

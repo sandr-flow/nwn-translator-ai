@@ -168,3 +168,24 @@ def test_ownerless_task_is_accessible_without_token(isolated_app) -> None:
         task_id = _seed_task(owner="")
         resp = client.get(f"/api/tasks/{task_id}/status")
         assert resp.status_code == 200
+
+
+def test_cancel_and_delete_reject_empty_or_foreign_token(isolated_app) -> None:
+    """An empty token must not bypass the owner check on cancel/delete (H2)."""
+    with isolated_app() as client:
+        task_id = _seed_task(owner="owner-tok")
+        assert client.post(f"/api/tasks/{task_id}/cancel").status_code == 403
+        assert client.delete(f"/api/tasks/{task_id}").status_code == 403
+        foreign = {"X-Client-Token": "intruder"}
+        assert client.post(f"/api/tasks/{task_id}/cancel", headers=foreign).status_code == 403
+        assert client.delete(f"/api/tasks/{task_id}", headers=foreign).status_code == 403
+
+
+def test_owner_can_cancel_and_delete(isolated_app) -> None:
+    with isolated_app() as client:
+        headers = {"X-Client-Token": "owner-tok"}
+        task_id = _seed_task(owner="owner-tok")
+        assert client.post(f"/api/tasks/{task_id}/cancel", headers=headers).status_code == 200
+        assert client.delete(f"/api/tasks/{task_id}", headers=headers).status_code == 200
+        # Deleted: subsequent lookups 404 for the owner too.
+        assert client.get(f"/api/tasks/{task_id}/status", headers=headers).status_code == 404

@@ -567,27 +567,15 @@ async def task_history(request: Request) -> TaskHistoryResponse:
 
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(
-    task_id: str,
-    request: Request,
-    tm: TaskManager = Depends(web_task_manager),
+    task: TranslationTask = Depends(require_task_owner),
 ) -> dict:
     """Signal a running task to stop at the next safe checkpoint.
 
     Progress is lost — already-paid-for in-flight API calls finish but their
     results are discarded. Only the owning client can cancel.
     """
-    if not _UUID_RE.match(task_id):
-        raise HTTPException(status_code=400, detail="Неверный формат task_id")
-    token = _client_token(request)
-    row = get_task_row(task_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    if token and row.get("client_token") != token:
-        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
-
-    task = tm.get(task_id)
-    if task is None or task.is_finished():
-        return {"ok": True, "status": row.get("status")}
+    if task.is_finished():
+        return {"ok": True, "status": task.status}
 
     task.request_cancel()
     return {"ok": True, "status": "cancelling"}
@@ -596,19 +584,10 @@ async def cancel_task(
 @router.delete("/tasks/{task_id}")
 async def delete_task(
     task_id: str,
-    request: Request,
     tm: TaskManager = Depends(web_task_manager),
+    _owner: TranslationTask = Depends(require_task_owner),
 ) -> dict:
     """Delete a task from history. Only the owning client can delete."""
-    if not _UUID_RE.match(task_id):
-        raise HTTPException(status_code=400, detail="Неверный формат task_id")
-    token = _client_token(request)
-    row = get_task_row(task_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    if token and row.get("client_token") != token:
-        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
-
     # Remove workspace from disk
     workspace = tm.workspace_root / task_id
     if workspace.is_dir():

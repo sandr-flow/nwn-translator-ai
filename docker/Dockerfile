@@ -12,6 +12,13 @@ COPY src ./src
 
 RUN pip install --no-cache-dir ".[web]"
 
+# Run as an unprivileged user. Pre-create the data dirs and hand them to the
+# user so the (initially empty) mounted volumes inherit non-root ownership.
+RUN useradd --system --uid 10001 --create-home appuser \
+    && mkdir -p /data/tasks /data/db \
+    && chown -R appuser:appuser /data
+USER appuser
+
 EXPOSE 8000
 
 CMD ["uvicorn", "nwn_translator.web.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

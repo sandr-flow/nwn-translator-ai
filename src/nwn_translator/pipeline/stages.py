@@ -769,28 +769,27 @@ def run_pipeline(state: PipelineState) -> Path:
     logger.info(f"Target language: {state.config.target_lang}")
     logger.info(f"OpenRouter model: {state.config.model}")
 
-    translatable_files = stage_unpack(state)
-    assert state.extract_dir is not None
+    try:
+        translatable_files = stage_unpack(state)
+        assert state.extract_dir is not None
 
-    if not translatable_files:
-        logger.warning("No translatable files found! Copying input archive unchanged.")
-        output_path = state._resolve_output_path(state.extract_dir)
-        shutil.copyfile(state.config.input_file, output_path)
-        state._write_metrics(output_path)
-        return output_path
+        if not translatable_files:
+            logger.warning("No translatable files found! Copying input archive unchanged.")
+            output_path = state._resolve_output_path(state.extract_dir)
+            shutil.copyfile(state.config.input_file, output_path)
+            state._write_metrics(output_path)
+            return output_path
 
-    # Session GFF cache (world scan + translation + .git)
-    state._gff_cache = {}
+        # Session GFF cache (world scan + translation + .git)
+        state._gff_cache = {}
 
-    stage_worldscan(state)
-    extracted_map = stage_extract(state, translatable_files)
-    stage_collect_entities(state, extracted_map)
-    stage_build_glossary(state)
-    all_translations = stage_translate(state, extracted_map)
-    stage_inject(state, extracted_map, all_translations)
-    output_path = stage_repack(state)
-
-    if not state.config.skip_cleanup:
-        state._cleanup()
-
-    return output_path
+        stage_worldscan(state)
+        extracted_map = stage_extract(state, translatable_files)
+        stage_collect_entities(state, extracted_map)
+        stage_build_glossary(state)
+        all_translations = stage_translate(state, extracted_map)
+        stage_inject(state, extracted_map, all_translations)
+        return stage_repack(state)
+    finally:
+        if not state.config.skip_cleanup:
+            state._cleanup()

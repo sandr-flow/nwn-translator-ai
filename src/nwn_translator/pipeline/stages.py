@@ -9,6 +9,7 @@ stage bodies are the same logic that previously lived inline in
 """
 
 import logging
+import shutil
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -772,8 +773,9 @@ def run_pipeline(state: PipelineState) -> Path:
     assert state.extract_dir is not None
 
     if not translatable_files:
-        logger.warning("No translatable files found!")
+        logger.warning("No translatable files found! Copying input archive unchanged.")
         output_path = state._resolve_output_path(state.extract_dir)
+        shutil.copyfile(state.config.input_file, output_path)
         state._write_metrics(output_path)
         return output_path
 

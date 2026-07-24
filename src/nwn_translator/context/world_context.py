@@ -298,22 +298,27 @@ class WorldScanner:
 
     def __init__(self):
         """Initialize the scanner."""
+        self._source_encoding: Optional[str] = None
 
     def scan_directory(
         self,
         extract_dir: Path,
         gff_cache: Optional[Dict[Path, Dict[str, Any]]] = None,
         progress_callback=None,
+        source_encoding: Optional[str] = None,
     ) -> WorldContext:
         """Scan the directory and build world context.
 
         Args:
             extract_dir: Path to directory containing extracted module files.
             gff_cache: Optional shared parse cache (same object as ModuleTranslator).
+                Must be read with the same *source_encoding* everywhere it is shared.
+            source_encoding: Declared code page for module string bytes.
 
         Returns:
             Populated WorldContext.
         """
+        self._source_encoding = source_encoding
         logger.info("Scanning module for world context...")
         context = WorldContext()
 
@@ -392,7 +397,7 @@ class WorldScanner:
         Returns:
             ``True`` if the NPC was added to the context.
         """
-        data = read_gff(file_path, cache=gff_cache)
+        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
         tag = data.get("Tag", "")
         if not tag:
             return False
@@ -454,7 +459,7 @@ class WorldScanner:
         Returns:
             ``True`` if the area was added to the context.
         """
-        data = read_gff(file_path, cache=gff_cache)
+        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "Name")
 
@@ -486,7 +491,7 @@ class WorldScanner:
         Returns:
             Number of quests added to the context.
         """
-        data = read_gff(file_path, cache=gff_cache)
+        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
         categories = data.get("Categories", [])
 
         added = 0
@@ -524,7 +529,7 @@ class WorldScanner:
         Returns:
             ``True`` if the item was added to the context.
         """
-        data = read_gff(file_path, cache=gff_cache)
+        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "LocalizedName")
 

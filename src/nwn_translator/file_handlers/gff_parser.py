@@ -14,16 +14,29 @@ from enum import IntEnum
 logger = logging.getLogger(__name__)
 
 
-def _decode_gff_text_bytes(raw: bytes) -> str:
-    """Decode CExoString / CExoLocString payload bytes to Unicode.
+def decode_module_text(raw: bytes, source_encoding: Optional[str] = None) -> str:
+    """Decode module string payload bytes (GFF CExoString/CExoLocString, NCS) to Unicode.
 
-    Classic modules use Windows-1252; Russian patches often use CP1251;
-    NWN:EE may store UTF-8. Order avoids mojibake and keeps ``translations`` keys
-    aligned with on-disk bytes for :func:`~nwn_translator.injectors.git_injector.patch_git_file`.
+    NWN:EE may store UTF-8, so a strict UTF-8 attempt always goes first. When
+    *source_encoding* is declared (from the module's source language) it is used
+    next; otherwise the legacy detection cascade cp1251 -> cp1252 applies. The
+    fallback order matters: cp1251 accepts almost any byte string, so without a
+    declared encoding cp1252 text with diacritics decodes as Cyrillic mojibake.
+    Decoding is deterministic per run, which keeps ``translations`` keys aligned
+    with on-disk bytes for text-addressed injectors.
     """
     if not raw:
         return ""
-    for enc in ("utf-8", "cp1251", "cp1252"):
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    if source_encoding:
+        try:
+            return raw.decode(source_encoding)
+        except (UnicodeDecodeError, LookupError):
+            logger.debug("Declared source encoding %s failed; falling back", source_encoding)
+    for enc in ("cp1251", "cp1252"):
         try:
             return raw.decode(enc)
         except UnicodeDecodeError:
@@ -168,13 +181,16 @@ class GFFParser:
         GFFType.DOUBLE: 8,
     }
 
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, source_encoding: Optional[str] = None):
         """Initialize parser.
 
         Args:
             file_path: Path to GFF file
+            source_encoding: Declared code page for string bytes; ``None`` uses
+                the detection cascade of :func:`decode_module_text`.
         """
         self.file_path = Path(file_path)
+        self.source_encoding = source_encoding
         self.data: bytes = b""
         # Absolute byte offsets saved during parse() for use in _parse_field_value()
         self.field_data_offset: int = 0
@@ -343,7 +359,9 @@ class GFFParser:
                 return ""
             if offset + 4 + length > len(self.data):
                 return ""
-            return _decode_gff_text_bytes(self.data[offset + 4 : offset + 4 + length])
+            return decode_module_text(
+                self.data[offset + 4 : offset + 4 + length], self.source_encoding
+            )
 
         elif field.type == GFFType.CResRef:
             # Layout in Field Data block: [size BYTE (1)] [string bytes (size)]
@@ -387,7 +405,7 @@ class GFFParser:
                         break
                     raw = self.data[sub_offset : sub_offset + length]
                     sub_offset += length
-                    value = _decode_gff_text_bytes(raw)
+                    value = decode_module_text(raw, self.source_encoding)
                     if value:
                         return {"StrRef": str_ref, "Value": value}
             except Exception:
@@ -464,11 +482,12 @@ class GFFParser:
             return value
 
 
-def parse_gff(file_path: Path) -> GFFFile:
+def parse_gff(file_path: Path, source_encoding: Optional[str] = None) -> GFFFile:
     """Parse a GFF file.
 
     Args:
         file_path: Path to GFF file
+        source_encoding: Declared code page for string bytes (see :class:`GFFParser`)
 
     Returns:
         Parsed GFFFile object
@@ -476,7 +495,7 @@ def parse_gff(file_path: Path) -> GFFFile:
     Raises:
         GFFParseError: If parsing fails
     """
-    parser = GFFParser(file_path)
+    parser = GFFParser(file_path, source_encoding=source_encoding)
     return parser.parse()
 
 

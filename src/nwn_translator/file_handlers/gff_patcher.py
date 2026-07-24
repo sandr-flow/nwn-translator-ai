@@ -42,7 +42,7 @@ _ROMANIAN_COMMA_BELOW_TO_CP1250 = str.maketrans(
     }
 )
 
-_ALLOWED_MODULE_ENCODINGS = frozenset({"cp1250", "cp1251", "cp1252", "cp1254"})
+_ALLOWED_MODULE_ENCODINGS = frozenset({"cp1250", "cp1251", "cp1252"})
 _COMMON_ASCII_NORMALIZE = str.maketrans(
     {
         "\u2013": "-",

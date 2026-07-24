@@ -29,7 +29,7 @@ archives.
   resolution has been removed entirely — StrRef-only fields are left untouched —
   so custom-TLK strings are intentionally out of scope.
 
-## The four runs (V2)
+## The five runs (V2, M-E)
 
 | File | Run | What it pins |
 |---|---|---|
@@ -37,6 +37,7 @@ archives.
 | `test_identity_roundtrip.py` | V2.2 | `extract → repack` (no translation) is byte-identical: same resources, type IDs, bytes. A second case repacks with overrides disabled, so type IDs come from the canonical table alone. |
 | `test_noop_patch.py` | V2.3 | Injecting `{original: original}` changes no bytes. |
 | `test_mock_translate.py` | V2.4 | Full pipeline with a deterministic marker provider; output reads back, GFF fields carry the marker, every `.ncs` reparses with a correct `T`. |
+| `test_encoding_diacritics.py` | M-E | For modules with a declared non-English language in the manifest (currently the French cp1252 module): extraction with the matching `source_encoding` yields ≥20 diacritic strings and zero Cyrillic mojibake; marker-patching those strings and re-extracting returns them byte-exactly. Skipped for English/undeclared modules. |
 
 V2.4 uses `MockTranslateProvider` (`_mock_provider.py`) with `use_context=False`,
 so the only network surface — `translate` — is replaced and the
@@ -76,6 +77,15 @@ world-context / glossary / contextual-dialog subsystems stay out of the loop.
 
 When that field is fixed, V2.4 turns green: remove the `xfail` marker on
 `test_mock_translate_roundtrip` and, if desired, tighten it to `strict=True`.
+
+**Baseline update (2026-07-24):** the inline-tag-only marker loss is not limited
+to LES LIONS — every corpus module currently xfails V2.4 on the same issue class
+(strings made entirely of `<StartAction>…</Start>` / `<CUSTOM…>` tags, plus
+punctuation-only strings like `. . .`). Measured on Midnight: 26/8118 fields,
+byte-identical between the branch head and the working tree (verified via a
+`git worktree` + `PYTHONPATH` run), so the source-encoding work introduced no
+regression here. Tag-validation loosening for legitimately unpaired tags is a
+separate planned fix.
 
 ### H6 batch-dedup metric (Almraiven, mock-translate)
 

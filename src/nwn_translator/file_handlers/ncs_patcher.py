@@ -209,6 +209,7 @@ def patch_ncs_string_replacements(
     file_path: Path,
     replacements: Sequence[Tuple[int, str, str]],
     text_encoding: str = "cp1251",
+    source_encoding: Optional[str] = None,
 ) -> int:
     """Patch only listed string CONSTS (by offset), with original-text checks.
 
@@ -221,6 +222,8 @@ def patch_ncs_string_replacements(
         file_path: Path to the ``.ncs`` file.
         replacements: Non-empty sequence of explicit replacement specs.
         text_encoding: Codec for written string bytes (default ``cp1251``).
+        source_encoding: Codec for decoding existing string bytes; must match
+            the one used at extraction time or the original-text checks fail.
 
     Returns:
         Number of CONSTS instructions patched.
@@ -232,7 +235,7 @@ def patch_ncs_string_replacements(
     if not replacements:
         return 0
 
-    ncs = parse_ncs(file_path)
+    ncs = parse_ncs(file_path, source_encoding=source_encoding)
     patches: List[Tuple[NCSInstruction, str]] = []
 
     for offset, original_text, translated_text in replacements:
@@ -260,6 +263,7 @@ def patch_ncs_strings(
     file_path: Path,
     translations: Dict[str, str],
     text_encoding: str = "cp1251",
+    source_encoding: Optional[str] = None,
 ) -> int:
     """Patch every string CONSTS whose value is a key in *translations*.
 
@@ -270,7 +274,7 @@ def patch_ncs_strings(
     Kept for tests and backward compatibility.
     """
     file_path = Path(file_path)
-    ncs = parse_ncs(file_path)
+    ncs = parse_ncs(file_path, source_encoding=source_encoding)
     patches: List[Tuple[NCSInstruction, str]] = []
     for instr in ncs.string_constants:
         if instr.string_value in translations:

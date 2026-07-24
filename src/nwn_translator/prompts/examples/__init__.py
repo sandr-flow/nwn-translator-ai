@@ -30,7 +30,6 @@ _LANG_MODULE_MAP: Dict[str, str] = {
     "romanian": "romanian",
     "hungarian": "hungarian",
     "dutch": "dutch",
-    "turkish": "turkish",
 }
 
 _cache: Dict[str, Dict[str, Any]] = {}

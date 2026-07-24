@@ -149,6 +149,9 @@ def rebuild_module(
     """
     gff_cache: Dict[Path, Dict[str, Any]] = {}
     text_enc = module_string_encoding_for_target_lang(target_lang)
+    # The extracted files on disk already hold first-pass translations, so both
+    # re-extraction and injector-side re-reads decode with the target code page.
+    read_enc = text_enc
 
     # NCS item_ids are globally unique (file stem + offset), so the per-file
     # maps can be flattened for the bytecode injector's by-item_id channel.
@@ -174,7 +177,7 @@ def rebuild_module(
             continue
 
         try:
-            loaded = load_parsed_and_extracted(file_path, ext, gff_cache)
+            loaded = load_parsed_and_extracted(file_path, ext, gff_cache, source_encoding=read_enc)
         except Exception as e:
             logger.warning("Failed to read %s during rebuild: %s", file_path.name, e)
             continue
@@ -190,6 +193,7 @@ def rebuild_module(
             ncs_translations_by_item_id=ncs_by_item_id,
             log_updates=False,
             target_lang=target_lang,
+            source_encoding=read_enc,
         )
 
     # Patch .git area instance files (separate injector, also text-addressed)
@@ -197,7 +201,9 @@ def rebuild_module(
 
     for git_path in extract_dir.glob("*.git"):
         try:
-            loaded = load_parsed_and_extracted(git_path, ".git", gff_cache)
+            loaded = load_parsed_and_extracted(
+                git_path, ".git", gff_cache, source_encoding=read_enc
+            )
             if loaded is None:
                 continue
             parsed_data, extracted = loaded

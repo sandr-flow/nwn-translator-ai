@@ -188,9 +188,10 @@ class TranslationConfig:
 # from the target language (see :func:`module_string_encoding_for_target_lang` and
 # ``gff_patcher`` / ``ncs_patcher``).
 #
-# **CJK** cannot be represented in these single-byte pages; those tags are blocked in
-# the web UI / API.
-GAME_INCOMPATIBLE_TARGET_LANGS = frozenset({"chinese", "japanese", "korean"})
+# **CJK** cannot be represented in these single-byte pages, and NWN:EE's codepage
+# setting only offers cp1250/cp1251/cp1252 — Turkish (cp1254) is not displayable
+# either. Those tags are blocked in the web UI / API.
+GAME_INCOMPATIBLE_TARGET_LANGS = frozenset({"chinese", "japanese", "korean", "turkish"})
 
 # Language slug -> Python codec (must stay in sync with ``gff_patcher`` allow-list).
 _LANG_TO_WINDOWS_ENCODING: dict[str, str] = {
@@ -207,7 +208,6 @@ _LANG_TO_WINDOWS_ENCODING: dict[str, str] = {
     "portuguese": "cp1252",
     "dutch": "cp1252",
     "english": "cp1252",
-    "turkish": "cp1254",
 }
 
 
@@ -223,6 +223,18 @@ def module_string_encoding_for_target_lang(target_lang: Optional[str]) -> str:
     if not key:
         return "cp1251"
     return _LANG_TO_WINDOWS_ENCODING.get(key, "cp1252")
+
+
+def source_string_encoding(source_lang: Optional[str]) -> Optional[str]:
+    """Windows code page for decoding module string bytes of *source_lang*.
+
+    Returns ``None`` for ``"auto"``, empty, or unknown languages — readers then
+    fall back to the legacy detection cascade (see ``decode_module_text``).
+    """
+    key = (source_lang or "").strip().lower()
+    if not key or key == "auto":
+        return None
+    return _LANG_TO_WINDOWS_ENCODING.get(key)
 
 
 def sanitized_mod_stem(stem: str) -> str:

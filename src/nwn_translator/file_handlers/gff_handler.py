@@ -35,11 +35,13 @@ class GFFHandler:
         self._data: Dict[str, Any] = {}
 
     @staticmethod
-    def read(file_path: Path) -> Dict[str, Any]:
+    def read(file_path: Path, source_encoding: Optional[str] = None) -> Dict[str, Any]:
         """Read a GFF file and return its data as a dictionary.
 
         Args:
             file_path: Path to the GFF file
+            source_encoding: Declared code page for string bytes; ``None`` uses
+                the detection cascade
 
         Returns:
             Dictionary containing GFF structure data
@@ -52,7 +54,7 @@ class GFFHandler:
             raise GFFHandlerError(f"File not found: {file_path}")
 
         try:
-            parser = GFFParser(file_path)
+            parser = GFFParser(file_path, source_encoding=source_encoding)
             gff = parser.parse()
             return gff_to_dict(gff)
 
@@ -84,12 +86,15 @@ class GFFHandler:
 def read_gff(
     file_path: Path,
     cache: Optional[Dict[Path, Dict[str, Any]]] = None,
+    source_encoding: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Read a GFF file and return its data.
 
     Args:
         file_path: Path to the GFF file
-        cache: Optional session cache keyed by resolved path
+        cache: Optional session cache keyed by resolved path. Callers sharing a
+            cache must pass the same *source_encoding* for every read.
+        source_encoding: Declared code page for string bytes
 
     Returns:
         Dictionary containing GFF data
@@ -98,10 +103,10 @@ def read_gff(
     if cache is not None:
         if path in cache:
             return cache[path]
-        data = GFFHandler.read(path)
+        data = GFFHandler.read(path, source_encoding=source_encoding)
         cache[path] = data
         return data
-    return GFFHandler.read(path)
+    return GFFHandler.read(path, source_encoding=source_encoding)
 
 
 def write_gff(file_path: Path, data: Dict[str, Any]) -> None:

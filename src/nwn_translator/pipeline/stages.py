@@ -21,6 +21,7 @@ from ..config import (
     TranslationConfig,
     create_output_path,
     module_string_encoding_for_target_lang,
+    source_string_encoding,
 )
 from ..file_handlers import (
     ERFReader,
@@ -105,19 +106,20 @@ def load_parsed_and_extracted(
     file_path: Path,
     file_ext: str,
     gff_cache: Optional[Dict[Path, Dict[str, Any]]],
+    source_encoding: Optional[str] = None,
 ) -> Optional[Tuple[Dict[str, Any], ExtractedContent]]:
     """Parse *file_path* and run the extractor; return data or ``None`` if skipped."""
     if file_ext == ".ncs":
         from ..file_handlers.ncs_parser import parse_ncs, NCSParseError
 
         try:
-            ncs_file = parse_ncs(file_path)
+            ncs_file = parse_ncs(file_path, source_encoding=source_encoding)
         except NCSParseError as e:
             logger.debug("Skipping unparseable NCS file %s: %s", file_path.name, e)
             return None
         parsed_data: Dict[str, Any] = {"_ncs_file": ncs_file}
     else:
-        parsed_data = read_gff(file_path, cache=gff_cache)
+        parsed_data = read_gff(file_path, cache=gff_cache, source_encoding=source_encoding)
 
     extractor = get_extractor_for_file(file_ext)
     if not extractor:
@@ -141,13 +143,20 @@ def inject_translations_into_file(
     ncs_translations_by_item_id: Optional[Dict[str, str]] = None,
     log_updates: bool = False,
     target_lang: Optional[str] = None,
+    source_encoding: Optional[str] = None,
 ) -> Optional[InjectedContent]:
-    """Run the appropriate injector for *extracted* (shared by Phase C and rebuild)."""
+    """Run the appropriate injector for *extracted* (shared by Phase C and rebuild).
+
+    *source_encoding* must match the decode used when *extracted* was produced:
+    injectors that re-read file bytes (NCS) compare decoded text against the
+    extracted originals.
+    """
     injector = get_injector_for_content(extracted.content_type)
     if not injector:
         return None
     inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
     inject_metadata["module_text_encoding"] = module_string_encoding_for_target_lang(target_lang)
+    inject_metadata["module_source_encoding"] = source_encoding
     if extracted.content_type == "ncs_script":
         by_id: Dict[str, str] = {}
         if ncs_translations_by_item_id is not None:
@@ -194,6 +203,10 @@ class PipelineState:
     _prev_errors: int = 0
 
     # ── setup helpers ──────────────────────────────────────────────────
+    def _source_encoding(self) -> Optional[str]:
+        """Declared code page for reading module strings (``None`` = detect)."""
+        return source_string_encoding(self.config.source_lang)
+
     def _check_cancel(self) -> None:
         """Raise :class:`TranslationCancelled` if the config's cancel check fires."""
         cb = self.config.cancel_check
@@ -248,7 +261,9 @@ class PipelineState:
     ) -> Optional[Tuple[Dict[str, Any], ExtractedContent, str]]:
         """Extract translatable content from a single file (Phase A)."""
         file_ext = file_path.suffix.lower()
-        loaded = load_parsed_and_extracted(file_path, file_ext, self._gff_cache)
+        loaded = load_parsed_and_extracted(
+            file_path, file_ext, self._gff_cache, source_encoding=self._source_encoding()
+        )
         if loaded is None:
             return None
         parsed_data, extracted = loaded
@@ -270,6 +285,7 @@ class PipelineState:
             ncs_translations_by_item_id=self._ncs_translations_by_item_id,
             log_updates=True,
             target_lang=self.config.target_lang,
+            source_encoding=self._source_encoding(),
         )
 
     # ── stats / logging helpers ────────────────────────────────────────
@@ -324,7 +340,9 @@ class PipelineState:
         total_patched = 0
         for git_path in git_files:
             try:
-                gff_cached = read_gff(git_path, cache=self._gff_cache)
+                gff_cached = read_gff(
+                    git_path, cache=self._gff_cache, source_encoding=self._source_encoding()
+                )
                 patched = patch_git_file(
                     git_path,
                     translations,
@@ -482,6 +500,7 @@ def stage_worldscan(state: PipelineState) -> None:
             state.extract_dir,
             gff_cache=state._gff_cache,
             progress_callback=state.config.progress_callback,
+            source_encoding=state._source_encoding(),
         )
 
 

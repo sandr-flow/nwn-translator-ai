@@ -10,11 +10,12 @@ const { t: i } = useI18n();
 const testing = ref(false);
 const testMsg = ref("");
 
-// Source and target use the same set: in-game strings are CP1251; CJK is not offered.
+// Source and target use the same set: in-game strings use single-byte Windows
+// code pages (cp1250/cp1251/cp1252); CJK and Turkish (cp1254) are not offered.
 const gameSupportedLangKeys = [
   "russian", "english", "ukrainian", "polish", "german", "french",
   "spanish", "italian", "portuguese", "czech", "romanian", "hungarian",
-  "dutch", "turkish",
+  "dutch",
 ];
 
 const targetLanguages = computed(() =>

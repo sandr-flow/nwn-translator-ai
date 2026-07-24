@@ -135,8 +135,15 @@ def _client_ip(request: Request) -> str:
 
 
 def _client_token(request: Request) -> str:
-    """Extract the anonymous client token from ``X-Client-Token`` header."""
-    return (request.headers.get("x-client-token") or "").strip()
+    """Extract the anonymous client token from ``X-Client-Token`` header.
+
+    Falls back to the ``client_token`` query parameter because browser
+    ``EventSource`` (the SSE progress route) cannot send custom headers.
+    """
+    header = (request.headers.get("x-client-token") or "").strip()
+    if header:
+        return header
+    return (request.query_params.get("client_token") or "").strip()
 
 
 @router.post("/translate", response_model=TranslateResponse)

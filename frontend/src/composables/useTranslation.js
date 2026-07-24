@@ -145,7 +145,9 @@ export function useTranslation() {
 
   function openSse(id) {
     closeSse();
-    const url = `/api/tasks/${id}/progress`;
+    // EventSource cannot send the X-Client-Token header, so the token rides
+    // in the query string (the backend accepts it as a fallback).
+    const url = `/api/tasks/${id}/progress?client_token=${encodeURIComponent(getClientToken())}`;
     eventSource = new EventSource(url);
 
     eventSource.onmessage = (ev) => {

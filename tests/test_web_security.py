@@ -163,6 +163,21 @@ def test_task_routes_allow_owner(isolated_app) -> None:
             assert resp.status_code != 403, f"{method} {path} denied owner ({resp.status_code})"
 
 
+def test_progress_allows_owner_token_via_query_param(isolated_app) -> None:
+    """EventSource cannot send headers, so SSE auth accepts ?client_token=."""
+    with isolated_app() as client:
+        task_id = _seed_task(owner="owner-tok")
+        resp = client.get(f"/api/tasks/{task_id}/progress?client_token=owner-tok")
+        assert resp.status_code == 200
+
+
+def test_progress_rejects_foreign_token_via_query_param(isolated_app) -> None:
+    with isolated_app() as client:
+        task_id = _seed_task(owner="owner-tok")
+        resp = client.get(f"/api/tasks/{task_id}/progress?client_token=intruder")
+        assert resp.status_code == 403
+
+
 def test_ownerless_task_is_accessible_without_token(isolated_app) -> None:
     with isolated_app() as client:
         task_id = _seed_task(owner="")

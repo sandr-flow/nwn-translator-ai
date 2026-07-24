@@ -125,7 +125,6 @@ class TranslationConfig:
 
     # Advanced features
     use_context: bool = True
-    tlk_file: Optional[Path] = None  # Path to dialog.tlk for resolving StrRef names
     player_gender: str = "male"  # "male" or "female" — affects grammatical gender in translations
 
     # Processing Options

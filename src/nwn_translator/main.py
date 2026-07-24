@@ -105,10 +105,6 @@ class ModuleTranslator:
         return self.state.stats
 
     @property
-    def tlk(self):
-        return self.state.tlk
-
-    @property
     def world_context(self) -> Optional[WorldContext]:
         return self.state.world_context
 
@@ -151,18 +147,7 @@ def rebuild_module(
     Returns:
         Path to the rebuilt .mod file.
     """
-    from .file_handlers.tlk_reader import parse_tlk, find_dialog_tlk
-
-    # Load TLK if available
-    tlk = None
-    tlk_path = find_dialog_tlk(extract_dir)
-    if tlk_path and tlk_path.exists():
-        try:
-            tlk = parse_tlk(tlk_path)
-        except Exception:
-            pass
-
-    gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = {}
+    gff_cache: Dict[Path, Dict[str, Any]] = {}
     text_enc = module_string_encoding_for_target_lang(target_lang)
 
     # NCS item_ids are globally unique (file stem + offset), so the per-file
@@ -189,7 +174,7 @@ def rebuild_module(
             continue
 
         try:
-            loaded = load_parsed_and_extracted(file_path, ext, tlk, gff_cache)
+            loaded = load_parsed_and_extracted(file_path, ext, gff_cache)
         except Exception as e:
             logger.warning("Failed to read %s during rebuild: %s", file_path.name, e)
             continue
@@ -212,7 +197,7 @@ def rebuild_module(
 
     for git_path in extract_dir.glob("*.git"):
         try:
-            loaded = load_parsed_and_extracted(git_path, ".git", tlk, gff_cache)
+            loaded = load_parsed_and_extracted(git_path, ".git", gff_cache)
             if loaded is None:
                 continue
             parsed_data, extracted = loaded
@@ -220,7 +205,6 @@ def rebuild_module(
             patch_git_file(
                 git_path,
                 _text_map(extracted, per_file),
-                tlk=tlk,
                 parsed_data=parsed_data,
                 text_encoding=text_enc,
             )

@@ -25,7 +25,9 @@ archives.
   so `pytest -m realdata` is green on a machine without the corpus.
 - Current corpus: 5 modules (Almraiven, A Dance with Rogues, LES LIONS DIFFAMES
   [French/cp1252], Midnight, Prophet III). **Known gap:** no Russian module with
-  a custom cp1251 `dialog.tlk` yet (needed to fully exercise H9 / M-E cp1251).
+  a custom cp1251 `dialog.tlk` yet (needed for M-E cp1251 round-trip). TLK
+  resolution has been removed entirely — StrRef-only fields are left untouched —
+  so custom-TLK strings are intentionally out of scope.
 
 ## The four runs (V2)
 

@@ -186,13 +186,11 @@ def run_context_glossary_stage(config: TranslationConfig) -> tuple[ModuleTransla
     logger.info("Found %d translatable files", len(translatable_files))
 
     translator._gff_cache = {}
-    translator._load_tlk(extract_dir)
 
     logger.info("Building world context...")
     scanner = WorldScanner()
     translator.world_context = scanner.scan_directory(
         extract_dir,
-        tlk=translator.tlk,
         gff_cache=translator._gff_cache,
         progress_callback=config.progress_callback,
     )
@@ -328,7 +326,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-lang", default="auto")
     parser.add_argument("--target-lang", default="russian")
-    parser.add_argument("--tlk-file", type=Path, default=None)
     parser.add_argument("--temp-dir", type=Path, default=Path("./temp_nwn_translate"))
     parser.add_argument("--keep-temp", action="store_true")
     parser.add_argument("--max-concurrent", type=int, default=None)
@@ -362,7 +359,6 @@ def main() -> None:
         "source_lang": args.source_lang,
         "target_lang": args.target_lang,
         "input_file": input_file,
-        "tlk_file": args.tlk_file,
         "temp_dir": args.temp_dir,
         "skip_cleanup": bool(args.keep_temp),
         "player_gender": args.player_gender,

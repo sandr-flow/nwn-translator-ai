@@ -26,7 +26,6 @@ from ..file_handlers import (
     create_mod_from_directory,
     read_gff,
 )
-from ..file_handlers.tlk_reader import parse_tlk, find_dialog_tlk, TLKFile
 from ..extractors import get_extractor_for_file
 from ..injectors import get_injector_for_content
 from ..injectors.base import InjectedContent
@@ -104,8 +103,7 @@ class _ItemProgress:
 def load_parsed_and_extracted(
     file_path: Path,
     file_ext: str,
-    tlk: Optional[TLKFile],
-    gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+    gff_cache: Optional[Dict[Path, Dict[str, Any]]],
 ) -> Optional[Tuple[Dict[str, Any], ExtractedContent]]:
     """Parse *file_path* and run the extractor; return data or ``None`` if skipped."""
     if file_ext == ".ncs":
@@ -118,7 +116,7 @@ def load_parsed_and_extracted(
             return None
         parsed_data: Dict[str, Any] = {"_ncs_file": ncs_file}
     else:
-        parsed_data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+        parsed_data = read_gff(file_path, cache=gff_cache)
 
     extractor = get_extractor_for_file(file_ext)
     if not extractor:
@@ -182,11 +180,10 @@ class PipelineState:
     metrics_recorder: RunMetricsRecorder = field(default_factory=RunMetricsRecorder)
     temp_dir: Optional[tempfile.TemporaryDirectory] = None
     extract_dir: Optional[Path] = None
-    tlk: Optional[TLKFile] = None
     world_context: Optional[WorldContext] = None
     glossary: Optional[Glossary] = None
-    #: Per-run GFF parse cache: (resolved_path, tlk_id) -> dict
-    _gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = field(default_factory=dict)
+    #: Per-run GFF parse cache: resolved_path -> dict
+    _gff_cache: Dict[Path, Dict[str, Any]] = field(default_factory=dict)
     #: Latest NCS per-``item_id`` translations from :class:`TranslationManager` (Phase B).
     _ncs_translations_by_item_id: Dict[str, str] = field(default_factory=dict)
     stats: Dict[str, Any] = field(default_factory=_new_stats)
@@ -244,28 +241,13 @@ class PipelineState:
                     translatable_files.append(file_path)
         return translatable_files
 
-    def _load_tlk(self, extract_dir: Path) -> None:
-        """Load TLK file for resolving StrRef-based names."""
-        tlk_path = self.config.tlk_file
-        if not tlk_path:
-            tlk_path = find_dialog_tlk(extract_dir)
-
-        if tlk_path and tlk_path.exists():
-            try:
-                self.tlk = parse_tlk(tlk_path)
-                logger.info(f"Loaded TLK file: {tlk_path} ({len(self.tlk)} entries)")
-            except Exception as e:
-                logger.warning(f"Failed to load TLK file {tlk_path}: {e}")
-        else:
-            logger.debug("No TLK file found, StrRef-only names will not be resolved")
-
     def _extract_file(
         self,
         file_path: Path,
     ) -> Optional[Tuple[Dict[str, Any], ExtractedContent, str]]:
         """Extract translatable content from a single file (Phase A)."""
         file_ext = file_path.suffix.lower()
-        loaded = load_parsed_and_extracted(file_path, file_ext, self.tlk, self._gff_cache)
+        loaded = load_parsed_and_extracted(file_path, file_ext, self._gff_cache)
         if loaded is None:
             return None
         parsed_data, extracted = loaded
@@ -341,11 +323,10 @@ class PipelineState:
         total_patched = 0
         for git_path in git_files:
             try:
-                gff_cached = read_gff(git_path, tlk=self.tlk, cache=self._gff_cache)
+                gff_cached = read_gff(git_path, cache=self._gff_cache)
                 patched = patch_git_file(
                     git_path,
                     translations,
-                    tlk=self.tlk,
                     parsed_data=gff_cached,
                     text_encoding=module_string_encoding_for_target_lang(self.config.target_lang),
                 )
@@ -498,7 +479,6 @@ def stage_worldscan(state: PipelineState) -> None:
         scanner = WorldScanner()
         state.world_context = scanner.scan_directory(
             state.extract_dir,
-            tlk=state.tlk,
             gff_cache=state._gff_cache,
             progress_callback=state.config.progress_callback,
         )
@@ -799,7 +779,6 @@ def run_pipeline(state: PipelineState) -> Path:
 
     # Session GFF cache (world scan + translation + .git)
     state._gff_cache = {}
-    state._load_tlk(state.extract_dir)
 
     stage_worldscan(state)
     extracted_map = stage_extract(state, translatable_files)

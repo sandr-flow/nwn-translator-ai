@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 
 from ..file_handlers import read_gff
-from ..file_handlers.tlk_reader import TLKFile
 from ..extractors.base import extract_local_string
 from ..nwn_constants import race_label, gender_label
 from .entity_candidates import EntityCandidateRegistry
@@ -303,15 +302,13 @@ class WorldScanner:
     def scan_directory(
         self,
         extract_dir: Path,
-        tlk: Optional[TLKFile] = None,
-        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]] = None,
+        gff_cache: Optional[Dict[Path, Dict[str, Any]]] = None,
         progress_callback=None,
     ) -> WorldContext:
         """Scan the directory and build world context.
 
         Args:
             extract_dir: Path to directory containing extracted module files.
-            tlk: Optional TLK for StrRef resolution (should match translation reads).
             gff_cache: Optional shared parse cache (same object as ModuleTranslator).
 
         Returns:
@@ -344,15 +341,15 @@ class WorldScanner:
 
             try:
                 if ext == ".utc":
-                    if self._process_utc(file_path, context, tlk, gff_cache):
+                    if self._process_utc(file_path, context, gff_cache):
                         count_npcs += 1
                 elif ext == ".are":
-                    if self._process_are(file_path, context, tlk, gff_cache):
+                    if self._process_are(file_path, context, gff_cache):
                         count_areas += 1
                 elif ext == ".jrl":
-                    count_quests += self._process_jrl(file_path, context, tlk, gff_cache)
+                    count_quests += self._process_jrl(file_path, context, gff_cache)
                 elif ext == ".uti":
-                    if self._process_uti(file_path, context, tlk, gff_cache):
+                    if self._process_uti(file_path, context, gff_cache):
                         count_items += 1
             except Exception as e:
                 logger.debug("Failed to scan context from %s: %s", file_path.name, e)
@@ -383,21 +380,19 @@ class WorldScanner:
         self,
         file_path: Path,
         context: WorldContext,
-        tlk: Optional[TLKFile],
-        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
     ) -> bool:
         """Extract NPC data from a .utc (Creature) file into *context*.
 
         Args:
             file_path: Path to the .utc file.
             context: World context to populate.
-            tlk: Optional TLK for StrRef resolution.
             gff_cache: Optional shared GFF parse cache.
 
         Returns:
             ``True`` if the NPC was added to the context.
         """
-        data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+        data = read_gff(file_path, cache=gff_cache)
         tag = data.get("Tag", "")
         if not tag:
             return False
@@ -447,21 +442,19 @@ class WorldScanner:
         self,
         file_path: Path,
         context: WorldContext,
-        tlk: Optional[TLKFile],
-        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
     ) -> bool:
         """Extract area name from an .are (Area) file into *context*.
 
         Args:
             file_path: Path to the .are file.
             context: World context to populate.
-            tlk: Optional TLK for StrRef resolution.
             gff_cache: Optional shared GFF parse cache.
 
         Returns:
             ``True`` if the area was added to the context.
         """
-        data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+        data = read_gff(file_path, cache=gff_cache)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "Name")
 
@@ -481,21 +474,19 @@ class WorldScanner:
         self,
         file_path: Path,
         context: WorldContext,
-        tlk: Optional[TLKFile],
-        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
     ) -> int:
         """Extract quest names from a .jrl (Journal) file into *context*.
 
         Args:
             file_path: Path to the .jrl file.
             context: World context to populate.
-            tlk: Optional TLK for StrRef resolution.
             gff_cache: Optional shared GFF parse cache.
 
         Returns:
             Number of quests added to the context.
         """
-        data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+        data = read_gff(file_path, cache=gff_cache)
         categories = data.get("Categories", [])
 
         added = 0
@@ -521,21 +512,19 @@ class WorldScanner:
         self,
         file_path: Path,
         context: WorldContext,
-        tlk: Optional[TLKFile],
-        gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
     ) -> bool:
         """Extract item name from a .uti (Item) file into *context*.
 
         Args:
             file_path: Path to the .uti file.
             context: World context to populate.
-            tlk: Optional TLK for StrRef resolution.
             gff_cache: Optional shared GFF parse cache.
 
         Returns:
             ``True`` if the item was added to the context.
         """
-        data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+        data = read_gff(file_path, cache=gff_cache)
         tag = data.get("Tag", "")
         name = self._get_local_string(data, "LocalizedName")
 

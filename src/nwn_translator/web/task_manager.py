@@ -354,7 +354,6 @@ class TaskManager:
                 max_concurrent_requests=max(1, int(max_concurrent_requests)),
                 player_gender=player_gender,
                 reasoning_effort=reasoning_effort,
-                tlk_file=None,
                 verbose=False,
                 quiet=True,
                 progress_callback=progress_cb,

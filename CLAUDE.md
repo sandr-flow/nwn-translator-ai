@@ -105,7 +105,7 @@ Code is expected to pass black (line length 100) and mypy; pylint is advisory.
 `translate_module` / `run_translation_pipeline` in `src/nwn_translator/main.py` orchestrate the run:
 
 1. **ERF read** (`file_handlers/erf_reader.py`) unpacks the input archive to a temp dir.
-2. **GFF/NCS parse** (`file_handlers/gff_parser.py`, `gff_handler.py`, `ncs_parser.py`) parses resources. TLK lookup (`tlk_reader.py`) resolves StrRef-only strings against `dialog.tlk` when available.
+2. **GFF/NCS parse** (`file_handlers/gff_parser.py`, `gff_handler.py`, `ncs_parser.py`) parses resources. Only embedded strings are translated; fields stored as a StrRef with no embedded text are left untouched (the engine resolves them from the player's `dialog.tlk` at runtime).
 3. **Extract** (`extractors/`) produces `ExtractedContent` with `TranslatableItem`s. Extractors are registered in `extractors/__init__.py`.
 4. **World context** (`context/world_context.py`, `context/entity_extractor.py`) scans extracted content for NPCs, areas, quests, and proper nouns.
 5. **Glossary** (`glossary.py`, `race_dictionary.py`) builds and injects terminology into prompts.

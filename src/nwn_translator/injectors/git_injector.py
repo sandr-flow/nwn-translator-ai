@@ -407,7 +407,6 @@ def _collect_inventory_item_patches(
 def patch_git_file(
     git_path: Path,
     translations: Dict[str, str],
-    tlk=None,
     parsed_data: Optional[Dict[str, Any]] = None,
     text_encoding: str = "cp1251",
 ) -> int:
@@ -420,7 +419,6 @@ def patch_git_file(
     Args:
         git_path: Path to the extracted .git file on disk.
         translations: Mapping of original text -> translated text.
-        tlk: Optional TLK file for resolving StrRef-only names.
         parsed_data: If provided, skip reading *git_path* (must match on-disk state).
         text_encoding: Windows code page for CExoLocString bytes (e.g. ``cp1252``).
 
@@ -431,7 +429,7 @@ def patch_git_file(
         return 0
 
     if parsed_data is None:
-        parsed_data = read_gff(git_path, tlk=tlk)
+        parsed_data = read_gff(git_path)
 
     try:
         patcher = GFFPatcher(git_path, text_encoding=text_encoding)

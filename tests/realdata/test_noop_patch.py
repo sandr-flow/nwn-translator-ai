@@ -29,7 +29,7 @@ def test_noop_patch(corpus_module: Path, tmp_path: Path) -> None:
         if not path.is_file() or path.suffix.lower() not in TRANSLATABLE_TYPES:
             continue
 
-        loaded = load_parsed_and_extracted(path, path.suffix.lower(), None, None)
+        loaded = load_parsed_and_extracted(path, path.suffix.lower(), None)
         if loaded is None:
             continue
         parsed_data, extracted = loaded

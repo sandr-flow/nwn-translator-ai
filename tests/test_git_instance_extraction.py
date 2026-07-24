@@ -216,7 +216,7 @@ class TestPatchGitInventory:
         mock_patcher_cls.return_value = patcher
         path = Path(__file__).parent / "_fake_waypoint.git"
         translations = {"City Gate": "Городские ворота"}
-        count = patch_git_file(path, translations, tlk=None)
+        count = patch_git_file(path, translations)
         assert count == 1
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(222, "Городские ворота")}
@@ -246,7 +246,7 @@ class TestPatchGitInventory:
 
         path = Path(__file__).parent / "_fake.git"
         translations = {"Chest": "Сундук", "Scroll Case": "Футляр"}
-        count = patch_git_file(path, translations, tlk=None)
+        count = patch_git_file(path, translations)
 
         assert count == 2
         patcher.patch_multiple.assert_called_once()
@@ -281,7 +281,7 @@ class TestPatchGitInventory:
             "Arms Dealer": "Оружейник",
             "Iron Longsword": "Железный длинный меч",
         }
-        count = patch_git_file(path, translations, tlk=None)
+        count = patch_git_file(path, translations)
 
         assert count == 2
         patcher.patch_multiple.assert_called_once()
@@ -305,7 +305,7 @@ class TestPatchGitInventory:
 
         path = Path(__file__).parent / "_fake_store_locname.git"
         translations = {"Coffee Merchant": "Кофейня"}
-        count = patch_git_file(path, translations, tlk=None)
+        count = patch_git_file(path, translations)
         assert count == 1
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(310, "Кофейня")}
@@ -340,7 +340,7 @@ class TestPatchGitInventory:
         mock_patcher_cls.return_value = patcher
         path = Path(__file__).parent / "_fake_nested_store.git"
         translations = {"Bar": "Бар", "Coffee": "Кофе"}
-        count = patch_git_file(path, translations, tlk=None)
+        count = patch_git_file(path, translations)
         assert count == 2
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(50, "Бар"), (900, "Кофе")}
@@ -389,7 +389,7 @@ class TestPatchGitInventory:
             "Worn by Grandma.": "Носит бабушка.",
             "The Skullsplitter": "Раскалыватель черепов",
         }
-        count = patch_git_file(path, translations, tlk=None)
+        count = patch_git_file(path, translations)
 
         assert count == 4
         patcher.patch_multiple.assert_called_once()

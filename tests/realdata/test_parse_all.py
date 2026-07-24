@@ -58,7 +58,7 @@ def test_parse_all(corpus_module: Path, tmp_path: Path) -> None:
         else:
             gff_total += 1
             try:
-                read_gff(path, tlk=None)
+                read_gff(path)
             except Exception as exc:  # noqa: BLE001 - robustness sweep
                 failures.append(f"GFF parse {path.name}: {type(exc).__name__}: {exc}")
 

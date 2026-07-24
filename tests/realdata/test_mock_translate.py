@@ -99,7 +99,7 @@ def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
             continue
 
         # GFF: every re-extracted player-facing field must carry the marker.
-        loaded = load_parsed_and_extracted(path, path.suffix.lower(), None, None)
+        loaded = load_parsed_and_extracted(path, path.suffix.lower(), None)
         if loaded is None:
             continue
         _parsed, extracted = loaded

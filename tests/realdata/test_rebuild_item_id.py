@@ -35,7 +35,7 @@ def _gff_items_by_file(extract_dir: Path) -> dict[str, dict[str, str]]:
         ext = path.suffix.lower()
         if not path.is_file() or ext == ".ncs" or ext not in TRANSLATABLE_TYPES:
             continue
-        loaded = load_parsed_and_extracted(path, ext, None, None)
+        loaded = load_parsed_and_extracted(path, ext, None)
         if loaded is None:
             continue
         _parsed, extracted = loaded

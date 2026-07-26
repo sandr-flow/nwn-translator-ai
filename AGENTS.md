@@ -120,7 +120,7 @@ The key consequence of injection: extractors must preserve `_record_offsets` on 
 - **Extractors** live in `src/nwn_translator/extractors/`. Each subclass of `BaseExtractor` declares `SUPPORTED_TYPES` and returns `ExtractedContent(content_type=..., items=[TranslatableItem(...)])`. A new file type needs the extractor class, registration in `extractors/__init__.py`, and an entry in `TRANSLATABLE_TYPES` in `config.py`.
 - **Injectors** live in `src/nwn_translator/injectors/`. Simple field-level resources go through `GenericInjector` (`SUPPORTED_TYPES` + `FIELD_MAP`). Dialogs, journals, `.git` instance lists, and `.ncs` bytecode have bespoke injectors.
 - `.git` is special: area instances contain per-instance `LocalizedName`, `LocName`, `Description`, and nested inventory/store shelf strings. Keep `GitExtractor` and `git_injector.patch_git_file` in sync via `INSTANCE_LISTS` and `INSTANCE_NESTED_ITEM_LISTS`.
-- Internal engine tags (`WP_...`, `DST_...`, `NW_...`, spaceless `snake_case` identifiers) are filtered by `is_internal_tag` in `git_injector.py`. Do not translate them.
+- Internal engine tags (`WP_...`, `DST_...`, `NW_...`, `POST_...`, `ARCH_...`, `YOURTAGHERE`, spaceless `snake_case`/CamelCase identifiers) must not be translated. `context/string_filters.py` is the single source of truth: `ENGINE_TAG_PREFIXES` is shared with the NCS extractor, and `should_skip_entity_source_text` is the gate both the `.git` extractor and entity extraction call. Add new prefixes there, not in a local list.
 - NWN save-game behaviour: `.git` instances are baked into a player's save on first area visit. Re-translating later affects only unvisited areas; visited areas require a new game.
 
 ## Other subsystems

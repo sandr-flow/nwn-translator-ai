@@ -1,15 +1,21 @@
-"""Deterministic filters for strings that should not seed world entities.
+"""Deterministic filters for engine/toolset strings that are not prose.
 
-The entity-extraction pass is intentionally conservative: missing one inferred
-proper noun is cheaper than letting technical labels pollute the run-wide
-glossary and every later translation prompt.
+Two callers rely on this module. The entity-extraction pass uses it to decide
+what may seed world entities, and the extractors use it to decide what may be
+sent to the translator at all. Both are intentionally conservative: missing one
+inferred proper noun is cheaper than letting technical labels pollute the
+run-wide glossary, and translating an engine tag silently breaks the scripts
+that look it up by name.
+
+This module is also the single source of truth for engine tag prefixes; the NCS
+extractor imports :data:`ENGINE_TAG_PREFIXES` rather than keeping its own copy.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import FrozenSet, Iterable, Literal, Optional
+from typing import FrozenSet, Iterable, Literal, Optional, Tuple
 
 _PLACEHOLDER_RE = re.compile(r"^<[^<>\s]+>$")
 _ANY_PLACEHOLDER_RE = re.compile(r"<[^<>]+>")
@@ -39,13 +45,21 @@ _SYSTEM_TERMS: FrozenSet[str] = frozenset(
     }
 )
 
-_TECHNICAL_PREFIXES = (
+# Engine/toolset tag prefixes that must never be translated: waypoints (WP_),
+# destinations (DST_), post markers (POST_), Bioware's NW_/ARCH_ families.
+# Shared with the NCS extractor, so a prefix is never declared in two lists.
+ENGINE_TAG_PREFIXES: Tuple[str, ...] = (
     "arch_",
     "nw_",
     "wp_",
     "dst_",
     "post_",
 )
+
+# Placeholder tags left in place by Bioware toolset templates. Matched whole and
+# case-insensitively: the all-caps form already reads as code-like, but
+# "yourtaghere" and "Yourtaghere" would otherwise pass as ordinary words.
+ENGINE_PLACEHOLDER_TAGS: FrozenSet[str] = frozenset({"yourtaghere"})
 
 _GIT_TECHNICAL_TYPES: FrozenSet[str] = frozenset(
     {
@@ -194,7 +208,8 @@ def classify_string(text: object) -> StringClassification:
     lowered = stripped.casefold()
     system_term = (
         lowered in _SYSTEM_TERMS
-        or lowered.startswith(_TECHNICAL_PREFIXES)
+        or lowered in ENGINE_PLACEHOLDER_TAGS
+        or lowered.startswith(ENGINE_TAG_PREFIXES)
         or _contains_system_term(stripped)
     )
     if system_term:
@@ -321,13 +336,6 @@ def classify_entity_candidate(
             "quest_hierarchy_label",
             technical_score,
             frozenset(reasons),
-        )
-
-    if lowered.startswith(("wp_", "dst_", "nw_")) or _RESREF_RE.fullmatch(text):
-        reasons.add("route_or_resref_label")
-        technical_score += 90
-        return CandidateFilterResult(
-            "drop", "route_or_resref_label", technical_score, frozenset(reasons)
         )
 
     if lowered in _GENERIC_PERSON_LABELS:

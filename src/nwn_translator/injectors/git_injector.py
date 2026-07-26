@@ -6,7 +6,6 @@ whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
 """
 
 import logging
-import re
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -16,20 +15,6 @@ from ..file_handlers.gff_handler import read_gff
 from ..file_handlers.gff_patcher import GFFPatcher, GFFPatchError
 
 logger = logging.getLogger(__name__)
-
-# Pattern for internal engine tags that must NOT be translated.
-# Waypoints (WP…), destinations (DST_…), posts (POST_…), night/spawn markers, etc.
-# Also matches CamelCase identifiers with no spaces (e.g. "NW_YOURTAGHERE").
-_INTERNAL_TAG_RE = re.compile(
-    r"^(?:"
-    r"WP_?\w*"  # WP, WP_, WPBasement, WP_Spawn …
-    r"|DST_\w*"  # DST_Tunnel …
-    r"|POST_\w*"  # POST_Guard …
-    r"|NW_\w*"  # NW_ engine prefixes
-    r"|YOURTAGHERE"  # placeholder tags from Bioware templates
-    r")$",
-    re.IGNORECASE,
-)
 
 # Mapping: GFF list key -> list of CExoLocString field names to translate
 INSTANCE_LISTS = {
@@ -196,19 +181,6 @@ def _iter_nested_item_entries(instance: Dict[str, Any], nested_key: str) -> List
     if not isinstance(raw, list):
         return []
     return [e for e in raw if isinstance(e, dict)]
-
-
-def is_internal_tag(text: str) -> bool:
-    """Return True if *text* looks like an internal engine tag that should not be translated.
-
-    Covers waypoint markers (WP…), destination tags (DST_…), post tags (POST_…),
-    NW_ engine prefixes, and spaceless CamelCase-only identifiers that contain no
-    natural-language words.
-    """
-    stripped = text.strip()
-    if not stripped:
-        return False
-    return bool(_INTERNAL_TAG_RE.match(stripped)) or not should_translate_git_string(stripped)
 
 
 def _add_string_values_from_fields(

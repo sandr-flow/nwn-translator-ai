@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from .base import BaseExtractor, ExtractedContent, TranslatableItem
+from ..context.string_filters import ENGINE_TAG_PREFIXES
 from ..file_handlers.ncs_parser import (
     NCSFile,
     NCSInstruction,
@@ -86,9 +87,9 @@ _RE_SNAKE_CASE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
 _RE_UPPER_CONST = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 _RE_RESREF = re.compile(r"^[a-zA-Z0-9_]{1,16}$")  # max 16 chars, no spaces
 
-# Known non-translatable prefixes (script names, system identifiers)
-_SKIP_PREFIXES = (
-    "nw_",
+# Known non-translatable prefixes: the shared engine tag families plus script
+# resref prefixes that only ever name compiled scripts.
+_SKIP_PREFIXES = ENGINE_TAG_PREFIXES + (
     "x0_",
     "x2_",
     "x3_",

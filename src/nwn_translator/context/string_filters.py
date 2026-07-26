@@ -106,6 +106,25 @@ _GENDER_TOKENS: FrozenSet[str] = frozenset(
 )
 _BRACKETED_TAG_RE = re.compile(r"^\s*\[[A-Za-z0-9_]+\]\s+")
 
+# Paired asterisks with at least one letter inside: the NWN emote convention
+# (*gasp*, *whispers* ..., "SAY MY NAME! *WHIPCRACK*") — player-facing prose,
+# unlike bare/unpaired wildcards ("Court of the Count *").
+_EMOTE_MARKUP_RE = re.compile(r"\*[^*]*[A-Za-z][^*]*\*")
+
+# Reasons that make a string unfit for translation/entity seeding, as opposed
+# to informational flags such as ``natural_language``.
+_BLOCKING_REASONS: FrozenSet[str] = frozenset(
+    {
+        "empty",
+        "placeholder",
+        "system_term",
+        "acronym_or_brand",
+        "code_like_identifier",
+        "wildcard_or_format_artifact",
+        "script_comment",
+    }
+)
+
 
 def _is_race_token(word: str) -> bool:
     return word.casefold() in _RACE_TOKENS
@@ -160,6 +179,8 @@ class StringClassification:
     acronym_or_brand: bool = False
     code_like_identifier: bool = False
     wildcard_or_format_artifact: bool = False
+    script_comment: bool = False
+    emote_markup: bool = False
     natural_language: bool = False
     reasons: FrozenSet[str] = field(default_factory=frozenset)
 
@@ -173,6 +194,7 @@ class StringClassification:
             or self.acronym_or_brand
             or self.code_like_identifier
             or self.wildcard_or_format_artifact
+            or self.script_comment
         )
 
     @property
@@ -223,6 +245,19 @@ def classify_string(text: object) -> StringClassification:
     if wildcard_or_format_artifact:
         reasons.add("wildcard_or_format_artifact")
 
+    # Scripter comments stored in name fields ("// * * * SCENE: ...").
+    script_comment = stripped.startswith("//")
+    if script_comment:
+        reasons.add("script_comment")
+
+    # Emote markup only when the asterisks are the sole artifact trigger:
+    # with them stripped out, the rest must be clean of braces/placeholders.
+    emote_markup = (
+        not script_comment
+        and bool(_EMOTE_MARKUP_RE.search(stripped))
+        and not _is_wildcard_or_format_artifact(stripped.replace("*", ""))
+    )
+
     code_like_identifier = _is_code_like_identifier(stripped)
     if code_like_identifier:
         reasons.add("code_like_identifier")
@@ -239,6 +274,8 @@ def classify_string(text: object) -> StringClassification:
         acronym_or_brand=acronym_or_brand,
         code_like_identifier=code_like_identifier,
         wildcard_or_format_artifact=wildcard_or_format_artifact,
+        script_comment=script_comment,
+        emote_markup=emote_markup,
         natural_language=natural_language,
         reasons=frozenset(reasons),
     )
@@ -268,10 +305,18 @@ def is_valid_entity_name(name: object, category: Optional[str] = None) -> bool:
 
 
 def should_skip_entity_source_text(text: object, metadata: Optional[dict] = None) -> bool:
-    """Return True when a TranslatableItem text should not be sent to the LLM."""
+    """Return True when a TranslatableItem text should not be sent to the LLM.
+
+    Emote markup (``*gasp*``, ``*whispers* ...``) is player-facing prose and is
+    allowed through when the wildcard artifact rule is the only objection. The
+    glossary gates (:func:`is_valid_entity_name`, :func:`classify_entity_candidate`)
+    deliberately stay strict — an asterisk-bearing string is never an entity name.
+    """
     cls = classify_string(text)
     if cls.blocked:
-        return True
+        blocking = cls.reasons & _BLOCKING_REASONS
+        if not (cls.emote_markup and blocking <= {"wildcard_or_format_artifact"}):
+            return True
 
     meta_type = str((metadata or {}).get("type", ""))
     if _is_git_technical_type(meta_type) and cls.code_like_identifier and not cls.natural_language:

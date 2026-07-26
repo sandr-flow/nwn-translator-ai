@@ -407,3 +407,27 @@ class TestPatchGitInventory:
         assert "Description" in INSTANCE_LISTS["StoreList"]
         assert "LocName" in INSTANCE_LISTS["StoreList"]
         assert "LocalizedName" in INSTANCE_LISTS["StoreList"]
+
+
+class TestEmoteStrings:
+    def test_collects_emote_texts_for_patch_side_symmetry(self):
+        """The patch-side fallback collector accepts the same emote strings the
+        extractor now emits — otherwise their translations would be dropped."""
+        gff = {
+            "TriggerList": [
+                {"LocalizedName": {"StrRef": -1, "Value": "*gasp*"}},
+                {
+                    "LocalizedName": {
+                        "StrRef": -1,
+                        "Value": "// * * * SCENE: Drinking dwarves  * * *",
+                    }
+                },
+            ],
+            "Placeable List": [
+                {"Description": {"StrRef": -1, "Value": "*The lever is stuck*"}},
+            ],
+        }
+        found = collect_git_strings_missing_from_translations(gff, {})
+        assert "*gasp*" in found
+        assert "*The lever is stuck*" in found
+        assert not any(t.startswith("//") for t in found)

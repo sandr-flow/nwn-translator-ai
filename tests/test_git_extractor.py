@@ -424,3 +424,36 @@ def test_git_filter_keeps_player_visible_trigger_and_item_strings():
 
     assert expected <= extracted
     assert expected <= collected
+
+
+def test_git_extractor_extracts_emote_trigger_texts():
+    """M-F3 DoD: emote-wrapped texts in .git fields are extracted."""
+    extractor = GitExtractor()
+    path = Path("testarea.git")
+    gff = {
+        "TriggerList": [
+            {"LocalizedName": {"StrRef": -1, "Value": "*gasp*"}},
+            {
+                "LocalizedName": {
+                    "StrRef": -1,
+                    "Value": "*whispers* There is such rage among these ruins...",
+                }
+            },
+            # Scripter comment stored in a trigger name: never translated.
+            {
+                "LocalizedName": {
+                    "StrRef": -1,
+                    "Value": "// * * * SCENE: Drinking dwarves  * * *",
+                }
+            },
+        ],
+        "Placeable List": [
+            {"Description": {"StrRef": -1, "Value": "*The lever is stuck*"}},
+        ],
+    }
+    result = extractor.extract(path, gff)
+    texts = {item.text for item in result.items}
+    assert "*gasp*" in texts
+    assert "*whispers* There is such rage among these ruins..." in texts
+    assert "*The lever is stuck*" in texts
+    assert not any(t.startswith("//") for t in texts)

@@ -226,3 +226,48 @@ def test_ncs_rejects_waypoint_tags_at_extraction(text):
 @pytest.mark.parametrize("text", ["Help me, please!", "I will not go back there."])
 def test_ncs_keeps_player_barks(text):
     assert not ncs_extractor._is_definitely_not_translatable(text)
+
+
+# --------------------------------------------------------------------------
+# Emote markup vs wildcard artifacts (.git emotion triggers)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "*The lever is stuck*",
+        "*gasp*",
+        "*whispers* There is such rage among these ruins...",
+        "*Hassir is silent as he looks in awe upon the great hall before you*",
+        "SAY MY NAME, BITCH! *WHIPCRACK*",
+    ],
+)
+def test_emote_markup_translates(text):
+    cls = classify_string(text)
+    assert cls.emote_markup
+    assert not should_skip_entity_source_text(text)
+    assert not should_skip_entity_source_text(text, {"type": "trigger_name"})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Court of the Count *",  # unpaired trailing wildcard
+        "// * * * SCENE: Drinking dwarves  * * *",  # scripter comment
+        "\n// * * * SCENE: Rigrin and Sagrirry talk  * * *",
+        "{0} gold",  # format placeholder
+        "*gasp* {0}",  # emote mixed with a format artifact
+        "***",  # letterless decoration
+        "*waves at <FirstName>*",  # mixed inline placeholder stays conservative
+    ],
+)
+def test_wildcard_artifacts_still_skipped(text):
+    assert should_skip_entity_source_text(text)
+
+
+def test_emote_markup_never_becomes_entity_name():
+    """The glossary gates stay strict even though translation is allowed."""
+    for text in ("*gasp*", "*The lever is stuck*"):
+        assert not is_valid_entity_name(text, "location")
+        assert classify_entity_candidate(text).decision == "drop"

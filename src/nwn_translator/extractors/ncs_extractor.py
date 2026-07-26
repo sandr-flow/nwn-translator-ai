@@ -23,54 +23,76 @@ from ..file_handlers.ncs_parser import (
 # ---------------------------------------------------------------------------
 # Engine function numbers for context-based classification
 # ---------------------------------------------------------------------------
+# A routine number is the zero-based index of the function prototype in the
+# game's nwscript.nss. The tables below are verified against the NWN:EE copy
+# (ovr/nwscript.nss); tests/test_ncs.py pins the key ids.
 
 # ACTION routines whose *string* argument is shown to the player.
 PLAYER_FACING_ACTIONS: Set[int] = {
-    39,  # SpeakString (classic NWN)
-    40,  # ActionSpeakString
-    169,  # ActionSpeakStringByStrRef (has string variant too)
-    221,  # SpeakString (NWN:EE / some compilers — same role as 39)
-    284,  # SetCustomToken
+    39,  # ActionSpeakString
+    221,  # SpeakString
+    284,  # SetCustomToken (token text is spliced into dialog shown to player)
     374,  # SendMessageToPC
-    417,  # SpeakOneLinerConversation
-    468,  # FloatingTextStringOnCreature
-    525,  # FloatingTextStringOnCreature (EE variant)
-    761,  # SetDescription
+    526,  # FloatingTextStringOnCreature
+    830,  # SetName
+    837,  # SetDescription
+    901,  # PostString (EE on-screen text)
 }
 
-# ACTION routines whose string argument is an internal identifier.
+# ACTION routines whose string argument is an internal identifier
+# (variable/tag/resref/database key) and must never be translated.
 NON_PLAYER_ACTIONS: Set[int] = {
     1,  # PrintString (server log / DM console, not player screen)
-    8,  # ExecuteScript
-    13,  # SetLocalString (var name)
-    14,  # SetLocalInt (var name)
-    15,  # SetLocalFloat (var name)
-    16,  # SetLocalObject (var name)
-    17,  # SetLocalLocation (var name)
-    29,  # GetLocalString (var name)
-    30,  # GetLocalInt (var name)
-    31,  # GetLocalFloat (var name)
-    32,  # GetLocalObject (var name)
-    33,  # GetLocalLocation (var name)
-    45,  # PlaySound
-    46,  # GetObjectByTag
-    57,  # GetWaypointByTag
-    165,  # CreateObject (resref)
-    173,  # EffectVisualEffect  # not string, but sometimes confused
-    200,  # GetObjectByTag (alt number)
-    514,  # StartNewModule
-    683,  # PlayAnimation (not string)
-    755,  # SendMessageToAllDMs (DM-only, not player-visible)
-    824,  # DeleteLocalString (var name)
-    825,  # DeleteLocalInt (var name)
-    826,  # DeleteLocalFloat (var name)
-    827,  # DeleteLocalObject (var name)
-    828,  # DeleteLocalLocation (var name)
+    8,  # ExecuteScript (script resref)
+    30,  # GetItemPossessedBy (item tag)
+    31,  # CreateItemOnObject (item resref)
+    46,  # PlaySound
+    51,  # GetLocalInt (var name)
+    52,  # GetLocalFloat (var name)
+    53,  # GetLocalString (var name)
+    54,  # GetLocalObject (var name)
+    55,  # SetLocalInt (var name)
+    56,  # SetLocalFloat (var name)
+    57,  # SetLocalString (var name)
+    58,  # SetLocalObject (var name)
+    152,  # SetLocalLocation (var name)
+    153,  # GetLocalLocation (var name)
+    197,  # GetWaypointByTag
+    200,  # GetObjectByTag
+    229,  # GetNearestObjectByTag
+    243,  # CreateObject (resref)
+    265,  # DeleteLocalInt (var name)
+    266,  # DeleteLocalFloat (var name)
+    267,  # DeleteLocalString (var name)
+    268,  # DeleteLocalObject (var name)
+    269,  # DeleteLocalLocation (var name)
+    417,  # SpeakOneLinerConversation (dialog resref, not display text)
+    509,  # StartNewModule (module resref)
+    563,  # SendMessageToAllDMs (DM-only, not player-visible)
+    589,  # SetCampaignFloat (db/var name)
+    590,  # SetCampaignInt (db/var name)
+    591,  # SetCampaignVector (db/var name)
+    592,  # SetCampaignLocation (db/var name)
+    593,  # SetCampaignString (db/var name)
+    594,  # DestroyCampaignDatabase (db name)
+    595,  # GetCampaignFloat (db/var name)
+    596,  # GetCampaignInt (db/var name)
+    597,  # GetCampaignVector (db/var name)
+    598,  # GetCampaignLocation (db/var name)
+    599,  # GetCampaignString (db/var name)
+    601,  # DeleteCampaignVariable (db/var name)
+    602,  # StoreCampaignObject (db/var name)
+    603,  # RetrieveCampaignObject (db/var name)
+    848,  # SetTag (EE)
 }
 
 # Max bytecode steps to scan after a CONST for a consuming ACTION.
 # Random/if/assign patterns may place SpeakString many instructions later in linear order.
 _ACTION_SCAN_WINDOW = 64
+
+# An ACTION this close to the push, with no other call in between, consumes the
+# string: only argument pushes (CONST/CPTOPSP) fit in the gap.
+_ADJACENT_CONSUMER_DISTANCE = 4
 
 # Context window around a literal in .nss source (lines on each side and
 # absolute character cap). Large enough to see the enclosing if/call, but
@@ -86,6 +108,9 @@ _NSS_SNIPPET_CHAR_CAP = 2000
 _RE_SNAKE_CASE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
 _RE_UPPER_CONST = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 _RE_RESREF = re.compile(r"^[a-zA-Z0-9_]{1,16}$")  # max 16 chars, no spaces
+# Single word with an interior [A-Z][a-z] hump (BJArrested, oAssignedHorse):
+# identifier convention — spoken one-worders are Titlecase or lowercase.
+_RE_MIXED_CASE_WORD = re.compile(r"^[A-Za-z][A-Za-z0-9]*[A-Z][a-z][A-Za-z0-9]*$")
 
 # Known non-translatable prefixes: the shared engine tag families plus script
 # resref prefixes that only ever name compiled scripts.
@@ -105,24 +130,35 @@ _SKIP_PREFIXES = ENGINE_TAG_PREFIXES + (
 )
 
 
-def _is_definitely_not_translatable(text: str) -> bool:
-    """Quick rejection test for obviously non-translatable strings."""
+_DEBUG_PHRASES = (
+    "report as bug",
+    "report this bug",
+    "please report",
+    "debug string",
+    "error:",
+)
+
+
+def _is_definitely_not_translatable(text: str, proven_player: bool = False) -> bool:
+    """Quick rejection test for obviously non-translatable strings.
+
+    With ``proven_player=True`` (a player-facing ACTION provably consumes the
+    string) only the hard rules apply: identifier shapes, debug phrases, and
+    letterless strings stay fatal, but the soft "looks odd" rules — short
+    length, resref-like single words, ``*...*`` decoration, all-caps shouts —
+    are waived, because ``*sniff*`` and ``Goodbye`` are then real speech.
+    """
     stripped = text.strip()
+
+    # --- hard rules: fatal regardless of consumption context ---
 
     # Empty / whitespace
     if not stripped:
         return True
 
-    # Very short strings (single char, two chars)
-    if len(stripped) <= 2:
+    # No letters at all (pure numbers, '+', '***', ' = '): nothing to translate.
+    if not any(ch.isalpha() for ch in stripped):
         return True
-
-    # Pure numeric
-    try:
-        float(stripped)
-        return True
-    except ValueError:
-        pass
 
     # Known non-translatable prefixes
     lower = stripped.lower()
@@ -137,6 +173,33 @@ def _is_definitely_not_translatable(text: str) -> bool:
     if _RE_UPPER_CONST.match(stripped):
         return True
 
+    # Mixed-case single-word identifiers: BJArrested, oAssignedHorse
+    if " " not in stripped and _RE_MIXED_CASE_WORD.match(stripped):
+        return True
+
+    # Variable dump pattern: ends with " = " or "varName = "
+    if stripped.endswith(" = ") or stripped.endswith("= ") or stripped.endswith(" ="):
+        return True
+
+    # Developer / debug error messages
+    if any(phrase in lower for phrase in _DEBUG_PHRASES):
+        return True
+
+    if proven_player:
+        # A bare all-lowercase single word ("triggered", "caravanrun") is an
+        # identifier even when a speech call appears in the scan window — the
+        # anywhere-in-window proof is too weak for it. Spoken one-worders are
+        # Titlecase ("Goodbye") or carry punctuation ("merci!", "*sniff*").
+        if " " not in stripped and stripped.isalpha() and stripped.islower():
+            return True
+        return False
+
+    # --- soft rules: heuristics for strings with no proven consumer ---
+
+    # Very short strings (single char, two chars)
+    if len(stripped) <= 2:
+        return True
+
     # ResRef-like: short, no spaces, only alnum+underscore
     if " " not in stripped and _RE_RESREF.match(stripped):
         return True
@@ -147,23 +210,6 @@ def _is_definitely_not_translatable(text: str) -> bool:
     if len(stripped) >= 3 and (
         decoration_chars / len(stripped) >= 0.5
         or (stripped[0] in "*#-=" and stripped[-1] in "*#-=")
-    ):
-        return True
-
-    # Variable dump pattern: ends with " = " or "varName = "
-    if stripped.endswith(" = ") or stripped.endswith("= ") or stripped.endswith(" ="):
-        return True
-
-    # Developer / debug error messages
-    if any(
-        phrase in lower
-        for phrase in (
-            "report as bug",
-            "report this bug",
-            "please report",
-            "debug string",
-            "error:",
-        )
     ):
         return True
 
@@ -189,12 +235,17 @@ def _contains_code_identifiers(text: str) -> bool:
     return bool(_RE_CAMEL_CASE.search(text) or _RE_FUNC_DOT.search(text))
 
 
-def ncs_hard_veto_reason(text: str) -> Optional[str]:
+def ncs_hard_veto_reason(text: str, proven_player: bool = False) -> Optional[str]:
     """Return a deterministic reason why an NCS string must never be translated.
 
     This is stricter than extraction filtering and is used as a final safety
     net before translation. NCS bytecode can contain script identifiers and
     technical literals that become invalid if localized.
+
+    ``proven_player=True`` relaxes exactly one rule: a single natural word with
+    letters only ("Goodbye", "Farewell") is no longer treated as a resref when
+    a player-facing ACTION provably consumes it. Identifier shapes with digits,
+    underscores, or known prefixes stay vetoed regardless.
     """
     stripped = text.strip()
     if not stripped:
@@ -216,22 +267,17 @@ def ncs_hard_veto_reason(text: str) -> Optional[str]:
     if " " not in stripped and "_" in stripped:
         return "underscore_identifier"
 
+    if " " not in stripped and _RE_MIXED_CASE_WORD.match(stripped):
+        return "code_identifier"
+
     if " " not in stripped and _RE_RESREF.match(stripped):
-        return "resref_like_identifier"
+        if not (proven_player and stripped.isalpha() and not stripped.islower()):
+            return "resref_like_identifier"
 
     if _contains_code_identifiers(stripped):
         return "code_identifier"
 
-    if any(
-        phrase in lower
-        for phrase in (
-            "report as bug",
-            "report this bug",
-            "please report",
-            "debug string",
-            "error:",
-        )
-    ):
+    if any(phrase in lower for phrase in _DEBUG_PHRASES):
         return "debug_or_developer_text"
 
     return None
@@ -262,45 +308,62 @@ def _classify_by_action_context(
     """Look ahead for an ACTION opcode to classify the string.
 
     Returns:
-        - ``"player"`` if a player-facing ACTION consumes this string
-        - ``"internal"`` if a non-player ACTION or a string comparison
-          (``OP_EQUAL`` / ``OP_NEQUAL``) consumes it
-        - ``None`` if no conclusive consumer found nearby
+        - ``"compare"`` if a string comparison (``OP_EQUAL`` / ``OP_NEQUAL``)
+          appears before any player-facing ACTION — the string is a dispatch
+          key (e.g. ``sChat == "animal empathy"`` in DMFI voice commands) and
+          translating it silently breaks the script
+        - ``"player"`` if a player-facing ACTION appears within the window
+        - ``"internal"`` if an internal ACTION is the first call after the
+          push and sits within arg-push distance — it is the consumer
+        - ``"internal_weak"`` if internal consumers appear only farther away
+        - ``None`` if nothing conclusive appears nearby
+
+    The stack is not simulated, so a distant ACTION is not reliably the
+    consumer: real speech regularly reaches its call through intermediate
+    instructions — variable assignment chains (``sBill = "..."`` spoken after
+    a switch) or nested argument calls (``DelayCommand(1.0,
+    ActionSpeakString(...))`` compiles the inner call away from the push).
+    A player-facing ACTION therefore wins over non-adjacent internal
+    consumers, and ``"internal_weak"`` is advisory: the caller drops
+    identifier-shaped strings on it but routes sentence-shaped ones to the
+    LLM gate, because the true speech call may simply sit beyond the window.
     """
-    # Scan forward for an ACTION that consumes this string (see _ACTION_SCAN_WINDOW).
-    # A comparison opcode seen before any ACTION wins: the string is a compare
-    # target (e.g. ``sChat == "animal empathy"`` in DMFI voice commands) and
-    # translating it silently breaks the script's dispatch.
     window = min(_ACTION_SCAN_WINDOW, len(instructions) - instr_index - 1)
+    action_seen = False
+    internal_seen = False
     for i in range(1, window + 1):
         next_instr = instructions[instr_index + i]
         if next_instr.opcode in (OP_EQUAL, OP_NEQUAL) and next_instr.type_byte == TYPE_STRING:
-            return "internal"
+            return "compare"
         if next_instr.is_action and next_instr.action_routine is not None:
             routine = next_instr.action_routine
             if routine in PLAYER_FACING_ACTIONS:
                 return "player"
             if routine in NON_PLAYER_ACTIONS:
-                return "internal"
+                # First call after the push, close enough that only argument
+                # pushes fit in between: this ACTION consumes the string.
+                if not action_seen and i <= _ADJACENT_CONSUMER_DISTANCE:
+                    return "internal"
+                internal_seen = True
+            action_seen = True
             # Unknown routine — inconclusive, keep looking
         # Several string CONSTS are often pushed as successive arguments before
         # one ACTION; keep scanning within the window instead of stopping here.
 
-    return None
+    return "internal_weak" if internal_seen else None
 
 
 def _action_name(routine: int) -> str:
     """Human-readable name for common ACTION routine numbers."""
     names = {
-        39: "SpeakString",
+        39: "ActionSpeakString",
         221: "SpeakString",
-        40: "ActionSpeakString",
         284: "SetCustomToken",
         374: "SendMessageToPC",
-        417: "SpeakOneLinerConversation",
-        468: "FloatingTextStringOnCreature",
-        525: "FloatingTextStringOnCreature",
-        761: "SetDescription",
+        526: "FloatingTextStringOnCreature",
+        830: "SetName",
+        837: "SetDescription",
+        901: "PostString",
     }
     return names.get(routine, f"ACTION #{routine}")
 
@@ -309,15 +372,18 @@ def _action_name(routine: int) -> str:
 # Source-based classification (.nss)
 # ---------------------------------------------------------------------------
 
-# Functions whose string argument is player-visible
+# Functions whose string argument is player-visible.
+# SpeakOneLinerConversation is deliberately absent: its string arg is a dialog
+# resref, not display text.
 _NSS_PLAYER_FUNCS = (
     "SpeakString",
     "ActionSpeakString",
     "SendMessageToPC",
     "FloatingTextStringOnCreature",
     "SetCustomToken",
-    "SpeakOneLinerConversation",
+    "SetName",
     "SetDescription",
+    "PostString",
 )
 
 # Functions whose string argument is debug / internal
@@ -488,10 +554,6 @@ class NcsExtractor(BaseExtractor):
             if not text.strip():
                 continue
 
-            # Quick rejection
-            if _is_definitely_not_translatable(text):
-                continue
-
             source_class: Optional[str] = None
             if nss_content is not None:
                 source_class = _classify_from_source(text, nss_content)
@@ -504,11 +566,21 @@ class NcsExtractor(BaseExtractor):
 
             action_class = _classify_by_action_context(idx, instructions)
 
-            if action_class == "internal":
+            # Dispatch keys (string compares) and strings consumed by an
+            # adjacent internal call must never be translated.
+            if action_class in ("compare", "internal"):
                 continue
 
             source_is_player = source_class == "player"
             bytecode_is_player = action_class == "player"
+
+            # Quick rejection runs after classification: a proven player-facing
+            # consumer waives the soft rules, so emotes (*sniff*) and one-word
+            # barks (Goodbye) survive to translation.
+            if _is_definitely_not_translatable(
+                text, proven_player=source_is_player or bytecode_is_player
+            ):
+                continue
 
             bytecode_ctx = _bytecode_context(idx, instructions)
             nss_snippet = (
@@ -533,6 +605,19 @@ class NcsExtractor(BaseExtractor):
                 )
                 needs_llm_gate = False
                 confidence = "high"
+            elif action_class == "internal_weak" and _is_likely_translatable(text):
+                # A nearby internal consumer is a weak verdict: the true speech
+                # call may sit beyond the scan window (assignment chains,
+                # DelayCommand-wrapped calls). Sentence-shaped strings go to
+                # the LLM gate instead of being dropped outright.
+                context = (
+                    f"Script string at offset {instr.offset:#x} in {file_path.stem}.ncs. "
+                    f"Nearest bytecode consumer is an internal function (variable/tag), "
+                    f"but the true consumer may be a later speech call. Only translate "
+                    f"if it is natural language shown to the player."
+                )
+                confidence = "low"
+                needs_llm_gate = True
             elif action_class is None and (
                 _is_likely_translatable(text)
                 or (_contains_code_identifiers(text) and len(text.split()) >= 2)
@@ -581,6 +666,7 @@ class NcsExtractor(BaseExtractor):
                         "type": "ncs_string",
                         "offset": instr.offset,
                         "confidence": confidence,
+                        "proven_player": source_is_player or bytecode_is_player,
                         "needs_llm_gate": needs_llm_gate,
                         "ncs_hint": ncs_hint,
                         "nss_snippet": nss_snippet,

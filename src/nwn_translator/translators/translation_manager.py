@@ -339,7 +339,9 @@ class TranslationManager:
             if meta.get("type") != "ncs_string":
                 continue
             iid = item.item_id or ""
-            hard_veto = ncs_hard_veto_reason(item.text)
+            hard_veto = ncs_hard_veto_reason(
+                item.text, proven_player=bool(meta.get("proven_player"))
+            )
             if hard_veto:
                 self._ncs_gate_approval[iid] = False
                 self._record_ncs_diagnostic(

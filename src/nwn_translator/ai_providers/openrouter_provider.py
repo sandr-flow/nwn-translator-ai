@@ -24,6 +24,7 @@ from openai import (
     APITimeoutError,
     AsyncOpenAI,
     BadRequestError,
+    InternalServerError,
     OpenAI,
 )
 from tenacity import (
@@ -58,7 +59,8 @@ from ..telemetry import (
 )
 
 #: Exception types that should trigger automatic retry with exponential backoff.
-_RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError)
+#: ``InternalServerError`` covers every HTTP status >= 500 from the gateway.
+_RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError, InternalServerError)
 
 
 class OpenRouterError(ProviderError):
@@ -421,7 +423,7 @@ class OpenRouterProvider(BaseAIProvider):
                 metadata={"model": self.model},
             )
 
-        except (RateLimitError, APIConnectionError, APITimeoutError):
+        except _RETRYABLE_EXCEPTIONS:
             raise
         except OpenRouterError:
             raise
@@ -502,7 +504,7 @@ class OpenRouterProvider(BaseAIProvider):
                 metadata={"model": self.model},
             )
 
-        except (RateLimitError, APIConnectionError, APITimeoutError):
+        except _RETRYABLE_EXCEPTIONS:
             raise
         except OpenRouterError:
             raise
@@ -555,7 +557,7 @@ class OpenRouterProvider(BaseAIProvider):
                 glossary_chars=glossary_chars,
             )
             return (response.choices[0].message.content or "").strip()
-        except (RateLimitError, APIConnectionError, APITimeoutError) as exc:
+        except _RETRYABLE_EXCEPTIONS as exc:
             self._record_llm_metric(
                 phase=phase or current_llm_phase("generic_batch"),
                 system_prompt=system_prompt,
@@ -769,7 +771,7 @@ class OpenRouterProvider(BaseAIProvider):
                 )
                 for item in items
             ]
-        except (RateLimitError, APIConnectionError, APITimeoutError):
+        except _RETRYABLE_EXCEPTIONS:
             raise
         except Exception as e:
             self._map_openrouter_exception(e)

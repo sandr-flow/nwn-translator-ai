@@ -4,7 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 import httpx
 import pytest
-from openai import BadRequestError
+from openai import AuthenticationError, BadRequestError, InternalServerError
 
 from src.nwn_translator.async_utils import run_async
 from src.nwn_translator.ai_providers.openrouter_provider import (
@@ -216,3 +216,54 @@ class TestCreateProvider:
         with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
             p = create_provider(FAKE_KEY)
         assert p.get_provider_name() == "openrouter"
+
+
+class TestOpenRouterRetryOn5xx:
+    """5xx responses must retry with backoff; other 4xx must not."""
+
+    def _make_provider(self, side_effect) -> OpenRouterProvider:
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            provider = OpenRouterProvider(api_key=FAKE_KEY)
+        mock_msg = MagicMock()
+        mock_msg.content = '{"translation": "Готово"}'
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            e if e is not None else mock_response for e in side_effect
+        ]
+        provider.client = mock_client
+        return provider
+
+    @staticmethod
+    def _status_error(cls, status: int):
+        req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        return cls("boom", response=httpx.Response(status, request=req), body=None)
+
+    @pytest.fixture(autouse=True)
+    def _no_backoff_sleep(self, monkeypatch):
+        monkeypatch.setattr(OpenRouterProvider.translate.retry, "sleep", lambda *_: None)
+
+    def test_5xx_retries_and_succeeds_on_second_attempt(self):
+        ise = self._status_error(InternalServerError, 502)
+        p = self._make_provider([ise, None])
+        result = p.translate("text", "english", "russian")
+        assert result.success is True
+        assert result.translated == "Готово"
+        assert p.client.chat.completions.create.call_count == 2
+
+    def test_5xx_exhausts_attempts_then_reraises(self):
+        ise = self._status_error(InternalServerError, 500)
+        p = self._make_provider([ise, ise, ise])
+        with pytest.raises(InternalServerError):
+            p.translate("text", "english", "russian")
+        assert p.client.chat.completions.create.call_count == 3
+
+    def test_4xx_does_not_retry(self):
+        auth = self._status_error(AuthenticationError, 401)
+        p = self._make_provider([auth])
+        with pytest.raises(OpenRouterError):
+            p.translate("text", "english", "russian")
+        assert p.client.chat.completions.create.call_count == 1

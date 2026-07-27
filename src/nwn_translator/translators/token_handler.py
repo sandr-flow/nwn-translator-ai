@@ -113,20 +113,30 @@ class TokenHandler:
     )
     RESTORED_ACTION_TAG_PATTERN = INLINE_TAG_PATTERN
 
+    # Placeholder matching is case-insensitive throughout: models occasionally
+    # re-case placeholders (``__nwn_token_…__``), and a missed match either
+    # leaks the raw placeholder into the output or silently drops the token.
     INLINE_PLACEHOLDER_CORE_PATTERN = r"NWN_INLINE_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
     ENGINE_PLACEHOLDER_CORE_PATTERN = r"NWN_TOKEN_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
     INLINE_PLACEHOLDER_PATTERN = re.compile(
-        rf"(?:__(?P<core1>{INLINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{INLINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>)"
+        rf"(?:__(?P<core1>{INLINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{INLINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>)",
+        re.IGNORECASE,
     )
     ENGINE_PLACEHOLDER_PATTERN = re.compile(
-        rf"(?:__(?P<core1>{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)"
+        rf"(?:__(?P<core1>{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)",
+        re.IGNORECASE,
     )
     HELPER_PLACEHOLDER_NOISE_PATTERN = re.compile(
-        rf"(?:__(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)"
+        rf"(?:__(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)",
+        re.IGNORECASE,
     )
     HELPER_PLACEHOLDER_BARE_NOISE_PATTERN = re.compile(
-        rf"[^\w\s]*(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})[^\w\s]*"
+        rf"[^\w\s]*(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})[^\w\s]*",
+        re.IGNORECASE,
     )
+    # Last-resort barrier: any leftover blob still carrying the placeholder
+    # marker (mangled core, stray wrapper) must never reach the output file.
+    PLACEHOLDER_RESIDUE_PATTERN = re.compile(r"\S*NWN_(?:TOKEN|INLINE)\S*", re.IGNORECASE)
 
     def __init__(self, preserve_standard_tokens: bool = True):
         """Initialize token handler."""
@@ -233,6 +243,7 @@ class TokenHandler:
         restored = self.ENGINE_PLACEHOLDER_PATTERN.sub(self._restore_engine_placeholder, restored)
         restored = self.HELPER_PLACEHOLDER_NOISE_PATTERN.sub("", restored)
         restored = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", restored)
+        restored = self.PLACEHOLDER_RESIDUE_PATTERN.sub("", restored)
 
         if self._has_unbalanced_action_tags(restored):
             restored = self.RESTORED_ACTION_TAG_PATTERN.sub("", restored)
@@ -305,6 +316,7 @@ class TokenHandler:
 
         cleaned = self.HELPER_PLACEHOLDER_NOISE_PATTERN.sub("", cleaned)
         cleaned = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", cleaned)
+        cleaned = self.PLACEHOLDER_RESIDUE_PATTERN.sub("", cleaned)
 
         if self._has_unbalanced_action_tags(cleaned):
             cleaned = self.RESTORED_ACTION_TAG_PATTERN.sub("", cleaned)
@@ -513,28 +525,32 @@ class TokenHandler:
         return f"__{core}__"
 
     def _store_placeholder_mapping(self, artifact: PreservedArtifact) -> None:
-        """Store restoration mapping for one protected artifact."""
+        """Store restoration mapping for one protected artifact.
+
+        Core keys are stored lowercased so lookups survive model re-casing;
+        cores differ only in the hex nonce and counter, so folding is safe.
+        """
         core = artifact.placeholder[2:-2]
         if artifact.kind in {"inline_tag", "dialog_action_marker", "dash_action_marker"}:
             self.action_tag_map[core] = artifact.original
-            self._inline_core_map[core] = artifact.original
+            self._inline_core_map[core.lower()] = artifact.original
         else:
             self.token_map[artifact.placeholder] = artifact.original
-            self._token_core_map[core] = artifact.original
+            self._token_core_map[core.lower()] = artifact.original
 
     def _restore_inline_placeholder(self, match: re.Match) -> str:
         """Restore one inline-tag placeholder or drop unknown helper artifacts."""
         core = next((group for group in match.groups() if group), None)
         if not core:
             return ""
-        return self._inline_core_map.get(core, "")
+        return self._inline_core_map.get(core.lower(), "")
 
     def _restore_engine_placeholder(self, match: re.Match) -> str:
         """Restore one engine-token placeholder or drop unknown helper artifacts."""
         core = next((group for group in match.groups() if group), None)
         if not core:
             return ""
-        return self._token_core_map.get(core, "")
+        return self._token_core_map.get(core.lower(), "")
 
     def _classify_artifact(self, raw: str) -> Tuple[Optional[str], str]:
         """Classify one raw artifact candidate from the original text."""

@@ -315,3 +315,63 @@ class TestDeterministicNonce:
         text = "Hello <FirstName>, welcome <StartAction>[wave]</Start>"
         sanitized, handler = sanitize_text(text)
         assert restore_text(sanitized, handler) == text
+
+
+class TestCaseInsensitiveRestoration:
+    """Models occasionally re-case placeholders; restore must survive it."""
+
+    def test_lowercased_placeholder_restores_token(self):
+        sanitized, handler = sanitize_text("Hello <FirstName>.")
+        placeholder = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)
+        translated = sanitized.replace(placeholder, placeholder.lower()).replace("Hello", "Привет")
+        assert restore_text(translated, handler) == "Привет <FirstName>."
+
+    def test_uppercased_core_restores_token(self):
+        sanitized, handler = sanitize_text("Hello <FirstName>.")
+        placeholder = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)
+        translated = sanitized.replace(placeholder, placeholder.upper())
+        assert "<FirstName>" in restore_text(translated, handler)
+
+    def test_recased_output_is_exact_valid_first_try(self):
+        """A case-only mutation must not burn a retry."""
+        sanitized, handler = sanitize_text("<StartAction>[Wave]</Start> Hello <FirstName>.")
+        outcome = handler.finalize_translation(sanitized.lower())
+        assert outcome.exact_valid
+        assert "<StartAction>" in outcome.final_text
+        assert "</Start>" in outcome.final_text
+        assert "<FirstName>" in outcome.final_text
+
+    def test_recased_wrapped_placeholder_restores(self):
+        sanitized, handler = sanitize_text("Hello <FirstName>.")
+        core = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)[2:-2]
+        translated = f"Привет [[{core.lower()}]]."
+        assert restore_text(translated, handler) == "Привет <FirstName>."
+
+
+class TestPlaceholderResidueBarrier:
+    """No placeholder residue may ever reach the output file."""
+
+    def test_mangled_core_is_stripped_and_marked_degraded(self):
+        _, handler = sanitize_text("Hello <FirstName>.")
+        translated = "Привет __NWN_TOKEN_обрывок__"
+        outcome = handler.finalize_translation(translated, allow_cleanup=True)
+        assert not outcome.exact_valid
+        assert outcome.used_cleanup
+        assert "nwn_token" not in outcome.final_text.lower()
+        assert "<FirstName>" in outcome.mismatch_report.missing
+
+    def test_recased_mangled_prefix_is_stripped(self):
+        _, handler = sanitize_text("Hello <FirstName>.")
+        restored = handler.restore("Привет __nwn_token_каракули__!")
+        assert "nwn_token" not in restored.lower()
+
+    def test_unknown_wellformed_core_is_dropped(self):
+        _, handler = sanitize_text("Hello <FirstName>.")
+        restored = handler.restore("Привет __NWN_TOKEN_deadbeef_9__.")
+        assert "nwn_token" not in restored.lower()
+
+    def test_bare_recased_marker_is_stripped(self):
+        _, handler = sanitize_text("Hello <FirstName>.")
+        restored = handler.restore("Привет nwn_inline_ab12cd34_0 друг.")
+        assert "nwn_inline" not in restored.lower()
+        assert "друг." in restored

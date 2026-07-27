@@ -353,3 +353,66 @@ class TestTranslationManagerTimeouts:
         result = manager.translate_content(content)
 
         assert result == {item.text: f"TR:{item.text}" for item in items}
+
+
+class TestGlossaryEchoBackAcceptance:
+    """Names the model insists on keeping unchanged must survive into the glossary."""
+
+    def test_full_echoback_accepted_after_retries(self):
+        """All names echoed on every attempt -> accepted as-is, retries still spent."""
+        import json
+        from src.nwn_translator.glossary import GlossaryBuilder, _MAX_RETRIES
+
+        builder = GlossaryBuilder()
+        batch_seen = {"Almraiven": "location", "Perin": "character"}
+
+        call_count = 0
+
+        async def fake_glossary(system_prompt, user_prompt, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return json.dumps({"Almraiven": "Almraiven", "Perin": "Perin"})
+
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
+        mock_config = Mock()
+        mock_config.target_lang = "french"
+
+        sem = asyncio.Semaphore(1)
+
+        async def run_test():
+            return await builder._translate_batch_async(
+                sem,
+                batch_seen,
+                mock_provider,
+                mock_config,
+                1,
+                1,
+                None,
+            )
+
+        result = run_async(run_test(), timeout=10.0)
+        assert result == {"Almraiven": "Almraiven", "Perin": "Perin"}
+        assert call_count == _MAX_RETRIES + 1  # nudge retries still happen
+
+    def test_build_degrades_to_empty_glossary_on_garbage(self, caplog):
+        """Unusable responses everywhere -> empty glossary + warning, no exception."""
+        import logging
+        from src.nwn_translator.glossary import GlossaryBuilder
+
+        world_context = Mock()
+        world_context.get_glossary_names = Mock(return_value=[("Perin", "character")])
+
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(return_value="not json at all")
+        mock_provider.close_async_client = AsyncMock()
+
+        mock_config = Mock()
+        mock_config.target_lang = "russian"
+        mock_config.max_concurrent_requests = 2
+
+        caplog.set_level(logging.WARNING)
+        glossary = GlossaryBuilder().build(world_context, mock_provider, mock_config)
+
+        assert glossary.entries == {}
+        assert "no usable entries" in caplog.text

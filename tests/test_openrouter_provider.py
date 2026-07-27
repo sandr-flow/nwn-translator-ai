@@ -144,7 +144,7 @@ class TestOpenRouterTranslate:
         assert kw["extra_body"] == {"reasoning": {"effort": "medium"}}
 
     def test_translate_bad_request_retries_without_reasoning(self):
-        """HTTP 400 with reasoning must retry once without extra_body."""
+        """HTTP 400 rejecting reasoning must retry once without extra_body."""
         with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
             p = OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="high")
 
@@ -157,7 +157,7 @@ class TestOpenRouterTranslate:
 
         req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
         resp = httpx.Response(400, request=req)
-        br = BadRequestError("nope", response=resp, body={"error": {}})
+        br = BadRequestError("Reasoning is not supported by this model", response=resp, body={})
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = [br, mock_response]
@@ -267,3 +267,81 @@ class TestOpenRouterRetryOn5xx:
         with pytest.raises(OpenRouterError):
             p.translate("text", "english", "russian")
         assert p.client.chat.completions.create.call_count == 1
+
+
+class TestReasoningFallbackMemory:
+    """A 'reasoning not supported' 400 is remembered; unrelated 400s propagate."""
+
+    def _make_provider(self) -> OpenRouterProvider:
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            return OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="medium")
+
+    @staticmethod
+    def _mock_response():
+        mock_msg = MagicMock()
+        mock_msg.content = '{"translation": "x"}'
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        return mock_response
+
+    @staticmethod
+    def _bad_request(message: str) -> BadRequestError:
+        req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        return BadRequestError(message, response=httpx.Response(400, request=req), body={})
+
+    def test_reasoning_rejection_is_remembered_for_the_session(self):
+        p = self._make_provider()
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            self._bad_request("Reasoning is not supported by this model"),
+            self._mock_response(),
+            self._mock_response(),
+        ]
+        p.client = mock_client
+
+        assert p.translate("a", "english", "russian").success is True
+        assert p.translate("b", "english", "russian").success is True
+
+        calls = mock_client.chat.completions.create.call_args_list
+        assert len(calls) == 3  # 400 + fallback + single second-request call
+        assert "extra_body" in calls[0].kwargs
+        assert "extra_body" not in calls[1].kwargs
+        assert "extra_body" not in calls[2].kwargs
+
+    def test_unrelated_400_propagates_without_fallback(self):
+        p = self._make_provider()
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = self._bad_request(
+            "This model's maximum context length is exceeded"
+        )
+        p.client = mock_client
+
+        with pytest.raises(OpenRouterError):
+            p.translate("a", "english", "russian")
+        assert mock_client.chat.completions.create.call_count == 1
+        assert "extra_body" in mock_client.chat.completions.create.call_args.kwargs
+
+    def test_async_path_respects_remembered_flag(self):
+        p = self._make_provider()
+        p._reasoning_unsupported = True
+        mock_async_client = MagicMock()
+
+        async def create(**kwargs):
+            create.calls.append(kwargs)
+            return self._mock_response()
+
+        create.calls = []
+        mock_async_client.chat.completions.create = create
+        p._thread_local.async_client = mock_async_client
+        p._thread_local.last_loop_id = None
+
+        async def run():
+            p._thread_local.async_client = mock_async_client
+            p._thread_local.last_loop_id = id(__import__("asyncio").get_running_loop())
+            return await p._chat_completions_create_async(model="m", messages=[])
+
+        run_async(run(), timeout=5.0)
+        assert len(create.calls) == 1
+        assert "extra_body" not in create.calls[0]

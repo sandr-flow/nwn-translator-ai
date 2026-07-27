@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..ai_providers import BaseAIProvider
 from ..ai_providers.openrouter_provider import OpenRouterProvider
-from ..config import TranslationConfig, TRANSLATION_MAX_TOKENS, TRANSLATION_TEMPERATURE
+from ..config import (
+    TranslationCancelled,
+    TranslationConfig,
+    TRANSLATION_MAX_TOKENS,
+    TRANSLATION_TEMPERATURE,
+)
 from ..context.dialog_formatter import DialogFormatter
 from ..context.world_context import WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode
@@ -61,6 +66,12 @@ class ContextualTranslationManager:
             config.translation_log_writer,
         )
         self.formatter = DialogFormatter()
+
+    def _raise_if_cancelled(self) -> None:
+        """Raise :class:`TranslationCancelled` when the config's cancel check fires."""
+        cb = self.config.cancel_check
+        if cb is not None and cb():
+            raise TranslationCancelled("Translation cancelled by user")
 
     def translate_dialog(
         self,
@@ -206,6 +217,7 @@ class ContextualTranslationManager:
             latest_invalid: Dict[str, Dict[str, Any]] = {}
 
             for chunk_index, (chunk_keys, script) in enumerate(dialog_chunks, 1):
+                self._raise_if_cancelled()
                 chunk_translations, chunk_pending, chunk_invalid = self._translate_dialog_chunk(
                     file_path,
                     file_path.stem,
@@ -228,6 +240,7 @@ class ContextualTranslationManager:
             pending_keys = sorted(set(pending_keys))
 
             if pending_keys:
+                self._raise_if_cancelled()
                 logger.warning(
                     "%s: retrying %d dialog nodes with missing or invalid preserved artifacts...",
                     file_path.name,
@@ -316,6 +329,7 @@ class ContextualTranslationManager:
                         [sanitized_by_key[key] for key in pending_after_json]
                     )
                     for key in pending_after_json:
+                        self._raise_if_cancelled()
                         context = self._build_dialog_retry_context(
                             key,
                             node_map,
@@ -340,6 +354,8 @@ class ContextualTranslationManager:
                                 run_single_retry(),
                                 cleanup=provider.close_async_client,
                             )
+                        except TranslationCancelled:
+                            raise
                         except Exception as exc:
                             logger.warning(
                                 "%s: individual dialog retry failed for %s: %s",
@@ -392,6 +408,8 @@ class ContextualTranslationManager:
             _finish()
             return translations
 
+        except TranslationCancelled:
+            raise
         except Exception as exc:
             logger.error("Contextual translation failed for %s: %s", file_path.name, exc)
             _finish()

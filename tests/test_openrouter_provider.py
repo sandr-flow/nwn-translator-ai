@@ -87,7 +87,7 @@ class TestOpenRouterTranslate:
 
     def test_translate_success(self):
         """Successful translation returns correct TranslationResult."""
-        p = self._make_provider("Привет, мир")
+        p = self._make_provider('{"translation": "Привет, мир"}')
         result = p.translate("Hello, world", "english", "russian")
         assert result.success is True
         assert result.translated == "Привет, мир"
@@ -103,7 +103,7 @@ class TestOpenRouterTranslate:
 
     def test_translate_with_context(self):
         """Context is forwarded to the prompt builder."""
-        p = self._make_provider("Меч")
+        p = self._make_provider('{"translation": "Меч"}')
         result = p.translate("Sword", "english", "russian", context="Item: sword_01")
         assert result.success is True
         # The create() call receives the messages; verify it was called once
@@ -345,3 +345,32 @@ class TestReasoningFallbackMemory:
         run_async(run(), timeout=5.0)
         assert len(create.calls) == 1
         assert "extra_body" not in create.calls[0]
+
+
+class TestNoJsonResponseRejected:
+    """Model chatter without a JSON object must fail the item, not ship as a translation."""
+
+    def test_translate_chatter_without_json_fails(self):
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = OpenRouterProvider(api_key=FAKE_KEY)
+        mock_msg = MagicMock()
+        mock_msg.content = "Sure! Here is the translation: Привет, мир"
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        p.client = mock_client
+
+        result = p.translate("Hello, world", "english", "russian")
+        assert result.success is False
+        assert result.translated == ""
+        assert "unparseable" in (result.error or "")
+
+    def test_parse_rejects_chatter_but_keeps_fenced_json(self):
+        parse = OpenRouterProvider._parse_model_json_response
+        assert parse("I cannot translate this content.") == ""
+        assert parse("") == ""
+        assert parse('```json\n{"translation": "Привет"}\n```') == "Привет"
+        assert parse('Sure! {"translation": "Привет"}') == "Привет"

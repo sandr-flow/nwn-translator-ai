@@ -324,8 +324,12 @@ class OpenRouterProvider(BaseAIProvider):
             # Find the first '{' and decode from there
             idx = cleaned.find("{")
             if idx == -1:
-                logger.warning("No JSON object found in model response, using raw text")
-                return raw_response
+                logger.warning(
+                    "No JSON object in model response, treating as failure. "
+                    "Raw (first 200 chars): %s",
+                    (raw_response or "")[:200],
+                )
+                return ""
             parsed, _ = decoder.raw_decode(cleaned, idx)
             translated_text = parsed.get("translation", "")
             if not isinstance(translated_text, str) or not translated_text:

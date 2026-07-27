@@ -61,9 +61,8 @@ class GFFType(IntEnum):
     CResRef = 11
     CExoLocString = 12
     VOID = 13
-    CExoLocSubString = 14  # Subtype of CExoLocString
+    Struct = 14
     List = 15
-    Struct = 16
     Unknown = 0xFF
 
     @staticmethod
@@ -432,7 +431,8 @@ class GFFParser:
             return result
 
         elif field.type == GFFType.Struct:
-            # Direct struct reference
+            # Direct struct field: data_or_offset is an index into the Struct
+            # array (expanded to a nested dict in _expand_struct).
             return field.data_or_offset
 
         elif field.type == GFFType.Unknown:
@@ -500,7 +500,10 @@ def parse_gff(file_path: Path, source_encoding: Optional[str] = None) -> GFFFile
 
 
 def _expand_struct(struct_fields: Dict[str, Any], gff: GFFFile, visited: set) -> Dict[str, Any]:
-    """Recursively expand struct fields, resolving list indices to their struct dicts.
+    """Recursively expand struct fields, resolving struct indices to their dicts.
+
+    Both List fields (lists of struct indices) and direct Struct fields (a bare
+    struct index) are expanded; invalid or already-visited indices stay as ints.
 
     Args:
         struct_fields: Raw fields dict from a GFFStruct
@@ -537,6 +540,14 @@ def _expand_struct(struct_fields: Dict[str, Any], gff: GFFFile, visited: set) ->
                 else:
                     expanded.append(idx)
             result[key] = expanded
+        elif (
+            field_types[key] == int(GFFType.Struct)
+            and isinstance(gff_val, int)
+            and 0 <= gff_val < len(gff.structs)
+            and gff_val not in visited
+        ):
+            child_fields = gff.structs[gff_val].fields
+            result[key] = _expand_struct(child_fields, gff, visited | {gff_val})
         else:
             result[key] = gff_val
 

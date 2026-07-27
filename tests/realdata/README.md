@@ -84,8 +84,16 @@ to LES LIONS — every corpus module currently xfails V2.4 on the same issue cla
 punctuation-only strings like `. . .`). Measured on Midnight: 26/8118 fields,
 byte-identical between the branch head and the working tree (verified via a
 `git worktree` + `PYTHONPATH` run), so the source-encoding work introduced no
-regression here. Tag-validation loosening for legitimately unpaired tags is a
-separate planned fix.
+regression here.
+
+**Baseline update (2026-07-27):** tag stripping is now gated on deviation from
+the original's tag multiset, so legitimately unpaired Start-tags (e.g. Midnight's
+`<CUSTOM1004>(sigh)</Start>` convention, 171 strings) round-trip `exact_valid`
+on the first try instead of burning the retry budget and losing the tag. The
+V2.4 marker metric is unchanged (26/8118 on Midnight): the marker is plain text
+and survived tag loss in prose strings, and the remaining 26 fields are the
+tag-only / punctuation-only class whose marker loss happens outside
+`TokenHandler`.
 
 ### H6 batch-dedup metric (Almraiven, mock-translate)
 

@@ -375,3 +375,52 @@ class TestPlaceholderResidueBarrier:
         restored = handler.restore("Привет nwn_inline_ab12cd34_0 друг.")
         assert "nwn_inline" not in restored.lower()
         assert "друг." in restored
+
+
+class TestUnpairedOriginalTags:
+    """Originals with legitimately unpaired Start-tags must round-trip untouched."""
+
+    def _roundtrip(self, original: str):
+        handler = TokenHandler()
+        sanitized = handler.sanitize(original).sanitized_text
+        return handler.finalize_translation(sanitized, allow_cleanup=False)
+
+    def test_unpaired_opening_tag_is_valid_first_try(self):
+        result = self._roundtrip("<StartAction>Waves a hand.")
+        assert result.exact_valid
+        assert result.final_text == "<StartAction>Waves a hand."
+
+    def test_tag_only_string_survives(self):
+        result = self._roundtrip("<StartAction>")
+        assert result.exact_valid
+        assert result.final_text == "<StartAction>"
+
+    def test_closing_tag_paired_with_custom_token(self):
+        original = "<CUSTOM1004>(sigh)</Start>  Will 100 gold assist your memory at all?"
+        result = self._roundtrip(original)
+        assert result.exact_valid
+        assert result.final_text == original
+
+    def test_mixed_paired_and_unpaired_tags_survive(self):
+        original = "<StartAction>A</Start> and <StartCheck>B"
+        result = self._roundtrip(original)
+        assert result.exact_valid
+        assert result.final_text == original
+
+    def test_genuinely_lost_closing_tag_still_caught(self):
+        handler = TokenHandler()
+        sanitized = handler.sanitize("<StartAction>Waves.</Start>").sanitized_text
+        mangled = sanitized.replace(handler.artifacts[-1].placeholder, "")
+        result = handler.finalize_translation(mangled, allow_cleanup=True)
+        assert not result.exact_valid
+        assert result.used_cleanup
+        assert "</Start>" in result.mismatch_report.missing
+        assert "<Start" not in result.final_text
+
+    def test_lost_tag_on_unpaired_original_still_caught(self):
+        handler = TokenHandler()
+        sanitized = handler.sanitize("<StartAction>Waves a hand.").sanitized_text
+        mangled = sanitized.replace(handler.artifacts[0].placeholder, "")
+        result = handler.finalize_translation(mangled, allow_cleanup=False)
+        assert not result.exact_valid
+        assert "<StartAction>" in result.mismatch_report.missing

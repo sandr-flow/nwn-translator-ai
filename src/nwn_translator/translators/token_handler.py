@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -245,7 +246,9 @@ class TokenHandler:
         restored = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", restored)
         restored = self.PLACEHOLDER_RESIDUE_PATTERN.sub("", restored)
 
-        if self._has_unbalanced_action_tags(restored):
+        if self._has_unbalanced_action_tags(restored) and self._action_tags_deviate_from_original(
+            restored
+        ):
             restored = self.RESTORED_ACTION_TAG_PATTERN.sub("", restored)
 
         return restored
@@ -318,7 +321,9 @@ class TokenHandler:
         cleaned = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", cleaned)
         cleaned = self.PLACEHOLDER_RESIDUE_PATTERN.sub("", cleaned)
 
-        if self._has_unbalanced_action_tags(cleaned):
+        if self._has_unbalanced_action_tags(cleaned) and self._action_tags_deviate_from_original(
+            cleaned
+        ):
             cleaned = self.RESTORED_ACTION_TAG_PATTERN.sub("", cleaned)
 
         return self._normalize_cleanup_whitespace(cleaned)
@@ -477,6 +482,21 @@ class TokenHandler:
                 )
             )
         return artifacts
+
+    def _action_tags_deviate_from_original(self, text: str) -> bool:
+        """Return True when Start-tags in ``text`` differ from the original's multiset.
+
+        Originals may legitimately carry unpaired Start-tags: modules pair
+        ``</Start>`` with an engine token opener (``<CUSTOM1004>(sigh)</Start>``)
+        or leave ``<StartAction>`` unclosed. Such imbalance must be preserved
+        byte-for-byte; only a deviation from the original inventory is malformed.
+        """
+        expected = Counter(
+            artifact.original
+            for artifact in self.artifacts
+            if self.RESTORED_ACTION_TAG_PATTERN.fullmatch(artifact.original)
+        )
+        return Counter(self.RESTORED_ACTION_TAG_PATTERN.findall(text)) != expected
 
     @classmethod
     def _has_unbalanced_action_tags(cls, text: str) -> bool:

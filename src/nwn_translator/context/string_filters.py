@@ -304,18 +304,35 @@ def is_valid_entity_name(name: object, category: Optional[str] = None) -> bool:
     return False
 
 
-def should_skip_entity_source_text(text: object, metadata: Optional[dict] = None) -> bool:
+def should_skip_entity_source_text(
+    text: object,
+    metadata: Optional[dict] = None,
+    known_names: Optional[FrozenSet[str]] = None,
+) -> bool:
     """Return True when a TranslatableItem text should not be sent to the LLM.
 
     Emote markup (``*gasp*``, ``*whispers* ...``) is player-facing prose and is
-    allowed through when the wildcard artifact rule is the only objection. The
-    glossary gates (:func:`is_valid_entity_name`, :func:`classify_entity_candidate`)
-    deliberately stay strict — an asterisk-bearing string is never an entity name.
+    allowed through when the wildcard artifact rule is the only objection.
+    *known_names* (casefolded display names taken from the module's own
+    blueprints) rescues strings whose only objection is the code-like shape:
+    a CamelCase surname such as ``McGee`` or ``DeVir`` is legitimate when a
+    creature in the same module carries it as a name — the .utc side already
+    translates it unfiltered, so blocking the .git copy would desynchronize
+    the two. Engine tags stay blocked (``system_term`` is a separate reason),
+    and so do technical field types below. The glossary gates
+    (:func:`is_valid_entity_name`, :func:`classify_entity_candidate`)
+    deliberately stay strict — an asterisk-bearing string is never an entity
+    name, and neither is a rescued CamelCase one.
     """
     cls = classify_string(text)
     if cls.blocked:
         blocking = cls.reasons & _BLOCKING_REASONS
-        if not (cls.emote_markup and blocking <= {"wildcard_or_format_artifact"}):
+        rescued = bool(
+            known_names is not None
+            and blocking <= {"code_like_identifier"}
+            and cls.text.casefold() in known_names
+        )
+        if not rescued and not (cls.emote_markup and blocking <= {"wildcard_or_format_artifact"}):
             return True
 
     meta_type = str((metadata or {}).get("type", ""))

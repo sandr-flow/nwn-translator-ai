@@ -6,9 +6,10 @@ whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
 """
 
 import logging
+from collections import OrderedDict
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from ..context.string_filters import should_skip_entity_source_text
 from ..file_handlers.gff_handler import read_gff
@@ -104,25 +105,93 @@ def _meta_type_for_inventory_field(field_name: str) -> str:
     return "git_instance_string"
 
 
-def should_translate_git_string(text: object, meta_type: str = "git_instance_string") -> bool:
+def should_translate_git_string(
+    text: object,
+    meta_type: str = "git_instance_string",
+    known_names: Optional[FrozenSet[str]] = None,
+) -> bool:
     """Return True when a .git locstring is suitable for translation.
 
     This is shared by extraction and fallback string collection so code-like
     route labels, resrefs, placeholders, and toolset/system terms are filtered
-    consistently before they can reach the translator.
+    consistently before they can reach the translator. *known_names* is the
+    module's blueprint-name oracle (see :func:`get_module_creature_names`):
+    a code-like string matching a blueprint creature name is a real name
+    (``McGee``, ``DeVir``) and passes.
     """
     if not isinstance(text, str):
         return False
     stripped = text.strip()
     if not stripped:
         return False
-    return not should_skip_entity_source_text(stripped, {"type": meta_type})
+    return not should_skip_entity_source_text(stripped, {"type": meta_type}, known_names)
+
+
+def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
+    """Collect casefolded FirstName/LastName values of every .utc under *root*.
+
+    Blueprint names are the translatability oracle for .git creature names:
+    the .utc extractor translates them unfiltered, so any .git occurrence of
+    the same text must be translatable too, however code-like it looks.
+    Encoding does not matter here — the oracle is only consulted for strings
+    whose code-like shape is pure ASCII, which decodes identically in every
+    supported code page.
+    """
+    names: Set[str] = set()
+    try:
+        utc_files = sorted(root.glob("*.utc"))
+    except OSError:
+        return frozenset()
+    for utc_path in utc_files:
+        try:
+            data = read_gff(utc_path)
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("Skipping unreadable blueprint %s", utc_path, exc_info=True)
+            continue
+        for field_name in ("FirstName", "LastName"):
+            field_obj = data.get(field_name)
+            if isinstance(field_obj, dict):
+                value = field_obj.get("Value", "")
+                if isinstance(value, str) and value.strip():
+                    names.add(value.strip().casefold())
+    return frozenset(names)
+
+
+_creature_name_cache: "OrderedDict[Path, FrozenSet[str]]" = OrderedDict()
+_CREATURE_NAME_CACHE_MAX = 4
+
+
+def get_module_creature_names(root: Path) -> FrozenSet[str]:
+    """Return the (cached) blueprint creature-name oracle for a module dir.
+
+    The entry built during extraction is deliberately reused at any later
+    lookup for the same directory: by injection time the on-disk .utc files
+    may already be patched with translated names, and rebuilding would break
+    original-text matching.
+    """
+    key = root.resolve()
+    cached = _creature_name_cache.get(key)
+    if cached is not None:
+        _creature_name_cache.move_to_end(key)
+        return cached
+    names = collect_blueprint_creature_names(root)
+    logger.debug("Blueprint name oracle for %s: %d names", root, len(names))
+    _creature_name_cache[key] = names
+    while len(_creature_name_cache) > _CREATURE_NAME_CACHE_MAX:
+        _creature_name_cache.popitem(last=False)
+    return names
+
+
+def clear_creature_name_cache() -> None:
+    """Drop all cached name oracles (tests / long-lived processes)."""
+    _creature_name_cache.clear()
 
 
 def _collect_strings_from_store_tree(
     store_node: Dict[str, Any],
     found: Set[str],
     existing: Dict[str, str],
+    known_names: Optional[FrozenSet[str]] = None,
 ) -> None:
     """Gather locstrings from *store_node* ItemList and nested StoreList shelves."""
     for inv_item in _iter_nested_item_entries(store_node, "ItemList"):
@@ -132,13 +201,14 @@ def _collect_strings_from_store_tree(
             found,
             existing,
             _meta_type_for_inventory_field,
+            known_names,
         )
     children = store_node.get("StoreList", [])
     if not isinstance(children, list):
         return
     for child in children:
         if isinstance(child, dict):
-            _collect_strings_from_store_tree(child, found, existing)
+            _collect_strings_from_store_tree(child, found, existing, known_names)
 
 
 def _collect_patches_from_store_tree(
@@ -189,6 +259,7 @@ def _add_string_values_from_fields(
     bucket: Set[str],
     existing: Dict[str, str],
     meta_type_for_field: Optional[Callable[[str], str]] = None,
+    known_names: Optional[FrozenSet[str]] = None,
 ) -> None:
     """Collect embedded CExoLocString Values not already present in *existing*.
 
@@ -214,7 +285,7 @@ def _add_string_values_from_fields(
             original_text
             and isinstance(original_text, str)
             and original_text not in existing
-            and should_translate_git_string(original_text, meta_type)
+            and should_translate_git_string(original_text, meta_type, known_names)
         ):
             bucket.add(original_text)
 
@@ -222,12 +293,14 @@ def _add_string_values_from_fields(
 def collect_git_strings_missing_from_translations(
     parsed_data: Dict[str, Any],
     existing_translations: Dict[str, str],
+    known_names: Optional[FrozenSet[str]] = None,
 ) -> Set[str]:
     """Gather unique locstring texts from a parsed .git that need translation.
 
     Walks the same structure as :func:`patch_git_file` (instance lists + nested
     ``ItemList``). Strings that already appear as keys in *existing_translations*
-    are skipped.
+    are skipped. Pass the same *known_names* oracle the extractor used so both
+    sides stay symmetric.
     """
     found: Set[str] = set()
 
@@ -244,9 +317,12 @@ def collect_git_strings_missing_from_translations(
                 found,
                 existing_translations,
                 partial(_meta_type_for_instance_field, list_key),
+                known_names,
             )
             if list_key == "StoreList":
-                _collect_strings_from_store_tree(instance, found, existing_translations)
+                _collect_strings_from_store_tree(
+                    instance, found, existing_translations, known_names
+                )
             else:
                 for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(list_key, []):
                     for inv_item in _iter_nested_item_entries(instance, nested_key):
@@ -256,6 +332,7 @@ def collect_git_strings_missing_from_translations(
                             found,
                             existing_translations,
                             _meta_type_for_inventory_field,
+                            known_names,
                         )
 
     for area_item in _iter_area_item_entries(parsed_data):
@@ -265,6 +342,7 @@ def collect_git_strings_missing_from_translations(
             found,
             existing_translations,
             _meta_type_for_inventory_field,
+            known_names,
         )
 
     return found

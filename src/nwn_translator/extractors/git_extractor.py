@@ -7,7 +7,7 @@ strings are translated in Phase A/B and patched in :func:`patch_git_file`.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional
 
 from ..injectors.git_injector import (
     AREA_ITEM_FIELDS,
@@ -19,6 +19,7 @@ from ..injectors.git_injector import (
     _iter_nested_item_entries,
     _meta_type_for_instance_field,
     _meta_type_for_inventory_field,
+    get_module_creature_names,
     should_translate_git_string,
 )
 from ..nwn_constants import race_label, gender_label, base_item_label
@@ -231,6 +232,7 @@ class GitExtractor(BaseExtractor):
         inst_idx: int,
         path_suffix: str,
         items: List[TranslatableItem],
+        known_names: Optional[FrozenSet[str]] = None,
     ) -> None:
         """Recurse store instance: ItemList rows + nested StoreList shelves."""
         for j, inv_item in enumerate(_iter_nested_item_entries(store_node, "ItemList")):
@@ -245,6 +247,7 @@ class GitExtractor(BaseExtractor):
                     context=ctx_label,
                     item_id=(f"{stem}_StoreList_{inst_idx}_{path_suffix}_il{j}_{inv_field}"),
                     items=items,
+                    known_names=known_names,
                 )
         children = store_node.get("StoreList", [])
         if not isinstance(children, list):
@@ -258,6 +261,7 @@ class GitExtractor(BaseExtractor):
                     inst_idx,
                     f"{path_suffix}.StoreList[{k}]",
                     items,
+                    known_names,
                 )
 
     def _append_loc_string_item(
@@ -270,12 +274,13 @@ class GitExtractor(BaseExtractor):
         context: str,
         item_id: str,
         items: List[TranslatableItem],
+        known_names: Optional[FrozenSet[str]] = None,
     ) -> None:
         field_obj = struct.get(field_name)
         if not isinstance(field_obj, dict):
             return
         text = self._extract_text_from_local_string(field_obj)
-        if text is None or not should_translate_git_string(text, meta_type):
+        if text is None or not should_translate_git_string(text, meta_type, known_names):
             return
         items.append(
             TranslatableItem(
@@ -296,6 +301,9 @@ class GitExtractor(BaseExtractor):
         stem = file_path.stem
 
         npc_index = _build_npc_name_index(parsed_data)
+        # Blueprint-name oracle: creature names from the module's .utc files
+        # rescue code-like-looking real names (McGee, DeVir) from the filters.
+        known_names = get_module_creature_names(file_path.parent)
 
         for list_key, field_names in INSTANCE_LISTS.items():
             instances = parsed_data.get(list_key, [])
@@ -315,11 +323,12 @@ class GitExtractor(BaseExtractor):
                         context=ctx_label,
                         item_id=f"{stem}_{list_key}_{inst_idx}_{field_name}",
                         items=items,
+                        known_names=known_names,
                     )
 
                 if list_key == "StoreList":
                     self._extract_nested_store_inventory(
-                        instance, file_path, stem, inst_idx, "", items
+                        instance, file_path, stem, inst_idx, "", items, known_names
                     )
                 else:
                     for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(list_key, []):
@@ -340,6 +349,7 @@ class GitExtractor(BaseExtractor):
                                         f"{j}_{inv_field}"
                                     ),
                                     items=items,
+                                    known_names=known_names,
                                 )
 
         for area_idx, area_item in enumerate(_iter_area_item_entries(parsed_data)):
@@ -354,6 +364,7 @@ class GitExtractor(BaseExtractor):
                     context=ctx_label,
                     item_id=(f"{stem}_{AREA_ITEM_LIST_KEY}_{area_idx}_{area_field}"),
                     items=items,
+                    known_names=known_names,
                 )
 
         return ExtractedContent(

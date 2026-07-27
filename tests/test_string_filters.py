@@ -271,3 +271,35 @@ def test_emote_markup_never_becomes_entity_name():
     for text in ("*gasp*", "*The lever is stuck*"):
         assert not is_valid_entity_name(text, "location")
         assert classify_entity_candidate(text).decision == "drop"
+
+
+@pytest.mark.parametrize("name", ["McGee", "DeVir", "MacReady", "VanCleef"])
+def test_camel_case_names_blocked_without_oracle(name):
+    assert should_skip_entity_source_text(name, {"type": "creature_first_name"})
+
+
+@pytest.mark.parametrize("name", ["McGee", "DeVir", "MacReady", "VanCleef"])
+def test_blueprint_oracle_rescues_camel_case_names(name):
+    oracle = frozenset({"mcgee", "devir", "macready", "vancleef"})
+    assert not should_skip_entity_source_text(name, {"type": "creature_first_name"}, oracle)
+    assert not should_skip_entity_source_text(name, {"type": "placeable_name"}, oracle)
+
+
+@pytest.mark.parametrize("name", ["WP_DoorTrigger", "NW_SomeTag", "YOURTAGHERE"])
+def test_oracle_never_rescues_engine_tags(name):
+    """system_term is its own blocking reason; a sloppy blueprint name cannot lift it."""
+    oracle = frozenset({name.casefold()})
+    assert should_skip_entity_source_text(name, {"type": "creature_first_name"}, oracle)
+
+
+def test_oracle_never_rescues_technical_git_types():
+    """Trigger/item/waypoint-note fields stay blocked for code-like text."""
+    oracle = frozenset({"mcgee"})
+    for meta_type in ("trigger_name", "item_name", "waypoint_map_note"):
+        assert should_skip_entity_source_text("McGee", {"type": meta_type}, oracle)
+
+
+def test_rescued_name_still_not_entity_name():
+    """The glossary gates stay strict: rescue applies to translation only."""
+    assert not is_valid_entity_name("McGee")
+    assert classify_entity_candidate("McGee").decision == "drop"

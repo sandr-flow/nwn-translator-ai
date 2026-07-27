@@ -1,7 +1,11 @@
 """NCS script extractor for compiled NWScript bytecode.
 
-Extracts player-visible string constants from ``.ncs`` files using a
-combination of pattern heuristics and ACTION opcode context analysis.
+Extracts player-visible string constants from ``.ncs`` files. The primary
+translatability oracle is the module's own ``.nss`` sources (see
+:mod:`.nss_index`): the toolset packs them next to the bytecode, and they
+name the consumer of each literal explicitly. Bytecode ACTION-context
+analysis and pattern heuristics remain as the fallback for modules shipped
+without sources and for literals the sources do not resolve.
 """
 
 import re
@@ -9,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from .base import BaseExtractor, ExtractedContent, TranslatableItem
+from .nss_index import NssModuleIndex, get_module_index
 from ..context.string_filters import ENGINE_TAG_PREFIXES
 from ..file_handlers.ncs_parser import (
     NCSFile,
@@ -93,12 +98,6 @@ _ACTION_SCAN_WINDOW = 64
 # An ACTION this close to the push, with no other call in between, consumes the
 # string: only argument pushes (CONST/CPTOPSP) fit in the gap.
 _ADJACENT_CONSUMER_DISTANCE = 4
-
-# Context window around a literal in .nss source (lines on each side and
-# absolute character cap). Large enough to see the enclosing if/call, but
-# bounded so per-item token cost in the gate batch stays predictable.
-_NSS_SNIPPET_LINES = 20
-_NSS_SNIPPET_CHAR_CAP = 2000
 
 # ---------------------------------------------------------------------------
 # Pattern-based heuristics
@@ -368,109 +367,6 @@ def _action_name(routine: int) -> str:
     return names.get(routine, f"ACTION #{routine}")
 
 
-# ---------------------------------------------------------------------------
-# Source-based classification (.nss)
-# ---------------------------------------------------------------------------
-
-# Functions whose string argument is player-visible.
-# SpeakOneLinerConversation is deliberately absent: its string arg is a dialog
-# resref, not display text.
-_NSS_PLAYER_FUNCS = (
-    "SpeakString",
-    "ActionSpeakString",
-    "SendMessageToPC",
-    "FloatingTextStringOnCreature",
-    "SetCustomToken",
-    "SetName",
-    "SetDescription",
-    "PostString",
-)
-
-# Functions whose string argument is debug / internal
-_NSS_DEBUG_FUNCS = (
-    "PrintString",
-    "SendMessageToAllDMs",
-)
-
-
-def _classify_from_source(text: str, nss_content: str) -> Optional[str]:
-    """Classify a string by searching the .nss source for its usage context.
-
-    Returns:
-        - ``"compare"`` if the literal is a comparison target (``== "text"``
-          or ``"text" ==``) — translating it would silently break the script
-        - ``"player"`` if the string is used in a player-facing function call
-        - ``"debug"`` if the string is used in a debug/internal function call
-        - ``None`` if the string is not found or context is ambiguous
-    """
-    # Escape the text for literal search
-    escaped = re.escape(text)
-
-    # Comparison target wins over any other classification: a string that is
-    # ever compared against a variable MUST not be translated, even if the
-    # same literal is later echoed back via SendMessageToPC elsewhere.
-    compare_patterns = (
-        rf'==\s*"{escaped}"',
-        rf'"{escaped}"\s*==',
-        rf'!=\s*"{escaped}"',
-        rf'"{escaped}"\s*!=',
-    )
-    for pattern in compare_patterns:
-        if re.search(pattern, nss_content):
-            return "compare"
-
-    # Match: FunctionName ( ... "text" ... )  — possibly across args
-    # We look for the string literal near a known function name
-    for func in _NSS_PLAYER_FUNCS:
-        pattern = rf'{func}\s*\(.*?"{escaped}"'
-        if re.search(pattern, nss_content, re.DOTALL):
-            return "player"
-
-    for func in _NSS_DEBUG_FUNCS:
-        pattern = rf'{func}\s*\(.*?"{escaped}"'
-        if re.search(pattern, nss_content, re.DOTALL):
-            return "debug"
-
-    return None
-
-
-def _nss_snippet_for_text(text: str, nss_content: str) -> Optional[str]:
-    """Return a ±N-line window around the first literal occurrence of ``text``.
-
-    Used to feed the LLM gate enough source context to decide whether the
-    literal is player-facing or a technical identifier. Returns ``None`` when
-    the literal is not found verbatim in ``nss_content``.
-    """
-    needle = f'"{text}"'
-    idx = nss_content.find(needle)
-    if idx == -1:
-        return None
-
-    lines = nss_content.splitlines()
-    # Find which line contains the hit.
-    running = 0
-    hit_line = 0
-    for i, line in enumerate(lines):
-        next_running = running + len(line) + 1  # +1 for the newline
-        if running <= idx < next_running:
-            hit_line = i
-            break
-        running = next_running
-
-    start = max(0, hit_line - _NSS_SNIPPET_LINES)
-    end = min(len(lines), hit_line + _NSS_SNIPPET_LINES + 1)
-    snippet = "\n".join(lines[start:end])
-    if len(snippet) > _NSS_SNIPPET_CHAR_CAP:
-        # Keep the window centred on the hit line when trimming.
-        hit_local = hit_line - start
-        hit_offset = sum(len(lines[start + i]) + 1 for i in range(hit_local))
-        half = _NSS_SNIPPET_CHAR_CAP // 2
-        cut_start = max(0, hit_offset - half)
-        cut_end = min(len(snippet), cut_start + _NSS_SNIPPET_CHAR_CAP)
-        snippet = snippet[cut_start:cut_end]
-    return snippet
-
-
 def _bytecode_context(
     instr_index: int,
     instructions: List[NCSInstruction],
@@ -537,14 +433,14 @@ class NcsExtractor(BaseExtractor):
         instructions = ncs_file.instructions
         items: List[TranslatableItem] = []
 
-        # Try to load .nss source for better classification
-        nss_content: Optional[str] = None
-        nss_path = file_path.with_suffix(".nss")
-        if nss_path.exists():
-            try:
-                nss_content = nss_path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                pass
+        # The module-wide .nss index is the primary oracle; the bytecode
+        # heuristics below are the fallback for modules without sources.
+        encoding = parsed_data.get("_source_encoding") or "cp1252"
+        try:
+            index: Optional[NssModuleIndex] = get_module_index(file_path.parent, encoding)
+        except OSError:
+            index = None
+        has_sources = index is not None and index.source_count > 0
 
         for idx, instr in enumerate(instructions):
             if not instr.is_string_const or instr.string_value is None:
@@ -554,25 +450,26 @@ class NcsExtractor(BaseExtractor):
             if not text.strip():
                 continue
 
-            source_class: Optional[str] = None
-            if nss_content is not None:
-                source_class = _classify_from_source(text, nss_content)
-                if source_class == "debug":
-                    continue
-                # Comparison targets (e.g. DMFI `sChat == "animal empathy"`):
-                # translating silently breaks the script's dispatch.
-                if source_class == "compare":
-                    continue
-
+            verdict = index.verdict(text) if has_sources and index is not None else "absent"
             action_class = _classify_by_action_context(idx, instructions)
 
-            # Dispatch keys (string compares) and strings consumed by an
-            # adjacent internal call must never be translated.
-            if action_class in ("compare", "internal"):
+            # Dispatch keys must never be translated: the per-occurrence
+            # bytecode compare and the module-wide source compare are both
+            # authoritative (e.g. DMFI `sChat == "animal empathy"`).
+            if action_class == "compare" or verdict == "compare":
+                continue
+            if verdict == "internal":
                 continue
 
-            source_is_player = source_class == "player"
+            source_is_player = verdict == "player"
             bytecode_is_player = action_class == "player"
+
+            # An adjacent internal consumer in bytecode is trusted only when
+            # the sources do not overrule it: DelayCommand/AssignCommand
+            # compile into stored state that hides the real speech call from
+            # the linear scan, while the .nss names it explicitly.
+            if action_class == "internal" and not source_is_player:
+                continue
 
             # Quick rejection runs after classification: a proven player-facing
             # consumer waives the soft rules, so emotes (*sniff*) and one-word
@@ -584,7 +481,9 @@ class NcsExtractor(BaseExtractor):
 
             bytecode_ctx = _bytecode_context(idx, instructions)
             nss_snippet = (
-                _nss_snippet_for_text(text, nss_content) if nss_content is not None else None
+                index.snippet(text, encoding, prefer_stem=file_path.stem)
+                if has_sources and index is not None
+                else None
             )
 
             # High-confidence player-facing: deterministic pass (no LLM gate)
@@ -599,12 +498,26 @@ class NcsExtractor(BaseExtractor):
                     ):
                         action_name = _action_name(next_i.action_routine)
                         break
+                if action_name == "script function" and source_is_player and index is not None:
+                    action_name = index.player_consumer(text) or action_name
                 context = (
                     f"Script text shown to player via {action_name} "
                     f"in {file_path.stem}.ncs. Translate naturally."
                 )
                 needs_llm_gate = False
                 confidence = "high"
+            elif verdict == "mixed" and _is_likely_translatable(text):
+                # The module sources use this exact text both as speech and as
+                # an internal identifier. Translating it may be right for this
+                # occurrence, but only the LLM gate can tell.
+                context = (
+                    f"Script string at offset {instr.offset:#x} in {file_path.stem}.ncs. "
+                    f"Module sources use this text both as player-visible speech and "
+                    f"as an internal identifier. Only translate if this occurrence is "
+                    f"natural language shown to the player."
+                )
+                confidence = "low"
+                needs_llm_gate = True
             elif action_class == "internal_weak" and _is_likely_translatable(text):
                 # A nearby internal consumer is a weak verdict: the true speech
                 # call may sit beyond the scan window (assignment chains,
@@ -671,7 +584,7 @@ class NcsExtractor(BaseExtractor):
                         "ncs_hint": ncs_hint,
                         "nss_snippet": nss_snippet,
                         "bytecode_context": bytecode_ctx,
-                        "source_class": source_class,
+                        "source_class": verdict,
                     },
                 )
             )

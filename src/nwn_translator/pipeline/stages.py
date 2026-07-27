@@ -117,7 +117,7 @@ def load_parsed_and_extracted(
         except NCSParseError as e:
             logger.debug("Skipping unparseable NCS file %s: %s", file_path.name, e)
             return None
-        parsed_data: Dict[str, Any] = {"_ncs_file": ncs_file}
+        parsed_data: Dict[str, Any] = {"_ncs_file": ncs_file, "_source_encoding": source_encoding}
     else:
         parsed_data = read_gff(file_path, cache=gff_cache, source_encoding=source_encoding)
 

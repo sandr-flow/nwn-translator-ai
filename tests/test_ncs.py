@@ -42,7 +42,6 @@ from nwn_translator.extractors.ncs_extractor import (
     _is_definitely_not_translatable,
     _is_likely_translatable,
     _contains_code_identifiers,
-    _classify_from_source,
     ncs_hard_veto_reason,
 )
 from nwn_translator.injectors.ncs_injector import NcsInjector
@@ -657,22 +656,9 @@ class TestStringFilter:
         )
         assert ncs_hard_veto_reason("Welcome, adventurer!") is None
 
-    def test_classify_from_source_player(self):
-        nss = 'SpeakString("Hello, traveler!");'
-        assert _classify_from_source("Hello, traveler!", nss) == "player"
-
-    def test_classify_from_source_debug(self):
-        nss = 'PrintString("nMin = " + IntToString(nMin));'
-        assert _classify_from_source("nMin = ", nss) == "debug"
-
-    def test_classify_from_source_unknown(self):
-        nss = 'string sTag = "sometag";'
-        assert _classify_from_source("sometag", nss) is None
-
-    def test_classify_from_source_parens_in_string(self):
-        """Regex must handle parentheses inside the string literal."""
-        nss = 'SendMessageToPC(oPC, "Hello (Player)!");'
-        assert _classify_from_source("Hello (Player)!", nss) == "player"
+    # Source-based classification now lives in nss_index; see
+    # tests/test_nss_index.py for the equivalents of the old
+    # _classify_from_source cases (player / debug / unknown / parens).
 
 
 # ═══════════════════════════════════════════════════════════════════════════

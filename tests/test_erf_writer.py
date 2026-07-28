@@ -312,6 +312,59 @@ class TestERFWriterRoundTrip:
 
 
 # ---------------------------------------------------------------------------
+# Atomic write
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicWrite:
+    """A failed write must never destroy the previous artifact."""
+
+    def test_failed_write_keeps_previous_artifact(self, tmp_path, monkeypatch):
+        """An exception mid-write leaves the old .mod intact and readable."""
+        out = tmp_path / "result.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("old", ".dlg", b"OLD DATA")
+        writer.write()
+        old_bytes = out.read_bytes()
+
+        writer2 = ERFWriter(out)
+        writer2.add_resource("new", ".dlg", b"NEW DATA")
+
+        original_write_bytes = Path.write_bytes
+
+        def broken_write_bytes(self, data):
+            original_write_bytes(self, data[: len(data) // 2])
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Path, "write_bytes", broken_write_bytes)
+        with pytest.raises(OSError, match="disk full"):
+            writer2.write()
+        monkeypatch.undo()
+
+        assert out.read_bytes() == old_bytes
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert [e.res_ref for e in entries] == ["old"]
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_write_replaces_existing_output(self, tmp_path):
+        """A successful write over an existing .mod leaves the new content."""
+        out = tmp_path / "result.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("old", ".dlg", b"OLD DATA")
+        writer.write()
+
+        writer2 = ERFWriter(out)
+        writer2.add_resource("new", ".dlg", b"NEW DATA")
+        writer2.write()
+
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert [e.res_ref for e in entries] == ["new"]
+        assert list(tmp_path.glob("*.tmp")) == []
+
+
+# ---------------------------------------------------------------------------
 # Canonical resource type-id table
 # ---------------------------------------------------------------------------
 

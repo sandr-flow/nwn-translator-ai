@@ -26,6 +26,7 @@ Resource List entry — 8 bytes each (per entry):
 
 import datetime
 import logging
+import os
 import struct
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -147,7 +148,17 @@ class ERFWriter:
         except Exception as exc:
             raise ERFWriterError(f"Failed to build ERF: {exc}") from exc
 
-        self.output_path.write_bytes(binary)
+        # Write to a sibling temp file and swap it in atomically: rebuild
+        # overwrites an existing .mod in place, and a failure mid-write must
+        # not destroy the previous artifact. os.replace is atomic only
+        # within one volume, hence the same directory.
+        tmp_path = self.output_path.with_name(self.output_path.name + ".tmp")
+        try:
+            tmp_path.write_bytes(binary)
+            os.replace(tmp_path, self.output_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
         logger.info(
             "ERF archive written: %s (%d bytes, %d resources)",
             self.output_path,

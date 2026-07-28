@@ -105,7 +105,7 @@ Code is expected to pass black (line length 100) and mypy; pylint is advisory.
 `translate_module` / `run_translation_pipeline` in `src/nwn_translator/main.py` orchestrate the run:
 
 1. **ERF read** (`file_handlers/erf_reader.py`) unpacks the input archive to a temp dir.
-2. **GFF/NCS parse** (`file_handlers/gff_parser.py`, `gff_handler.py`, `ncs_parser.py`) parses resources. TLK lookup (`tlk_reader.py`) resolves StrRef-only strings against `dialog.tlk` when available.
+2. **GFF/NCS parse** (`file_handlers/gff_parser.py`, `gff_handler.py`, `ncs_parser.py`) parses resources. Only embedded strings are translated; fields stored as a StrRef with no embedded text are left untouched (the engine resolves them from the player's `dialog.tlk` at runtime).
 3. **Extract** (`extractors/`) produces `ExtractedContent` with `TranslatableItem`s. Extractors are registered in `extractors/__init__.py`.
 4. **World context** (`context/world_context.py`, `context/entity_extractor.py`) scans extracted content for NPCs, areas, quests, and proper nouns.
 5. **Glossary** (`glossary.py`, `race_dictionary.py`) builds and injects terminology into prompts.
@@ -115,12 +115,14 @@ Code is expected to pass black (line length 100) and mypy; pylint is advisory.
 
 The key consequence of injection: extractors must preserve `_record_offsets` on parsed structs, and injectors must patch the same field names the extractor read. Field mismatches silently drop translations.
 
+CExoLocString policy: the parser reads the first non-empty substring, and the patcher always writes back a single substring with LanguageID 0 — the universal English slot every client displays directly or via the engine's language fallback (target languages such as Russian have no official NWN language id; the community standard is codepage bytes in slot 0). Original gender/language sub-variants are collapsed on patch, with a warning when more than one substring is overwritten.
+
 ## Extractor / Injector contract
 
 - **Extractors** live in `src/nwn_translator/extractors/`. Each subclass of `BaseExtractor` declares `SUPPORTED_TYPES` and returns `ExtractedContent(content_type=..., items=[TranslatableItem(...)])`. A new file type needs the extractor class, registration in `extractors/__init__.py`, and an entry in `TRANSLATABLE_TYPES` in `config.py`.
 - **Injectors** live in `src/nwn_translator/injectors/`. Simple field-level resources go through `GenericInjector` (`SUPPORTED_TYPES` + `FIELD_MAP`). Dialogs, journals, `.git` instance lists, and `.ncs` bytecode have bespoke injectors.
 - `.git` is special: area instances contain per-instance `LocalizedName`, `LocName`, `Description`, and nested inventory/store shelf strings. Keep `GitExtractor` and `git_injector.patch_git_file` in sync via `INSTANCE_LISTS` and `INSTANCE_NESTED_ITEM_LISTS`.
-- Internal engine tags (`WP_...`, `DST_...`, `NW_...`, spaceless `snake_case` identifiers) are filtered by `is_internal_tag` in `git_injector.py`. Do not translate them.
+- Internal engine tags (`WP_...`, `DST_...`, `NW_...`, `POST_...`, `ARCH_...`, `YOURTAGHERE`, spaceless `snake_case`/CamelCase identifiers) must not be translated. `context/string_filters.py` is the single source of truth: `ENGINE_TAG_PREFIXES` is shared with the NCS extractor, and `should_skip_entity_source_text` is the gate both the `.git` extractor and entity extraction call. Add new prefixes there, not in a local list.
 - NWN save-game behaviour: `.git` instances are baked into a player's save on first area visit. Re-translating later affects only unvisited areas; visited areas require a new game.
 
 ## Other subsystems
@@ -133,6 +135,7 @@ The key consequence of injection: extractors must preserve `_record_offsets` on 
 
 ## Test expectations
 
-- `tests/` uses pytest with `addopts = "-v --tb=short"` from `pyproject.toml`.
+- `tests/` uses pytest with `addopts = "-v --tb=short -m 'not realdata'"` from `pyproject.toml`.
 - Many tests construct parsed-GFF dicts by hand; do not depend on `check_this/` fixtures for automated tests.
+- `tests/realdata/` holds opt-in end-to-end checks against a local module corpus (`test_corpus/`, gitignored; path via `NWN_TEST_CORPUS`). They carry the `realdata` marker and are **deselected by default**; run with `pytest -m realdata`. They skip cleanly when the corpus is absent. See `tests/realdata/README.md` for the four runs (parse-all, identity round-trip, no-op patch, mock-translate) and the current known-issues baseline.
 - When changing extractor/injector behaviour, add focused regression tests that cover both the positive extraction/patching case and internal-tag negative cases where relevant. Treat these regression tests as the verification step for the change (see "Goal-driven execution").

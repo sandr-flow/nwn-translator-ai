@@ -9,6 +9,7 @@ stage bodies are the same logic that previously lived inline in
 """
 
 import logging
+import shutil
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -20,13 +21,13 @@ from ..config import (
     TranslationConfig,
     create_output_path,
     module_string_encoding_for_target_lang,
+    source_string_encoding,
 )
 from ..file_handlers import (
     ERFReader,
     create_mod_from_directory,
     read_gff,
 )
-from ..file_handlers.tlk_reader import parse_tlk, find_dialog_tlk, TLKFile
 from ..extractors import get_extractor_for_file
 from ..injectors import get_injector_for_content
 from ..injectors.base import InjectedContent
@@ -104,21 +105,21 @@ class _ItemProgress:
 def load_parsed_and_extracted(
     file_path: Path,
     file_ext: str,
-    tlk: Optional[TLKFile],
-    gff_cache: Optional[Dict[Tuple[Path, int], Dict[str, Any]]],
+    gff_cache: Optional[Dict[Path, Dict[str, Any]]],
+    source_encoding: Optional[str] = None,
 ) -> Optional[Tuple[Dict[str, Any], ExtractedContent]]:
     """Parse *file_path* and run the extractor; return data or ``None`` if skipped."""
     if file_ext == ".ncs":
         from ..file_handlers.ncs_parser import parse_ncs, NCSParseError
 
         try:
-            ncs_file = parse_ncs(file_path)
+            ncs_file = parse_ncs(file_path, source_encoding=source_encoding)
         except NCSParseError as e:
             logger.debug("Skipping unparseable NCS file %s: %s", file_path.name, e)
             return None
-        parsed_data: Dict[str, Any] = {"_ncs_file": ncs_file}
+        parsed_data: Dict[str, Any] = {"_ncs_file": ncs_file, "_source_encoding": source_encoding}
     else:
-        parsed_data = read_gff(file_path, tlk=tlk, cache=gff_cache)
+        parsed_data = read_gff(file_path, cache=gff_cache, source_encoding=source_encoding)
 
     extractor = get_extractor_for_file(file_ext)
     if not extractor:
@@ -142,13 +143,20 @@ def inject_translations_into_file(
     ncs_translations_by_item_id: Optional[Dict[str, str]] = None,
     log_updates: bool = False,
     target_lang: Optional[str] = None,
+    source_encoding: Optional[str] = None,
 ) -> Optional[InjectedContent]:
-    """Run the appropriate injector for *extracted* (shared by Phase C and rebuild)."""
+    """Run the appropriate injector for *extracted* (shared by Phase C and rebuild).
+
+    *source_encoding* must match the decode used when *extracted* was produced:
+    injectors that re-read file bytes (NCS) compare decoded text against the
+    extracted originals.
+    """
     injector = get_injector_for_content(extracted.content_type)
     if not injector:
         return None
     inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
     inject_metadata["module_text_encoding"] = module_string_encoding_for_target_lang(target_lang)
+    inject_metadata["module_source_encoding"] = source_encoding
     if extracted.content_type == "ncs_script":
         by_id: Dict[str, str] = {}
         if ncs_translations_by_item_id is not None:
@@ -182,11 +190,10 @@ class PipelineState:
     metrics_recorder: RunMetricsRecorder = field(default_factory=RunMetricsRecorder)
     temp_dir: Optional[tempfile.TemporaryDirectory] = None
     extract_dir: Optional[Path] = None
-    tlk: Optional[TLKFile] = None
     world_context: Optional[WorldContext] = None
     glossary: Optional[Glossary] = None
-    #: Per-run GFF parse cache: (resolved_path, tlk_id) -> dict
-    _gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = field(default_factory=dict)
+    #: Per-run GFF parse cache: resolved_path -> dict
+    _gff_cache: Dict[Path, Dict[str, Any]] = field(default_factory=dict)
     #: Latest NCS per-``item_id`` translations from :class:`TranslationManager` (Phase B).
     _ncs_translations_by_item_id: Dict[str, str] = field(default_factory=dict)
     stats: Dict[str, Any] = field(default_factory=_new_stats)
@@ -196,6 +203,10 @@ class PipelineState:
     _prev_errors: int = 0
 
     # ── setup helpers ──────────────────────────────────────────────────
+    def _source_encoding(self) -> Optional[str]:
+        """Declared code page for reading module strings (``None`` = detect)."""
+        return source_string_encoding(self.config.source_lang)
+
     def _check_cancel(self) -> None:
         """Raise :class:`TranslationCancelled` if the config's cancel check fires."""
         cb = self.config.cancel_check
@@ -244,28 +255,15 @@ class PipelineState:
                     translatable_files.append(file_path)
         return translatable_files
 
-    def _load_tlk(self, extract_dir: Path) -> None:
-        """Load TLK file for resolving StrRef-based names."""
-        tlk_path = self.config.tlk_file
-        if not tlk_path:
-            tlk_path = find_dialog_tlk(extract_dir)
-
-        if tlk_path and tlk_path.exists():
-            try:
-                self.tlk = parse_tlk(tlk_path)
-                logger.info(f"Loaded TLK file: {tlk_path} ({len(self.tlk)} entries)")
-            except Exception as e:
-                logger.warning(f"Failed to load TLK file {tlk_path}: {e}")
-        else:
-            logger.debug("No TLK file found, StrRef-only names will not be resolved")
-
     def _extract_file(
         self,
         file_path: Path,
     ) -> Optional[Tuple[Dict[str, Any], ExtractedContent, str]]:
         """Extract translatable content from a single file (Phase A)."""
         file_ext = file_path.suffix.lower()
-        loaded = load_parsed_and_extracted(file_path, file_ext, self.tlk, self._gff_cache)
+        loaded = load_parsed_and_extracted(
+            file_path, file_ext, self._gff_cache, source_encoding=self._source_encoding()
+        )
         if loaded is None:
             return None
         parsed_data, extracted = loaded
@@ -287,40 +285,35 @@ class PipelineState:
             ncs_translations_by_item_id=self._ncs_translations_by_item_id,
             log_updates=True,
             target_lang=self.config.target_lang,
+            source_encoding=self._source_encoding(),
         )
 
     # ── stats / logging helpers ────────────────────────────────────────
     def _log_per_file_translations(
         self,
         extracted_map: ExtractedMap,
-        dialog_files: List[Path],
         all_translations: Dict[str, str],
         manager: "TranslationManager",
     ) -> None:
-        """Write per-file JSONL entries for non-dialog items.
+        """Write per-(file, item_id) translation rows for the web editor.
 
-        Dialog files are already logged inside ContextualTranslationManager.
-        For non-dialog files the TranslationManager logs only unique items
-        (one entry per deduplicated text).  This method adds entries for
-        every (file, item) pair so the web editor can group by source file.
+        The TranslationManager logs only unique items (one entry per
+        deduplicated text); this method adds an entry for every (file, item_id)
+        pair — including dialogs — so the editor groups by source file and each
+        item is independently addressable at rebuild time.
         """
         already_logged: Set[Tuple[str, str]] = set()
 
         for file_path, (_gff, extracted, file_ext) in extracted_map.items():
-            if file_path in dialog_files:
-                continue
             for item in extracted.items:
-                if not item.has_text():
+                if not item.has_text() or not item.item_id:
                     continue
                 translated = all_translations.get(item.text)
                 if translated is None and (item.metadata or {}).get("type") == "ncs_string":
-                    translated = manager.ncs_translations_by_item_id.get(item.item_id or "")
+                    translated = manager.ncs_translations_by_item_id.get(item.item_id)
                 if translated is None:
                     continue
-                if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
-                    log_key: Tuple[str, str] = (file_path.name, item.item_id)
-                else:
-                    log_key = (file_path.name, item.text)
+                log_key = (file_path.name, item.item_id)
                 if log_key in already_logged:
                     continue
                 already_logged.add(log_key)
@@ -329,9 +322,7 @@ class PipelineState:
                     translated=translated,
                     context=item.context,
                     source_filename=file_path.name,
-                    item_id=(
-                        item.item_id if (item.metadata or {}).get("type") == "ncs_string" else None
-                    ),
+                    item_id=item.item_id,
                 )
 
     def _patch_git_files(
@@ -349,11 +340,12 @@ class PipelineState:
         total_patched = 0
         for git_path in git_files:
             try:
-                gff_cached = read_gff(git_path, tlk=self.tlk, cache=self._gff_cache)
+                gff_cached = read_gff(
+                    git_path, cache=self._gff_cache, source_encoding=self._source_encoding()
+                )
                 patched = patch_git_file(
                     git_path,
                     translations,
-                    tlk=self.tlk,
                     parsed_data=gff_cached,
                     text_encoding=module_string_encoding_for_target_lang(self.config.target_lang),
                 )
@@ -506,9 +498,9 @@ def stage_worldscan(state: PipelineState) -> None:
         scanner = WorldScanner()
         state.world_context = scanner.scan_directory(
             state.extract_dir,
-            tlk=state.tlk,
             gff_cache=state._gff_cache,
             progress_callback=state.config.progress_callback,
+            source_encoding=state._source_encoding(),
         )
 
 
@@ -528,24 +520,31 @@ def stage_extract(state: PipelineState, translatable_files: List[Path]) -> Extra
             for file_path in translatable_files
         }
         completed_count = 0
-        for future in as_completed(future_to_file):
-            file_path = future_to_file[future]
-            completed_count += 1
-            if state.config.progress_callback is not None:
-                state.config.progress_callback(
-                    "extracting_content", completed_count, total_files, file_path.name
-                )
-            state._check_cancel()
-            try:
-                result = future.result()
-                if result is not None:
-                    parsed_data, extracted, file_ext = result
-                    extracted_map[file_path] = (parsed_data, extracted, file_ext)
-            except Exception as e:
-                error_msg = f"Error extracting {file_path.name}: {e}"
-                with state._stats_lock:
-                    state.stats["errors"].append(error_msg)
-                logger.error(error_msg)
+        try:
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                completed_count += 1
+                if state.config.progress_callback is not None:
+                    state.config.progress_callback(
+                        "extracting_content", completed_count, total_files, file_path.name
+                    )
+                state._check_cancel()
+                try:
+                    result = future.result()
+                    if result is not None:
+                        parsed_data, extracted, file_ext = result
+                        extracted_map[file_path] = (parsed_data, extracted, file_ext)
+                except Exception as e:
+                    error_msg = f"Error extracting {file_path.name}: {e}"
+                    with state._stats_lock:
+                        state.stats["errors"].append(error_msg)
+                    logger.error(error_msg)
+        except BaseException:
+            # On cancellation (or any error escaping the loop) drop the queued
+            # futures; otherwise the executor's __exit__ would run every
+            # remaining file to completion before the exception propagates.
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
 
     logger.info("Phase A complete: %d files extracted", len(extracted_map))
     return extracted_map
@@ -711,7 +710,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
     logger.info("Phase B complete: %d translations collected", len(all_translations))
 
     # Write per-file log entries so the web editor groups by source file.
-    state._log_per_file_translations(extracted_map, dialog_files, all_translations, manager)
+    state._log_per_file_translations(extracted_map, all_translations, manager)
 
     return all_translations
 
@@ -796,28 +795,47 @@ def run_pipeline(state: PipelineState) -> Path:
     logger.info(f"Target language: {state.config.target_lang}")
     logger.info(f"OpenRouter model: {state.config.model}")
 
-    translatable_files = stage_unpack(state)
-    assert state.extract_dir is not None
+    try:
+        translatable_files = stage_unpack(state)
+        assert state.extract_dir is not None
 
-    if not translatable_files:
-        logger.warning("No translatable files found!")
-        output_path = state._resolve_output_path(state.extract_dir)
-        state._write_metrics(output_path)
-        return output_path
+        if not translatable_files:
+            logger.warning("No translatable files found! Copying input archive unchanged.")
+            output_path = state._resolve_output_path(state.extract_dir)
+            shutil.copyfile(state.config.input_file, output_path)
+            state._write_metrics(output_path)
+            return output_path
 
-    # Session GFF cache (world scan + translation + .git)
-    state._gff_cache = {}
-    state._load_tlk(state.extract_dir)
+        # Session GFF cache (world scan + translation + .git)
+        state._gff_cache = {}
 
-    stage_worldscan(state)
-    extracted_map = stage_extract(state, translatable_files)
-    stage_collect_entities(state, extracted_map)
-    stage_build_glossary(state)
-    all_translations = stage_translate(state, extracted_map)
-    stage_inject(state, extracted_map, all_translations)
-    output_path = stage_repack(state)
+        stage_worldscan(state)
+        extracted_map = stage_extract(state, translatable_files)
+        stage_collect_entities(state, extracted_map)
+        stage_build_glossary(state)
+        all_translations = stage_translate(state, extracted_map)
+        stage_inject(state, extracted_map, all_translations)
+        return stage_repack(state)
+    finally:
+        _shutdown_async_resources(state)
+        if not state.config.skip_cleanup:
+            state._cleanup()
 
-    if not state.config.skip_cleanup:
-        state._cleanup()
 
-    return output_path
+def _shutdown_async_resources(state: PipelineState) -> None:
+    """Close the provider's HTTP client and this thread's persistent loop.
+
+    The loop (and the loop-bound client) is reused across ``run_async`` calls
+    for the whole run; without this the web process would keep one open client
+    and loop per finished task thread.
+    """
+    from ..async_utils import run_async, shutdown_thread_loop
+
+    close = getattr(state.provider, "close_async_client", None)
+    try:
+        if close is not None:
+            run_async(close(), timeout=30.0)
+    except Exception:
+        pass
+    finally:
+        shutdown_thread_loop()

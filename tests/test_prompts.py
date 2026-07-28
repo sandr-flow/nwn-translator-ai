@@ -102,7 +102,6 @@ _LANG_MARKERS = {
     "romanian": "Hanul Lăncii",
     "hungarian": "Lándzsás Fogadó",
     "dutch": "Herberg van de Lans",
-    "turkish": "Mızrak Hanı",
 }
 
 

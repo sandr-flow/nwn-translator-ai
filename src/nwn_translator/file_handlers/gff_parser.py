@@ -14,16 +14,29 @@ from enum import IntEnum
 logger = logging.getLogger(__name__)
 
 
-def _decode_gff_text_bytes(raw: bytes) -> str:
-    """Decode CExoString / CExoLocString payload bytes to Unicode.
+def decode_module_text(raw: bytes, source_encoding: Optional[str] = None) -> str:
+    """Decode module string payload bytes (GFF CExoString/CExoLocString, NCS) to Unicode.
 
-    Classic modules use Windows-1252; Russian patches often use CP1251;
-    NWN:EE may store UTF-8. Order avoids mojibake and keeps ``translations`` keys
-    aligned with on-disk bytes for :func:`~nwn_translator.injectors.git_injector.patch_git_file`.
+    NWN:EE may store UTF-8, so a strict UTF-8 attempt always goes first. When
+    *source_encoding* is declared (from the module's source language) it is used
+    next; otherwise the legacy detection cascade cp1251 -> cp1252 applies. The
+    fallback order matters: cp1251 accepts almost any byte string, so without a
+    declared encoding cp1252 text with diacritics decodes as Cyrillic mojibake.
+    Decoding is deterministic per run, which keeps ``translations`` keys aligned
+    with on-disk bytes for text-addressed injectors.
     """
     if not raw:
         return ""
-    for enc in ("utf-8", "cp1251", "cp1252"):
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    if source_encoding:
+        try:
+            return raw.decode(source_encoding)
+        except (UnicodeDecodeError, LookupError):
+            logger.debug("Declared source encoding %s failed; falling back", source_encoding)
+    for enc in ("cp1251", "cp1252"):
         try:
             return raw.decode(enc)
         except UnicodeDecodeError:
@@ -48,9 +61,8 @@ class GFFType(IntEnum):
     CResRef = 11
     CExoLocString = 12
     VOID = 13
-    CExoLocSubString = 14  # Subtype of CExoLocString
+    Struct = 14
     List = 15
-    Struct = 16
     Unknown = 0xFF
 
     @staticmethod
@@ -168,13 +180,16 @@ class GFFParser:
         GFFType.DOUBLE: 8,
     }
 
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, source_encoding: Optional[str] = None):
         """Initialize parser.
 
         Args:
             file_path: Path to GFF file
+            source_encoding: Declared code page for string bytes; ``None`` uses
+                the detection cascade of :func:`decode_module_text`.
         """
         self.file_path = Path(file_path)
+        self.source_encoding = source_encoding
         self.data: bytes = b""
         # Absolute byte offsets saved during parse() for use in _parse_field_value()
         self.field_data_offset: int = 0
@@ -220,11 +235,31 @@ class GFFParser:
         label_offset = struct.unpack("<I", self.data[24:28])[0]
         label_count = struct.unpack("<I", self.data[28:32])[0]
         field_data_offset = struct.unpack("<I", self.data[32:36])[0]  # base for complex fields
-        # field_data_byte_size = 36:40 (not needed for parsing)
+        field_data_byte_size = struct.unpack("<I", self.data[36:40])[0]
         field_indices_offset = struct.unpack("<I", self.data[40:44])[0]
         field_indices_byte_size = struct.unpack("<I", self.data[44:48])[0]
         list_indices_offset = struct.unpack("<I", self.data[48:52])[0]
-        # list_indices_byte_size = 52:56 (not needed; we read on-demand)
+        list_indices_byte_size = struct.unpack("<I", self.data[52:56])[0]
+
+        # Reject headers whose declared blocks lie outside the file before any
+        # allocation: a corrupt or non-GFF header can declare billions of
+        # labels/fields, and the parse loops below would otherwise spin for
+        # minutes or exhaust memory building placeholder lists.
+        size = len(self.data)
+        declared_blocks = (
+            ("structs", struct_offset, struct_count * 12),
+            ("fields", field_offset, field_count * 12),
+            ("labels", label_offset, label_count * 16),
+            ("field data", field_data_offset, field_data_byte_size),
+            ("field indices", field_indices_offset, field_indices_byte_size),
+            ("list indices", list_indices_offset, list_indices_byte_size),
+        )
+        for block_name, block_offset, block_bytes in declared_blocks:
+            if block_offset > size or block_offset + block_bytes > size:
+                raise GFFParseError(
+                    f"GFF header declares {block_name} block outside the file: "
+                    f"offset={block_offset} bytes={block_bytes} file_size={size}"
+                )
 
         # Store for use in _parse_field_value
         self.field_data_offset = field_data_offset
@@ -343,7 +378,9 @@ class GFFParser:
                 return ""
             if offset + 4 + length > len(self.data):
                 return ""
-            return _decode_gff_text_bytes(self.data[offset + 4 : offset + 4 + length])
+            return decode_module_text(
+                self.data[offset + 4 : offset + 4 + length], self.source_encoding
+            )
 
         elif field.type == GFFType.CResRef:
             # Layout in Field Data block: [size BYTE (1)] [string bytes (size)]
@@ -387,7 +424,7 @@ class GFFParser:
                         break
                     raw = self.data[sub_offset : sub_offset + length]
                     sub_offset += length
-                    value = _decode_gff_text_bytes(raw)
+                    value = decode_module_text(raw, self.source_encoding)
                     if value:
                         return {"StrRef": str_ref, "Value": value}
             except Exception:
@@ -414,7 +451,8 @@ class GFFParser:
             return result
 
         elif field.type == GFFType.Struct:
-            # Direct struct reference
+            # Direct struct field: data_or_offset is an index into the Struct
+            # array (expanded to a nested dict in _expand_struct).
             return field.data_or_offset
 
         elif field.type == GFFType.Unknown:
@@ -464,11 +502,12 @@ class GFFParser:
             return value
 
 
-def parse_gff(file_path: Path) -> GFFFile:
+def parse_gff(file_path: Path, source_encoding: Optional[str] = None) -> GFFFile:
     """Parse a GFF file.
 
     Args:
         file_path: Path to GFF file
+        source_encoding: Declared code page for string bytes (see :class:`GFFParser`)
 
     Returns:
         Parsed GFFFile object
@@ -476,12 +515,15 @@ def parse_gff(file_path: Path) -> GFFFile:
     Raises:
         GFFParseError: If parsing fails
     """
-    parser = GFFParser(file_path)
+    parser = GFFParser(file_path, source_encoding=source_encoding)
     return parser.parse()
 
 
 def _expand_struct(struct_fields: Dict[str, Any], gff: GFFFile, visited: set) -> Dict[str, Any]:
-    """Recursively expand struct fields, resolving list indices to their struct dicts.
+    """Recursively expand struct fields, resolving struct indices to their dicts.
+
+    Both List fields (lists of struct indices) and direct Struct fields (a bare
+    struct index) are expanded; invalid or already-visited indices stay as ints.
 
     Args:
         struct_fields: Raw fields dict from a GFFStruct
@@ -518,6 +560,14 @@ def _expand_struct(struct_fields: Dict[str, Any], gff: GFFFile, visited: set) ->
                 else:
                     expanded.append(idx)
             result[key] = expanded
+        elif (
+            field_types[key] == int(GFFType.Struct)
+            and isinstance(gff_val, int)
+            and 0 <= gff_val < len(gff.structs)
+            and gff_val not in visited
+        ):
+            child_fields = gff.structs[gff_val].fields
+            result[key] = _expand_struct(child_fields, gff, visited | {gff_val})
         else:
             result[key] = gff_val
 

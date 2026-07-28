@@ -65,7 +65,6 @@ class TestRaceTermsData:
             "romanian",
             "hungarian",
             "dutch",
-            "turkish",
             "english",
         }
         missing = expected - set(RACE_TERMS.keys())

@@ -75,6 +75,8 @@ class TranslationItem(BaseModel):
 
     original: str
     translated: str
+    #: Stable per-file identifier used to address this item on rebuild.
+    item_id: str = ""
     shared_with: List[str] = Field(
         default_factory=list,
         description="Other filenames containing the same original text",
@@ -94,10 +96,22 @@ class TranslationsResponse(BaseModel):
     files: List[TranslationFileGroup]
 
 
-class RebuildRequest(BaseModel):
-    """Request to rebuild .mod with edited translations."""
+class RebuildEdit(BaseModel):
+    """A single edited translation addressed by source file + item_id."""
 
-    translations: Dict[str, str]
+    file: str
+    item_id: str
+    translated: str
+
+
+class RebuildRequest(BaseModel):
+    """Request to rebuild .mod with edited translations.
+
+    Edits are addressed by ``(file, item_id)`` so two identical originals in
+    different files (or different dialog nodes) can be edited independently.
+    """
+
+    edits: List[RebuildEdit] = Field(default_factory=list)
     #: Must match the language used for translation (drives GFF/NCS encoding).
     target_lang: Optional[str] = None
 

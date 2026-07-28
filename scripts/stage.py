@@ -92,7 +92,6 @@ def _build_state(args: argparse.Namespace) -> PipelineState:
         "source_lang": args.source_lang,
         "target_lang": args.target_lang,
         "input_file": Path(args.input) if args.input else Path("."),
-        "tlk_file": args.tlk_file,
         "temp_dir": args.temp_dir,
         "skip_cleanup": True,  # runner keeps extract_dir between stages
         "player_gender": args.player_gender,
@@ -109,7 +108,7 @@ def _build_state(args: argparse.Namespace) -> PipelineState:
 def _resolve_extract_dir(
     args: argparse.Namespace, state: PipelineState, *, do_extract: bool
 ) -> Path:
-    """Determine (and optionally populate) the extraction directory, load TLK."""
+    """Determine (and optionally populate) the extraction directory."""
     if args.extract_dir:
         extract_dir = Path(args.extract_dir)
     elif args.input and Path(args.input).is_dir():
@@ -129,7 +128,6 @@ def _resolve_extract_dir(
 
     state.extract_dir = extract_dir
     state._gff_cache = {}
-    state._load_tlk(extract_dir)
     return extract_dir
 
 
@@ -330,7 +328,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-lang", default="auto")
     parser.add_argument("--target-lang", default="russian")
-    parser.add_argument("--tlk-file", type=Path, default=None)
     parser.add_argument("--temp-dir", type=Path, default=Path("./temp_nwn_translate"))
     parser.add_argument("--max-concurrent", type=int, default=None)
     parser.add_argument("--player-gender", choices=["male", "female"], default="male")

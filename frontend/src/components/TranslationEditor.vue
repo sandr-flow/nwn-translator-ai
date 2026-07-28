@@ -167,7 +167,7 @@ const rebuildError = ref("");
 
 async function onRebuild() {
   rebuildError.value = "";
-  const edits = {};
+  const edits = [];
   const origFiles = t.translationFiles;
   for (let fi = 0; fi < editableFiles.value.length; fi++) {
     const ef = editableFiles.value[fi];
@@ -177,7 +177,11 @@ async function onRebuild() {
       const edited = ef.items[ii];
       const orig = of_.items[ii];
       if (edited.translated !== orig?.translated) {
-        edits[edited.original] = edited.translated;
+        edits.push({
+          file: ef.filename,
+          item_id: edited.item_id,
+          translated: edited.translated,
+        });
       }
     }
   }

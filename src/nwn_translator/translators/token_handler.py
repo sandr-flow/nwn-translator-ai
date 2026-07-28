@@ -10,8 +10,9 @@ clean up mismatched artifacts while keeping the translated prose.
 
 from __future__ import annotations
 
+import hashlib
 import re
-import secrets
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -113,20 +114,30 @@ class TokenHandler:
     )
     RESTORED_ACTION_TAG_PATTERN = INLINE_TAG_PATTERN
 
+    # Placeholder matching is case-insensitive throughout: models occasionally
+    # re-case placeholders (``__nwn_token_…__``), and a missed match either
+    # leaks the raw placeholder into the output or silently drops the token.
     INLINE_PLACEHOLDER_CORE_PATTERN = r"NWN_INLINE_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
     ENGINE_PLACEHOLDER_CORE_PATTERN = r"NWN_TOKEN_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*"
     INLINE_PLACEHOLDER_PATTERN = re.compile(
-        rf"(?:__(?P<core1>{INLINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{INLINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>)"
+        rf"(?:__(?P<core1>{INLINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{INLINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{INLINE_PLACEHOLDER_CORE_PATTERN})\]>)",
+        re.IGNORECASE,
     )
     ENGINE_PLACEHOLDER_PATTERN = re.compile(
-        rf"(?:__(?P<core1>{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)"
+        rf"(?:__(?P<core1>{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?P<core2>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?P<core3>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?P<core4>{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)",
+        re.IGNORECASE,
     )
     HELPER_PLACEHOLDER_NOISE_PATTERN = re.compile(
-        rf"(?:__(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)"
+        rf"(?:__(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})__|\[\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]\]|<<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>>|<\[(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})\]>)",
+        re.IGNORECASE,
     )
     HELPER_PLACEHOLDER_BARE_NOISE_PATTERN = re.compile(
-        rf"[^\w\s]*(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})[^\w\s]*"
+        rf"[^\w\s]*(?:{INLINE_PLACEHOLDER_CORE_PATTERN}|{ENGINE_PLACEHOLDER_CORE_PATTERN})[^\w\s]*",
+        re.IGNORECASE,
     )
+    # Last-resort barrier: any leftover blob still carrying the placeholder
+    # marker (mangled core, stray wrapper) must never reach the output file.
+    PLACEHOLDER_RESIDUE_PATTERN = re.compile(r"\S*NWN_(?:TOKEN|INLINE)\S*", re.IGNORECASE)
 
     def __init__(self, preserve_standard_tokens: bool = True):
         """Initialize token handler."""
@@ -138,7 +149,7 @@ class TokenHandler:
         self._placeholder_to_artifact: Dict[str, PreservedArtifact] = {}
         self._inline_core_map: Dict[str, str] = {}
         self._token_core_map: Dict[str, str] = {}
-        self._nonce = secrets.token_hex(4)
+        self._nonce = ""
         self._artifact_counter = 0
 
     def sanitize(self, text: str) -> SanitizedText:
@@ -150,6 +161,7 @@ class TokenHandler:
 
         self.clear()
         self.original_text = text
+        self._nonce = self._deterministic_nonce(text)
         result = SanitizedText(sanitized_text=text)
         parts: List[str] = []
         last_end = 0
@@ -188,6 +200,7 @@ class TokenHandler:
                     kind="dash_action_marker",
                     structural_role="opening",
                 )
+                protected_inner = self._protect_nested_artifacts(result, inner, match.start() + 1)
                 closing = self._add_protected_artifact(
                     result,
                     "-",
@@ -197,7 +210,7 @@ class TokenHandler:
                 )
                 parts.append(text[last_end : match.start()])
                 parts.append(opening)
-                parts.append(inner)
+                parts.append(protected_inner)
                 parts.append(closing)
                 last_end = match.end()
                 continue
@@ -231,8 +244,11 @@ class TokenHandler:
         restored = self.ENGINE_PLACEHOLDER_PATTERN.sub(self._restore_engine_placeholder, restored)
         restored = self.HELPER_PLACEHOLDER_NOISE_PATTERN.sub("", restored)
         restored = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", restored)
+        restored = self.PLACEHOLDER_RESIDUE_PATTERN.sub("", restored)
 
-        if self._has_unbalanced_action_tags(restored):
+        if self._has_unbalanced_action_tags(restored) and self._action_tags_deviate_from_original(
+            restored
+        ):
             restored = self.RESTORED_ACTION_TAG_PATTERN.sub("", restored)
 
         return restored
@@ -303,8 +319,11 @@ class TokenHandler:
 
         cleaned = self.HELPER_PLACEHOLDER_NOISE_PATTERN.sub("", cleaned)
         cleaned = self.HELPER_PLACEHOLDER_BARE_NOISE_PATTERN.sub("", cleaned)
+        cleaned = self.PLACEHOLDER_RESIDUE_PATTERN.sub("", cleaned)
 
-        if self._has_unbalanced_action_tags(cleaned):
+        if self._has_unbalanced_action_tags(cleaned) and self._action_tags_deviate_from_original(
+            cleaned
+        ):
             cleaned = self.RESTORED_ACTION_TAG_PATTERN.sub("", cleaned)
 
         return self._normalize_cleanup_whitespace(cleaned)
@@ -343,6 +362,37 @@ class TokenHandler:
         )
         return placeholder
 
+    def _protect_nested_artifacts(
+        self, result: SanitizedText, inner: str, base_position: int
+    ) -> str:
+        """Protect engine tokens and inline tags nested inside an action marker.
+
+        An action body (for example ``glances at <FirstName>`` inside
+        ``-glances at <FirstName>-``) is otherwise emitted verbatim, so a nested
+        token would reach the LLM unprotected and escape validation. Replace each
+        classifiable fragment with a placeholder anchored at its absolute position
+        in the original text, and return the rebuilt body.
+        """
+        parts: List[str] = []
+        last_end = 0
+        for match in self.TOKEN_LIKE_FRAGMENT_PATTERN.finditer(inner):
+            raw = match.group(0)
+            kind, structural_role = self._classify_artifact(raw)
+            if kind is None:
+                continue
+            placeholder = self._add_protected_artifact(
+                result,
+                raw,
+                base_position + match.start(),
+                kind=kind,
+                structural_role=structural_role,
+            )
+            parts.append(inner[last_end : match.start()])
+            parts.append(placeholder)
+            last_end = match.end()
+        parts.append(inner[last_end:])
+        return "".join(parts)
+
     def clear(self) -> None:
         """Clear handler state and reset placeholder counters."""
         self.original_text = ""
@@ -352,7 +402,7 @@ class TokenHandler:
         self._placeholder_to_artifact.clear()
         self._inline_core_map.clear()
         self._token_core_map.clear()
-        self._nonce = secrets.token_hex(4)
+        self._nonce = ""
         self._artifact_counter = 0
 
     def get_token_count(self) -> int:
@@ -396,6 +446,20 @@ class TokenHandler:
                         structural_role="opening",
                     )
                 )
+                inner = raw[1:-1]
+                for inner_match in cls.TOKEN_LIKE_FRAGMENT_PATTERN.finditer(inner):
+                    inner_raw = inner_match.group(0)
+                    inner_kind, inner_role = cls._classify_artifact_static(inner_raw)
+                    if inner_kind is None:
+                        continue
+                    artifacts.append(
+                        PreservedArtifact(
+                            kind=inner_kind,
+                            original=inner_raw,
+                            position=match.start() + 1 + inner_match.start(),
+                            structural_role=inner_role,
+                        )
+                    )
                 artifacts.append(
                     PreservedArtifact(
                         kind="dash_action_marker",
@@ -418,6 +482,21 @@ class TokenHandler:
                 )
             )
         return artifacts
+
+    def _action_tags_deviate_from_original(self, text: str) -> bool:
+        """Return True when Start-tags in ``text`` differ from the original's multiset.
+
+        Originals may legitimately carry unpaired Start-tags: modules pair
+        ``</Start>`` with an engine token opener (``<CUSTOM1004>(sigh)</Start>``)
+        or leave ``<StartAction>`` unclosed. Such imbalance must be preserved
+        byte-for-byte; only a deviation from the original inventory is malformed.
+        """
+        expected = Counter(
+            artifact.original
+            for artifact in self.artifacts
+            if self.RESTORED_ACTION_TAG_PATTERN.fullmatch(artifact.original)
+        )
+        return Counter(self.RESTORED_ACTION_TAG_PATTERN.findall(text)) != expected
 
     @classmethod
     def _has_unbalanced_action_tags(cls, text: str) -> bool:
@@ -443,6 +522,17 @@ class TokenHandler:
         normalized = re.sub(r" \)", ")", normalized)
         return normalized.strip()
 
+    @staticmethod
+    def _deterministic_nonce(text: str) -> str:
+        """Derive the placeholder nonce from the source text.
+
+        Identical input text yields identical placeholders, so two equal strings
+        sanitize to the same form and share one session-cache / dedup key (and one
+        paid LLM call). Different texts get different nonces. Per-artifact
+        uniqueness within a single string is handled by ``_artifact_counter``.
+        """
+        return hashlib.blake2s(text.encode("utf-8"), digest_size=4).hexdigest()
+
     def _make_placeholder(self, kind: str) -> str:
         """Build one opaque placeholder for a preserved artifact."""
         prefix = (
@@ -455,28 +545,32 @@ class TokenHandler:
         return f"__{core}__"
 
     def _store_placeholder_mapping(self, artifact: PreservedArtifact) -> None:
-        """Store restoration mapping for one protected artifact."""
+        """Store restoration mapping for one protected artifact.
+
+        Core keys are stored lowercased so lookups survive model re-casing;
+        cores differ only in the hex nonce and counter, so folding is safe.
+        """
         core = artifact.placeholder[2:-2]
         if artifact.kind in {"inline_tag", "dialog_action_marker", "dash_action_marker"}:
             self.action_tag_map[core] = artifact.original
-            self._inline_core_map[core] = artifact.original
+            self._inline_core_map[core.lower()] = artifact.original
         else:
             self.token_map[artifact.placeholder] = artifact.original
-            self._token_core_map[core] = artifact.original
+            self._token_core_map[core.lower()] = artifact.original
 
     def _restore_inline_placeholder(self, match: re.Match) -> str:
         """Restore one inline-tag placeholder or drop unknown helper artifacts."""
         core = next((group for group in match.groups() if group), None)
         if not core:
             return ""
-        return self._inline_core_map.get(core, "")
+        return self._inline_core_map.get(core.lower(), "")
 
     def _restore_engine_placeholder(self, match: re.Match) -> str:
         """Restore one engine-token placeholder or drop unknown helper artifacts."""
         core = next((group for group in match.groups() if group), None)
         if not core:
             return ""
-        return self._token_core_map.get(core, "")
+        return self._token_core_map.get(core.lower(), "")
 
     def _classify_artifact(self, raw: str) -> Tuple[Optional[str], str]:
         """Classify one raw artifact candidate from the original text."""

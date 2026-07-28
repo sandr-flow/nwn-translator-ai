@@ -87,7 +87,6 @@ class GlossaryCurator:
         try:
             results = run_async(
                 run_all(),
-                cleanup=provider.close_async_client,
                 timeout=max(GLOSSARY_LLM_TIMEOUT, GLOSSARY_LLM_TIMEOUT * len(batches)),
             )
         except Exception as exc:

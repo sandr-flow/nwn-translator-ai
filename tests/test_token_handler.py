@@ -133,6 +133,48 @@ class TestTokenHandler:
         assert finalized.exact_valid
         assert finalized.final_text == "-отдать ему письмо-"
 
+    def test_dash_action_protects_nested_engine_token(self):
+        """Regression (H7): a token inside a dash marker is hidden from the LLM.
+
+        Previously the dash body was emitted verbatim, so ``<FirstName>`` in
+        ``-glances at <FirstName>-`` reached the model unprotected and was not
+        tracked for validation.
+        """
+        handler = TokenHandler()
+        result = handler.sanitize("-glances at <FirstName>-")
+        assert "<FirstName>" not in result.sanitized_text
+        assert [a.original for a in result.artifacts] == ["-", "<FirstName>", "-"]
+
+        token_placeholder = next(
+            r.placeholder for r in result.replacements if r.original == "<FirstName>"
+        )
+        markers = [r.placeholder for r in result.replacements if r.original == "-"]
+        finalized = handler.finalize_translation(
+            f"{markers[0]}смотрит на {token_placeholder}{markers[1]}"
+        )
+        assert finalized.exact_valid
+        assert finalized.final_text == "-смотрит на <FirstName>-"
+
+    def test_dash_action_protects_nested_inline_tag(self):
+        handler = TokenHandler()
+        result = handler.sanitize("-<StartHighlight>aside</Start>-")
+        assert [a.original for a in result.artifacts] == [
+            "-",
+            "<StartHighlight>",
+            "</Start>",
+            "-",
+        ]
+
+    def test_dash_action_validation_catches_dropped_nested_token(self):
+        """A nested token corrupted by the model fails exact validation."""
+        handler = TokenHandler()
+        result = handler.sanitize("-glances at <FirstName>-")
+        markers = [r.placeholder for r in result.replacements if r.original == "-"]
+        # Model dropped the engine-token placeholder entirely.
+        report = handler.validate_text(handler.restore(f"{markers[0]}смотрит{markers[1]}"))
+        assert not report.is_exact_match
+        assert "<FirstName>" in report.missing
+
 
 class TestTokenValidator:
     """Tests for exact preserved-artifact validation."""
@@ -246,3 +288,139 @@ class TestCleanupPath:
         assert result.used_cleanup
         assert "<sir/madam>" not in result.final_text
         assert "Good evening" in result.final_text
+
+
+class TestDeterministicNonce:
+    """Identical token-bearing text must sanitize identically (cache/dedup reuse)."""
+
+    def test_same_text_with_token_sanitizes_identically(self):
+        text = "Greetings, <FirstName>!"
+        a, _ = sanitize_text(text)
+        b, _ = sanitize_text(text)
+        assert a == b
+        assert TOKEN_PLACEHOLDER_RE.search(a)
+
+    def test_same_handler_reused_is_deterministic(self):
+        handler = TokenHandler()
+        first = handler.sanitize("Hello <FirstName>").sanitized_text
+        second = handler.sanitize("Hello <FirstName>").sanitized_text
+        assert first == second
+
+    def test_different_text_gets_different_nonce(self):
+        a, _ = sanitize_text("Hello <FirstName>")
+        b, _ = sanitize_text("Goodbye <FirstName>")
+        assert a != b
+
+    def test_roundtrip_still_restores(self):
+        text = "Hello <FirstName>, welcome <StartAction>[wave]</Start>"
+        sanitized, handler = sanitize_text(text)
+        assert restore_text(sanitized, handler) == text
+
+
+class TestCaseInsensitiveRestoration:
+    """Models occasionally re-case placeholders; restore must survive it."""
+
+    def test_lowercased_placeholder_restores_token(self):
+        sanitized, handler = sanitize_text("Hello <FirstName>.")
+        placeholder = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)
+        translated = sanitized.replace(placeholder, placeholder.lower()).replace("Hello", "Привет")
+        assert restore_text(translated, handler) == "Привет <FirstName>."
+
+    def test_uppercased_core_restores_token(self):
+        sanitized, handler = sanitize_text("Hello <FirstName>.")
+        placeholder = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)
+        translated = sanitized.replace(placeholder, placeholder.upper())
+        assert "<FirstName>" in restore_text(translated, handler)
+
+    def test_recased_output_is_exact_valid_first_try(self):
+        """A case-only mutation must not burn a retry."""
+        sanitized, handler = sanitize_text("<StartAction>[Wave]</Start> Hello <FirstName>.")
+        outcome = handler.finalize_translation(sanitized.lower())
+        assert outcome.exact_valid
+        assert "<StartAction>" in outcome.final_text
+        assert "</Start>" in outcome.final_text
+        assert "<FirstName>" in outcome.final_text
+
+    def test_recased_wrapped_placeholder_restores(self):
+        sanitized, handler = sanitize_text("Hello <FirstName>.")
+        core = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)[2:-2]
+        translated = f"Привет [[{core.lower()}]]."
+        assert restore_text(translated, handler) == "Привет <FirstName>."
+
+
+class TestPlaceholderResidueBarrier:
+    """No placeholder residue may ever reach the output file."""
+
+    def test_mangled_core_is_stripped_and_marked_degraded(self):
+        _, handler = sanitize_text("Hello <FirstName>.")
+        translated = "Привет __NWN_TOKEN_обрывок__"
+        outcome = handler.finalize_translation(translated, allow_cleanup=True)
+        assert not outcome.exact_valid
+        assert outcome.used_cleanup
+        assert "nwn_token" not in outcome.final_text.lower()
+        assert "<FirstName>" in outcome.mismatch_report.missing
+
+    def test_recased_mangled_prefix_is_stripped(self):
+        _, handler = sanitize_text("Hello <FirstName>.")
+        restored = handler.restore("Привет __nwn_token_каракули__!")
+        assert "nwn_token" not in restored.lower()
+
+    def test_unknown_wellformed_core_is_dropped(self):
+        _, handler = sanitize_text("Hello <FirstName>.")
+        restored = handler.restore("Привет __NWN_TOKEN_deadbeef_9__.")
+        assert "nwn_token" not in restored.lower()
+
+    def test_bare_recased_marker_is_stripped(self):
+        _, handler = sanitize_text("Hello <FirstName>.")
+        restored = handler.restore("Привет nwn_inline_ab12cd34_0 друг.")
+        assert "nwn_inline" not in restored.lower()
+        assert "друг." in restored
+
+
+class TestUnpairedOriginalTags:
+    """Originals with legitimately unpaired Start-tags must round-trip untouched."""
+
+    def _roundtrip(self, original: str):
+        handler = TokenHandler()
+        sanitized = handler.sanitize(original).sanitized_text
+        return handler.finalize_translation(sanitized, allow_cleanup=False)
+
+    def test_unpaired_opening_tag_is_valid_first_try(self):
+        result = self._roundtrip("<StartAction>Waves a hand.")
+        assert result.exact_valid
+        assert result.final_text == "<StartAction>Waves a hand."
+
+    def test_tag_only_string_survives(self):
+        result = self._roundtrip("<StartAction>")
+        assert result.exact_valid
+        assert result.final_text == "<StartAction>"
+
+    def test_closing_tag_paired_with_custom_token(self):
+        original = "<CUSTOM1004>(sigh)</Start>  Will 100 gold assist your memory at all?"
+        result = self._roundtrip(original)
+        assert result.exact_valid
+        assert result.final_text == original
+
+    def test_mixed_paired_and_unpaired_tags_survive(self):
+        original = "<StartAction>A</Start> and <StartCheck>B"
+        result = self._roundtrip(original)
+        assert result.exact_valid
+        assert result.final_text == original
+
+    def test_genuinely_lost_closing_tag_still_caught(self):
+        handler = TokenHandler()
+        sanitized = handler.sanitize("<StartAction>Waves.</Start>").sanitized_text
+        mangled = sanitized.replace(handler.artifacts[-1].placeholder, "")
+        result = handler.finalize_translation(mangled, allow_cleanup=True)
+        assert not result.exact_valid
+        assert result.used_cleanup
+        assert "</Start>" in result.mismatch_report.missing
+        assert "<Start" not in result.final_text
+
+    def test_lost_tag_on_unpaired_original_still_caught(self):
+        handler = TokenHandler()
+        sanitized = handler.sanitize("<StartAction>Waves a hand.").sanitized_text
+        mangled = sanitized.replace(handler.artifacts[0].placeholder, "")
+        result = handler.finalize_translation(mangled, allow_cleanup=False)
+        assert not result.exact_valid
+        assert "<StartAction>" in result.mismatch_report.missing

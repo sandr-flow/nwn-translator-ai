@@ -27,7 +27,7 @@ class CapturingWriter:
 def test_load_and_inject_ncs_from_text_translation_map(tmp_path: Path) -> None:
     """Rebuild-style: ``translations`` keyed by original text derives NCS item map."""
     path = _write_ncs(tmp_path, "s.ncs", _consts("Hello world!"), _retn())
-    loaded = load_parsed_and_extracted(path, ".ncs", None, None)
+    loaded = load_parsed_and_extracted(path, ".ncs", None)
     assert loaded is not None
     parsed, extracted = loaded
     inject_translations_into_file(
@@ -43,7 +43,7 @@ def test_load_and_inject_ncs_from_text_translation_map(tmp_path: Path) -> None:
 
 def test_load_and_inject_ncs_prefers_explicit_item_id_map(tmp_path: Path) -> None:
     path = _write_ncs(tmp_path, "t.ncs", _consts("Hello world!"), _retn())
-    loaded = load_parsed_and_extracted(path, ".ncs", None, None)
+    loaded = load_parsed_and_extracted(path, ".ncs", None)
     assert loaded is not None
     parsed, extracted = loaded
     item_id = extracted.items[0].item_id

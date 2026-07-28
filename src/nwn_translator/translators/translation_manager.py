@@ -34,11 +34,16 @@ _MIN_PREFIX_LEN = 20
 
 # Placeholders produced by TokenHandler.sanitize() that carry no translatable
 # content and must be stripped before checking if a sanitized string is empty.
+# The core is matched exactly (8-hex nonce + decimal counter, see
+# TokenHandler._make_placeholder): a permissive [A-Za-z0-9_]+ would greedily
+# swallow a single word sandwiched between two placeholders
+# (__NWN_INLINE_x_0__Attack__NWN_INLINE_x_1__) and misclassify it as empty.
+_PLACEHOLDER_CORE = r"(?:NWN_INLINE|NWN_TOKEN)_[0-9a-f]{8}_\d+"
 _NON_TRANSLATABLE_RE = re.compile(
-    r"__(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+__"
-    r"|\[\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]\]"
-    r"|<<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>>"
-    r"|<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>"
+    rf"__{_PLACEHOLDER_CORE}__"
+    rf"|\[\[{_PLACEHOLDER_CORE}\]\]"
+    rf"|<<\[{_PLACEHOLDER_CORE}\]>>"
+    rf"|<\[{_PLACEHOLDER_CORE}\]>"
 )
 _NUMBERED_LABEL_FAMILY_RE = re.compile(
     r"^(?P<base>[A-Z][A-Za-z']+(?: [A-Z][A-Za-z']+){0,4}) (?P<number>\d{1,4})$"
@@ -339,7 +344,9 @@ class TranslationManager:
             if meta.get("type") != "ncs_string":
                 continue
             iid = item.item_id or ""
-            hard_veto = ncs_hard_veto_reason(item.text)
+            hard_veto = ncs_hard_veto_reason(
+                item.text, proven_player=bool(meta.get("proven_player"))
+            )
             if hard_veto:
                 self._ncs_gate_approval[iid] = False
                 self._record_ncs_diagnostic(
@@ -409,7 +416,7 @@ class TranslationManager:
         try:
             # No overall timeout: large modules may need many minutes to gate.
             # Per-call timeouts and retries live in the provider layer.
-            verdicts = run_async(gate_all(), cleanup=self.provider.close_async_client, timeout=None)
+            verdicts = run_async(gate_all(), timeout=None)
         except Exception as exc:
             logger.warning(
                 "NCS LLM gate failed for %d item(s): %s — defaulting to reject.",
@@ -1000,9 +1007,7 @@ class TranslationManager:
             "context": item.context,
             "model": model or self.config.model,
             "file": item_filename,
-            "item_id": (
-                item.item_id if (item.metadata or {}).get("type") == "ncs_string" else None
-            ),
+            "item_id": item.item_id,
         }
         try:
             self._log_writer.write(log_entry)
@@ -1048,7 +1053,6 @@ class TranslationManager:
             try:
                 retry_result = run_async(
                     run_retry(),
-                    cleanup=self.provider.close_async_client,
                     timeout=self._ITEM_TIMEOUT,
                 )
             except Exception as exc:
@@ -1368,7 +1372,6 @@ class TranslationManager:
 
         long_results, batch_results = run_async(
             run_all(),
-            cleanup=self.provider.close_async_client,
             timeout=run_timeout,
         )
 
@@ -1621,7 +1624,6 @@ class TranslationManager:
         )
         batch_results = run_async(
             run_batches(),
-            cleanup=self.provider.close_async_client,
             timeout=run_timeout,
         )
 
@@ -1699,7 +1701,6 @@ class TranslationManager:
         limit = max(1, int(self.config.max_concurrent_requests))
         retry_results = run_async(
             run_fallback(),
-            cleanup=self.provider.close_async_client,
             timeout=max(
                 self._RUN_ASYNC_TIMEOUT / 2,
                 self._queued_call_timeout(len(retry_items), self._ITEM_TIMEOUT, limit) + 30.0,
@@ -1772,7 +1773,6 @@ class TranslationManager:
         limit = max(1, int(self.config.max_concurrent_requests))
         results = run_async(
             run_fallback(),
-            cleanup=self.provider.close_async_client,
             timeout=max(
                 self._RUN_ASYNC_TIMEOUT / 2,
                 self._queued_call_timeout(len(items), self._ITEM_TIMEOUT, limit) + 30.0,

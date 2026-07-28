@@ -3,12 +3,16 @@
 import pytest
 
 from src.nwn_translator.context.string_filters import (
+    ENGINE_PLACEHOLDER_TAGS,
+    ENGINE_TAG_PREFIXES,
     classify_entity_candidate,
     classify_string,
     is_generic_entity_label,
     is_valid_entity_name,
     should_skip_entity_source_text,
 )
+from src.nwn_translator.extractors import ncs_extractor
+from src.nwn_translator.injectors import git_injector
 
 
 @pytest.mark.parametrize(
@@ -151,3 +155,151 @@ def test_candidate_prefilter_keeps_specific_names(text):
         "To the Sewers",
         {"type": "trigger_name"},
     )
+
+
+# --------------------------------------------------------------------------
+# Engine tag prefixes: one shared source of truth
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "arch_target",
+        "ARCH_TARGET",
+        "nw_c2_default9",
+        "NW_Thing",
+        "wp_spawn_01",
+        "WP_MerudocRuns_01",
+        "dst_tunnel",
+        "DST_Tunnel",
+        "post_guard",
+        "POST_Guard",
+    ],
+)
+def test_engine_tag_prefixes_blocked(text):
+    cls = classify_string(text)
+    assert cls.blocked
+    assert "system_term" in cls.reasons
+    assert should_skip_entity_source_text(text)
+    assert classify_entity_candidate(text).decision == "drop"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Archery Range",
+        "Northwest Gate",
+        "Post Road Inn",
+        "Destined Hall",
+        "Weapon Rack",
+    ],
+)
+def test_prose_resembling_engine_prefixes_kept(text):
+    assert not classify_string(text).blocked
+    assert not should_skip_entity_source_text(text)
+
+
+@pytest.mark.parametrize("text", ["YOURTAGHERE", "yourtaghere", "Yourtaghere", "YourTagHere"])
+def test_toolset_placeholder_tag_blocked_in_any_case(text):
+    """Bioware template placeholders leak through the toolset in mixed case."""
+    assert classify_string(text).blocked
+    assert should_skip_entity_source_text(text)
+
+
+def test_engine_prefixes_are_not_duplicated_per_module():
+    """The NCS extractor must reuse the shared list, not keep a parallel copy."""
+    assert set(ENGINE_TAG_PREFIXES) <= set(ncs_extractor._SKIP_PREFIXES)
+    assert ENGINE_PLACEHOLDER_TAGS == {"yourtaghere"}
+    assert not hasattr(git_injector, "is_internal_tag")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["WP_DPR1_CloseDoor", "WP_CoN_Parishoner", "WP_MerudocRuns_01", "WP_DP1_GateFXCenter"],
+)
+def test_ncs_rejects_waypoint_tags_at_extraction(text):
+    """Corpus waypoint tags used to survive extraction and reach the LLM gate."""
+    assert ncs_extractor._is_definitely_not_translatable(text)
+
+
+@pytest.mark.parametrize("text", ["Help me, please!", "I will not go back there."])
+def test_ncs_keeps_player_barks(text):
+    assert not ncs_extractor._is_definitely_not_translatable(text)
+
+
+# --------------------------------------------------------------------------
+# Emote markup vs wildcard artifacts (.git emotion triggers)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "*The lever is stuck*",
+        "*gasp*",
+        "*whispers* There is such rage among these ruins...",
+        "*Hassir is silent as he looks in awe upon the great hall before you*",
+        "SAY MY NAME, BITCH! *WHIPCRACK*",
+    ],
+)
+def test_emote_markup_translates(text):
+    cls = classify_string(text)
+    assert cls.emote_markup
+    assert not should_skip_entity_source_text(text)
+    assert not should_skip_entity_source_text(text, {"type": "trigger_name"})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Court of the Count *",  # unpaired trailing wildcard
+        "// * * * SCENE: Drinking dwarves  * * *",  # scripter comment
+        "\n// * * * SCENE: Rigrin and Sagrirry talk  * * *",
+        "{0} gold",  # format placeholder
+        "*gasp* {0}",  # emote mixed with a format artifact
+        "***",  # letterless decoration
+        "*waves at <FirstName>*",  # mixed inline placeholder stays conservative
+    ],
+)
+def test_wildcard_artifacts_still_skipped(text):
+    assert should_skip_entity_source_text(text)
+
+
+def test_emote_markup_never_becomes_entity_name():
+    """The glossary gates stay strict even though translation is allowed."""
+    for text in ("*gasp*", "*The lever is stuck*"):
+        assert not is_valid_entity_name(text, "location")
+        assert classify_entity_candidate(text).decision == "drop"
+
+
+@pytest.mark.parametrize("name", ["McGee", "DeVir", "MacReady", "VanCleef"])
+def test_camel_case_names_blocked_without_oracle(name):
+    assert should_skip_entity_source_text(name, {"type": "creature_first_name"})
+
+
+@pytest.mark.parametrize("name", ["McGee", "DeVir", "MacReady", "VanCleef"])
+def test_blueprint_oracle_rescues_camel_case_names(name):
+    oracle = frozenset({"mcgee", "devir", "macready", "vancleef"})
+    assert not should_skip_entity_source_text(name, {"type": "creature_first_name"}, oracle)
+    assert not should_skip_entity_source_text(name, {"type": "placeable_name"}, oracle)
+
+
+@pytest.mark.parametrize("name", ["WP_DoorTrigger", "NW_SomeTag", "YOURTAGHERE"])
+def test_oracle_never_rescues_engine_tags(name):
+    """system_term is its own blocking reason; a sloppy blueprint name cannot lift it."""
+    oracle = frozenset({name.casefold()})
+    assert should_skip_entity_source_text(name, {"type": "creature_first_name"}, oracle)
+
+
+def test_oracle_never_rescues_technical_git_types():
+    """Trigger/item/waypoint-note fields stay blocked for code-like text."""
+    oracle = frozenset({"mcgee"})
+    for meta_type in ("trigger_name", "item_name", "waypoint_map_note"):
+        assert should_skip_entity_source_text("McGee", {"type": meta_type}, oracle)
+
+
+def test_rescued_name_still_not_entity_name():
+    """The glossary gates stay strict: rescue applies to translation only."""
+    assert not is_valid_entity_name("McGee")
+    assert classify_entity_candidate("McGee").decision == "drop"

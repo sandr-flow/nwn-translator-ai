@@ -424,3 +424,121 @@ def test_git_filter_keeps_player_visible_trigger_and_item_strings():
 
     assert expected <= extracted
     assert expected <= collected
+
+
+def test_git_extractor_extracts_emote_trigger_texts():
+    """M-F3 DoD: emote-wrapped texts in .git fields are extracted."""
+    extractor = GitExtractor()
+    path = Path("testarea.git")
+    gff = {
+        "TriggerList": [
+            {"LocalizedName": {"StrRef": -1, "Value": "*gasp*"}},
+            {
+                "LocalizedName": {
+                    "StrRef": -1,
+                    "Value": "*whispers* There is such rage among these ruins...",
+                }
+            },
+            # Scripter comment stored in a trigger name: never translated.
+            {
+                "LocalizedName": {
+                    "StrRef": -1,
+                    "Value": "// * * * SCENE: Drinking dwarves  * * *",
+                }
+            },
+        ],
+        "Placeable List": [
+            {"Description": {"StrRef": -1, "Value": "*The lever is stuck*"}},
+        ],
+    }
+    result = extractor.extract(path, gff)
+    texts = {item.text for item in result.items}
+    assert "*gasp*" in texts
+    assert "*whispers* There is such rage among these ruins..." in texts
+    assert "*The lever is stuck*" in texts
+    assert not any(t.startswith("//") for t in texts)
+
+
+def test_git_extractor_rescues_blueprint_creature_names(tmp_path, monkeypatch):
+    """A camel-cased .git creature name matching a .utc blueprint name is kept."""
+    from src.nwn_translator.injectors import git_injector
+
+    git_injector.clear_creature_name_cache()
+    (tmp_path / "npc_mcgee.utc").write_bytes(b"")
+    monkeypatch.setattr(
+        git_injector,
+        "read_gff",
+        lambda path, **kwargs: {
+            "FirstName": {"StrRef": -1, "Value": "McGee"},
+            "LastName": {"StrRef": -1, "Value": "DeVir"},
+        },
+    )
+    extractor = GitExtractor()
+    gff = {
+        "Creature List": [
+            {
+                "FirstName": {"StrRef": -1, "Value": "McGee"},
+                "LastName": {"StrRef": -1, "Value": "DeVir"},
+            }
+        ],
+        "Placeable List": [
+            # Camel junk with no blueprint counterpart stays blocked.
+            {"LocName": {"StrRef": -1, "Value": "WorkBench"}},
+        ],
+    }
+    result = extractor.extract(tmp_path / "area.git", gff)
+    texts = {item.text for item in result.items}
+    git_injector.clear_creature_name_cache()
+    assert "McGee" in texts
+    assert "DeVir" in texts
+    assert "WorkBench" not in texts
+
+
+def test_git_extractor_blocks_camel_names_without_blueprints(tmp_path):
+    """Without a matching .utc blueprint the camel-case rule still applies."""
+    from src.nwn_translator.injectors import git_injector
+
+    git_injector.clear_creature_name_cache()
+    extractor = GitExtractor()
+    gff = {"Creature List": [{"FirstName": {"StrRef": -1, "Value": "McGee"}}]}
+    result = extractor.extract(tmp_path / "area.git", gff)
+    git_injector.clear_creature_name_cache()
+    assert {item.text for item in result.items} == set()
+
+
+def test_creature_name_oracle_survives_blueprint_patching(tmp_path, monkeypatch):
+    """Injection-time lookups reuse the oracle built from the original names.
+
+    By injection time the .utc files on disk may already carry translated
+    names; rebuilding the oracle then would break original-text matching.
+    """
+    from src.nwn_translator.injectors import git_injector
+
+    git_injector.clear_creature_name_cache()
+    (tmp_path / "npc.utc").write_bytes(b"")
+    monkeypatch.setattr(
+        git_injector,
+        "read_gff",
+        lambda path, **kwargs: {"FirstName": {"StrRef": -1, "Value": "McGee"}},
+    )
+    assert "mcgee" in git_injector.get_module_creature_names(tmp_path)
+
+    monkeypatch.setattr(
+        git_injector,
+        "read_gff",
+        lambda path, **kwargs: {"FirstName": {"StrRef": -1, "Value": "МакГи"}},
+    )
+    assert "mcgee" in git_injector.get_module_creature_names(tmp_path)
+    git_injector.clear_creature_name_cache()
+
+
+def test_git_collector_rescues_blueprint_names_symmetrically():
+    """The fallback string collector honors the same oracle as the extractor."""
+    from src.nwn_translator.injectors.git_injector import (
+        collect_git_strings_missing_from_translations,
+    )
+
+    gff = {"Creature List": [{"FirstName": {"StrRef": -1, "Value": "McGee"}}]}
+    assert collect_git_strings_missing_from_translations(gff, {}) == set()
+    rescued = collect_git_strings_missing_from_translations(gff, {}, frozenset({"mcgee"}))
+    assert rescued == {"McGee"}

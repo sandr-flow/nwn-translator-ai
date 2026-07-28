@@ -151,7 +151,6 @@ class EntityExtractor:
                     source_lang,
                     progress_callback,
                 ),
-                cleanup=provider.close_async_client,
                 timeout=overall_timeout,
             )
         except Exception as exc:

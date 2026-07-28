@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import time
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from nwn_translator.ai_providers.base import TranslationResult
+from nwn_translator.web import database as db
+from nwn_translator.web import routes as web_routes
 from nwn_translator.web.app import create_app
 from nwn_translator.web.task_manager import TaskManager, set_task_manager
 
@@ -198,6 +203,199 @@ def test_reject_cjk_target_lang_not_representable_in_game(client: TestClient) ->
         assert "NWN" in detail
         assert "Windows" in detail
         assert "Целевой" in detail
+
+
+# ---------------------------------------------------------------------------
+# One-job-per-IP slot: atomic registration and cleanup
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def isolated_tm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A TaskManager with the SQLite singleton pointed at a temp file."""
+    monkeypatch.setenv("NWN_WEB_DB_PATH", str(tmp_path / "web.db"))
+    db.close_db()
+    monkeypatch.setattr(db, "_connection", None)
+    yield TaskManager(workspace_root=tmp_path / "tasks")
+    db.close_db()
+    monkeypatch.setattr(db, "_connection", None)
+
+
+class TestOneJobPerIpSlot:
+    def test_concurrent_registration_single_winner(self, isolated_tm: TaskManager) -> None:
+        """Two threads race for the same IP slot; exactly one must win."""
+        tm = isolated_tm
+        tasks = [tm.create_task("9.9.9.9", f"m{i}.mod") for i in range(2)]
+        barrier = threading.Barrier(2)
+        results: dict[str, bool] = {}
+
+        def attempt(task_id: str) -> None:
+            barrier.wait()
+            results[task_id] = tm.try_register_active("9.9.9.9", task_id)
+
+        threads = [threading.Thread(target=attempt, args=(t.task_id,)) for t in tasks]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        assert sorted(results.values()) == [False, True]
+
+    def test_slot_reusable_after_previous_task_finishes(self, isolated_tm: TaskManager) -> None:
+        tm = isolated_tm
+        first = tm.create_task("9.9.9.9", "a.mod")
+        second = tm.create_task("9.9.9.9", "b.mod")
+        assert tm.try_register_active("9.9.9.9", first.task_id) is True
+        assert tm.try_register_active("9.9.9.9", second.task_id) is False
+        first.status = "completed"
+        assert tm.try_register_active("9.9.9.9", second.task_id) is True
+
+    def test_discard_task_removes_memory_and_db_row(self, isolated_tm: TaskManager) -> None:
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        assert db.get_task_row(task.task_id) is not None
+        tm.discard_task(task.task_id)
+        assert tm.get(task.task_id) is None
+        assert db.get_task_row(task.task_id) is None
+
+
+# ---------------------------------------------------------------------------
+# TTL purge of workspace files
+# ---------------------------------------------------------------------------
+
+
+def _fill_workspace(tm: TaskManager, task_id: str) -> Path:
+    """Create a realistic task workspace: input, extraction temp, result."""
+    base = tm.workspace_for_task(task_id)
+    (base / "input.mod").write_bytes(b"\x01" * 64)
+    (base / "temp").mkdir(exist_ok=True)
+    (base / "temp" / "area.git").write_bytes(b"\x02" * 32)
+    (base / "result.mod").write_bytes(b"\x03" * 64)
+    return base
+
+
+class TestPurgeExpiredWorkspace:
+    def test_expired_finished_task_files_deleted_row_kept(self, isolated_tm: TaskManager) -> None:
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        base = _fill_workspace(tm, task.task_id)
+        task.status = "completed"
+        task.created_at -= tm.task_ttl_seconds + 10
+        db.update_task_row(task.task_id, status="completed", created_at=task.created_at)
+
+        tm.purge_expired()
+
+        assert not base.exists()
+        assert tm.get(task.task_id) is None  # evicted from memory
+        assert db.get_task_row(task.task_id) is not None  # history row kept
+
+    def test_fresh_finished_task_files_kept(self, isolated_tm: TaskManager) -> None:
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        base = _fill_workspace(tm, task.task_id)
+        task.status = "completed"
+        db.update_task_row(task.task_id, status="completed")
+
+        tm.purge_expired()
+
+        assert base.is_dir()
+        assert tm.get(task.task_id) is not None
+
+    def test_old_running_task_files_kept(self, isolated_tm: TaskManager) -> None:
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        base = _fill_workspace(tm, task.task_id)
+        task.created_at -= tm.task_ttl_seconds + 10
+        db.update_task_row(task.task_id, status="translating", created_at=task.created_at)
+
+        tm.purge_expired()
+
+        assert base.is_dir()
+
+    def test_expired_task_absent_from_memory_still_purged(self, isolated_tm: TaskManager) -> None:
+        """Restart scenario: a completed row survives in the DB, its task object
+        does not — the workspace directory must still be cleaned up."""
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        base = _fill_workspace(tm, task.task_id)
+        db.update_task_row(task.task_id, status="completed")
+        old_created = task.created_at - tm.task_ttl_seconds - 10
+        conn = db.get_db()
+        conn.execute(
+            "UPDATE tasks SET created_at = ? WHERE task_id = ?",
+            (old_created, task.task_id),
+        )
+        conn.commit()
+
+        fresh_tm = TaskManager(
+            workspace_root=tm.workspace_root, task_ttl_seconds=tm.task_ttl_seconds
+        )
+        assert fresh_tm.get(task.task_id) is None  # not reloaded into memory
+
+        fresh_tm.purge_expired()
+
+        assert not base.exists()
+        assert db.get_task_row(task.task_id) is not None
+
+
+def test_second_request_during_upload_gets_429(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The IP slot is claimed before the upload, not after it.
+
+    The first request is held inside the (mocked) upload; a second request from
+    the same IP must be rejected immediately instead of slipping through the
+    old check-then-act window that spanned the whole upload.
+    """
+    upload_started = threading.Event()
+    release_upload = threading.Event()
+
+    async def held_upload(upload, dest: Path, max_bytes: int) -> None:
+        dest.write_bytes(b"\x01" * 10)
+        upload_started.set()
+        while not release_upload.is_set():
+            await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(web_routes, "_stream_upload_to_file", held_upload)
+
+    results: dict[str, object] = {}
+
+    def first_post() -> None:
+        files = {"file": ("a.mod", b"\x01" * 200, "application/octet-stream")}
+        data = {"api_key": "sk-x", "target_lang": "russian"}
+        results["first"] = client.post("/api/translate", files=files, data=data)
+
+    worker = threading.Thread(target=first_post)
+    worker.start()
+    try:
+        assert upload_started.wait(timeout=5.0), "first request never reached the upload"
+        files2 = {"file": ("b.mod", b"\x02" * 200, "application/octet-stream")}
+        data2 = {"api_key": "sk-x", "target_lang": "russian"}
+        r2 = client.post("/api/translate", files=files2, data=data2)
+        assert r2.status_code == 429
+    finally:
+        release_upload.set()
+        worker.join(timeout=10)
+    assert not worker.is_alive()
+    first = results["first"]
+    assert first.status_code == 200  # type: ignore[attr-defined]
+
+
+def test_failed_upload_frees_slot(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An upload error must release the IP slot and discard the task."""
+    original_upload = web_routes._stream_upload_to_file
+
+    async def broken_upload(upload, dest: Path, max_bytes: int) -> None:
+        raise HTTPException(status_code=413, detail="too big")
+
+    monkeypatch.setattr(web_routes, "_stream_upload_to_file", broken_upload)
+    files = {"file": ("a.mod", b"\x01" * 200, "application/octet-stream")}
+    data = {"api_key": "sk-x", "target_lang": "russian"}
+    r1 = client.post("/api/translate", files=files, data=data)
+    assert r1.status_code == 413
+
+    monkeypatch.setattr(web_routes, "_stream_upload_to_file", original_upload)
+    r2 = client.post("/api/translate", files=files, data=data)
+    assert r2.status_code == 200
 
 
 def test_reject_cjk_source_lang_not_representable_in_game(client: TestClient) -> None:

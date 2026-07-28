@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..ai_providers import BaseAIProvider
 from ..ai_providers.openrouter_provider import OpenRouterProvider
-from ..config import TranslationConfig, TRANSLATION_MAX_TOKENS, TRANSLATION_TEMPERATURE
+from ..config import (
+    TranslationCancelled,
+    TranslationConfig,
+    TRANSLATION_MAX_TOKENS,
+    TRANSLATION_TEMPERATURE,
+)
 from ..context.dialog_formatter import DialogFormatter
 from ..context.world_context import WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode
@@ -61,6 +66,12 @@ class ContextualTranslationManager:
             config.translation_log_writer,
         )
         self.formatter = DialogFormatter()
+
+    def _raise_if_cancelled(self) -> None:
+        """Raise :class:`TranslationCancelled` when the config's cancel check fires."""
+        cb = self.config.cancel_check
+        if cb is not None and cb():
+            raise TranslationCancelled("Translation cancelled by user")
 
     def translate_dialog(
         self,
@@ -206,6 +217,7 @@ class ContextualTranslationManager:
             latest_invalid: Dict[str, Dict[str, Any]] = {}
 
             for chunk_index, (chunk_keys, script) in enumerate(dialog_chunks, 1):
+                self._raise_if_cancelled()
                 chunk_translations, chunk_pending, chunk_invalid = self._translate_dialog_chunk(
                     file_path,
                     file_path.stem,
@@ -216,7 +228,6 @@ class ContextualTranslationManager:
                     sanitized_by_key,
                     call_api,
                     run_async,
-                    provider.close_async_client,
                     chunk_index=chunk_index,
                     total_chunks=len(dialog_chunks),
                 )
@@ -228,6 +239,7 @@ class ContextualTranslationManager:
             pending_keys = sorted(set(pending_keys))
 
             if pending_keys:
+                self._raise_if_cancelled()
                 logger.warning(
                     "%s: retrying %d dialog nodes with missing or invalid preserved artifacts...",
                     file_path.name,
@@ -255,7 +267,6 @@ class ContextualTranslationManager:
                         retry_prompt,
                         max_tokens=TRANSLATION_MAX_TOKENS,
                     ),
-                    cleanup=provider.close_async_client,
                 )
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json is None and self._dialog_response_likely_truncated(retry_raw):
@@ -273,7 +284,6 @@ class ContextualTranslationManager:
                             retry_prompt,
                             max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                         ),
-                        cleanup=provider.close_async_client,
                     )
                     retry_json = self._parse_json_response(retry_raw, file_path.name)
 
@@ -316,6 +326,7 @@ class ContextualTranslationManager:
                         [sanitized_by_key[key] for key in pending_after_json]
                     )
                     for key in pending_after_json:
+                        self._raise_if_cancelled()
                         context = self._build_dialog_retry_context(
                             key,
                             node_map,
@@ -336,10 +347,9 @@ class ContextualTranslationManager:
                             )
 
                         try:
-                            line_result = run_async(
-                                run_single_retry(),
-                                cleanup=provider.close_async_client,
-                            )
+                            line_result = run_async(run_single_retry())
+                        except TranslationCancelled:
+                            raise
                         except Exception as exc:
                             logger.warning(
                                 "%s: individual dialog retry failed for %s: %s",
@@ -392,6 +402,8 @@ class ContextualTranslationManager:
             _finish()
             return translations
 
+        except TranslationCancelled:
+            raise
         except Exception as exc:
             logger.error("Contextual translation failed for %s: %s", file_path.name, exc)
             _finish()
@@ -512,7 +524,6 @@ class ContextualTranslationManager:
         sanitized_by_key: Dict[str, str],
         call_api: Any,
         run_async: Any,
-        cleanup: Any,
         *,
         chunk_index: int,
         total_chunks: int,
@@ -533,10 +544,7 @@ class ContextualTranslationManager:
                 len(script),
             )
 
-        raw_response = run_async(
-            call_api(system_prompt, user_prompt),
-            cleanup=cleanup,
-        )
+        raw_response = run_async(call_api(system_prompt, user_prompt))
         parsed_json = self._parse_json_response(raw_response, file_path.name)
 
         if parsed_json is None:
@@ -553,7 +561,6 @@ class ContextualTranslationManager:
                         user_prompt,
                         max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                     ),
-                    cleanup=cleanup,
                 )
                 parsed_json = self._parse_json_response(raw_response, file_path.name)
 
@@ -575,7 +582,6 @@ class ContextualTranslationManager:
                             repair_prompt,
                             max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                         ),
-                        cleanup=cleanup,
                     )
                     parsed_json = self._parse_json_response(raw_response, file_path.name)
             else:
@@ -590,10 +596,7 @@ class ContextualTranslationManager:
                     keys_for_api,
                     raw_response,
                 )
-                raw_response = run_async(
-                    call_api(system_prompt, repair_prompt),
-                    cleanup=cleanup,
-                )
+                raw_response = run_async(call_api(system_prompt, repair_prompt))
                 parsed_json = self._parse_json_response(raw_response, file_path.name)
 
                 if parsed_json is None:
@@ -608,7 +611,6 @@ class ContextualTranslationManager:
                             repair_prompt,
                             max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                         ),
-                        cleanup=cleanup,
                     )
                     parsed_json = self._parse_json_response(raw_response, file_path.name)
 

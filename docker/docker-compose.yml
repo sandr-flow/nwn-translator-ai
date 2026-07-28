@@ -8,9 +8,17 @@ services:
       - "8000"
     environment:
       NWN_WEB_TASK_ROOT: /data/tasks
-      NWN_WEB_CORS_ORIGINS: "*"
+      # SQLite DB on its own volume so it survives container recreation.
+      NWN_WEB_DB_PATH: /data/db/translations.db
+      # Trust X-Forwarded-For only from the nginx container's fixed address.
+      NWN_WEB_TRUSTED_PROXIES: 172.28.0.10
+      # No CORS: nginx serves the SPA and proxies /api on the same origin.
+      # Set NWN_WEB_CORS_ORIGINS to an explicit origin list only for cross-origin setups.
     volumes:
       - nwn_tasks:/data/tasks
+      - nwn_db:/data/db
+    networks:
+      - nwn_net
 
   nginx:
     build:
@@ -20,6 +28,17 @@ services:
       - "8080:80"
     depends_on:
       - app
+    networks:
+      nwn_net:
+        # Fixed address so the app can trust this proxy by exact IP.
+        ipv4_address: 172.28.0.10
+
+networks:
+  nwn_net:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 volumes:
   nwn_tasks:
+  nwn_db:

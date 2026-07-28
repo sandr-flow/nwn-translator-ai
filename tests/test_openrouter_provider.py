@@ -4,7 +4,7 @@ import json
 from unittest.mock import MagicMock, patch
 import httpx
 import pytest
-from openai import BadRequestError
+from openai import AuthenticationError, BadRequestError, InternalServerError
 
 from src.nwn_translator.async_utils import run_async
 from src.nwn_translator.ai_providers.openrouter_provider import (
@@ -87,7 +87,7 @@ class TestOpenRouterTranslate:
 
     def test_translate_success(self):
         """Successful translation returns correct TranslationResult."""
-        p = self._make_provider("Привет, мир")
+        p = self._make_provider('{"translation": "Привет, мир"}')
         result = p.translate("Hello, world", "english", "russian")
         assert result.success is True
         assert result.translated == "Привет, мир"
@@ -103,7 +103,7 @@ class TestOpenRouterTranslate:
 
     def test_translate_with_context(self):
         """Context is forwarded to the prompt builder."""
-        p = self._make_provider("Меч")
+        p = self._make_provider('{"translation": "Меч"}')
         result = p.translate("Sword", "english", "russian", context="Item: sword_01")
         assert result.success is True
         # The create() call receives the messages; verify it was called once
@@ -144,7 +144,7 @@ class TestOpenRouterTranslate:
         assert kw["extra_body"] == {"reasoning": {"effort": "medium"}}
 
     def test_translate_bad_request_retries_without_reasoning(self):
-        """HTTP 400 with reasoning must retry once without extra_body."""
+        """HTTP 400 rejecting reasoning must retry once without extra_body."""
         with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
             p = OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="high")
 
@@ -157,7 +157,7 @@ class TestOpenRouterTranslate:
 
         req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
         resp = httpx.Response(400, request=req)
-        br = BadRequestError("nope", response=resp, body={"error": {}})
+        br = BadRequestError("Reasoning is not supported by this model", response=resp, body={})
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = [br, mock_response]
@@ -216,3 +216,161 @@ class TestCreateProvider:
         with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
             p = create_provider(FAKE_KEY)
         assert p.get_provider_name() == "openrouter"
+
+
+class TestOpenRouterRetryOn5xx:
+    """5xx responses must retry with backoff; other 4xx must not."""
+
+    def _make_provider(self, side_effect) -> OpenRouterProvider:
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            provider = OpenRouterProvider(api_key=FAKE_KEY)
+        mock_msg = MagicMock()
+        mock_msg.content = '{"translation": "Готово"}'
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            e if e is not None else mock_response for e in side_effect
+        ]
+        provider.client = mock_client
+        return provider
+
+    @staticmethod
+    def _status_error(cls, status: int):
+        req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        return cls("boom", response=httpx.Response(status, request=req), body=None)
+
+    @pytest.fixture(autouse=True)
+    def _no_backoff_sleep(self, monkeypatch):
+        monkeypatch.setattr(OpenRouterProvider.translate.retry, "sleep", lambda *_: None)
+
+    def test_5xx_retries_and_succeeds_on_second_attempt(self):
+        ise = self._status_error(InternalServerError, 502)
+        p = self._make_provider([ise, None])
+        result = p.translate("text", "english", "russian")
+        assert result.success is True
+        assert result.translated == "Готово"
+        assert p.client.chat.completions.create.call_count == 2
+
+    def test_5xx_exhausts_attempts_then_reraises(self):
+        ise = self._status_error(InternalServerError, 500)
+        p = self._make_provider([ise, ise, ise])
+        with pytest.raises(InternalServerError):
+            p.translate("text", "english", "russian")
+        assert p.client.chat.completions.create.call_count == 3
+
+    def test_4xx_does_not_retry(self):
+        auth = self._status_error(AuthenticationError, 401)
+        p = self._make_provider([auth])
+        with pytest.raises(OpenRouterError):
+            p.translate("text", "english", "russian")
+        assert p.client.chat.completions.create.call_count == 1
+
+
+class TestReasoningFallbackMemory:
+    """A 'reasoning not supported' 400 is remembered; unrelated 400s propagate."""
+
+    def _make_provider(self) -> OpenRouterProvider:
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            return OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="medium")
+
+    @staticmethod
+    def _mock_response():
+        mock_msg = MagicMock()
+        mock_msg.content = '{"translation": "x"}'
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        return mock_response
+
+    @staticmethod
+    def _bad_request(message: str) -> BadRequestError:
+        req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        return BadRequestError(message, response=httpx.Response(400, request=req), body={})
+
+    def test_reasoning_rejection_is_remembered_for_the_session(self):
+        p = self._make_provider()
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = [
+            self._bad_request("Reasoning is not supported by this model"),
+            self._mock_response(),
+            self._mock_response(),
+        ]
+        p.client = mock_client
+
+        assert p.translate("a", "english", "russian").success is True
+        assert p.translate("b", "english", "russian").success is True
+
+        calls = mock_client.chat.completions.create.call_args_list
+        assert len(calls) == 3  # 400 + fallback + single second-request call
+        assert "extra_body" in calls[0].kwargs
+        assert "extra_body" not in calls[1].kwargs
+        assert "extra_body" not in calls[2].kwargs
+
+    def test_unrelated_400_propagates_without_fallback(self):
+        p = self._make_provider()
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = self._bad_request(
+            "This model's maximum context length is exceeded"
+        )
+        p.client = mock_client
+
+        with pytest.raises(OpenRouterError):
+            p.translate("a", "english", "russian")
+        assert mock_client.chat.completions.create.call_count == 1
+        assert "extra_body" in mock_client.chat.completions.create.call_args.kwargs
+
+    def test_async_path_respects_remembered_flag(self):
+        p = self._make_provider()
+        p._reasoning_unsupported = True
+        mock_async_client = MagicMock()
+
+        async def create(**kwargs):
+            create.calls.append(kwargs)
+            return self._mock_response()
+
+        create.calls = []
+        mock_async_client.chat.completions.create = create
+        p._thread_local.async_client = mock_async_client
+        p._thread_local.client_loop = None
+
+        async def run():
+            p._thread_local.async_client = mock_async_client
+            p._thread_local.client_loop = __import__("asyncio").get_running_loop()
+            return await p._chat_completions_create_async(model="m", messages=[])
+
+        run_async(run(), timeout=5.0)
+        assert len(create.calls) == 1
+        assert "extra_body" not in create.calls[0]
+
+
+class TestNoJsonResponseRejected:
+    """Model chatter without a JSON object must fail the item, not ship as a translation."""
+
+    def test_translate_chatter_without_json_fails(self):
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = OpenRouterProvider(api_key=FAKE_KEY)
+        mock_msg = MagicMock()
+        mock_msg.content = "Sure! Here is the translation: Привет, мир"
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        p.client = mock_client
+
+        result = p.translate("Hello, world", "english", "russian")
+        assert result.success is False
+        assert result.translated == ""
+        assert "unparseable" in (result.error or "")
+
+    def test_parse_rejects_chatter_but_keeps_fenced_json(self):
+        parse = OpenRouterProvider._parse_model_json_response
+        assert parse("I cannot translate this content.") == ""
+        assert parse("") == ""
+        assert parse('```json\n{"translation": "Привет"}\n```') == "Привет"
+        assert parse('Sure! {"translation": "Привет"}') == "Привет"

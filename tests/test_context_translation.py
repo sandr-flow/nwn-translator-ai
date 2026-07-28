@@ -3,7 +3,13 @@
 import logging
 from pathlib import Path
 
-from src.nwn_translator.config import TRANSLATION_MAX_TOKENS, TranslationConfig
+import pytest
+
+from src.nwn_translator.config import (
+    TRANSLATION_MAX_TOKENS,
+    TranslationCancelled,
+    TranslationConfig,
+)
 from src.nwn_translator.context.world_context import WorldContext
 from src.nwn_translator.extractors.base import DialogNode
 from src.nwn_translator.translators import context_translator as context_module
@@ -274,3 +280,63 @@ def test_chunked_dialog_retries_missing_keys_after_merge(monkeypatch):
         "changed, dropped, or omitted preserved NWN tags/tokens" in provider.calls[2]["user_prompt"]
     )
     assert "keys exactly R2" in provider.calls[2]["user_prompt"]
+
+
+def test_cancel_before_first_chunk_raises_without_api_calls(monkeypatch):
+    tree = [DialogNode(node_id=1, text="Hello there", is_entry=True)]
+    _patch_dialog_environment(monkeypatch, tree)
+    provider = _FakeOpenRouter([])
+    manager = ContextualTranslationManager(
+        _make_config(cancel_check=lambda: True),
+        provider,
+        WorldContext(),
+    )
+
+    with pytest.raises(TranslationCancelled):
+        manager.translate_dialog(Path("test.dlg"), parsed_data={})
+    assert provider.calls == []
+
+
+def test_cancel_between_chunks_stops_run_and_propagates(monkeypatch):
+    tree = [
+        DialogNode(
+            node_id=1,
+            text="Hello there, traveler.",
+            is_entry=True,
+            replies=[DialogNode(node_id=2, text="Who are you?", is_entry=False)],
+        )
+    ]
+    _patch_dialog_environment(monkeypatch, tree)
+    monkeypatch.setattr(context_module, "_DIALOG_CHUNK_MAX_KEYS", 1)
+    provider = _FakeOpenRouter(['{"E1":"Привет, путник."}', '{"R2":"Кто ты?"}'])
+    manager = ContextualTranslationManager(
+        _make_config(cancel_check=lambda: len(provider.calls) >= 1),
+        provider,
+        WorldContext(),
+    )
+
+    with pytest.raises(TranslationCancelled):
+        manager.translate_dialog(Path("test.dlg"), parsed_data={})
+    assert len(provider.calls) == 1  # second chunk was never requested
+
+
+def test_generic_api_error_still_degrades_to_partial_result(monkeypatch, caplog):
+    tree = [DialogNode(node_id=1, text="Hello there", is_entry=True)]
+    _patch_dialog_environment(monkeypatch, tree)
+
+    class _ExplodingProvider(_FakeOpenRouter):
+        async def complete_json_chat_async(self, *args, **kwargs):
+            raise RuntimeError("network exploded")
+
+    provider = _ExplodingProvider([])
+    manager = ContextualTranslationManager(
+        _make_config(cancel_check=lambda: False),
+        provider,
+        WorldContext(),
+    )
+
+    caplog.set_level(logging.ERROR)
+    result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
+
+    assert result == {}
+    assert "Contextual translation failed" in caplog.text

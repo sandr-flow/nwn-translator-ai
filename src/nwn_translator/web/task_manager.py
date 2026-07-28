@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -23,7 +24,16 @@ from ..config import (
 from ..main import ModuleTranslator, run_translation_pipeline
 
 # ``ModuleTranslator`` stays imported here for test monkeypatch compatibility.
-from .database import SqliteTranslationLogWriter, create_task_row, update_task_row, get_db
+from .database import (
+    TERMINAL_STATUSES,
+    SqliteTranslationLogWriter,
+    create_task_row,
+    delete_task_row,
+    get_db,
+    get_finished_task_ids_older_than,
+    get_unfinished_task_rows,
+    update_task_row,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +82,7 @@ class TranslationTask:
 
     def is_finished(self) -> bool:
         """Return ``True`` if the task has reached a terminal status."""
-        return self.status in ("completed", "failed", "cancelled")
+        return self.status in TERMINAL_STATUSES
 
 
 class TaskManager:
@@ -93,6 +103,30 @@ class TaskManager:
         self._lock = threading.Lock()
         #: IP -> task_id while job is running (not completed/failed)
         self._active_by_ip: Dict[str, str] = {}
+        self._reconcile_interrupted()
+
+    def _reconcile_interrupted(self) -> None:
+        """Flip tasks left unfinished by a dead worker to ``interrupted``.
+
+        A process restart leaves DB rows in a non-terminal status with no live
+        worker. On startup we mark them ``interrupted`` (a terminal status) so
+        clients stop seeing a forever-running job, and register them in memory so
+        TTL purge can later drop them.
+        """
+        for row in get_unfinished_task_rows():
+            update_task_row(row["task_id"], status="interrupted")
+            task = TranslationTask(
+                task_id=row["task_id"],
+                client_ip=row["client_ip"],
+                client_token=row.get("client_token", ""),
+                created_at=row["created_at"],
+                status="interrupted",
+                input_filename=row.get("input_filename", ""),
+                target_lang=row.get("target_lang"),
+                source_lang=row.get("source_lang"),
+            )
+            task.mark_done()
+            self._tasks[row["task_id"]] = task
 
     def workspace_for_task(self, task_id: str) -> Path:
         """Return (and create) the workspace directory for a given task.
@@ -191,6 +225,43 @@ class TaskManager:
         """
         with self._lock:
             self._active_by_ip[client_ip] = task_id
+
+    def try_register_active(self, client_ip: str, task_id: str) -> bool:
+        """Atomically register *task_id* for *client_ip* unless one is already active.
+
+        The check and the registration happen in one critical section, so two
+        concurrent requests from the same IP cannot both pass the one-job-per-IP
+        limit.
+
+        Args:
+            client_ip: Client IP address.
+            task_id: UUID of the task to register.
+
+        Returns:
+            ``True`` if registered; ``False`` if an unfinished task already
+            occupies the slot for this IP.
+        """
+        with self._lock:
+            existing = self._active_by_ip.get(client_ip)
+            if existing:
+                t = self._tasks.get(existing)
+                if t and not t.is_finished():
+                    return False
+            self._active_by_ip[client_ip] = task_id
+            return True
+
+    def discard_task(self, task_id: str) -> None:
+        """Remove a task that never started running (lost the IP race, failed upload).
+
+        Drops it from memory and deletes its SQLite row so it does not linger in
+        the client's history.
+
+        Args:
+            task_id: UUID of the task to discard.
+        """
+        with self._lock:
+            self._tasks.pop(task_id, None)
+        delete_task_row(task_id)
 
     def release_active(self, client_ip: str, task_id: str) -> None:
         """Remove the active-job mapping for *client_ip* if it matches *task_id*.
@@ -323,7 +394,6 @@ class TaskManager:
                 max_concurrent_requests=max(1, int(max_concurrent_requests)),
                 player_gender=player_gender,
                 reasoning_effort=reasoning_effort,
-                tlk_file=None,
                 verbose=False,
                 quiet=True,
                 progress_callback=progress_cb,
@@ -378,9 +448,14 @@ class TaskManager:
             self.release_active(task.client_ip, task.task_id)
 
     def purge_expired(self) -> None:
-        """Remove finished tasks from in-memory dict to free RAM.
+        """Evict finished tasks older than the TTL from memory and disk.
 
-        Workspace files and DB rows are kept — the user deletes via UI.
+        Workspace directories (uploaded module, extraction temp, result) are
+        deleted; DB rows and translations are kept, so the client history and
+        the translation editor keep working while download/rebuild degrade to
+        their existing "files unavailable" errors. Expired tasks come from the
+        DB, not the in-memory dict: finished tasks are not reloaded into memory
+        after a restart, but their workspace files survive it.
         """
         now = time.time()
         with self._lock:
@@ -390,6 +465,22 @@ class TaskManager:
                     to_delete.append(tid)
             for tid in to_delete:
                 self._tasks.pop(tid, None)
+
+        # Filesystem work happens outside the lock.
+        for tid in get_finished_task_ids_older_than(now - self.task_ttl_seconds):
+            # Task IDs are our own uuid4 strings; refuse anything that could
+            # escape workspace_root just in case a row was tampered with.
+            if "/" in tid or "\\" in tid or tid in ("", ".", ".."):
+                logger.warning("Skipping workspace purge for suspicious task id %r", tid)
+                continue
+            task_dir = self.workspace_root / tid
+            if not task_dir.is_dir():
+                continue
+            try:
+                shutil.rmtree(task_dir)
+                logger.info("Purged expired workspace %s", task_dir)
+            except OSError as e:
+                logger.warning("Failed to purge workspace %s: %s", task_dir, e)
 
 
 # Global manager instance (tests can replace)

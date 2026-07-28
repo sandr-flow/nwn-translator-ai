@@ -176,7 +176,7 @@ def _load_ncs_contents(
     for index, path in enumerate(ncs_files, 1):
         if limit_files is not None and len(contents) >= limit_files:
             break
-        loaded = load_parsed_and_extracted(path, ".ncs", None, None)
+        loaded = load_parsed_and_extracted(path, ".ncs", None)
         if loaded is None:
             continue
         _parsed, extracted = loaded

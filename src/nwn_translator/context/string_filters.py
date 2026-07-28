@@ -1,15 +1,21 @@
-"""Deterministic filters for strings that should not seed world entities.
+"""Deterministic filters for engine/toolset strings that are not prose.
 
-The entity-extraction pass is intentionally conservative: missing one inferred
-proper noun is cheaper than letting technical labels pollute the run-wide
-glossary and every later translation prompt.
+Two callers rely on this module. The entity-extraction pass uses it to decide
+what may seed world entities, and the extractors use it to decide what may be
+sent to the translator at all. Both are intentionally conservative: missing one
+inferred proper noun is cheaper than letting technical labels pollute the
+run-wide glossary, and translating an engine tag silently breaks the scripts
+that look it up by name.
+
+This module is also the single source of truth for engine tag prefixes; the NCS
+extractor imports :data:`ENGINE_TAG_PREFIXES` rather than keeping its own copy.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import FrozenSet, Iterable, Literal, Optional
+from typing import FrozenSet, Iterable, Literal, Optional, Tuple
 
 _PLACEHOLDER_RE = re.compile(r"^<[^<>\s]+>$")
 _ANY_PLACEHOLDER_RE = re.compile(r"<[^<>]+>")
@@ -39,13 +45,21 @@ _SYSTEM_TERMS: FrozenSet[str] = frozenset(
     }
 )
 
-_TECHNICAL_PREFIXES = (
+# Engine/toolset tag prefixes that must never be translated: waypoints (WP_),
+# destinations (DST_), post markers (POST_), Bioware's NW_/ARCH_ families.
+# Shared with the NCS extractor, so a prefix is never declared in two lists.
+ENGINE_TAG_PREFIXES: Tuple[str, ...] = (
     "arch_",
     "nw_",
     "wp_",
     "dst_",
     "post_",
 )
+
+# Placeholder tags left in place by Bioware toolset templates. Matched whole and
+# case-insensitively: the all-caps form already reads as code-like, but
+# "yourtaghere" and "Yourtaghere" would otherwise pass as ordinary words.
+ENGINE_PLACEHOLDER_TAGS: FrozenSet[str] = frozenset({"yourtaghere"})
 
 _GIT_TECHNICAL_TYPES: FrozenSet[str] = frozenset(
     {
@@ -91,6 +105,25 @@ _GENDER_TOKENS: FrozenSet[str] = frozenset(
     {"male", "female", "man", "woman", "boy", "girl", "child"}
 )
 _BRACKETED_TAG_RE = re.compile(r"^\s*\[[A-Za-z0-9_]+\]\s+")
+
+# Paired asterisks with at least one letter inside: the NWN emote convention
+# (*gasp*, *whispers* ..., "SAY MY NAME! *WHIPCRACK*") — player-facing prose,
+# unlike bare/unpaired wildcards ("Court of the Count *").
+_EMOTE_MARKUP_RE = re.compile(r"\*[^*]*[A-Za-z][^*]*\*")
+
+# Reasons that make a string unfit for translation/entity seeding, as opposed
+# to informational flags such as ``natural_language``.
+_BLOCKING_REASONS: FrozenSet[str] = frozenset(
+    {
+        "empty",
+        "placeholder",
+        "system_term",
+        "acronym_or_brand",
+        "code_like_identifier",
+        "wildcard_or_format_artifact",
+        "script_comment",
+    }
+)
 
 
 def _is_race_token(word: str) -> bool:
@@ -146,6 +179,8 @@ class StringClassification:
     acronym_or_brand: bool = False
     code_like_identifier: bool = False
     wildcard_or_format_artifact: bool = False
+    script_comment: bool = False
+    emote_markup: bool = False
     natural_language: bool = False
     reasons: FrozenSet[str] = field(default_factory=frozenset)
 
@@ -159,6 +194,7 @@ class StringClassification:
             or self.acronym_or_brand
             or self.code_like_identifier
             or self.wildcard_or_format_artifact
+            or self.script_comment
         )
 
     @property
@@ -194,7 +230,8 @@ def classify_string(text: object) -> StringClassification:
     lowered = stripped.casefold()
     system_term = (
         lowered in _SYSTEM_TERMS
-        or lowered.startswith(_TECHNICAL_PREFIXES)
+        or lowered in ENGINE_PLACEHOLDER_TAGS
+        or lowered.startswith(ENGINE_TAG_PREFIXES)
         or _contains_system_term(stripped)
     )
     if system_term:
@@ -207,6 +244,19 @@ def classify_string(text: object) -> StringClassification:
     wildcard_or_format_artifact = _is_wildcard_or_format_artifact(stripped)
     if wildcard_or_format_artifact:
         reasons.add("wildcard_or_format_artifact")
+
+    # Scripter comments stored in name fields ("// * * * SCENE: ...").
+    script_comment = stripped.startswith("//")
+    if script_comment:
+        reasons.add("script_comment")
+
+    # Emote markup only when the asterisks are the sole artifact trigger:
+    # with them stripped out, the rest must be clean of braces/placeholders.
+    emote_markup = (
+        not script_comment
+        and bool(_EMOTE_MARKUP_RE.search(stripped))
+        and not _is_wildcard_or_format_artifact(stripped.replace("*", ""))
+    )
 
     code_like_identifier = _is_code_like_identifier(stripped)
     if code_like_identifier:
@@ -224,6 +274,8 @@ def classify_string(text: object) -> StringClassification:
         acronym_or_brand=acronym_or_brand,
         code_like_identifier=code_like_identifier,
         wildcard_or_format_artifact=wildcard_or_format_artifact,
+        script_comment=script_comment,
+        emote_markup=emote_markup,
         natural_language=natural_language,
         reasons=frozenset(reasons),
     )
@@ -252,11 +304,36 @@ def is_valid_entity_name(name: object, category: Optional[str] = None) -> bool:
     return False
 
 
-def should_skip_entity_source_text(text: object, metadata: Optional[dict] = None) -> bool:
-    """Return True when a TranslatableItem text should not be sent to the LLM."""
+def should_skip_entity_source_text(
+    text: object,
+    metadata: Optional[dict] = None,
+    known_names: Optional[FrozenSet[str]] = None,
+) -> bool:
+    """Return True when a TranslatableItem text should not be sent to the LLM.
+
+    Emote markup (``*gasp*``, ``*whispers* ...``) is player-facing prose and is
+    allowed through when the wildcard artifact rule is the only objection.
+    *known_names* (casefolded display names taken from the module's own
+    blueprints) rescues strings whose only objection is the code-like shape:
+    a CamelCase surname such as ``McGee`` or ``DeVir`` is legitimate when a
+    creature in the same module carries it as a name — the .utc side already
+    translates it unfiltered, so blocking the .git copy would desynchronize
+    the two. Engine tags stay blocked (``system_term`` is a separate reason),
+    and so do technical field types below. The glossary gates
+    (:func:`is_valid_entity_name`, :func:`classify_entity_candidate`)
+    deliberately stay strict — an asterisk-bearing string is never an entity
+    name, and neither is a rescued CamelCase one.
+    """
     cls = classify_string(text)
     if cls.blocked:
-        return True
+        blocking = cls.reasons & _BLOCKING_REASONS
+        rescued = bool(
+            known_names is not None
+            and blocking <= {"code_like_identifier"}
+            and cls.text.casefold() in known_names
+        )
+        if not rescued and not (cls.emote_markup and blocking <= {"wildcard_or_format_artifact"}):
+            return True
 
     meta_type = str((metadata or {}).get("type", ""))
     if _is_git_technical_type(meta_type) and cls.code_like_identifier and not cls.natural_language:
@@ -321,13 +398,6 @@ def classify_entity_candidate(
             "quest_hierarchy_label",
             technical_score,
             frozenset(reasons),
-        )
-
-    if lowered.startswith(("wp_", "dst_", "nw_")) or _RESREF_RE.fullmatch(text):
-        reasons.add("route_or_resref_label")
-        technical_score += 90
-        return CandidateFilterResult(
-            "drop", "route_or_resref_label", technical_score, frozenset(reasons)
         )
 
     if lowered in _GENERIC_PERSON_LABELS:

@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Dict, Iterator, Optional, Tuple
 
 
+def _is_word_char(ch: str) -> bool:
+    """Return True for characters that may not be split across a prefix boundary."""
+    return ch.isalnum() or ch == "_"
+
+
 class _TrieNode:
     __slots__ = ("children", "key_at_end", "value_at_end")
 
@@ -33,6 +38,15 @@ class PrefixAwareTranslationCache:
         self._data[key] = value
         _trie_insert(self._root, key, value)
 
+    def set_exact(self, key: str, value: str) -> None:
+        """Store an exact-match-only entry, excluded from prefix lookups.
+
+        Glossary seeds are terminology, not journal-chain bases, so they must
+        not seed longest-prefix matches; they live in the exact-match map only
+        and never enter the trie.
+        """
+        self._data[key] = value
+
     def __getitem__(self, key: str) -> str:
         return self._data[key]
 
@@ -60,13 +74,19 @@ class PrefixAwareTranslationCache:
         best_key: Optional[str] = None
         best_val: Optional[str] = None
         best_len = 0
-        for ch in sanitized:
+        last_index = len(sanitized) - 1
+        for i, ch in enumerate(sanitized):
             child = node.children.get(ch)
             if child is None:
                 break
             node = child
             if node.key_at_end is not None and len(node.key_at_end) >= min_len:
-                if len(node.key_at_end) > best_len:
+                # Reject a match that splits a word in the query, so cached
+                # "Moonstone" does not prefix-match "Moonstones".
+                splits_word = (
+                    i < last_index and _is_word_char(ch) and _is_word_char(sanitized[i + 1])
+                )
+                if not splits_word and len(node.key_at_end) > best_len:
                     best_key = node.key_at_end
                     best_val = node.value_at_end
                     best_len = len(node.key_at_end)

@@ -10,8 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from src.nwn_translator.file_handlers.erf_writer import ERFWriter, ERFWriterError
+from src.nwn_translator.file_handlers.erf_writer import (
+    ERFWriter,
+    ERFWriterError,
+    create_mod_from_directory,
+)
 from src.nwn_translator.file_handlers.erf_reader import ERFEntry, ERFReader, ERFHeader
+from src.nwn_translator.config import TRANSLATABLE_TYPES
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -234,6 +239,25 @@ class TestERFWriterRoundTrip:
         finally:
             tmp.unlink(missing_ok=True)
 
+    def test_resref_longer_than_16_chars_raises(self, tmp_path):
+        """A resref that does not fit the 16-byte field must fail the write."""
+        out = tmp_path / "long_name.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("a_very_long_resref", ".dlg", b"data")
+        with pytest.raises(ERFWriterError, match="limited to 16"):
+            writer.write()
+
+    def test_resref_exactly_16_chars_accepted(self, tmp_path):
+        """A 16-character resref is the maximum and must round-trip intact."""
+        out = tmp_path / "max_name.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("sixteen_chars_ab", ".dlg", b"data")
+        writer.write()
+
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert entries[0].res_ref == "sixteen_chars_ab"
+
     def test_empty_archive_writes(self, tmp_path):
         """An empty ERF archive with no resources must still write successfully."""
         out = tmp_path / "empty.mod"
@@ -289,3 +313,245 @@ class TestERFWriterRoundTrip:
         entry = ERFEntry("resource", 0, 6789, 0, 12)
 
         assert reader.detect_type_from_header(entry) == expected_ext
+
+
+# ---------------------------------------------------------------------------
+# Module description (Localized String List)
+# ---------------------------------------------------------------------------
+
+
+def _make_mod_with_description(path: Path) -> bytes:
+    """Write a .mod with a one-language description block; return the block."""
+    text = b"Module description text"
+    block = struct.pack("<II", 0, len(text)) + text
+    writer = ERFWriter(path)
+    writer.set_localized_strings(1, block, 0xDEADBEEF)
+    writer.add_resource("dialog", ".dlg", b"DLG DATA")
+    writer.write()
+    return block
+
+
+class TestModuleDescription:
+    """The Localized String List must survive the rewrite."""
+
+    def test_writer_emits_localized_block(self, tmp_path):
+        """Header fields and block placement follow the ERF v1.0 layout."""
+        out = tmp_path / "desc.mod"
+        block = _make_mod_with_description(out)
+
+        raw = out.read_bytes()
+        assert struct.unpack("<I", raw[8:12])[0] == 1  # LanguageCount
+        assert struct.unpack("<I", raw[12:16])[0] == len(block)  # LocalizedStringSize
+        assert struct.unpack("<I", raw[20:24])[0] == 160  # OffsetToLocalizedString
+        assert raw[160 : 160 + len(block)] == block
+        assert struct.unpack("<I", raw[24:28])[0] == 160 + len(block)  # OffsetToKeyList
+        assert struct.unpack("<I", raw[40:44])[0] == 0xDEADBEEF  # DescriptionStrRef
+
+    def test_reader_parses_description_fields(self, tmp_path):
+        """ERFReader exposes the new header fields and the raw block."""
+        out = tmp_path / "desc.mod"
+        block = _make_mod_with_description(out)
+
+        reader = ERFReader(out)
+        header = reader.read_header()
+        assert header.language_count == 1
+        assert header.description_strref == 0xDEADBEEF
+        assert reader.read_localized_strings_block() == block
+
+    def test_resources_intact_with_description(self, tmp_path):
+        """The shifted Key List still yields byte-identical resource data."""
+        out = tmp_path / "desc.mod"
+        _make_mod_with_description(out)
+
+        raw = out.read_bytes()
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.res_ref == "dialog"
+        assert raw[entry.offset : entry.offset + entry.size] == b"DLG DATA"
+
+    def test_create_mod_from_directory_carries_description(self, tmp_path):
+        """Repacking an extracted module preserves the description block."""
+        src = tmp_path / "source.mod"
+        block = _make_mod_with_description(src)
+
+        extract_dir = ERFReader(src).extract_all(tmp_path / "extract")
+        out = tmp_path / "repacked.mod"
+        create_mod_from_directory(extract_dir, out, original_mod=src)
+
+        reader = ERFReader(out)
+        header = reader.read_header()
+        assert header.language_count == 1
+        assert header.description_strref == 0xDEADBEEF
+        assert reader.read_localized_strings_block() == block
+
+    def test_no_description_header_unchanged(self, tmp_path):
+        """Without a carried description the header keeps the old defaults."""
+        out = tmp_path / "plain.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("dialog", ".dlg", b"DLG DATA")
+        writer.write()
+
+        raw = out.read_bytes()
+        assert struct.unpack("<I", raw[8:12])[0] == 0  # LanguageCount
+        assert struct.unpack("<I", raw[12:16])[0] == 0  # LocalizedStringSize
+        assert struct.unpack("<I", raw[20:24])[0] == 0  # OffsetToLocalizedString
+        assert struct.unpack("<I", raw[40:44])[0] == 0xFFFFFFFF  # DescriptionStrRef
+
+
+# ---------------------------------------------------------------------------
+# Atomic write
+# ---------------------------------------------------------------------------
+
+
+class TestAtomicWrite:
+    """A failed write must never destroy the previous artifact."""
+
+    def test_failed_write_keeps_previous_artifact(self, tmp_path, monkeypatch):
+        """An exception mid-write leaves the old .mod intact and readable."""
+        out = tmp_path / "result.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("old", ".dlg", b"OLD DATA")
+        writer.write()
+        old_bytes = out.read_bytes()
+
+        writer2 = ERFWriter(out)
+        writer2.add_resource("new", ".dlg", b"NEW DATA")
+
+        def broken_write(out_fp, src):
+            out_fp.write(b"PARTIAL")
+            raise OSError("disk full")
+
+        monkeypatch.setattr(ERFWriter, "_write_resource_data", staticmethod(broken_write))
+        with pytest.raises(OSError, match="disk full"):
+            writer2.write()
+        monkeypatch.undo()
+
+        assert out.read_bytes() == old_bytes
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert [e.res_ref for e in entries] == ["old"]
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_source_file_resized_during_write_aborts(self, tmp_path, monkeypatch):
+        """A source file changing size between stat and copy must abort cleanly."""
+        out = tmp_path / "result.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("old", ".dlg", b"OLD DATA")
+        writer.write()
+        old_bytes = out.read_bytes()
+
+        src = tmp_path / "racy.dlg"
+        src.write_bytes(b"A" * 100)
+        writer2 = ERFWriter(out)
+        writer2.add_file(src)
+
+        original = ERFWriter._write_resource_data
+
+        def shrink_then_write(out_fp, source):
+            if isinstance(source, Path):
+                source.write_bytes(b"A" * 10)
+            return original(out_fp, source)
+
+        monkeypatch.setattr(ERFWriter, "_write_resource_data", staticmethod(shrink_then_write))
+        with pytest.raises(ERFWriterError, match="changed size"):
+            writer2.write()
+        monkeypatch.undo()
+
+        assert out.read_bytes() == old_bytes
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_large_file_streams_in_chunks(self, tmp_path):
+        """A file larger than the copy chunk round-trips byte-identically."""
+        payload = bytes(range(256)) * (10 * 1024)  # 2.5 MiB, > two 1 MiB chunks
+        src = tmp_path / "big.dlg"
+        src.write_bytes(payload)
+
+        out = tmp_path / "big.mod"
+        writer = ERFWriter(out)
+        writer.add_file(src)
+        writer.write()
+
+        raw = out.read_bytes()
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert len(entries) == 1
+        entry = entries[0]
+        assert raw[entry.offset : entry.offset + entry.size] == payload
+
+    def test_write_replaces_existing_output(self, tmp_path):
+        """A successful write over an existing .mod leaves the new content."""
+        out = tmp_path / "result.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("old", ".dlg", b"OLD DATA")
+        writer.write()
+
+        writer2 = ERFWriter(out)
+        writer2.add_resource("new", ".dlg", b"NEW DATA")
+        writer2.write()
+
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert [e.res_ref for e in entries] == ["new"]
+        assert list(tmp_path.glob("*.tmp")) == []
+
+
+# ---------------------------------------------------------------------------
+# Canonical resource type-id table
+# ---------------------------------------------------------------------------
+
+# Canonical Aurora IDs (nwn.h / xoreos) for the game resource types we touch.
+# These were historically wrong (.uts duplicated, .utt/.utd/.utm absent).
+_CANONICAL_IDS = {
+    2010: ".ncs",
+    2012: ".are",
+    2014: ".ifo",
+    2023: ".git",
+    2025: ".uti",
+    2027: ".utc",
+    2029: ".dlg",
+    2032: ".utt",
+    2035: ".uts",
+    2040: ".ute",
+    2042: ".utd",
+    2044: ".utp",
+    2051: ".utm",
+    2056: ".jrl",
+}
+
+
+class TestCanonicalResourceTypes:
+    """C-spec: ERFReader.RESOURCE_TYPES must match canonical Aurora IDs."""
+
+    @pytest.mark.parametrize("res_id, ext", sorted(_CANONICAL_IDS.items()))
+    def test_reader_table_matches_canonical(self, res_id, ext):
+        assert ERFReader.RESOURCE_TYPES.get(res_id) == ext
+
+    def test_no_duplicate_extension_in_canonical_range(self):
+        """Within the 20xx range each extension maps to exactly one ID."""
+        canonical = {rid: ext for rid, ext in ERFReader.RESOURCE_TYPES.items() if rid >= 2000}
+        seen: dict = {}
+        for rid, ext in canonical.items():
+            assert ext not in seen, f"{ext} duplicated: {seen.get(ext)} and {rid}"
+            seen[ext] = rid
+
+    @pytest.mark.parametrize("ext", sorted(TRANSLATABLE_TYPES))
+    def test_translatable_ext_round_trips_to_canonical_id(self, ext):
+        """Each translatable ext inverts to a 20xx ID that maps back to the ext."""
+        res_id = ERFWriter.RESOURCE_TYPE_IDS.get(ext)
+        assert res_id is not None and res_id >= 2000
+        assert ERFReader.RESOURCE_TYPES[res_id] == ext
+
+    @pytest.mark.parametrize(
+        "signature, ext, expected_id",
+        [
+            (b"UTT ", ".utt", 2032),
+            (b"UTD ", ".utd", 2042),
+            (b"UTM ", ".utm", 2051),
+        ],
+    )
+    def test_writer_emits_canonical_id_without_overrides(self, signature, ext, expected_id):
+        """Writing a translatable resource without overrides yields the canonical ID."""
+        entries = _write_and_read({f"blueprint{ext}": signature + b"V3.2" + b"\x00" * 8})
+        assert entries[0].res_type == expected_id

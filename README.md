@@ -119,7 +119,7 @@ docker compose -f docker/docker-compose.yml up --build
 | `NWN_WEB_HOST` | Host web-сервера | `127.0.0.1` |
 | `NWN_WEB_PORT` | Port web-сервера | `8000` |
 | `NWN_WEB_RELOAD` | Auto-reload backend в dev-режиме | выключено |
-| `NWN_WEB_CORS_ORIGINS` | Разрешённые CORS origins через запятую | `*` |
+| `NWN_WEB_CORS_ORIGINS` | Разрешённые CORS origins через запятую (или `*`) | пусто (cross-origin запрещён) |
 | `NWN_WEB_STATIC_DIR` | Путь к production static files SPA | не задано |
 | `NWN_WEB_TASK_ROOT` | Корневая директория задач web UI | `workspace/web` |
 | `NWN_WEB_DB_PATH` | Путь к SQLite базе задач | `workspace/web/translations.db` |
@@ -135,6 +135,18 @@ NWN_WEB_PORT=8000
 ```
 
 Модель задаётся через параметры web/API или `TranslationConfig(model=...)`; отдельная переменная `NWN_TRANSLATE_MODEL` в актуальном коде не читается.
+
+### API-ключ и BYOK
+
+Продукт работает по модели **BYOK (Bring Your Own Key)**: в web UI каждый пользователь вводит
+свой API-ключ, и `POST /api/translate` всегда требует ключ от клиента. Серверный
+`NWN_TRANSLATE_API_KEY` сервер **не раздаёт** браузеру.
+
+Исключение — локальный запуск для себя: при старте `python -m nwn_translator.web` с биндом на
+петлю (`NWN_WEB_HOST` по умолчанию `127.0.0.1`) включается локальный режим, и `/api/config`
+отдаёт ключ из `.env` для автозаполнения поля в UI. Любой нелокальный запуск (бинд на
+`0.0.0.0`, Docker, инстанс за nginx) этот режим не активирует, поэтому ключ из `.env` наружу не
+попадает.
 
 ## Этапы пайплайна и диагностика
 

@@ -14,6 +14,10 @@ from nwn_translator.file_handlers.ncs_parser import (
     NCSParseError,
     OP_ACTION,
     OP_CONST,
+    OP_CPDOWNSP,
+    OP_CPTOPSP,
+    OP_CPDOWNBP,
+    OP_CPTOPBP,
     OP_JMP,
     OP_JSR,
     OP_JZ,
@@ -21,6 +25,7 @@ from nwn_translator.file_handlers.ncs_parser import (
     OP_RETN,
     OP_MOVSP,
     OP_EQUAL,
+    OP_NEQUAL,
     TYPE_INT,
     TYPE_STRING,
     parse_ncs,
@@ -37,7 +42,6 @@ from nwn_translator.extractors.ncs_extractor import (
     _is_definitely_not_translatable,
     _is_likely_translatable,
     _contains_code_identifiers,
-    _classify_from_source,
     ncs_hard_veto_reason,
 )
 from nwn_translator.injectors.ncs_injector import NcsInjector
@@ -208,6 +212,77 @@ class TestNCSParser:
         assert len(strings) == 2
         assert strings[0].string_value == "Hello"
         assert strings[1].string_value == "World"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Opcode argument sizes (C1 regression)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _cp_offset_size(opcode: int, offset: int, size: int) -> bytes:
+    """CPDOWNSP/CPTOPSP/CPDOWNBP/CPTOPBP: int32 stack offset + uint16 size (6 arg bytes)."""
+    return struct.pack(">BB", opcode, 0x01) + struct.pack(">i", offset) + struct.pack(">H", size)
+
+
+def _eq_struct(opcode: int, size: int) -> bytes:
+    """EQUAL/NEQUAL comparing two structures (type 0x24): trailing uint16 size."""
+    return struct.pack(">BB", opcode, 0x24) + struct.pack(">H", size)
+
+
+class TestNCSOpcodeArgSizes:
+    """C1: copy opcodes carry int32+uint16 (6 bytes); struct compares carry +2."""
+
+    def test_cpdownsp_canonical_sequence(self):
+        """``01 01 FF FF FF FC 00 04`` is one CPDOWNSP, not CPDOWNSP + garbage."""
+        data = _header() + bytes.fromhex("0101FFFFFFFC0004")
+        ncs = parse_ncs_bytes(data)
+        assert len(ncs.instructions) == 1
+        instr = ncs.instructions[0]
+        assert instr.opcode == OP_CPDOWNSP
+        assert instr.size == 8  # 2 header + 6 args
+        assert instr.offset == 8
+
+    @pytest.mark.parametrize(
+        "opcode",
+        [OP_CPDOWNSP, OP_CPTOPSP, OP_CPDOWNBP, OP_CPTOPBP],
+    )
+    def test_copy_opcodes_consume_six_arg_bytes(self, opcode):
+        """Each copy opcode must consume 8 total bytes so the next instr aligns."""
+        data = _header() + _cp_offset_size(opcode, -4, 4) + _retn()
+        ncs = parse_ncs_bytes(data)
+        assert len(ncs.instructions) == 2
+        assert ncs.instructions[0].opcode == opcode
+        assert ncs.instructions[0].size == 8
+        assert ncs.instructions[1].opcode == OP_RETN
+        assert ncs.instructions[1].offset == 16
+
+    def test_assignment_then_string_const_offset(self):
+        """A CPDOWNSP assignment followed by a string const: string at right offset."""
+        data = _header() + _cp_offset_size(OP_CPDOWNSP, -4, 4) + _consts("Ow.") + _retn()
+        ncs = parse_ncs_bytes(data)
+        strings = ncs.string_constants
+        assert len(strings) == 1
+        assert strings[0].string_value == "Ow."
+        assert strings[0].offset == 16  # 8 header + 8-byte CPDOWNSP
+
+    @pytest.mark.parametrize("opcode", [OP_EQUAL, OP_NEQUAL])
+    def test_struct_compare_carries_trailing_size(self, opcode):
+        """EQUAL/NEQUAL with type 0x24 consume a uint16 size; next instr aligns."""
+        data = _header() + _eq_struct(opcode, 8) + _retn()
+        ncs = parse_ncs_bytes(data)
+        assert len(ncs.instructions) == 2
+        assert ncs.instructions[0].opcode == opcode
+        assert ncs.instructions[0].size == 4  # 2 header + 2 args
+        assert ncs.instructions[1].opcode == OP_RETN
+        assert ncs.instructions[1].offset == 12
+
+    def test_non_struct_equal_has_no_args(self):
+        """EQUAL on non-struct types (e.g. int 0x03) still carries zero arg bytes."""
+        data = _header() + struct.pack(">BB", OP_EQUAL, TYPE_INT) + _retn()
+        ncs = parse_ncs_bytes(data)
+        assert len(ncs.instructions) == 2
+        assert ncs.instructions[0].size == 2
+        assert ncs.instructions[1].opcode == OP_RETN
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -428,6 +503,59 @@ class TestNCSPatcher:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Patcher: NWN:EE size field (C2 regression)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _ee_file(body: bytes) -> bytes:
+    """Wrap *body* with the NCS banner + NWN:EE 0x42 size preamble."""
+    total = len(NCS_HEADER) + 5 + len(body)
+    return NCS_HEADER + struct.pack(">BI", 0x42, total) + body
+
+
+def _read_size_field(data: bytes) -> int:
+    """Read the BE uint32 ``T`` size field at offset 9."""
+    return struct.unpack_from(">I", data, 9)[0]
+
+
+class TestNCSPatcherSizeField:
+    """C2: the NWN:EE preamble size field ``T`` must track the patched length."""
+
+    def test_lengthening_updates_size_field(self, tmp_path):
+        path = tmp_path / "ee.ncs"
+        path.write_bytes(_ee_file(_consts("Hi") + _retn()))
+        n = patch_ncs_string_replacements(path, [(13, "Hi", "Hello there")], "cp1252")
+        assert n == 1
+        out = path.read_bytes()
+        assert _read_size_field(out) == len(out)
+
+    def test_shortening_updates_size_field(self, tmp_path):
+        path = tmp_path / "ee.ncs"
+        path.write_bytes(_ee_file(_consts("Hello there") + _retn()))
+        patch_ncs_string_replacements(path, [(13, "Hello there", "Hi")], "cp1252")
+        out = path.read_bytes()
+        assert _read_size_field(out) == len(out)
+
+    def test_same_length_leaves_size_field_untouched(self, tmp_path):
+        data = _ee_file(_consts("Hi") + _retn())
+        path = tmp_path / "ee.ncs"
+        path.write_bytes(data)
+        before = _read_size_field(data)
+        patch_ncs_string_replacements(path, [(13, "Hi", "Yo")], "cp1252")
+        out = path.read_bytes()
+        assert _read_size_field(out) == before == len(out)
+
+    def test_non_ee_script_size_offset_not_clobbered(self, tmp_path):
+        """No 0x42 preamble: byte 9 is real instruction data — leave it alone."""
+        path = tmp_path / "old.ncs"
+        path.write_bytes(NCS_HEADER + _consts("Hi") + _retn())
+        patch_ncs_string_replacements(path, [(8, "Hi", "Hello there")], "cp1252")
+        out = path.read_bytes()
+        ncs = parse_ncs_bytes(out)  # must still reparse cleanly
+        assert [i.string_value for i in ncs.string_constants] == ["Hello there"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # String filter tests
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -528,22 +656,9 @@ class TestStringFilter:
         )
         assert ncs_hard_veto_reason("Welcome, adventurer!") is None
 
-    def test_classify_from_source_player(self):
-        nss = 'SpeakString("Hello, traveler!");'
-        assert _classify_from_source("Hello, traveler!", nss) == "player"
-
-    def test_classify_from_source_debug(self):
-        nss = 'PrintString("nMin = " + IntToString(nMin));'
-        assert _classify_from_source("nMin = ", nss) == "debug"
-
-    def test_classify_from_source_unknown(self):
-        nss = 'string sTag = "sometag";'
-        assert _classify_from_source("sometag", nss) is None
-
-    def test_classify_from_source_parens_in_string(self):
-        """Regex must handle parentheses inside the string literal."""
-        nss = 'SendMessageToPC(oPC, "Hello (Player)!");'
-        assert _classify_from_source("Hello (Player)!", nss) == "player"
+    # Source-based classification now lives in nss_index; see
+    # tests/test_nss_index.py for the equivalents of the old
+    # _classify_from_source cases (player / debug / unknown / parens).
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -604,7 +719,7 @@ class TestNcsExtractor:
             "test.ncs",
             _consts("Ow."),
             int_equal,
-            _action(39, 1),  # SpeakString
+            _action(39, 1),  # ActionSpeakString
             _retn(),
         )
         ncs = parse_ncs(path)
@@ -614,7 +729,7 @@ class TestNcsExtractor:
         meta = result.items[0].metadata
         bc = meta["bytecode_context"]
         assert bc["compare_nearby"] is False
-        assert bc["next_action_name"] == "SpeakString"
+        assert bc["next_action_name"] == "ActionSpeakString"
         assert meta["confidence"] == "high"
 
     def test_skip_internal_string(self, tmp_path):
@@ -953,3 +1068,206 @@ class TestNCSIntegration:
         ]  # after the main block
         assert len(sub_consts) == 1
         assert jsr.offset + jsr.jump_offset == sub_consts[0].offset
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Proven-player filtering: emotes and one-word barks (routine tables verified
+# against the game's nwscript.nss, where routine id == prototype index)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestRoutineTables:
+    """Pin the key ACTION routine ids so a typo cannot silently reclassify."""
+
+    def test_player_facing_ids(self):
+        from nwn_translator.extractors.ncs_extractor import PLAYER_FACING_ACTIONS
+
+        assert {39, 221, 284, 374, 526, 830, 837, 901} == PLAYER_FACING_ACTIONS
+
+    def test_internal_ids_cover_local_variable_family(self):
+        from nwn_translator.extractors.ncs_extractor import NON_PLAYER_ACTIONS
+
+        # GetLocal* 51-54, SetLocal* 55-58: the wrong old ids (13-17, 29-33)
+        # made the classifier scan past variable reads into a later speech
+        # call, flagging var names as player-facing.
+        assert {51, 52, 53, 54, 55, 56, 57, 58} <= NON_PLAYER_ACTIONS
+        assert 417 in NON_PLAYER_ACTIONS  # SpeakOneLinerConversation: resref arg
+
+    def test_wrong_legacy_ids_gone(self):
+        from nwn_translator.extractors.ncs_extractor import (
+            NON_PLAYER_ACTIONS,
+            PLAYER_FACING_ACTIONS,
+        )
+
+        # 468 is EffectBlindness, 525 is the StrRef variant with no string arg,
+        # 761 is GetStoreMaxBuyPrice — none of them display a string.
+        assert not {468, 525, 761} & PLAYER_FACING_ACTIONS
+        assert not {13, 14, 15, 16, 17, 29, 32, 33} & NON_PLAYER_ACTIONS
+
+
+class TestProvenPlayerFiltering:
+    """M-F2: soft filter rules are waived for provably spoken strings."""
+
+    def _extract(self, tmp_path, *parts):
+        path = _write_ncs(tmp_path, "test.ncs", *parts)
+        ncs = parse_ncs(path)
+        return NcsExtractor().extract(path, {"_ncs_file": ncs})
+
+    def test_emote_with_speakstring_extracted(self, tmp_path):
+        result = self._extract(tmp_path, _consts("*sniff*"), _action(221, 2), _retn())
+        assert [it.text for it in result.items] == ["*sniff*"]
+        assert result.items[0].metadata["proven_player"] is True
+
+    def test_emote_without_context_skipped(self, tmp_path):
+        result = self._extract(tmp_path, _consts("*sniff*"), _retn())
+        assert result.items == []
+
+    def test_one_word_bark_with_speakstring_extracted(self, tmp_path):
+        result = self._extract(tmp_path, _consts("Goodbye"), _action(221, 2), _retn())
+        assert [it.text for it in result.items] == ["Goodbye"]
+
+    def test_one_word_in_internal_context_skipped(self, tmp_path):
+        result = self._extract(tmp_path, _consts("Goodbye"), _action(53, 2), _retn())
+        assert result.items == []  # GetLocalString consumes a var name
+
+    def test_letterless_fragment_skipped_even_when_spoken(self, tmp_path):
+        # Concatenation operand: SpeakString("..." + IntToString(n) + "+")
+        result = self._extract(tmp_path, _consts("+"), _action(221, 2), _retn())
+        assert result.items == []
+
+    def test_allcaps_shout_with_speakstring_extracted(self, tmp_path):
+        result = self._extract(
+            tmp_path, _consts("NOBODY MOVES AN INCH!!!"), _action(221, 2), _retn()
+        )
+        assert [it.text for it in result.items] == ["NOBODY MOVES AN INCH!!!"]
+
+    def test_allcaps_shout_without_context_skipped(self, tmp_path):
+        result = self._extract(tmp_path, _consts("NOBODY MOVES AN INCH!!!"), _retn())
+        assert result.items == []
+
+    def test_var_name_before_distant_speech_not_rescued(self, tmp_path):
+        """A var name scanned past GetLocalInt (51) into a later SpeakString
+        classifies as player, but the hard shape rules still reject it — only
+        the genuine speech line is extracted."""
+        result = self._extract(
+            tmp_path,
+            _consts("X3_HORSE_NOMOUNT"),
+            _action(51, 2),
+            _consts("Hello there, friend."),
+            _action(221, 2),
+            _retn(),
+        )
+        assert [it.text for it in result.items] == ["Hello there, friend."]
+
+    def test_speech_past_intermediate_internal_action_extracted(self, tmp_path):
+        """Regression (ADwR do_bj_knock): speech wrapped in DelayCommand has no
+        adjacent consumer — the DelayCommand call intervenes before a var read.
+        The non-adjacent GetLocalInt must not bury the line; it goes to the
+        gate. The var name itself, adjacent to its GetLocalInt, is dropped."""
+        result = self._extract(
+            tmp_path,
+            _consts("What's she in for?"),
+            _action(7, 2),  # DelayCommand (unknown routine) intervenes
+            _consts("BJArrested"),
+            _action(51, 2),  # GetLocalInt: adjacent consumer of the var name
+            _retn(),
+        )
+        assert [it.text for it in result.items] == ["What's she in for?"]
+        assert result.items[0].metadata["needs_llm_gate"] is True
+
+    def test_compare_before_speech_still_internal(self, tmp_path):
+        """A string-typed compare before any speech ACTION marks a dispatch
+        key; a later SpeakString in the window must not resurrect it."""
+        str_equal = struct.pack(">BB", OP_EQUAL, TYPE_STRING)
+        result = self._extract(
+            tmp_path,
+            _consts("animal empathy"),
+            str_equal,
+            _action(221, 2),
+            _retn(),
+        )
+        assert result.items == []
+
+    def test_sentence_near_internal_consumer_goes_to_gate(self, tmp_path):
+        """Regression (Almraiven trainer barks): a sentence wrapped in
+        AssignCommand reaches its speech call beyond the scan window; the
+        non-adjacent internal consumer must route it to the LLM gate, not
+        drop it."""
+        result = self._extract(
+            tmp_path,
+            _consts("Excellent form, Raywen!"),
+            _action(6, 2),  # AssignCommand (unknown routine) intervenes
+            _action(51, 2),  # GetLocalInt farther on — weak evidence only
+            _retn(),
+        )
+        assert [it.text for it in result.items] == ["Excellent form, Raywen!"]
+        meta = result.items[0].metadata
+        assert meta["needs_llm_gate"] is True
+        assert meta["confidence"] == "low"
+        assert meta["proven_player"] is False
+
+    def test_sentence_consumed_by_adjacent_internal_call_skipped(self, tmp_path):
+        """An internal ACTION right after the push is the consumer: even a
+        sentence-shaped string is dropped (PrintString debug, stored values)."""
+        result = self._extract(
+            tmp_path,
+            _consts("Debug trace: entering combat round."),
+            _action(1, 1),  # PrintString adjacent — definitely the consumer
+            _retn(),
+        )
+        assert result.items == []
+
+    def test_bare_lowercase_word_not_rescued_by_nearby_speech(self, tmp_path):
+        """Var names like 'triggered'/'caravanrun' stay rejected even when a
+        speech ACTION appears in the scan window: the anywhere-in-window proof
+        is too weak for a bare all-lowercase word."""
+        for word in ("triggered", "caravanrun"):
+            result = self._extract(tmp_path, _consts(word), _action(221, 2), _retn())
+            assert result.items == [], word
+
+    def test_floating_text_is_player_facing(self, tmp_path):
+        """FloatingTextStringOnCreature is 526; the old table had 468/525."""
+        result = self._extract(tmp_path, _consts("Ouch!"), _action(526, 2), _retn())
+        assert len(result.items) == 1
+        assert result.items[0].metadata["confidence"] == "high"
+        assert result.items[0].metadata["ncs_hint"] == "FloatingTextStringOnCreature"
+
+    def test_identifier_shapes_stay_fatal_even_when_spoken(self, tmp_path):
+        for bad in (
+            "nw_c2_default9",
+            "my_var_name",
+            "NW_FLAG_HEARTBEAT",
+            "BJArrested",
+            "oAssignedHorse",
+        ):
+            result = self._extract(tmp_path, _consts(bad), _action(221, 2), _retn())
+            assert result.items == [], bad
+
+
+class TestProvenPlayerVeto:
+    """The translation-time hard veto honours the proven-player flag."""
+
+    def test_one_word_bark_vetoed_only_without_proof(self):
+        assert ncs_hard_veto_reason("Goodbye") == "resref_like_identifier"
+        assert ncs_hard_veto_reason("Goodbye", proven_player=True) is None
+        assert ncs_hard_veto_reason("Farewell", proven_player=True) is None
+        # Bare lowercase words stay vetoed: identifiers, not barks.
+        assert ncs_hard_veto_reason("triggered", proven_player=True) is not None
+
+    def test_identifiers_stay_vetoed_despite_proof(self):
+        assert ncs_hard_veto_reason("NRB1_Guard", proven_player=True) is not None
+        assert ncs_hard_veto_reason("nw_foo", proven_player=True) == "known_internal_prefix"
+        assert ncs_hard_veto_reason("X3_HORSE_NOMOUNT", proven_player=True) is not None
+
+    def test_emote_passes_veto(self):
+        assert ncs_hard_veto_reason("*sniff*") is None
+
+    def test_filter_split_unit(self):
+        assert _is_definitely_not_translatable("*sniff*")
+        assert not _is_definitely_not_translatable("*sniff*", proven_player=True)
+        assert _is_definitely_not_translatable("Goodbye")
+        assert not _is_definitely_not_translatable("Goodbye", proven_player=True)
+        # Hard rules survive the proven-player waiver.
+        assert _is_definitely_not_translatable("+", proven_player=True)
+        assert _is_definitely_not_translatable("3.14", proven_player=True)
+        assert _is_definitely_not_translatable("nMin = ", proven_player=True)

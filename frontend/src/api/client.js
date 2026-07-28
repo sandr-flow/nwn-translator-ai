@@ -8,13 +8,28 @@ export function apiUrl(path) {
 }
 
 /**
+ * UUID v4. crypto.randomUUID is only exposed in secure contexts (HTTPS or
+ * localhost); self-hosted UIs opened over plain HTTP from a LAN address fall
+ * back to building one from crypto.getRandomValues, which has no such limit.
+ */
+export function uuid4() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
  * Get or create a persistent anonymous client token (UUID v4 in localStorage).
  */
 export function getClientToken() {
   const key = "nwn_client_token";
   let token = localStorage.getItem(key);
   if (!token) {
-    token = crypto.randomUUID();
+    token = uuid4();
     localStorage.setItem(key, token);
   }
   return token;
@@ -94,8 +109,8 @@ export async function fetchTranslations(taskId) {
   return fetchJson(`/api/tasks/${taskId}/translations`);
 }
 
-export async function postRebuild(taskId, translations, targetLang) {
-  const payload = { translations };
+export async function postRebuild(taskId, edits, targetLang) {
+  const payload = { edits };
   if (targetLang != null && String(targetLang).trim()) {
     payload.target_lang = String(targetLang).trim();
   }

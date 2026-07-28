@@ -31,12 +31,12 @@ from ..ai_providers import (
 from .deps import web_task_manager
 from .database import (
     delete_task_row,
-    get_ncs_translation_map_by_task,
+    get_item_translation_map_by_task,
     get_task_row,
-    get_translation_map_by_task,
     get_translations_by_task,
     list_tasks_by_token,
     update_task_row,
+    update_translation_text,
 )
 from .schemas import (
     ConfigResponse,
@@ -135,8 +135,15 @@ def _client_ip(request: Request) -> str:
 
 
 def _client_token(request: Request) -> str:
-    """Extract the anonymous client token from ``X-Client-Token`` header."""
-    return (request.headers.get("x-client-token") or "").strip()
+    """Extract the anonymous client token from ``X-Client-Token`` header.
+
+    Falls back to the ``client_token`` query parameter because browser
+    ``EventSource`` (the SSE progress route) cannot send custom headers.
+    """
+    header = (request.headers.get("x-client-token") or "").strip()
+    if header:
+        return header
+    return (request.query_params.get("client_token") or "").strip()
 
 
 @router.post("/translate", response_model=TranslateResponse)
@@ -175,7 +182,7 @@ async def start_translate(
 
     _cp1251_lang_error = (
         "Недоступно для модулей NWN: строки записываются в однобайтовую кодировку Windows "
-        "(зависит от языка); китайский, японский и корейский в игре не отображаются. "
+        "(зависит от языка); китайский, японский, корейский и турецкий в игре не отображаются. "
         "Выберите другой язык."
     )
     tl_norm = target_lang.strip()
@@ -212,10 +219,22 @@ async def start_translate(
         source_lang=source_lang.strip() or "auto",
         model=model_slug,
     )
+    # Claim the one-job-per-IP slot atomically before the (slow) upload; the
+    # check at the top of the handler is only a fast path and is racy on its own.
+    if not tm.try_register_active(ip, task.task_id):
+        tm.discard_task(task.task_id)
+        raise HTTPException(
+            status_code=429,
+            detail="Уже выполняется перевод с вашего IP. Дождитесь завершения.",
+        )
     base = tm.workspace_for_task(task.task_id)
     input_path = base / Path(file.filename).name
-    await _stream_upload_to_file(file, input_path, MAX_UPLOAD_BYTES)
-    tm.register_active(ip, task.task_id)
+    try:
+        await _stream_upload_to_file(file, input_path, MAX_UPLOAD_BYTES)
+    except BaseException:
+        tm.release_active(ip, task.task_id)
+        tm.discard_task(task.task_id)
+        raise
 
     mc = (
         max(1, int(max_concurrent_requests))
@@ -287,16 +306,37 @@ def _task_or_404(task_id: str, tm: TaskManager) -> TranslationTask:
     return task
 
 
+def require_task_owner(
+    task_id: str,
+    request: Request,
+    tm: TaskManager = Depends(web_task_manager),
+) -> TranslationTask:
+    """Resolve a task and enforce that the caller owns it.
+
+    When the task has an owner (non-empty ``client_token``), the request's
+    ``X-Client-Token`` must match it, otherwise access is denied. Tasks without
+    an owner stay accessible (legacy rows / tokenless creation).
+
+    Raises:
+        HTTPException: 400/404 from :func:`_task_or_404`; 403 if the token does
+        not match the task owner.
+    """
+    task = _task_or_404(task_id, tm)
+    owner = (task.client_token or "").strip()
+    if owner and _client_token(request) != owner:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
+    return task
+
+
 @router.get("/tasks/{task_id}/status", response_model=TaskStatusResponse)
 async def task_status(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> TaskStatusResponse:
     """Return a JSON snapshot of the current task state."""
-    task = _task_or_404(task_id, tm)
     result_name = task.result_path.name if task.result_path else None
     target_lang = task.target_lang
     if not target_lang:
-        row = get_task_row(task_id)
+        row = get_task_row(task.task_id)
         if row:
             target_lang = row.get("target_lang")
     return TaskStatusResponse(
@@ -314,10 +354,9 @@ async def task_status(
 
 @router.get("/tasks/{task_id}/progress")
 async def task_progress(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> StreamingResponse:
     """Server-Sent Events stream of progress updates."""
-    task = _task_or_404(task_id, tm)
 
     async def event_stream():
         # Send current snapshot first
@@ -380,10 +419,9 @@ async def task_progress(
 
 @router.get("/tasks/{task_id}/download")
 async def download_result(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> FileResponse:
     """Download the translated module file for a completed task."""
-    task = _task_or_404(task_id, tm)
     if task.status != "completed" or not task.result_path or not task.result_path.is_file():
         raise HTTPException(status_code=400, detail="Файл результата ещё не готов")
     return FileResponse(
@@ -395,11 +433,10 @@ async def download_result(
 
 @router.get("/tasks/{task_id}/log")
 async def download_log(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> StreamingResponse:
     """Download the translation log as JSONL (generated from SQLite)."""
-    _task_or_404(task_id, tm)
-    rows = get_translations_by_task(task_id)
+    rows = get_translations_by_task(task.task_id)
     if not rows:
         raise HTTPException(status_code=404, detail="Лог недоступен")
 
@@ -416,12 +453,10 @@ async def download_log(
 
 @router.get("/tasks/{task_id}/translations", response_model=TranslationsResponse)
 async def get_translations(
-    task_id: str, tm: TaskManager = Depends(web_task_manager)
+    task: TranslationTask = Depends(require_task_owner),
 ) -> TranslationsResponse:
     """Return structured translation data grouped by source file for the editor."""
-    _task_or_404(task_id, tm)  # validate exists
-
-    rows = get_translations_by_task(task_id)
+    rows = get_translations_by_task(task.task_id)
     if not rows:
         return TranslationsResponse(files=[])
 
@@ -440,7 +475,13 @@ async def get_translations(
             seen[filename] = set()
         if original not in seen[filename]:
             seen[filename].add(original)
-            groups[filename].append(TranslationItem(original=original, translated=translated))
+            groups[filename].append(
+                TranslationItem(
+                    original=original,
+                    translated=translated,
+                    item_id=entry.get("item_id") or "",
+                )
+            )
             if original not in text_to_files:
                 text_to_files[original] = []
             text_to_files[original].append(filename)
@@ -459,10 +500,9 @@ async def get_translations(
 async def rebuild_task(
     task_id: str,
     body: RebuildRequest,
-    tm: TaskManager = Depends(web_task_manager),
+    task: TranslationTask = Depends(require_task_owner),
 ) -> RebuildResponse:
     """Rebuild the .mod file with edited translations (no LLM calls)."""
-    task = _task_or_404(task_id, tm)
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="Задача ещё не завершена")
     if not task.extract_dir or not Path(task.extract_dir).is_dir():
@@ -471,20 +511,11 @@ async def rebuild_task(
             detail="Извлечённые файлы модуля недоступны (возможно, были очищены)",
         )
 
-    # Build full translation map from SQLite, then apply user overrides
-    all_translations = get_translation_map_by_task(task_id)
-    ncs_by_item_id = get_ncs_translation_map_by_task(task_id)
-    all_translations.update(body.translations)
-
-    if body.translations:
-        for row in get_translations_by_task(task_id):
-            iid = row.get("item_id")
-            file = row.get("file") or ""
-            if not iid or not file.lower().endswith(".ncs"):
-                continue
-            orig = row.get("original")
-            if orig in body.translations:
-                ncs_by_item_id[iid] = body.translations[orig]
+    # Build the per-(file, item_id) translation map from SQLite, then apply the
+    # user's edits on top — each edit targets exactly one (file, item_id).
+    translations_by_item_id = get_item_translation_map_by_task(task_id)
+    for edit in body.edits:
+        translations_by_item_id.setdefault(edit.file, {})[edit.item_id] = edit.translated
 
     extract_dir = Path(task.extract_dir)
     output_path = task.result_path
@@ -502,15 +533,19 @@ async def rebuild_task(
         await asyncio.to_thread(
             rebuild_module,
             extract_dir,
-            all_translations,
+            translations_by_item_id,
             output_path,
             original_mod_path=original_mod_path,
             target_lang=rebuild_target_lang,
-            ncs_translations_by_item_id=ncs_by_item_id,
         )
     except Exception as e:
         logger.exception("Rebuild failed for task %s", task.task_id)
         raise HTTPException(status_code=500, detail=f"Ошибка сборки: {e}")
+
+    # Persist the edits so a later editor session reads the current values and a
+    # subsequent no-edit rebuild does not revert them with a stale snapshot.
+    for edit in body.edits:
+        update_translation_text(task_id, edit.file, edit.item_id, edit.translated)
 
     import time
 
@@ -551,27 +586,15 @@ async def task_history(request: Request) -> TaskHistoryResponse:
 
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(
-    task_id: str,
-    request: Request,
-    tm: TaskManager = Depends(web_task_manager),
+    task: TranslationTask = Depends(require_task_owner),
 ) -> dict:
     """Signal a running task to stop at the next safe checkpoint.
 
     Progress is lost — already-paid-for in-flight API calls finish but their
     results are discarded. Only the owning client can cancel.
     """
-    if not _UUID_RE.match(task_id):
-        raise HTTPException(status_code=400, detail="Неверный формат task_id")
-    token = _client_token(request)
-    row = get_task_row(task_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    if token and row.get("client_token") != token:
-        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
-
-    task = tm.get(task_id)
-    if task is None or task.is_finished():
-        return {"ok": True, "status": row.get("status")}
+    if task.is_finished():
+        return {"ok": True, "status": task.status}
 
     task.request_cancel()
     return {"ok": True, "status": "cancelling"}
@@ -580,19 +603,10 @@ async def cancel_task(
 @router.delete("/tasks/{task_id}")
 async def delete_task(
     task_id: str,
-    request: Request,
     tm: TaskManager = Depends(web_task_manager),
+    _owner: TranslationTask = Depends(require_task_owner),
 ) -> dict:
     """Delete a task from history. Only the owning client can delete."""
-    if not _UUID_RE.match(task_id):
-        raise HTTPException(status_code=400, detail="Неверный формат task_id")
-    token = _client_token(request)
-    row = get_task_row(task_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    if token and row.get("client_token") != token:
-        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
-
     # Remove workspace from disk
     workspace = tm.workspace_root / task_id
     if workspace.is_dir():
@@ -659,8 +673,16 @@ async def list_models() -> ModelsResponse:
 
 @router.get("/config", response_model=ConfigResponse)
 async def get_config() -> ConfigResponse:
-    """Return server-side defaults: API key from env (if set) and default model."""
-    api_key = os.environ.get("NWN_TRANSLATE_API_KEY", "").strip() or None
+    """Return server-side defaults for the UI: default model and, only on a local
+    run, the server's ``.env`` API key for autofill.
+
+    The key is exposed solely in local mode (the process bound to loopback by
+    ``python -m nwn_translator.web``). A deployed/exposed instance never hands it
+    out — this is a BYOK product, so remote users supply their own key.
+    """
+    api_key = None
+    if os.environ.get("NWN_WEB_LOCAL_MODE") == "1":
+        api_key = os.environ.get("NWN_TRANSLATE_API_KEY", "").strip() or None
     return ConfigResponse(
         api_key=api_key,
         default_model=OpenRouterProvider.DEFAULT_MODEL,

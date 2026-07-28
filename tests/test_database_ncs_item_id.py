@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -96,3 +97,69 @@ def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyP
     cur = db.get_db().execute("PRAGMA table_info(translations)")
     cols = {row[1] for row in cur.fetchall()}
     assert "item_id" in cols
+
+
+def test_concurrent_access_is_serialized(isolated_db: None) -> None:
+    """Many threads reading/writing the shared connection must not raise or scramble.
+
+    Regression: without a lock around execute/commit (and with ``row_factory`` on the
+    shared connection), concurrent calls raised ``InterfaceError`` / ``OperationalError``
+    ("cannot start a transaction within a transaction") and could mix up rows.
+    """
+    errors: list[str] = []
+
+    def worker(n: int) -> None:
+        try:
+            for i in range(40):
+                tid = f"t{n}_{i}"
+                db.create_task_row(tid, "tok", "127.0.0.1", 1.0 + i, "m.mod")
+                db.insert_translation(tid, "orig", "tr", file="a.dlg", item_id="x")
+                db.update_task_row(tid, status="running")
+                row = db.get_task_row(tid)
+                assert row is not None and row["task_id"] == tid and row["status"] == "running"
+                assert db.get_ncs_translation_map_by_task(tid) == {"x": "tr"}
+                assert db.get_item_translation_map_by_task(tid) == {"a.dlg": {"x": "tr"}}
+                db.list_tasks_by_token("tok")
+        except Exception as exc:  # noqa: BLE001 - the test asserts none occur
+            errors.append(f"{type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(12)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert len(db.list_tasks_by_token("tok")) == 12 * 40
+
+
+def test_startup_reconciles_unfinished_tasks(isolated_db: None) -> None:
+    """A non-terminal row left by a dead worker becomes ``interrupted`` on init.
+
+    Regression: after a restart, ``running``/``extracting`` rows had no worker but
+    the status endpoint kept reporting them as running forever.
+    """
+    from nwn_translator.web.task_manager import TaskManager
+
+    db.create_task_row("alive", "tok", "127.0.0.1", 1.0, "m.mod")
+    db.update_task_row("alive", status="extracting")  # non-terminal -> interrupted
+    db.create_task_row("done", "tok", "127.0.0.1", 2.0, "m.mod")
+    db.update_task_row("done", status="completed")  # terminal -> untouched
+
+    tm = TaskManager(db_connection=db.get_db())
+
+    # DB row flipped to a terminal status; the completed row is left alone.
+    assert db.get_task_row("alive")["status"] == "interrupted"
+    assert db.get_task_row("done")["status"] == "completed"
+
+    # The interrupted task is registered in memory and counts as finished;
+    # the already-terminal one is not reloaded into memory.
+    interrupted = tm.get("alive")
+    assert interrupted is not None and interrupted.status == "interrupted"
+    assert interrupted.is_finished()
+    assert tm.get("done") is None
+
+    # TTL purge picks the interrupted task up like any other finished task.
+    tm.task_ttl_seconds = -1
+    tm.purge_expired()
+    assert tm.get("alive") is None

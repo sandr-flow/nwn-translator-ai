@@ -27,8 +27,8 @@ from .config import (
 )
 from .file_handlers import (
     create_mod_from_directory,
-    read_gff,
 )
+from .extractors.base import ExtractedContent
 from .context.world_context import WorldContext
 from .glossary import Glossary
 from .ai_providers import create_provider
@@ -105,10 +105,6 @@ class ModuleTranslator:
         return self.state.stats
 
     @property
-    def tlk(self):
-        return self.state.tlk
-
-    @property
     def world_context(self) -> Optional[WorldContext]:
         return self.state.world_context
 
@@ -126,39 +122,51 @@ class ModuleTranslator:
 
 def rebuild_module(
     extract_dir: Path,
-    translations: Dict[str, str],
+    translations_by_item_id: Dict[str, Dict[str, str]],
     output_path: Path,
     original_mod_path: Path,
     target_lang: Optional[str] = None,
-    ncs_translations_by_item_id: Optional[Dict[str, str]] = None,
 ) -> Path:
     """Re-inject translations and reassemble a .mod without LLM calls.
 
+    Translations are addressed by ``item_id``, not by original text: the
+    extracted files on disk already hold the first-pass translation, so a
+    text-keyed map would never match. For each file we re-extract its items
+    (each carries a stable ``item_id`` and its current on-disk text) and build a
+    ``{current_text: desired_text}`` map from *translations_by_item_id*, which
+    the existing text-based injectors then apply. Unedited items map to
+    themselves, so rebuild is idempotent.
+
     Args:
-        extract_dir: Directory with previously extracted GFF files.
-        translations: Mapping of original text to (possibly edited) translated text.
+        extract_dir: Directory with previously extracted files.
+        translations_by_item_id: ``{filename: {item_id: translated}}``.
         output_path: Where to write the rebuilt .mod file.
         original_mod_path: Path to the original .mod (needed for ERF header info).
-        ncs_translations_by_item_id: Optional per-``item_id`` NCS strings (required when
-            bytecode already contains translated text so *translations* cannot be
-            resolved by original substring).
+        target_lang: Target language (drives GFF/NCS string encoding).
 
     Returns:
         Path to the rebuilt .mod file.
     """
-    from .file_handlers.tlk_reader import parse_tlk, find_dialog_tlk
-
-    # Load TLK if available
-    tlk = None
-    tlk_path = find_dialog_tlk(extract_dir)
-    if tlk_path and tlk_path.exists():
-        try:
-            tlk = parse_tlk(tlk_path)
-        except Exception:
-            pass
-
-    gff_cache: Dict[Tuple[Path, int], Dict[str, Any]] = {}
+    gff_cache: Dict[Path, Dict[str, Any]] = {}
     text_enc = module_string_encoding_for_target_lang(target_lang)
+    # The extracted files on disk already hold first-pass translations, so both
+    # re-extraction and injector-side re-reads decode with the target code page.
+    read_enc = text_enc
+
+    # NCS item_ids are globally unique (file stem + offset), so the per-file
+    # maps can be flattened for the bytecode injector's by-item_id channel.
+    ncs_by_item_id: Dict[str, str] = {}
+    for fname, per_file in translations_by_item_id.items():
+        if fname.lower().endswith(".ncs"):
+            ncs_by_item_id.update(per_file)
+
+    def _text_map(extracted: ExtractedContent, per_file: Dict[str, str]) -> Dict[str, str]:
+        """Map each item's current on-disk text to its desired translation."""
+        text_map: Dict[str, str] = {}
+        for item in extracted.items:
+            if item.item_id and item.item_id in per_file:
+                text_map[item.text] = per_file[item.item_id]
+        return text_map
 
     # Inject translations into each translatable file
     for file_path in extract_dir.rglob("*"):
@@ -169,33 +177,40 @@ def rebuild_module(
             continue
 
         try:
-            loaded = load_parsed_and_extracted(file_path, ext, tlk, gff_cache)
+            loaded = load_parsed_and_extracted(file_path, ext, gff_cache, source_encoding=read_enc)
         except Exception as e:
             logger.warning("Failed to read %s during rebuild: %s", file_path.name, e)
             continue
         if loaded is None:
             continue
         parsed_data, extracted = loaded
+        per_file = translations_by_item_id.get(file_path.name, {})
         inject_translations_into_file(
             file_path,
             parsed_data,
             extracted,
-            translations,
-            ncs_translations_by_item_id=ncs_translations_by_item_id,
+            _text_map(extracted, per_file),
+            ncs_translations_by_item_id=ncs_by_item_id,
             log_updates=False,
             target_lang=target_lang,
+            source_encoding=read_enc,
         )
 
-    # Patch .git area instance files
+    # Patch .git area instance files (separate injector, also text-addressed)
     from .injectors.git_injector import patch_git_file
 
     for git_path in extract_dir.glob("*.git"):
         try:
-            parsed_data = read_gff(git_path, tlk=tlk, cache=gff_cache)
+            loaded = load_parsed_and_extracted(
+                git_path, ".git", gff_cache, source_encoding=read_enc
+            )
+            if loaded is None:
+                continue
+            parsed_data, extracted = loaded
+            per_file = translations_by_item_id.get(git_path.name, {})
             patch_git_file(
                 git_path,
-                translations,
-                tlk=tlk,
+                _text_map(extracted, per_file),
                 parsed_data=parsed_data,
                 text_encoding=text_enc,
             )

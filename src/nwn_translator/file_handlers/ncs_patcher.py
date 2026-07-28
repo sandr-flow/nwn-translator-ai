@@ -32,6 +32,12 @@ from .gff_patcher import sanitize_for_module_encoding
 
 logger = logging.getLogger(__name__)
 
+# NWN:EE preamble after the 8-byte "NCS V1.0" banner: 0x42 + BE uint32 total
+# script size (field ``T``). Bytes 9-12 hold the size; it must match the file
+# length, so any length-changing patch has to rewrite it (see ncs_parser).
+_NCS_EE_SIZE_OPCODE = 0x42
+_NCS_EE_SIZE_FIELD_OFFSET = 9
+
 
 class NCSPatchError(Exception):
     """Raised when NCS patching fails."""
@@ -162,6 +168,16 @@ def _apply_instruction_patches(
         if instr.jump_offset is not None:
             struct.pack_into(">i", data, instr.offset + 2, instr.jump_offset)
 
+    # The total size changed; rewrite the NWN:EE preamble size field ``T`` so
+    # the engine reads the right code length. Guard on the preamble being
+    # present — older scripts have instruction bytes at this offset.
+    if (
+        len(data) != len(original_bytes)
+        and len(data) >= _NCS_EE_SIZE_FIELD_OFFSET + 4
+        and data[8] == _NCS_EE_SIZE_OPCODE
+    ):
+        struct.pack_into(">I", data, _NCS_EE_SIZE_FIELD_OFFSET, len(data))
+
     try:
         validated = parse_ncs_bytes(bytes(data))
         if not _validate_jumps(validated):
@@ -193,6 +209,7 @@ def patch_ncs_string_replacements(
     file_path: Path,
     replacements: Sequence[Tuple[int, str, str]],
     text_encoding: str = "cp1251",
+    source_encoding: Optional[str] = None,
 ) -> int:
     """Patch only listed string CONSTS (by offset), with original-text checks.
 
@@ -205,6 +222,8 @@ def patch_ncs_string_replacements(
         file_path: Path to the ``.ncs`` file.
         replacements: Non-empty sequence of explicit replacement specs.
         text_encoding: Codec for written string bytes (default ``cp1251``).
+        source_encoding: Codec for decoding existing string bytes; must match
+            the one used at extraction time or the original-text checks fail.
 
     Returns:
         Number of CONSTS instructions patched.
@@ -216,7 +235,7 @@ def patch_ncs_string_replacements(
     if not replacements:
         return 0
 
-    ncs = parse_ncs(file_path)
+    ncs = parse_ncs(file_path, source_encoding=source_encoding)
     patches: List[Tuple[NCSInstruction, str]] = []
 
     for offset, original_text, translated_text in replacements:
@@ -244,6 +263,7 @@ def patch_ncs_strings(
     file_path: Path,
     translations: Dict[str, str],
     text_encoding: str = "cp1251",
+    source_encoding: Optional[str] = None,
 ) -> int:
     """Patch every string CONSTS whose value is a key in *translations*.
 
@@ -254,7 +274,7 @@ def patch_ncs_strings(
     Kept for tests and backward compatibility.
     """
     file_path = Path(file_path)
-    ncs = parse_ncs(file_path)
+    ncs = parse_ncs(file_path, source_encoding=source_encoding)
     patches: List[Tuple[NCSInstruction, str]] = []
     for instr in ncs.string_constants:
         if instr.string_value in translations:

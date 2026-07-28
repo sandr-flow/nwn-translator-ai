@@ -23,10 +23,17 @@ logger = logging.getLogger(__name__)
 def _parse_cors_origins() -> List[str]:
     """Parse ``NWN_WEB_CORS_ORIGINS`` env var into a list of allowed origins.
 
+    Defaults to an empty list (no cross-origin access) when unset: the SPA is
+    served from the same origin as the API — directly or behind nginx — so CORS
+    is not needed. Set the env var to a comma-separated origin list (or ``*``) to
+    opt in explicitly.
+
     Returns:
-        List of origin strings.  Defaults to ``["*"]`` if unset.
+        List of origin strings.
     """
-    raw = os.environ.get("NWN_WEB_CORS_ORIGINS", "*").strip()
+    raw = os.environ.get("NWN_WEB_CORS_ORIGINS", "").strip()
+    if not raw:
+        return []
     if raw == "*":
         return ["*"]
     return [o.strip() for o in raw.split(",") if o.strip()]

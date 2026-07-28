@@ -89,6 +89,139 @@ class TestDialogExtractor:
         assert "test:reply:0" in ids
 
 
+class TestBuildDialogTree:
+    """Tests for the iterative dialog tree walk."""
+
+    @staticmethod
+    def _entry(text, reply_indices=(), speaker=""):
+        return {
+            "Text": {"StrRef": -1, "Value": text},
+            "Speaker": speaker,
+            "RepliesList": [{"Index": i} for i in reply_indices],
+        }
+
+    @staticmethod
+    def _reply(text, entry_indices=()):
+        return {
+            "Text": {"StrRef": -1, "Value": text},
+            "EntriesList": [{"Index": i} for i in entry_indices],
+        }
+
+    def _build(self, entry_list, reply_list, starting_indices):
+        return DialogExtractor().build_dialog_tree(
+            {
+                "StructType": "DLG",
+                "EntryList": entry_list,
+                "ReplyList": reply_list,
+                "StartingList": [{"Index": i} for i in starting_indices],
+            }
+        )
+
+    def test_deep_chain_builds_without_recursion_error(self):
+        """1000 entry/reply alternations: depth 2000, far past the recursion limit."""
+        n = 1000
+        entry_list = [self._entry(f"E{i}", reply_indices=[i]) for i in range(n)]
+        reply_list = [
+            self._reply(f"R{i}", entry_indices=[i + 1] if i + 1 < n else []) for i in range(n)
+        ]
+
+        tree = self._build(entry_list, reply_list, [0])
+
+        assert len(tree) == 1
+        depth = 0
+        node = tree[0]
+        while True:
+            depth += 1
+            if not node.replies:
+                break
+            assert len(node.replies) == 1
+            node = node.replies[0]
+        assert depth == 2 * n
+        assert node.text == f"R{n - 1}"
+
+    def test_non_dict_entry_skipped_with_warning(self, caplog):
+        import logging
+
+        entry_list = [self._entry("Hello", reply_indices=[0]), 12345]
+        reply_list = [self._reply("Take me to the broken one", entry_indices=[1])]
+
+        with caplog.at_level(logging.WARNING):
+            tree = self._build(entry_list, reply_list, [0])
+
+        assert "Dialog entry 1 is not a struct (int)" in caplog.text
+        assert len(tree) == 1
+        reply = tree[0].replies[0]
+        assert reply.text == "Take me to the broken one"
+        assert reply.replies == []  # the broken entry produced no node
+
+    def test_non_dict_reply_skipped_with_warning(self, caplog):
+        import logging
+
+        entry_list = [self._entry("Hello", reply_indices=[0, 1])]
+        reply_list = ["not-a-struct", self._reply("A valid reply")]
+
+        with caplog.at_level(logging.WARNING):
+            tree = self._build(entry_list, reply_list, [0])
+
+        assert "Dialog reply 0 is not a struct (str)" in caplog.text
+        assert len(tree) == 1
+        assert [r.text for r in tree[0].replies] == ["A valid reply"]
+
+    def test_cycle_terminates_and_back_edge_dropped(self):
+        entry_list = [self._entry("Loop?", reply_indices=[0])]
+        reply_list = [self._reply("Again!", entry_indices=[0])]
+
+        tree = self._build(entry_list, reply_list, [0])
+
+        assert len(tree) == 1
+        assert [r.text for r in tree[0].replies] == ["Again!"]
+        assert tree[0].replies[0].replies == []  # back-edge to entry 0 not attached
+
+    def test_diamond_entry_attached_once_on_first_path(self):
+        entry_list = [
+            self._entry("Root", reply_indices=[0, 1]),
+            self._entry("Shared destination"),
+        ]
+        reply_list = [
+            self._reply("Left path", entry_indices=[1]),
+            self._reply("Right path", entry_indices=[1]),
+        ]
+
+        tree = self._build(entry_list, reply_list, [0])
+
+        left, right = tree[0].replies
+        assert [n.text for n in left.replies] == ["Shared destination"]
+        assert right.replies == []  # already visited via the left path
+
+    def test_root_and_sibling_order_preserved(self):
+        entry_list = [
+            self._entry("First root", reply_indices=[0, 1, 2]),
+            self._entry("Second root"),
+        ]
+        reply_list = [self._reply("A"), self._reply("B"), self._reply("C")]
+
+        tree = self._build(entry_list, reply_list, [0, 1])
+
+        assert [n.text for n in tree] == ["First root", "Second root"]
+        assert [r.text for r in tree[0].replies] == ["A", "B", "C"]
+
+    def test_node_fields_carried(self):
+        entry_list = [self._entry("Halt!", reply_indices=[0], speaker="Guard")]
+        reply_list = [self._reply("Just passing.")]
+
+        tree = self._build(entry_list, reply_list, [0])
+
+        entry = tree[0]
+        assert entry.is_entry is True
+        assert entry.speaker == "Guard"
+        assert entry.node_id == 0
+        assert entry.metadata == {"type": "entry"}
+        reply = entry.replies[0]
+        assert reply.is_entry is False
+        assert reply.speaker == "Player"
+        assert reply.metadata == {"type": "reply"}
+
+
 class TestJournalExtractor:
     """Tests for JournalExtractor."""
 

@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .gff_parser import decode_module_text
+
 
 class NCSParseError(Exception):
     """Raised when an NCS file cannot be parsed."""
@@ -91,8 +93,8 @@ JUMP_OPCODES = frozenset({OP_JMP, OP_JSR, OP_JZ, OP_JNZ})
 # Most opcodes have 0 extra bytes (header-only = 2 bytes total).
 # This dict lists exceptions.
 _OPCODE_ARG_SIZES: Dict[int, int] = {
-    OP_CPDOWNSP: 4,  # int32: stack offset + size
-    OP_CPTOPSP: 4,  # int32: stack offset + size
+    OP_CPDOWNSP: 6,  # int32 stack offset + uint16 size
+    OP_CPTOPSP: 6,  # int32 stack offset + uint16 size
     OP_ACTION: 3,  # uint16 routine number + uint8 arg count
     OP_MOVSP: 4,  # int32: displacement
     OP_STORE_STATEALL: 4,  # int32 (obsolete, but may appear)
@@ -103,12 +105,19 @@ _OPCODE_ARG_SIZES: Dict[int, int] = {
     OP_DECISP: 4,  # int32
     OP_INCISP: 4,  # int32
     OP_JNZ: 4,  # int32: relative offset
-    OP_CPDOWNBP: 4,  # int32
-    OP_CPTOPBP: 4,  # int32
+    OP_CPDOWNBP: 6,  # int32 stack offset + uint16 size
+    OP_CPTOPBP: 6,  # int32 stack offset + uint16 size
     OP_DECIBP: 4,  # int32
     OP_INCIBP: 4,  # int32
     OP_STORE_STATE: 8,  # int32 BP size + int32 stack size
 }
+
+# EQUAL/NEQUAL normally have no argument bytes, EXCEPT when comparing two engine
+# structures (type qualifier 0x24, "TT"): those carry a trailing uint16 giving
+# the structure size to compare. Missing this desyncs the instruction stream.
+_STRUCT_COMPARE_TYPE = 0x24
+_STRUCT_COMPARE_OPCODES = frozenset({OP_EQUAL, OP_NEQUAL})
+_STRUCT_COMPARE_ARG_SIZE = 2
 
 # CONST arg sizes by type qualifier (TYPE_STRING is variable-length)
 _CONST_ARG_SIZES: Dict[int, int] = {
@@ -187,20 +196,16 @@ _NCS_EE_SCRIPT_SIZE_OPCODE = 0x42
 _NCS_EE_SCRIPT_SIZE_PREFIX_LEN = 5  # opcode + 4-byte BE length
 
 
-def _decode_string(raw: bytes) -> str:
-    """Decode a string from NCS bytecode (CP1252 with fallback)."""
-    try:
-        return raw.decode("cp1252")
-    except UnicodeDecodeError:
-        return raw.decode("latin-1", errors="replace")
-
-
-def _parse_instruction(data: bytes, offset: int) -> NCSInstruction:
+def _parse_instruction(
+    data: bytes, offset: int, source_encoding: Optional[str] = None
+) -> NCSInstruction:
     """Parse a single instruction starting at *offset* in *data*.
 
     Args:
         data: Complete file bytes.
         offset: Byte offset of the instruction.
+        source_encoding: Declared code page for CONSTS string bytes; ``None``
+            uses the shared detection cascade (same rule as GFF strings).
 
     Returns:
         Parsed NCSInstruction.
@@ -233,6 +238,8 @@ def _parse_instruction(data: bytes, offset: int) -> NCSInstruction:
         else:
             # Unknown CONST type -- try 4 bytes (most common)
             arg_size = 4
+    elif opcode in _STRUCT_COMPARE_OPCODES and type_byte == _STRUCT_COMPARE_TYPE:
+        arg_size = _STRUCT_COMPARE_ARG_SIZE  # struct/struct compare: trailing uint16 size
     elif opcode in _OPCODE_ARG_SIZES:
         arg_size = _OPCODE_ARG_SIZES[opcode]
     else:
@@ -261,7 +268,7 @@ def _parse_instruction(data: bytes, offset: int) -> NCSInstruction:
     if opcode == OP_CONST and type_byte == TYPE_STRING:
         str_len = struct.unpack_from(">H", data, offset + 2)[0]
         raw_str = data[offset + 4 : offset + 4 + str_len]
-        instr.string_value = _decode_string(raw_str)
+        instr.string_value = decode_module_text(raw_str, source_encoding)
 
     if opcode in JUMP_OPCODES:
         instr.jump_offset = struct.unpack_from(">i", data, offset + 2)[0]
@@ -273,11 +280,12 @@ def _parse_instruction(data: bytes, offset: int) -> NCSInstruction:
     return instr
 
 
-def parse_ncs(file_path: Path) -> NCSFile:
+def parse_ncs(file_path: Path, source_encoding: Optional[str] = None) -> NCSFile:
     """Parse an NCS bytecode file.
 
     Args:
         file_path: Path to the ``.ncs`` file.
+        source_encoding: Declared code page for CONSTS string bytes.
 
     Returns:
         Parsed NCSFile with all instructions.
@@ -290,14 +298,15 @@ def parse_ncs(file_path: Path) -> NCSFile:
         raise NCSParseError(f"File not found: {file_path}")
 
     raw = file_path.read_bytes()
-    return parse_ncs_bytes(raw)
+    return parse_ncs_bytes(raw, source_encoding=source_encoding)
 
 
-def parse_ncs_bytes(raw: bytes) -> NCSFile:
+def parse_ncs_bytes(raw: bytes, source_encoding: Optional[str] = None) -> NCSFile:
     """Parse NCS bytecode from raw bytes.
 
     Args:
         raw: Complete file contents.
+        source_encoding: Declared code page for CONSTS string bytes.
 
     Returns:
         Parsed NCSFile.
@@ -324,7 +333,7 @@ def parse_ncs_bytes(raw: bytes) -> NCSFile:
         cursor = NCS_HEADER_SIZE + _NCS_EE_SCRIPT_SIZE_PREFIX_LEN
 
     while cursor < len(data):
-        instr = _parse_instruction(data, cursor)
+        instr = _parse_instruction(data, cursor, source_encoding)
         instructions.append(instr)
         cursor += instr.size
 

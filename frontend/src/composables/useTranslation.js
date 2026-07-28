@@ -11,6 +11,7 @@ import {
   deleteTask,
   fetchJson,
   postCancelTask,
+  getClientToken,
 } from "../api/client.js";
 import { useI18n } from "./useI18n.js";
 
@@ -62,7 +63,9 @@ export function useTranslation() {
   let eventSource = null;
   let sseRetryCount = 0;
   let sseRetryTimer = null;
+  let pollTimer = null;
   const SSE_MAX_RETRIES = 5;
+  const POLL_INTERVAL_MS = 10000;
 
   const phaseLabel = computed(() => PHASE_KEYS[t.phase] ? i(PHASE_KEYS[t.phase]) : t.phase ?? "");
 
@@ -87,11 +90,16 @@ export function useTranslation() {
       clearTimeout(sseRetryTimer);
       sseRetryTimer = null;
     }
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
     if (eventSource) {
       eventSource.close();
       eventSource = null;
     }
-    sseRetryCount = 0;
+    // sseRetryCount is intentionally NOT reset here: openSse() calls closeSse(),
+    // so resetting would restart the backoff on every reconnect attempt.
   }
 
   function applySnapshot(data) {
@@ -104,29 +112,42 @@ export function useTranslation() {
   }
 
   async function pollTaskStatus(id) {
+    let status;
     try {
-      const status = await fetchJson(`/api/tasks/${id}/status`);
-      if (status.status === "completed") {
-        t.status = "completed";
-        t.progress = 1;
-        t.resultFilename = status.result_filename ?? "";
-        t.stats = status.stats ?? null;
-        t.step = "done";
-      } else if (status.status === "failed") {
-        t.status = "failed";
-        t.error = status.error ?? i("error.default");
-        t.step = "done";
-      } else if (status.status === "cancelled") {
-        reset();
-      }
+      status = await fetchJson(`/api/tasks/${id}/status`);
     } catch {
-      /* backend unreachable — nothing to do */
+      return; // backend unreachable — a running poll timer will retry
     }
+    if (status.status === "completed") {
+      closeSse();
+      t.status = "completed";
+      t.progress = 1;
+      t.resultFilename = status.result_filename ?? "";
+      t.stats = status.stats ?? null;
+      t.step = "done";
+    } else if (status.status === "failed" || status.status === "interrupted") {
+      closeSse();
+      t.status = "failed";
+      t.error = status.error ?? i("error.default");
+      t.step = "done";
+    } else if (status.status === "cancelled") {
+      reset();
+    } else {
+      applySnapshot({ ...status, file: status.current_file });
+    }
+  }
+
+  function startPolling(id) {
+    if (pollTimer) return;
+    pollTimer = setInterval(() => pollTaskStatus(id), POLL_INTERVAL_MS);
+    pollTaskStatus(id);
   }
 
   function openSse(id) {
     closeSse();
-    const url = `/api/tasks/${id}/progress`;
+    // EventSource cannot send the X-Client-Token header, so the token rides
+    // in the query string (the backend accepts it as a fallback).
+    const url = `/api/tasks/${id}/progress?client_token=${encodeURIComponent(getClientToken())}`;
     eventSource = new EventSource(url);
 
     eventSource.onmessage = (ev) => {
@@ -174,7 +195,7 @@ export function useTranslation() {
         if (msg.type === "done") {
           closeSse();
           if (t.status !== "completed" && t.status !== "failed") {
-            pollTaskStatus(id);
+            startPolling(id);
           }
         }
       } catch {
@@ -195,7 +216,9 @@ export function useTranslation() {
         sseRetryCount++;
         sseRetryTimer = setTimeout(async () => {
           try {
-            const res = await fetch(`/api/tasks/${id}/status`);
+            const res = await fetch(`/api/tasks/${id}/status`, {
+              headers: { "X-Client-Token": getClientToken() },
+            });
             if (res.status === 404) {
               t.status = "failed";
               t.error = i("error.taskNotFound");
@@ -229,7 +252,9 @@ export function useTranslation() {
         t.status !== "failed" &&
         t.status !== "cancelled"
       ) {
-        pollTaskStatus(id);
+        // SSE retries exhausted — degrade to periodic status polling until the
+        // task reaches a terminal status.
+        startPolling(id);
       }
     };
   }
@@ -299,6 +324,7 @@ export function useTranslation() {
 
     const { task_id } = await postTranslate(fd);
     t.taskId = task_id;
+    sseRetryCount = 0;
     openSse(task_id);
   }
 
@@ -337,11 +363,11 @@ export function useTranslation() {
     t.step = "editing";
   }
 
-  async function rebuildWithEdits(editedTranslations) {
+  async function rebuildWithEdits(edits) {
     if (!t.taskId) return;
     t.rebuilding = true;
     try {
-      const data = await postRebuild(t.taskId, editedTranslations, t.targetLang);
+      const data = await postRebuild(t.taskId, edits, t.targetLang);
       t.resultFilename = data.result_filename ?? t.resultFilename;
       t.step = "done";
     } finally {

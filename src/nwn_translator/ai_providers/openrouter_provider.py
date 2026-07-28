@@ -24,6 +24,7 @@ from openai import (
     APITimeoutError,
     AsyncOpenAI,
     BadRequestError,
+    InternalServerError,
     OpenAI,
 )
 from tenacity import (
@@ -58,7 +59,8 @@ from ..telemetry import (
 )
 
 #: Exception types that should trigger automatic retry with exponential backoff.
-_RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError)
+#: ``InternalServerError`` covers every HTTP status >= 500 from the gateway.
+_RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError, InternalServerError)
 
 
 class OpenRouterError(ProviderError):
@@ -124,6 +126,9 @@ class OpenRouterProvider(BaseAIProvider):
         self.site_name = site_name
         super().__init__(api_key, model, **kwargs)
         self._reasoning_effort = parse_reasoning_effort(reasoning_raw)
+        #: Set after the first "reasoning not supported" 400 so the rest of the
+        #: session skips the doomed reasoning request instead of retrying each call.
+        self._reasoning_unsupported = False
         _timeout = httpx.Timeout(connect=10, read=180, write=10, pool=10)
         self._headers = self._build_default_headers()
         self._timeout = _timeout
@@ -202,20 +207,24 @@ class OpenRouterProvider(BaseAIProvider):
         )
         recorder.record(metric)
 
+    #: Sentinel distinguishing "no cached loop yet" from a legitimate ``None`` loop.
+    _NO_LOOP_CACHED = object()
+
     @property
     def async_client(self) -> AsyncOpenAI:
         """Get or create an AsyncOpenAI client bound to the current event loop.
 
-        This prevents httpx connection pool errors when using a ThreadPoolExecutor
-        where each thread runs its own asyncio event loop."""
+        The cache key is the loop object itself (a strong reference is kept):
+        comparing ``id(loop)`` values would false-hit when a garbage-collected
+        loop's address is reused by a new one. With the persistent loop of
+        ``run_async`` the same client thus serves every call of a run."""
         try:
-            loop = asyncio.get_running_loop()
-            loop_id = id(loop)
+            loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
         except RuntimeError:
-            loop_id = None
+            loop = None
 
-        if getattr(self._thread_local, "last_loop_id", None) != loop_id:
-            self._thread_local.last_loop_id = loop_id
+        if getattr(self._thread_local, "client_loop", self._NO_LOOP_CACHED) is not loop:
+            self._thread_local.client_loop = loop
             self._thread_local.async_client = AsyncOpenAI(
                 api_key=self.api_key,
                 base_url=self.BASE_URL,
@@ -234,7 +243,7 @@ class OpenRouterProvider(BaseAIProvider):
             except Exception:
                 pass
             self._thread_local.async_client = None
-            self._thread_local.last_loop_id = None
+            self._thread_local.client_loop = self._NO_LOOP_CACHED
 
     def get_default_model(self) -> str:
         """Get the default OpenRouter model.
@@ -254,9 +263,24 @@ class OpenRouterProvider(BaseAIProvider):
 
     def _reasoning_extra_body(self) -> Optional[Dict[str, Any]]:
         """OpenRouter ``extra_body`` fragment for ``reasoning``, or ``None``."""
-        if not self._reasoning_effort:
+        if not self._reasoning_effort or self._reasoning_unsupported:
             return None
         return {"reasoning": {"effort": self._reasoning_effort}}
+
+    @staticmethod
+    def _is_reasoning_rejection(error: BadRequestError) -> bool:
+        """Heuristic: the 400 complains about the ``reasoning`` request field."""
+        return "reasoning" in str(error).lower()
+
+    def _handle_reasoning_rejection(self, error: BadRequestError) -> None:
+        """Remember that the model rejects ``reasoning``; re-raise unrelated 400s."""
+        if not self._is_reasoning_rejection(error):
+            raise error
+        logger.warning(
+            "%s rejected the reasoning field (HTTP 400); disabling reasoning for this session",
+            self.PROVIDER_LABEL,
+        )
+        self._reasoning_unsupported = True
 
     def _chat_completions_create_sync(self, *, use_reasoning: bool = True, **kwargs: Any):
         """``chat.completions.create`` with optional ``reasoning``; one 400 retry without it."""
@@ -265,10 +289,8 @@ class OpenRouterProvider(BaseAIProvider):
             call_kw = {**kwargs, "extra_body": reasoning_extra}
             try:
                 return self.client.chat.completions.create(**call_kw)
-            except BadRequestError:
-                logger.warning(
-                    "OpenRouter returned HTTP 400 with reasoning enabled; retrying without reasoning"
-                )
+            except BadRequestError as e:
+                self._handle_reasoning_rejection(e)
                 return self.client.chat.completions.create(**kwargs)
         return self.client.chat.completions.create(**kwargs)
 
@@ -284,10 +306,8 @@ class OpenRouterProvider(BaseAIProvider):
             call_kw = {**kwargs, "extra_body": reasoning_extra}
             try:
                 return await self.async_client.chat.completions.create(**call_kw)
-            except BadRequestError:
-                logger.warning(
-                    "OpenRouter returned HTTP 400 with reasoning enabled; retrying without reasoning"
-                )
+            except BadRequestError as e:
+                self._handle_reasoning_rejection(e)
                 return await self.async_client.chat.completions.create(**kwargs)
         return await self.async_client.chat.completions.create(**kwargs)
 
@@ -308,8 +328,12 @@ class OpenRouterProvider(BaseAIProvider):
             # Find the first '{' and decode from there
             idx = cleaned.find("{")
             if idx == -1:
-                logger.warning("No JSON object found in model response, using raw text")
-                return raw_response
+                logger.warning(
+                    "No JSON object in model response, treating as failure. "
+                    "Raw (first 200 chars): %s",
+                    (raw_response or "")[:200],
+                )
+                return ""
             parsed, _ = decoder.raw_decode(cleaned, idx)
             translated_text = parsed.get("translation", "")
             if not isinstance(translated_text, str) or not translated_text:
@@ -421,7 +445,7 @@ class OpenRouterProvider(BaseAIProvider):
                 metadata={"model": self.model},
             )
 
-        except (RateLimitError, APIConnectionError, APITimeoutError):
+        except _RETRYABLE_EXCEPTIONS:
             raise
         except OpenRouterError:
             raise
@@ -502,7 +526,7 @@ class OpenRouterProvider(BaseAIProvider):
                 metadata={"model": self.model},
             )
 
-        except (RateLimitError, APIConnectionError, APITimeoutError):
+        except _RETRYABLE_EXCEPTIONS:
             raise
         except OpenRouterError:
             raise
@@ -555,7 +579,7 @@ class OpenRouterProvider(BaseAIProvider):
                 glossary_chars=glossary_chars,
             )
             return (response.choices[0].message.content or "").strip()
-        except (RateLimitError, APIConnectionError, APITimeoutError) as exc:
+        except _RETRYABLE_EXCEPTIONS as exc:
             self._record_llm_metric(
                 phase=phase or current_llm_phase("generic_batch"),
                 system_prompt=system_prompt,
@@ -769,7 +793,7 @@ class OpenRouterProvider(BaseAIProvider):
                 )
                 for item in items
             ]
-        except (RateLimitError, APIConnectionError, APITimeoutError):
+        except _RETRYABLE_EXCEPTIONS:
             raise
         except Exception as e:
             self._map_openrouter_exception(e)

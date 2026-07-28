@@ -91,7 +91,7 @@ def _uti_text_for_resref(extract_root: Path, resref: str) -> str | None:
     if not uti.is_file():
         return None
     try:
-        data = read_gff(uti, tlk=None)
+        data = read_gff(uti)
     except Exception:
         return None
     loc = data.get("LocalizedName", {})
@@ -104,7 +104,7 @@ def test_real_git_nested_record_offsets_and_inventory_res_alignment():
     if git_path is None:
         pytest.skip("No workspace *.git found; set NWN_DIAG_GIT_PATH to enable")
 
-    parsed = read_gff(git_path, tlk=None)
+    parsed = read_gff(git_path)
     _assert_nested_offsets(git_path, parsed)
 
     found = collect_git_strings_missing_from_translations(parsed, {})

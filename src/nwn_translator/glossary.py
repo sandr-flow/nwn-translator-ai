@@ -164,7 +164,8 @@ class Glossary:
                 str(original_en).strip(),
                 preserve_tokens=preserve_tokens,
             )
-            cache[sanitized] = translated
+            # Seed as exact-match only: glossary terms must not seed prefix matches.
+            cache.set_exact(sanitized, translated)
 
 
 class GlossaryBuilder:
@@ -182,10 +183,8 @@ class GlossaryBuilder:
         Large name lists are split into batches of ~40 to stay within token
         limits.  Batches run concurrently (up to ``_MAX_GLOSSARY_CONCURRENCY``).
         Each batch is retried up to ``_MAX_RETRIES`` times on parse failure,
-        with partial results merged across attempts.
-
-        Raises:
-            RuntimeError: If the glossary cannot be built after retries.
+        with partial results merged across attempts.  When no usable entries
+        survive at all, the run degrades to an empty glossary with a warning.
         """
         if not hasattr(provider, "complete_glossary_chat_async") and not hasattr(
             provider, "complete_json_chat_async"
@@ -239,7 +238,6 @@ class GlossaryBuilder:
                 config,
                 progress_callback,
             ),
-            cleanup=provider.close_async_client,
             timeout=overall_timeout,
         )
 
@@ -264,10 +262,11 @@ class GlossaryBuilder:
         logger.info("Glossary build completed in %.1fs", total_elapsed)
 
         if not all_entries:
-            raise RuntimeError(
-                "Glossary LLM returned no usable entries after retries. "
-                "Translation cannot proceed without a glossary."
+            logger.warning(
+                "Glossary LLM returned no usable entries after retries; "
+                "continuing without a glossary."
             )
+            return Glossary()
 
         missing = len(sorted_names) - len(all_entries)
         if missing > 0:
@@ -336,6 +335,7 @@ class GlossaryBuilder:
 
         all_batch_entries: Dict[str, str] = {}
         remaining_keys: Set[str] = set(seen.keys())
+        echoed_values: Dict[str, str] = {}
         last_raw = ""
 
         logger.info(
@@ -412,7 +412,10 @@ class GlossaryBuilder:
             entries = self._parse_glossary_json(raw, remaining_keys)
             if entries:
                 # Detect echo-backs: model returned the English name unchanged.
-                # These are likely untranslated; exclude and retry them.
+                # Retry them as likely-untranslated, but remember the values:
+                # a name that only ever comes back unchanged is accepted as-is
+                # after the attempts run out (legitimate for proper nouns and
+                # the norm for Latin-script target languages).
                 echobacks = {k for k, v in entries.items() if v == k}
                 if echobacks:
                     logger.warning(
@@ -423,7 +426,7 @@ class GlossaryBuilder:
                         ", ".join(sorted(echobacks)[:10]),
                     )
                     for k in echobacks:
-                        del entries[k]
+                        echoed_values[k] = entries.pop(k)
 
                 all_batch_entries.update(entries)
                 remaining_keys -= set(entries.keys())
@@ -459,6 +462,17 @@ class GlossaryBuilder:
                         total_batches,
                         f"Glossary {batch_label}: attempt {attempt} failed, retrying…",
                     )
+
+        rescued = {k: v for k, v in echoed_values.items() if k in remaining_keys}
+        if rescued:
+            all_batch_entries.update(rescued)
+            remaining_keys -= set(rescued)
+            logger.info(
+                "Glossary %s: accepting %d name(s) the model kept unchanged after retries: %s",
+                batch_label,
+                len(rescued),
+                ", ".join(sorted(rescued)[:10]),
+            )
 
         if remaining_keys:
             logger.warning(

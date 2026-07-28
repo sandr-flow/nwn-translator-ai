@@ -245,6 +245,29 @@ def get_unfinished_task_rows() -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def get_finished_task_ids_older_than(cutoff: float) -> List[str]:
+    """Return IDs of terminal-status tasks created before *cutoff*.
+
+    Used by workspace TTL cleanup. Reads the DB rather than the in-memory task
+    dict because finished tasks are not reloaded into memory after a process
+    restart, while their rows (and workspace files) survive it.
+
+    Args:
+        cutoff: Unix timestamp; only tasks with ``created_at`` strictly below
+            it are returned.
+    """
+    placeholders = ", ".join("?" for _ in TERMINAL_STATUSES)
+    db = get_db()
+    with _lock:
+        cur = db.execute(
+            f"SELECT task_id FROM tasks WHERE status IN ({placeholders}) "  # noqa: S608
+            "AND created_at < ?",
+            (*TERMINAL_STATUSES, cutoff),
+        )
+        rows = cur.fetchall()
+    return [r[0] for r in rows]
+
+
 def delete_task_row(task_id: str) -> bool:
     """Delete a task (CASCADE deletes translations). Returns True if row existed."""
     db = get_db()

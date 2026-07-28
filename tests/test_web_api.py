@@ -258,6 +258,85 @@ class TestOneJobPerIpSlot:
         assert db.get_task_row(task.task_id) is None
 
 
+# ---------------------------------------------------------------------------
+# TTL purge of workspace files
+# ---------------------------------------------------------------------------
+
+
+def _fill_workspace(tm: TaskManager, task_id: str) -> Path:
+    """Create a realistic task workspace: input, extraction temp, result."""
+    base = tm.workspace_for_task(task_id)
+    (base / "input.mod").write_bytes(b"\x01" * 64)
+    (base / "temp").mkdir(exist_ok=True)
+    (base / "temp" / "area.git").write_bytes(b"\x02" * 32)
+    (base / "result.mod").write_bytes(b"\x03" * 64)
+    return base
+
+
+class TestPurgeExpiredWorkspace:
+    def test_expired_finished_task_files_deleted_row_kept(self, isolated_tm: TaskManager) -> None:
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        base = _fill_workspace(tm, task.task_id)
+        task.status = "completed"
+        task.created_at -= tm.task_ttl_seconds + 10
+        db.update_task_row(task.task_id, status="completed", created_at=task.created_at)
+
+        tm.purge_expired()
+
+        assert not base.exists()
+        assert tm.get(task.task_id) is None  # evicted from memory
+        assert db.get_task_row(task.task_id) is not None  # history row kept
+
+    def test_fresh_finished_task_files_kept(self, isolated_tm: TaskManager) -> None:
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        base = _fill_workspace(tm, task.task_id)
+        task.status = "completed"
+        db.update_task_row(task.task_id, status="completed")
+
+        tm.purge_expired()
+
+        assert base.is_dir()
+        assert tm.get(task.task_id) is not None
+
+    def test_old_running_task_files_kept(self, isolated_tm: TaskManager) -> None:
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        base = _fill_workspace(tm, task.task_id)
+        task.created_at -= tm.task_ttl_seconds + 10
+        db.update_task_row(task.task_id, status="translating", created_at=task.created_at)
+
+        tm.purge_expired()
+
+        assert base.is_dir()
+
+    def test_expired_task_absent_from_memory_still_purged(self, isolated_tm: TaskManager) -> None:
+        """Restart scenario: a completed row survives in the DB, its task object
+        does not — the workspace directory must still be cleaned up."""
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod")
+        base = _fill_workspace(tm, task.task_id)
+        db.update_task_row(task.task_id, status="completed")
+        old_created = task.created_at - tm.task_ttl_seconds - 10
+        conn = db.get_db()
+        conn.execute(
+            "UPDATE tasks SET created_at = ? WHERE task_id = ?",
+            (old_created, task.task_id),
+        )
+        conn.commit()
+
+        fresh_tm = TaskManager(
+            workspace_root=tm.workspace_root, task_ttl_seconds=tm.task_ttl_seconds
+        )
+        assert fresh_tm.get(task.task_id) is None  # not reloaded into memory
+
+        fresh_tm.purge_expired()
+
+        assert not base.exists()
+        assert db.get_task_row(task.task_id) is not None
+
+
 def test_second_request_during_upload_gets_429(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

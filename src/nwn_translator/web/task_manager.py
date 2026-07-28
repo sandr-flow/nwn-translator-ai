@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -29,6 +30,7 @@ from .database import (
     create_task_row,
     delete_task_row,
     get_db,
+    get_finished_task_ids_older_than,
     get_unfinished_task_rows,
     update_task_row,
 )
@@ -446,9 +448,14 @@ class TaskManager:
             self.release_active(task.client_ip, task.task_id)
 
     def purge_expired(self) -> None:
-        """Remove finished tasks from in-memory dict to free RAM.
+        """Evict finished tasks older than the TTL from memory and disk.
 
-        Workspace files and DB rows are kept — the user deletes via UI.
+        Workspace directories (uploaded module, extraction temp, result) are
+        deleted; DB rows and translations are kept, so the client history and
+        the translation editor keep working while download/rebuild degrade to
+        their existing "files unavailable" errors. Expired tasks come from the
+        DB, not the in-memory dict: finished tasks are not reloaded into memory
+        after a restart, but their workspace files survive it.
         """
         now = time.time()
         with self._lock:
@@ -458,6 +465,22 @@ class TaskManager:
                     to_delete.append(tid)
             for tid in to_delete:
                 self._tasks.pop(tid, None)
+
+        # Filesystem work happens outside the lock.
+        for tid in get_finished_task_ids_older_than(now - self.task_ttl_seconds):
+            # Task IDs are our own uuid4 strings; refuse anything that could
+            # escape workspace_root just in case a row was tampered with.
+            if "/" in tid or "\\" in tid or tid in ("", ".", ".."):
+                logger.warning("Skipping workspace purge for suspicious task id %r", tid)
+                continue
+            task_dir = self.workspace_root / tid
+            if not task_dir.is_dir():
+                continue
+            try:
+                shutil.rmtree(task_dir)
+                logger.info("Purged expired workspace %s", task_dir)
+            except OSError as e:
+                logger.warning("Failed to purge workspace %s: %s", task_dir, e)
 
 
 # Global manager instance (tests can replace)

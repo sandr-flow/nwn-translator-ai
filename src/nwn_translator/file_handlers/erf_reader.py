@@ -31,7 +31,6 @@ class ERFHeader:
     ERF_TYPE = b"ERF "
     MOD_TYPE = b"MOD "  # NWN: Enhanced Edition uses MOD type
     ERF_VERSION_V1 = b"V1.0"
-    ERF_VERSION_V2 = b"V2.0"
 
     # Valid file types
     VALID_TYPES = (ERF_TYPE, MOD_TYPE, b"HAK ", b"ERF")
@@ -65,6 +64,11 @@ class ERFHeader:
         # Validate (support both ERF and MOD types)
         if self.file_type not in self.VALID_TYPES:
             raise ERFReaderError(f"Invalid file type: {self.file_type!r}")
+        if self.version != self.ERF_VERSION_V1:
+            raise ERFReaderError(
+                f"Unsupported ERF version {self.version!r}; "
+                "only V1.0 (NWN / NWN:EE) is supported"
+            )
 
     def is_valid(self) -> bool:
         """Check if header is valid."""
@@ -277,6 +281,18 @@ class ERFReader:
         if not self.header.is_valid():
             raise ERFReaderError("Invalid ERF header")
 
+        # Sanity-check the declared tables against the real file size before
+        # any allocation depending on entry_count (crafted headers with a
+        # huge count would otherwise exhaust memory in read_entries).
+        file_size = self.file_path.stat().st_size
+        key_list_end = self.header.offset_to_key_list + self.header.entry_count * 24
+        res_list_end = self.header.offset_to_resource_list + self.header.entry_count * 8
+        if key_list_end > file_size or res_list_end > file_size:
+            raise ERFReaderError(
+                f"Corrupt ERF header: {self.header.entry_count} entries do not fit "
+                f"in a {file_size}-byte file"
+            )
+
         return self.header
 
     def read_entries(self) -> List[ERFEntry]:
@@ -327,15 +343,34 @@ class ERFReader:
                 size = struct.unpack("<I", res_data_block[base + 4 : base + 8])[0]
                 resources.append((offset, size))
 
-        # 3. Combine
+        # 3. Combine, validating data regions against the real file size.
+        # ERF stores resources uncompressed, so in a well-formed archive the
+        # regions are disjoint and their total cannot exceed the file itself;
+        # crafted overlapping entries would otherwise let a small upload
+        # extract to an unbounded volume on disk.
+        file_size = self.file_path.stat().st_size
+        total_data_size = 0
         self.entries = []
         for res_ref, res_id, res_type in keys:
             if res_id < len(resources):
                 offset, size = resources[res_id]
+                if offset != 0xFFFFFFFF:
+                    if offset + size > file_size:
+                        raise ERFReaderError(
+                            f"Corrupt ERF entry {res_ref!r}: data region "
+                            f"{offset}+{size} exceeds file size {file_size}"
+                        )
+                    total_data_size += size
                 entry = ERFEntry(res_ref, res_id, res_type, offset, size)
                 self.entries.append(entry)
             else:
                 logger.warning(f"Invalid resource ID {res_id} for {res_ref}")
+
+        if total_data_size > file_size:
+            raise ERFReaderError(
+                f"Corrupt ERF: entries declare {total_data_size} bytes of data "
+                f"in a {file_size}-byte file (overlapping entries)"
+            )
 
         self._fill_header_type_cache()
         return self.entries

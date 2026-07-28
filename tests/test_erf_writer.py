@@ -235,6 +235,25 @@ class TestERFWriterRoundTrip:
         finally:
             tmp.unlink(missing_ok=True)
 
+    def test_resref_longer_than_16_chars_raises(self, tmp_path):
+        """A resref that does not fit the 16-byte field must fail the write."""
+        out = tmp_path / "long_name.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("a_very_long_resref", ".dlg", b"data")
+        with pytest.raises(ERFWriterError, match="limited to 16"):
+            writer.write()
+
+    def test_resref_exactly_16_chars_accepted(self, tmp_path):
+        """A 16-character resref is the maximum and must round-trip intact."""
+        out = tmp_path / "max_name.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("sixteen_chars_ab", ".dlg", b"data")
+        writer.write()
+
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert entries[0].res_ref == "sixteen_chars_ab"
+
     def test_empty_archive_writes(self, tmp_path):
         """An empty ERF archive with no resources must still write successfully."""
         out = tmp_path / "empty.mod"

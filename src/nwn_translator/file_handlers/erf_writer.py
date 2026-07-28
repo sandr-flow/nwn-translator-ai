@@ -227,8 +227,16 @@ class ERFWriter:
 
         Returns:
             24-byte packed bytes.
+
+        Raises:
+            ERFWriterError: If *res_ref* does not fit the 16-byte field.
         """
-        name_bytes = res_ref.encode("ascii", errors="replace")[:16]
+        name_bytes = res_ref.encode("ascii", errors="replace")
+        if len(name_bytes) > 16:
+            raise ERFWriterError(
+                f"Resource name {res_ref!r} is {len(name_bytes)} bytes; "
+                "ERF resrefs are limited to 16"
+            )
         name_bytes = name_bytes.ljust(16, b"\x00")
         return name_bytes + struct.pack("<II", res_id, res_type_id)
 

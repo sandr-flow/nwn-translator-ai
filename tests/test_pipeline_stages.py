@@ -1,9 +1,13 @@
 """Tests for pipeline seam (de)serialization and isolated stage execution."""
 
+import threading
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
-from nwn_translator.config import TranslationConfig
+import pytest
+
+from nwn_translator.config import TranslationCancelled, TranslationConfig
 from nwn_translator.context.entity_candidates import EntityCandidateRegistry
 from nwn_translator.context.world_context import NPCInfo, WorldContext
 from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
@@ -173,3 +177,48 @@ def test_only_ext_filter_isolates_file_type(tmp_path: Path) -> None:
     extracted_map = stage_extract(state, ncs_only)
 
     assert {p.suffix.lower() for p in extracted_map} == {".ncs"}
+
+
+def test_cancel_during_extract_drops_queued_futures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancellation must not wait for every queued extraction to finish.
+
+    Before the fix the executor's __exit__ ran all submitted futures to
+    completion, so cancelling during extract still parsed the whole module.
+    """
+    total_files = 40
+    sleep_per_file = 0.1
+    started_lock = threading.Lock()
+    started_count = 0
+
+    def slow_extract(self, file_path):
+        nonlocal started_count
+        with started_lock:
+            started_count += 1
+        time.sleep(sleep_per_file)
+        return None
+
+    monkeypatch.setattr(PipelineState, "_extract_file", slow_extract)
+
+    config = TranslationConfig(
+        api_key="test-key",
+        model="test-model",
+        source_lang="english",
+        target_lang="russian",
+        input_file=tmp_path / "m.mod",
+        max_concurrent_requests=2,
+        cancel_check=lambda: True,
+    )
+    state = PipelineState(config=config, provider=Mock())
+    files = [tmp_path / f"f{i}.uti" for i in range(total_files)]
+
+    begun = time.monotonic()
+    with pytest.raises(TranslationCancelled):
+        stage_extract(state, files)
+    elapsed = time.monotonic() - begun
+
+    # Old behaviour: all 40 futures run (~2s with 2 workers). New behaviour:
+    # only the few already started when the cancel fired.
+    assert started_count < total_files / 2
+    assert elapsed < total_files * sleep_per_file / 2 / 2

@@ -520,24 +520,31 @@ def stage_extract(state: PipelineState, translatable_files: List[Path]) -> Extra
             for file_path in translatable_files
         }
         completed_count = 0
-        for future in as_completed(future_to_file):
-            file_path = future_to_file[future]
-            completed_count += 1
-            if state.config.progress_callback is not None:
-                state.config.progress_callback(
-                    "extracting_content", completed_count, total_files, file_path.name
-                )
-            state._check_cancel()
-            try:
-                result = future.result()
-                if result is not None:
-                    parsed_data, extracted, file_ext = result
-                    extracted_map[file_path] = (parsed_data, extracted, file_ext)
-            except Exception as e:
-                error_msg = f"Error extracting {file_path.name}: {e}"
-                with state._stats_lock:
-                    state.stats["errors"].append(error_msg)
-                logger.error(error_msg)
+        try:
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                completed_count += 1
+                if state.config.progress_callback is not None:
+                    state.config.progress_callback(
+                        "extracting_content", completed_count, total_files, file_path.name
+                    )
+                state._check_cancel()
+                try:
+                    result = future.result()
+                    if result is not None:
+                        parsed_data, extracted, file_ext = result
+                        extracted_map[file_path] = (parsed_data, extracted, file_ext)
+                except Exception as e:
+                    error_msg = f"Error extracting {file_path.name}: {e}"
+                    with state._stats_lock:
+                        state.stats["errors"].append(error_msg)
+                    logger.error(error_msg)
+        except BaseException:
+            # On cancellation (or any error escaping the loop) drop the queued
+            # futures; otherwise the executor's __exit__ would run every
+            # remaining file to completion before the exception propagates.
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
 
     logger.info("Phase A complete: %d files extracted", len(extracted_map))
     return extracted_map

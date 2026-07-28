@@ -19,10 +19,13 @@ NWN .dlg GFF structure:
         EntriesList   — list of entry link structs; each has an Index into EntryList
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .base import BaseExtractor, ExtractedContent, TranslatableItem, DialogNode
+
+logger = logging.getLogger(__name__)
 
 
 class DialogExtractor(BaseExtractor):
@@ -124,6 +127,10 @@ class DialogExtractor(BaseExtractor):
         Useful for generating a human-readable dialog preview, but extraction
         uses the flat approach (see extract()) which is safer for translation.
 
+        The walk is iterative: recursion depth would otherwise scale with the
+        conversation length, and long cutscene chains can exceed Python's
+        recursion limit. Non-struct entries/replies are skipped with a warning.
+
         Args:
             parsed_data: Parsed GFF data
 
@@ -141,103 +148,76 @@ class DialogExtractor(BaseExtractor):
         tree: List[DialogNode] = []
         visited_entries: Set[int] = set()
 
-        for link in starting_list:
+        # Work items: (is_entry, node_id, parent); parent None = root of the tree.
+        # A LIFO stack with children pushed in reverse order reproduces the
+        # depth-first order of the recursive walk, including the visited check
+        # firing only after the previous sibling's subtree is fully built.
+        stack: List[Tuple[bool, Any, Optional[DialogNode]]] = []
+        for link in reversed(starting_list):
             if not isinstance(link, dict):
                 continue
             entry_idx = link.get("Index")
             if entry_idx is None:
                 # Try direct integer (some tool versions store index directly)
                 continue
-            if entry_idx in entries and entry_idx not in visited_entries:
-                node = self._build_entry_node(entry_idx, entries, replies, visited_entries)
+            stack.append((True, entry_idx, None))
+
+        while stack:
+            is_entry, node_id, parent = stack.pop()
+
+            if is_entry:
+                if node_id not in entries or node_id in visited_entries:
+                    continue
+                visited_entries.add(node_id)
+                data = entries[node_id]
+                if not isinstance(data, dict):
+                    logger.warning(
+                        "Dialog entry %s is not a struct (%s); skipping node",
+                        node_id,
+                        type(data).__name__,
+                    )
+                    continue
+                node = DialogNode(
+                    node_id=node_id,
+                    text=self._extract_text_from_local_string(data.get("Text") or {}) or "",
+                    speaker=data.get("Speaker", ""),
+                    is_entry=True,
+                    metadata={"type": "entry"},
+                )
+                # Each entry has a RepliesList of link structs: {Index: <reply_index>, ...}
+                links = data.get("RepliesList") or []
+            else:
+                if node_id not in replies:
+                    continue
+                data = replies[node_id]
+                if not isinstance(data, dict):
+                    logger.warning(
+                        "Dialog reply %s is not a struct (%s); skipping node",
+                        node_id,
+                        type(data).__name__,
+                    )
+                    continue
+                node = DialogNode(
+                    node_id=node_id,
+                    text=self._extract_text_from_local_string(data.get("Text") or {}) or "",
+                    speaker="Player",
+                    is_entry=False,
+                    metadata={"type": "reply"},
+                )
+                # Each reply has an EntriesList of link structs: {Index: <entry_index>, ...}
+                links = data.get("EntriesList") or []
+
+            if parent is None:
                 tree.append(node)
+            else:
+                parent.replies.append(node)
+
+            for link in reversed(links):
+                if not isinstance(link, dict):
+                    continue
+                child_idx = link.get("Index")
+                if child_idx is None:
+                    continue
+                stack.append((not is_entry, child_idx, node))
 
         return tree
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _build_entry_node(
-        self,
-        entry_id: int,
-        entries: Dict[int, Dict[str, Any]],
-        replies: Dict[int, Dict[str, Any]],
-        visited: Set[int],
-    ) -> DialogNode:
-        """Build a DialogNode for an NPC entry.
-
-        Args:
-            entry_id: Index into entries dict
-            entries: All entry structs keyed by index
-            replies: All reply structs keyed by index
-            visited: Set of already-visited entry indices (cycle guard)
-
-        Returns:
-            DialogNode for this entry
-        """
-        visited.add(entry_id)
-        entry_data = entries.get(entry_id, {})
-
-        text = self._extract_text_from_local_string(entry_data.get("Text") or {}) or ""
-        speaker = entry_data.get("Speaker", "")
-
-        node = DialogNode(
-            node_id=entry_id,
-            text=text,
-            speaker=speaker,
-            is_entry=True,
-            metadata={"type": "entry"},
-        )
-
-        # Each entry has a RepliesList of link structs: {Index: <reply_index>, ...}
-        for link in entry_data.get("RepliesList") or []:
-            if not isinstance(link, dict):
-                continue
-            reply_idx = link.get("Index")
-            if reply_idx is not None and reply_idx in replies:
-                reply_node = self._build_reply_node(reply_idx, replies, entries, visited)
-                node.replies.append(reply_node)
-
-        return node
-
-    def _build_reply_node(
-        self,
-        reply_id: int,
-        replies: Dict[int, Dict[str, Any]],
-        entries: Dict[int, Dict[str, Any]],
-        visited: Set[int],
-    ) -> DialogNode:
-        """Build a DialogNode for a player reply.
-
-        Args:
-            reply_id: Index into replies dict
-            replies: All reply structs keyed by index
-            entries: All entry structs keyed by index
-            visited: Set of already-visited entry indices (cycle guard)
-
-        Returns:
-            DialogNode for this reply
-        """
-        reply_data = replies.get(reply_id, {})
-
-        text = self._extract_text_from_local_string(reply_data.get("Text") or {}) or ""
-
-        node = DialogNode(
-            node_id=reply_id,
-            text=text,
-            speaker="Player",
-            is_entry=False,
-            metadata={"type": "reply"},
-        )
-
-        # Each reply has an EntriesList of link structs: {Index: <entry_index>, ...}
-        for link in reply_data.get("EntriesList") or []:
-            if not isinstance(link, dict):
-                continue
-            entry_idx = link.get("Index")
-            if entry_idx is not None and entry_idx in entries and entry_idx not in visited:
-                entry_node = self._build_entry_node(entry_idx, entries, replies, visited)
-                node.replies.append(entry_node)
-
-        return node

@@ -1,9 +1,11 @@
 """V2.1 parse-all: every parsable resource of every corpus module parses.
 
-For GFF resources this means :func:`read_gff` does not raise. For ``.ncs`` it
-additionally means the instruction stream reaches exactly the end declared by
-the NWN:EE preamble field ``T`` (a parser-independent synchronization check: if
-the parser desyncs on an opcode with a wrong argument size, either it raises or
+For GFF resources this means :func:`read_gff` does not raise. For ``.dlg`` it
+additionally means :meth:`DialogExtractor.build_dialog_tree` builds a tree
+(the contextual translation path depends on it). For ``.ncs`` it additionally
+means the instruction stream reaches exactly the end declared by the NWN:EE
+preamble field ``T`` (a parser-independent synchronization check: if the
+parser desyncs on an opcode with a wrong argument size, either it raises or
 the declared ``T`` no longer equals the file size it walked).
 """
 
@@ -15,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from nwn_translator.config import TRANSLATABLE_TYPES
+from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.file_handlers.gff_handler import read_gff
 from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
 
@@ -58,9 +61,15 @@ def test_parse_all(corpus_module: Path, tmp_path: Path) -> None:
         else:
             gff_total += 1
             try:
-                read_gff(path)
+                parsed = read_gff(path)
             except Exception as exc:  # noqa: BLE001 - robustness sweep
                 failures.append(f"GFF parse {path.name}: {type(exc).__name__}: {exc}")
+                continue
+            if ext == ".dlg":
+                try:
+                    DialogExtractor().build_dialog_tree(parsed)
+                except Exception as exc:  # noqa: BLE001 - robustness sweep
+                    failures.append(f"DLG tree {path.name}: {type(exc).__name__}: {exc}")
 
     assert not failures, (
         f"{corpus_module.name}: {len(failures)} parse failures "

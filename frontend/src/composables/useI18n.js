@@ -5,7 +5,7 @@ const locale = ref(localStorage.getItem("nwn-locale") || "ru");
 
 export function useI18n() {
   function t(key) {
-    return messages[locale.value]?.[key] ?? messages.ru[key] ?? key;
+    return messages[locale.value]?.[key] ?? messages.en[key] ?? key;
   }
 
   function setLocale(l) {

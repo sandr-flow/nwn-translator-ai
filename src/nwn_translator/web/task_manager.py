@@ -27,6 +27,7 @@ from .database import (
     TERMINAL_STATUSES,
     SqliteTranslationLogWriter,
     create_task_row,
+    delete_task_row,
     get_db,
     get_unfinished_task_rows,
     update_task_row,
@@ -222,6 +223,43 @@ class TaskManager:
         """
         with self._lock:
             self._active_by_ip[client_ip] = task_id
+
+    def try_register_active(self, client_ip: str, task_id: str) -> bool:
+        """Atomically register *task_id* for *client_ip* unless one is already active.
+
+        The check and the registration happen in one critical section, so two
+        concurrent requests from the same IP cannot both pass the one-job-per-IP
+        limit.
+
+        Args:
+            client_ip: Client IP address.
+            task_id: UUID of the task to register.
+
+        Returns:
+            ``True`` if registered; ``False`` if an unfinished task already
+            occupies the slot for this IP.
+        """
+        with self._lock:
+            existing = self._active_by_ip.get(client_ip)
+            if existing:
+                t = self._tasks.get(existing)
+                if t and not t.is_finished():
+                    return False
+            self._active_by_ip[client_ip] = task_id
+            return True
+
+    def discard_task(self, task_id: str) -> None:
+        """Remove a task that never started running (lost the IP race, failed upload).
+
+        Drops it from memory and deletes its SQLite row so it does not linger in
+        the client's history.
+
+        Args:
+            task_id: UUID of the task to discard.
+        """
+        with self._lock:
+            self._tasks.pop(task_id, None)
+        delete_task_row(task_id)
 
     def release_active(self, client_ip: str, task_id: str) -> None:
         """Remove the active-job mapping for *client_ip* if it matches *task_id*.

@@ -219,10 +219,22 @@ async def start_translate(
         source_lang=source_lang.strip() or "auto",
         model=model_slug,
     )
+    # Claim the one-job-per-IP slot atomically before the (slow) upload; the
+    # check at the top of the handler is only a fast path and is racy on its own.
+    if not tm.try_register_active(ip, task.task_id):
+        tm.discard_task(task.task_id)
+        raise HTTPException(
+            status_code=429,
+            detail="Уже выполняется перевод с вашего IP. Дождитесь завершения.",
+        )
     base = tm.workspace_for_task(task.task_id)
     input_path = base / Path(file.filename).name
-    await _stream_upload_to_file(file, input_path, MAX_UPLOAD_BYTES)
-    tm.register_active(ip, task.task_id)
+    try:
+        await _stream_upload_to_file(file, input_path, MAX_UPLOAD_BYTES)
+    except BaseException:
+        tm.release_active(ip, task.task_id)
+        tm.discard_task(task.task_id)
+        raise
 
     mc = (
         max(1, int(max_concurrent_requests))

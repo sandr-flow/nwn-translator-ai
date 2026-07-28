@@ -5,14 +5,19 @@ This module handles writing and packaging .mod files from extracted resources.
 ERF v1.0 binary layout (header = 160 bytes):
     [0:4]   FileType    (b"MOD ", b"ERF ", b"HAK ")
     [4:8]   Version     (b"V1.0")
-    [8:12]  LanguageCount    = 0
-    [12:16] LocalizedStringSize = 0
+    [8:12]  LanguageCount
+    [12:16] LocalizedStringSize
     [16:20] EntryCount
+    [20:24] OffsetToLocalizedString ← byte offset from start of file
     [24:28] OffsetToKeyList   ← byte offset from start of file
     [28:32] OffsetToResourceList ← byte offset from start of file
     [32:36] BuildYear (years since 1900)
     [36:40] BuildDay  (day of year, 0-based)
-    bytes [20:24] and [40:160] are unused/zero
+    [40:44] DescriptionStrRef (0xFFFFFFFF when LanguageCount = 0)
+    bytes [44:160] are unused/zero
+
+The Localized String List (the module description shown by the toolset)
+sits between the header and the Key List.
 
 Key List entry — 24 bytes each (per entry):
     ResRef[16]  null-padded ASCII name (no extension)
@@ -29,7 +34,7 @@ import logging
 import os
 import struct
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .erf_reader import ERFReader, ERFHeader
 
@@ -90,6 +95,11 @@ class ERFWriter:
         self.type_overrides: Dict[str, int] = type_overrides or {}
         # Ordered mapping: filename (stem + ext) → raw bytes
         self._resources: Dict[str, bytes] = {}
+        # Module description (Localized String List) carried from a source
+        # archive; defaults mean "no description".
+        self._loc_language_count = 0
+        self._loc_strings_block = b""
+        self._description_strref = 0xFFFFFFFF
 
         ext = self.output_path.suffix.lower()
         self.file_type: bytes = self.FILE_TYPES.get(ext, b"ERF ")
@@ -108,6 +118,20 @@ class ERFWriter:
         """
         filename = f"{res_ref}{res_type.lower()}"
         self._resources[filename] = data
+
+    def set_localized_strings(
+        self, language_count: int, raw_block: bytes, description_strref: int
+    ) -> None:
+        """Carry the module description from a source archive.
+
+        Args:
+            language_count: LanguageCount header value of the source archive.
+            raw_block: Raw Localized String List bytes (may be empty).
+            description_strref: DescriptionStrRef header value of the source.
+        """
+        self._loc_language_count = language_count
+        self._loc_strings_block = raw_block
+        self._description_strref = description_strref
 
     def add_file(self, file_path: Path) -> None:
         """Add a file from disk to the archive.
@@ -180,7 +204,9 @@ class ERFWriter:
         entry_count = len(sorted_resources)
 
         # ── 1. Calculate section offsets ──────────────────────────────
-        key_list_offset = _HEADER_SIZE
+        # The Localized String List (module description) sits right after
+        # the header, pushing the Key List back by its size.
+        key_list_offset = _HEADER_SIZE + len(self._loc_strings_block)
         resource_list_offset = key_list_offset + entry_count * _KEY_ENTRY_SIZE
         resource_data_offset = resource_list_offset + entry_count * _RES_ENTRY_SIZE
 
@@ -221,6 +247,7 @@ class ERFWriter:
         return b"".join(
             [
                 header,
+                self._loc_strings_block,
                 bytes(key_list_bytes),
                 bytes(res_list_bytes),
                 *res_data_parts,
@@ -274,10 +301,11 @@ class ERFWriter:
         header = bytearray(_HEADER_SIZE)
         header[0:4] = self.file_type  # FileType
         header[4:8] = self.version  # Version
-        # [8:12]  LanguageCount = 0 (already zero)
-        # [12:16] LocalizedStringSize = 0 (already zero)
+        struct.pack_into("<I", header, 8, self._loc_language_count)  # LanguageCount
+        struct.pack_into("<I", header, 12, len(self._loc_strings_block))  # LocalizedStringSize
         struct.pack_into("<I", header, 16, entry_count)  # EntryCount
-        # [20:24] unused — keep zero
+        if self._loc_strings_block:
+            struct.pack_into("<I", header, 20, _HEADER_SIZE)  # OffsetToLocalizedString
         struct.pack_into("<I", header, 24, key_list_offset)  # OffsetToKeyList
         struct.pack_into("<I", header, 28, resource_list_offset)  # OffsetToResourceList
         struct.pack_into("<I", header, 32, build_year)  # BuildYear
@@ -285,7 +313,7 @@ class ERFWriter:
 
         # [40:44] DescriptionStrRef. MUST be 0xFFFFFFFF if LanguageCount=0,
         # otherwise NWN looks up string 0 in dialog.tlk, which is "Bad Strref"!
-        struct.pack_into("<I", header, 40, 0xFFFFFFFF)
+        struct.pack_into("<I", header, 40, self._description_strref)
 
         # Bytes [44:160] remain zero
         return bytes(header)
@@ -309,6 +337,7 @@ def create_mod_from_directory(
         original_mod: Original .mod for reference metadata (res_type IDs).
     """
     type_overrides: Dict[str, int] = {}
+    description_carry: Optional[Tuple[int, bytes, int]] = None
 
     if original_mod and original_mod.exists():
         try:
@@ -320,6 +349,15 @@ def create_mod_from_directory(
                 raw_filename = f"{entry.res_ref}{res_type_ext}"
                 filename = reader._sanitize_filename(raw_filename)
                 type_overrides[filename] = entry.res_type
+            assert reader.header is not None
+            loc_block = reader.read_localized_strings_block()
+            description_carry = (
+                # A corrupt block reads back empty; LanguageCount > 0 with
+                # zero LocalizedStringSize would make an invalid header.
+                reader.header.language_count if loc_block else 0,
+                loc_block,
+                reader.header.description_strref,
+            )
             reader.cleanup()
         except Exception as exc:
             logger.error("Could not read original mod for metadata: %s", exc)
@@ -328,6 +366,8 @@ def create_mod_from_directory(
             ) from exc
 
     writer = ERFWriter(output_path, type_overrides=type_overrides)
+    if description_carry is not None:
+        writer.set_localized_strings(*description_carry)
     writer.add_directory(input_dir)
     writer.write()
 

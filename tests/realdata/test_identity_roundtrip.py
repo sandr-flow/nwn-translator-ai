@@ -20,6 +20,15 @@ from nwn_translator.file_handlers.erf_writer import create_mod_from_directory
 from ._corpus import extract_module, read_raw_resources
 
 
+def _description_fields(mod_path: Path) -> Tuple[int, bytes, int]:
+    """Read ``(LanguageCount, raw localized-string block, DescriptionStrRef)``."""
+    reader = ERFReader(mod_path)
+    header = reader.read_header()
+    block = reader.read_localized_strings_block()
+    reader.cleanup()
+    return header.language_count, block, header.description_strref
+
+
 def _type_ids_by_resource(mod_path: Path) -> Dict[Tuple[str, str], int]:
     """Map ``(res_ref, detected_ext) -> res_type_id`` for every resource."""
     reader = ERFReader(mod_path)
@@ -56,6 +65,15 @@ def test_identity_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
     if byte_diffs:
         problems.append(
             f"{len(byte_diffs)} resources differ in bytes, e.g. {sorted(byte_diffs)[:5]}"
+        )
+
+    desc_in = _description_fields(corpus_module)
+    desc_out = _description_fields(out_path)
+    if desc_in != desc_out:
+        problems.append(
+            "module description mismatch: "
+            f"in=(lang={desc_in[0]}, {len(desc_in[1])}B, strref={desc_in[2]:#x}) "
+            f"out=(lang={desc_out[0]}, {len(desc_out[1])}B, strref={desc_out[2]:#x})"
         )
 
     assert not problems, (

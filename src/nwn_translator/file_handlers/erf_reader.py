@@ -54,12 +54,16 @@ class ERFHeader:
         self.localized_string_size = struct.unpack("<I", data[12:16])[0]
         self.entry_count = struct.unpack("<I", data[16:20])[0]
 
+        # Offset to Localized String List (module description)
+        self.offset_to_localized_string = struct.unpack("<I", data[20:24])[0]
+
         # Offset to Key List (variable names in docs can be confusing)
         self.offset_to_key_list = struct.unpack("<I", data[24:28])[0]
 
         # Offset to Resource List
         self.offset_to_resource_list = struct.unpack("<I", data[28:32])[0]
         self.build_day = struct.unpack("<I", data[32:36])[0]
+        self.description_strref = struct.unpack("<I", data[40:44])[0]
 
         # Validate (support both ERF and MOD types)
         if self.file_type not in self.VALID_TYPES:
@@ -294,6 +298,34 @@ class ERFReader:
             )
 
         return self.header
+
+    def read_localized_strings_block(self) -> bytes:
+        """Read the raw Localized String List block (module description).
+
+        Returns:
+            The block bytes as stored in the file, or ``b""`` when the header
+            declares no block or the declared region does not fit the file.
+        """
+        if not self.header:
+            self.read_header()
+        assert self.header is not None
+
+        offset = self.header.offset_to_localized_string
+        size = self.header.localized_string_size
+        if size == 0:
+            return b""
+        file_size = self.file_path.stat().st_size
+        if offset + size > file_size:
+            logger.warning(
+                "Localized string block %d+%d exceeds file size %d; treating as absent",
+                offset,
+                size,
+                file_size,
+            )
+            return b""
+        with open(self.file_path, "rb") as f:
+            f.seek(offset)
+            return f.read(size)
 
     def read_entries(self) -> List[ERFEntry]:
         """Read ERF entry table.

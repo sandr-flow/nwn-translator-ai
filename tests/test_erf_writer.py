@@ -10,7 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from src.nwn_translator.file_handlers.erf_writer import ERFWriter, ERFWriterError
+from src.nwn_translator.file_handlers.erf_writer import (
+    ERFWriter,
+    ERFWriterError,
+    create_mod_from_directory,
+)
 from src.nwn_translator.file_handlers.erf_reader import ERFEntry, ERFReader, ERFHeader
 from src.nwn_translator.config import TRANSLATABLE_TYPES
 
@@ -309,6 +313,91 @@ class TestERFWriterRoundTrip:
         entry = ERFEntry("resource", 0, 6789, 0, 12)
 
         assert reader.detect_type_from_header(entry) == expected_ext
+
+
+# ---------------------------------------------------------------------------
+# Module description (Localized String List)
+# ---------------------------------------------------------------------------
+
+
+def _make_mod_with_description(path: Path) -> bytes:
+    """Write a .mod with a one-language description block; return the block."""
+    text = b"Module description text"
+    block = struct.pack("<II", 0, len(text)) + text
+    writer = ERFWriter(path)
+    writer.set_localized_strings(1, block, 0xDEADBEEF)
+    writer.add_resource("dialog", ".dlg", b"DLG DATA")
+    writer.write()
+    return block
+
+
+class TestModuleDescription:
+    """The Localized String List must survive the rewrite."""
+
+    def test_writer_emits_localized_block(self, tmp_path):
+        """Header fields and block placement follow the ERF v1.0 layout."""
+        out = tmp_path / "desc.mod"
+        block = _make_mod_with_description(out)
+
+        raw = out.read_bytes()
+        assert struct.unpack("<I", raw[8:12])[0] == 1  # LanguageCount
+        assert struct.unpack("<I", raw[12:16])[0] == len(block)  # LocalizedStringSize
+        assert struct.unpack("<I", raw[20:24])[0] == 160  # OffsetToLocalizedString
+        assert raw[160 : 160 + len(block)] == block
+        assert struct.unpack("<I", raw[24:28])[0] == 160 + len(block)  # OffsetToKeyList
+        assert struct.unpack("<I", raw[40:44])[0] == 0xDEADBEEF  # DescriptionStrRef
+
+    def test_reader_parses_description_fields(self, tmp_path):
+        """ERFReader exposes the new header fields and the raw block."""
+        out = tmp_path / "desc.mod"
+        block = _make_mod_with_description(out)
+
+        reader = ERFReader(out)
+        header = reader.read_header()
+        assert header.language_count == 1
+        assert header.description_strref == 0xDEADBEEF
+        assert reader.read_localized_strings_block() == block
+
+    def test_resources_intact_with_description(self, tmp_path):
+        """The shifted Key List still yields byte-identical resource data."""
+        out = tmp_path / "desc.mod"
+        _make_mod_with_description(out)
+
+        raw = out.read_bytes()
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.res_ref == "dialog"
+        assert raw[entry.offset : entry.offset + entry.size] == b"DLG DATA"
+
+    def test_create_mod_from_directory_carries_description(self, tmp_path):
+        """Repacking an extracted module preserves the description block."""
+        src = tmp_path / "source.mod"
+        block = _make_mod_with_description(src)
+
+        extract_dir = ERFReader(src).extract_all(tmp_path / "extract")
+        out = tmp_path / "repacked.mod"
+        create_mod_from_directory(extract_dir, out, original_mod=src)
+
+        reader = ERFReader(out)
+        header = reader.read_header()
+        assert header.language_count == 1
+        assert header.description_strref == 0xDEADBEEF
+        assert reader.read_localized_strings_block() == block
+
+    def test_no_description_header_unchanged(self, tmp_path):
+        """Without a carried description the header keeps the old defaults."""
+        out = tmp_path / "plain.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("dialog", ".dlg", b"DLG DATA")
+        writer.write()
+
+        raw = out.read_bytes()
+        assert struct.unpack("<I", raw[8:12])[0] == 0  # LanguageCount
+        assert struct.unpack("<I", raw[12:16])[0] == 0  # LocalizedStringSize
+        assert struct.unpack("<I", raw[20:24])[0] == 0  # OffsetToLocalizedString
+        assert struct.unpack("<I", raw[40:44])[0] == 0xFFFFFFFF  # DescriptionStrRef
 
 
 # ---------------------------------------------------------------------------

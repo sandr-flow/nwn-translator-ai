@@ -136,6 +136,16 @@ class TestEntryValidation:
         with pytest.raises(ERFReaderError, match="overlapping"):
             reader.read_entries()
 
+    def test_localized_block_beyond_file_treated_as_absent(self, tmp_path):
+        """A description block that does not fit the file reads back empty."""
+        mod = _write_valid_mod(tmp_path / "bad_desc.mod")
+        # Declare a huge LocalizedStringSize pointing past EOF.
+        _patch_bytes(mod, 12, struct.pack("<I", 0x7FFFFFFF))
+        _patch_bytes(mod, 20, struct.pack("<I", 160))
+
+        reader = ERFReader(mod)
+        assert reader.read_localized_strings_block() == b""
+
     def test_valid_entries_accepted(self, tmp_path):
         """A multi-resource writer archive passes all entry checks."""
         mod = _write_valid_mod(

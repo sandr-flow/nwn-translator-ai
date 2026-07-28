@@ -5,8 +5,10 @@ corpus module using :class:`MockTranslateProvider`, then reads the output back
 and checks three invariants:
 
 1. the output ``.mod`` reads back (all resources extractable);
-2. every re-extracted GFF field carries the marker (player-facing content is
-   translated in full; gaps expose patch-coverage bugs such as M-G1);
+2. every re-extracted GFF field with translatable content carries the marker
+   (player-facing content is translated in full; gaps expose patch-coverage
+   bugs such as M-G1). Fields that sanitize down to tokens/punctuation only
+   (``"<Deity>!"``, ``. . .``) are passthrough by design and exempt;
 3. every output ``.ncs`` reparses and its preamble field ``T`` equals its size.
 
 NCS strings are deliberately *not* held to the marker invariant: the extractor
@@ -25,8 +27,6 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
-import pytest
-
 from nwn_translator.config import TRANSLATABLE_TYPES, TranslationConfig
 from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
 from nwn_translator.pipeline.stages import (
@@ -34,6 +34,8 @@ from nwn_translator.pipeline.stages import (
     load_parsed_and_extracted,
     run_pipeline,
 )
+from nwn_translator.translators.token_handler import TokenHandler
+from nwn_translator.translators.translation_manager import _is_empty_after_sanitize
 
 from ._corpus import extract_module
 from ._mock_provider import MARKER, MockTranslateProvider
@@ -47,13 +49,6 @@ def _declared_ncs_size(raw: bytes) -> int | None:
     return None
 
 
-# KNOWN ISSUE: C1 (NCS opcode arg sizes) and C2 (NCS preamble ``T``) are fixed
-# and the corpus NCS now reparse with a correct ``T``. The remaining failure is
-# a dialog string made entirely of inline tags (``<StartHighlight>...</Start>``)
-# that loses its marker somewhere in the pipeline (it round-trips fine through
-# TokenHandler in isolation). See tests/realdata/README.md. Remove this marker
-# once that field is fixed; tighten to strict afterwards.
-@pytest.mark.xfail(reason="known-issue: inline-tag-only string loses marker", strict=False)
 def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
     out_path = tmp_path / "translated.mod"
     config = TranslationConfig(
@@ -98,7 +93,8 @@ def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
                     ncs_failures.append(f"size {path.name}: T={declared} actual={len(raw)}")
             continue
 
-        # GFF: every re-extracted player-facing field must carry the marker.
+        # GFF: every re-extracted field with translatable content must carry
+        # the marker; token/punctuation-only fields are passthrough by design.
         loaded = load_parsed_and_extracted(path, path.suffix.lower(), None)
         if loaded is None:
             continue
@@ -107,10 +103,14 @@ def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
             if not item.text:
                 continue
             field_total += 1
-            if MARKER not in item.text:
-                missing_marker += 1
-                if len(missing_examples) < 20:
-                    missing_examples.append(f"{path.name}: {item.text[:60]!r}")
+            if MARKER in item.text:
+                continue
+            sanitized = TokenHandler().sanitize(item.text).sanitized_text
+            if _is_empty_after_sanitize(sanitized):
+                continue
+            missing_marker += 1
+            if len(missing_examples) < 20:
+                missing_examples.append(f"{path.name}: {item.text[:60]!r}")
 
     problems = []
     if missing_marker:

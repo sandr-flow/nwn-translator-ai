@@ -34,11 +34,16 @@ _MIN_PREFIX_LEN = 20
 
 # Placeholders produced by TokenHandler.sanitize() that carry no translatable
 # content and must be stripped before checking if a sanitized string is empty.
+# The core is matched exactly (8-hex nonce + decimal counter, see
+# TokenHandler._make_placeholder): a permissive [A-Za-z0-9_]+ would greedily
+# swallow a single word sandwiched between two placeholders
+# (__NWN_INLINE_x_0__Attack__NWN_INLINE_x_1__) and misclassify it as empty.
+_PLACEHOLDER_CORE = r"(?:NWN_INLINE|NWN_TOKEN)_[0-9a-f]{8}_\d+"
 _NON_TRANSLATABLE_RE = re.compile(
-    r"__(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+__"
-    r"|\[\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]\]"
-    r"|<<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>>"
-    r"|<\[(?:NWN_INLINE|NWN_TOKEN)_[A-Za-z0-9_]+\]>"
+    rf"__{_PLACEHOLDER_CORE}__"
+    rf"|\[\[{_PLACEHOLDER_CORE}\]\]"
+    rf"|<<\[{_PLACEHOLDER_CORE}\]>>"
+    rf"|<\[{_PLACEHOLDER_CORE}\]>"
 )
 _NUMBERED_LABEL_FAMILY_RE = re.compile(
     r"^(?P<base>[A-Z][A-Za-z']+(?: [A-Z][A-Za-z']+){0,4}) (?P<number>\d{1,4})$"

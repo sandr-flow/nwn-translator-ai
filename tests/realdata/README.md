@@ -50,7 +50,7 @@ world-context / glossary / contextual-dialog subsystems stay out of the loop.
 | V2.1 parse-all | **pass** 5/5 | Parser never raises across the corpus. C1 is latent here: with an unknown/under-sized opcode the parser falls back to a 2-byte instruction instead of raising, so a desync rarely surfaces as an exception, and `T == file size` is a pure input-integrity check. C1 is caught downstream in V2.4. |
 | V2.2 identity round-trip | **pass** 5/5 (both cases) | ERF read/write is byte-faithful, including type IDs from the canonical table with overrides disabled. (Previously the wrong type-id table was only masked by `type_overrides`.) M-W8 does not corrupt these modules' descriptions. |
 | V2.3 no-op patch | **pass** 5/5 | Injectors skip identical text, so a no-op truly changes nothing. |
-| V2.4 mock-translate | **xfail** (one known issue) | C1+C2 fixed; one token edge remains — see below. |
+| V2.4 mock-translate | **pass** 5/5 (2026-07-28) | C1+C2 fixed; the inline-tag marker loss is resolved — see below. |
 
 ### V2.4 history and remaining known issue
 
@@ -67,16 +67,20 @@ world-context / glossary / contextual-dialog subsystems stay out of the loop.
   tracked for validation, so corruption inside a marker is caught. This was a
   distinct token edge; it does not touch this module's remaining failure (no
   dash marker is involved) and does not change its marker count.
-- **inline-tag-only field (open)** — one dialog string made entirely of inline
-  tags (`<StartHighlight>Partir</Start>` in `malt.dlg`) loses its marker:
-  1/8473 GFF fields on that module. The string round-trips correctly through
-  `TokenHandler` in isolation (the restored text keeps the prepended marker), so
-  the loss happens elsewhere in the pipeline (extraction/batch/injection), not in
-  the token-protection roundtrip itself. Root cause is not yet pinned to a plan
-  item; this is the only remaining V2.4 failure and keeps the test `xfail`.
-
-When that field is fixed, V2.4 turns green: remove the `xfail` marker on
-`test_mock_translate_roundtrip` and, if desired, tighten it to `strict=True`.
+- **inline-tag-only field (fixed 2026-07-28)** — dialog strings whose only word
+  sat entirely inside inline tags (`<StartHighlight>Partir</Start>`,
+  `<StartAction>Attack</Start>`) silently skipped translation. Root cause: the
+  passthrough gate's placeholder-stripping regex used a permissive greedy
+  `[A-Za-z0-9_]+` core, which on
+  `__NWN_INLINE_x_0__Attack__NWN_INLINE_x_1__` matched from the first
+  placeholder to the last `__`, swallowing the word — the string was then
+  misclassified as "tokens/punctuation only" and never sent to the provider
+  (that is why `TokenHandler` was clean in isolation). The regex now matches
+  the exact placeholder core (8-hex nonce + counter). A corpus inventory found
+  21 such fields (20 Midnight + 1 LES LIONS); the other 410 marker-less fields
+  were legitimately untranslatable (punctuation-only like `. . .`, or
+  token+punctuation like `"<Deity>!"`) — the V2.4 metric now exempts fields
+  that sanitize to empty, the `xfail` marker is removed, and the run is green.
 
 **Baseline update (2026-07-24):** the inline-tag-only marker loss is not limited
 to LES LIONS — every corpus module currently xfails V2.4 on the same issue class
@@ -94,6 +98,10 @@ V2.4 marker metric is unchanged (26/8118 on Midnight): the marker is plain text
 and survived tag loss in prose strings, and the remaining 26 fields are the
 tag-only / punctuation-only class whose marker loss happens outside
 `TokenHandler`.
+
+**Baseline update (2026-07-28):** the class above is resolved (greedy
+placeholder regex in the passthrough gate — see the fixed bullet); V2.4 runs
+green 5/5 with the metric exempting fields that sanitize to empty.
 
 ### H6 batch-dedup metric (Almraiven, mock-translate)
 

@@ -221,9 +221,12 @@ class GFFPatcher:
     def patch_multiple(self, patches: List[Tuple[int, str]]) -> None:
         """Apply several CExoLocString patches in one read/write pass.
 
-        Patches are applied in order; each inserts at the then-current end of FieldData.
-        A field that carried several substrings (gender or language variants) is
-        collapsed into the single LanguageID-0 substring, with a warning.
+        Every payload lands at the end of the original FieldData block, in
+        patch order, so the whole batch is a single splice: DataOffsets are
+        assigned cumulatively and the blocks after FieldData shift once by
+        the total payload length. A field that carried several substrings
+        (gender or language variants) is collapsed into the single
+        LanguageID-0 substring, with a warning.
 
         Args:
             patches: ``(record_offset, new_text)`` for each 12-byte field record.
@@ -234,23 +237,54 @@ class GFFPatcher:
         with open(self.file_path, "rb") as f:
             data = bytearray(f.read())
 
+        hdr = self._read_header(data)
+        insert_pos = hdr["fielddata_offset"] + hdr["fielddata_size"]
+
+        payloads: List[bytearray] = []
+        next_data_offset = hdr["fielddata_size"]
+        patched_offsets: set = set()
         for record_offset, new_text in patches:
             if record_offset <= 0:
                 raise GFFPatchError("Invalid record offset provided")
-            original_count = self._substring_count_at(data, record_offset)
-            if original_count > 1:
-                logger.warning(
-                    "%s: overwriting %d substrings at field record offset %d with a single "
-                    "LanguageID-0 substring; gender/language variants are lost",
-                    self.file_path.name,
-                    original_count,
-                    record_offset,
-                )
+            # A repeated offset already points at its (not yet spliced)
+            # replacement payload, so its substring count is meaningless.
+            if record_offset not in patched_offsets:
+                original_count = self._substring_count_at(data, record_offset)
+                if original_count > 1:
+                    logger.warning(
+                        "%s: overwriting %d substrings at field record offset %d with a single "
+                        "LanguageID-0 substring; gender/language variants are lost",
+                        self.file_path.name,
+                        original_count,
+                        record_offset,
+                    )
+            patched_offsets.add(record_offset)
             payload = self._build_cexo_locstring_payload(new_text)
-            data = self._apply_payload_at_fielddata_end(data, record_offset, payload)
+            # Field records live before FieldData, so record_offset is not
+            # shifted by the splice below.
+            struct.pack_into("<I", data, record_offset + 8, next_data_offset)
+            next_data_offset += len(payload)
+            payloads.append(payload)
+
+        total_len = next_data_offset - hdr["fielddata_size"]
+        new_data = bytearray(b"".join([data[:insert_pos], *payloads, data[insert_pos:]]))
+        struct.pack_into(
+            "<I", new_data, self._HDR_FIELDDATA_SIZE, hdr["fielddata_size"] + total_len
+        )
+        if hdr["fieldindices_size"] > 0:
+            struct.pack_into(
+                "<I",
+                new_data,
+                self._HDR_FIELDINDICES_OFFSET,
+                hdr["fieldindices_offset"] + total_len,
+            )
+        if hdr["listindices_size"] > 0:
+            struct.pack_into(
+                "<I", new_data, self._HDR_LISTINDICES_OFFSET, hdr["listindices_offset"] + total_len
+            )
 
         with open(self.file_path, "wb") as f:
-            f.write(data)
+            f.write(new_data)
 
     def patch_local_string(self, record_offset: int, new_text: str) -> None:
         """Patch a CExoLocString field to point to a new translated string.

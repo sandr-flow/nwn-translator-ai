@@ -1,9 +1,12 @@
 import logging
 import struct
 
+import pytest
+
 from src.nwn_translator.file_handlers.gff_handler import read_gff, write_gff
 from src.nwn_translator.file_handlers.gff_patcher import (
     GFFPatcher,
+    GFFPatchError,
     sanitize_for_module_encoding,
 )
 
@@ -60,6 +63,72 @@ def _splice_substrings(path, record_offset, substrings, str_ref=-1):
     data = bytearray(path.read_bytes())
     new_data = patcher._apply_payload_at_fielddata_end(data, record_offset, payload)
     path.write_bytes(new_data)
+
+
+class TestPatchMultipleSingleSplice:
+    """The batched splice must be equivalent to applying patches one by one."""
+
+    _FIELDS = {
+        "StructType": "UTC",
+        "FirstName": {"StrRef": -1, "Value": "aaa"},
+        "LastName": {"StrRef": -1, "Value": "bbb"},
+        "Description": {"StrRef": -1, "Value": "ccc"},
+    }
+
+    def _make_patches(self, path):
+        write_gff(path, dict(self._FIELDS))
+        offsets = read_gff(path)["_record_offsets"]
+        return [
+            (offsets["FirstName"], "Первый"),
+            (offsets["LastName"], "Второй"),
+            (offsets["Description"], "Длинное описание для сдвига блоков"),
+        ]
+
+    def test_batch_matches_sequential(self, tmp_path):
+        """One patch_multiple call and N single calls produce identical bytes."""
+        batch_path = tmp_path / "batch.utc"
+        patches = self._make_patches(batch_path)
+        GFFPatcher(batch_path, text_encoding="cp1251").patch_multiple(patches)
+
+        seq_path = tmp_path / "seq.utc"
+        for record_offset, text in self._make_patches(seq_path):
+            GFFPatcher(seq_path, text_encoding="cp1251").patch_multiple([(record_offset, text)])
+
+        assert batch_path.read_bytes() == seq_path.read_bytes()
+
+    def test_all_fields_read_back_translated(self, tmp_path):
+        """Every patched field yields its new text through the parser."""
+        path = tmp_path / "multi.utc"
+        patches = self._make_patches(path)
+        GFFPatcher(path, text_encoding="cp1251").patch_multiple(patches)
+
+        parsed = read_gff(path)
+        assert parsed["FirstName"]["Value"] == "Первый"
+        assert parsed["LastName"]["Value"] == "Второй"
+        assert parsed["Description"]["Value"] == "Длинное описание для сдвига блоков"
+
+    def test_duplicate_offset_last_wins(self, tmp_path):
+        """Two patches on one field leave the last text visible."""
+        path = tmp_path / "dup.utc"
+        write_gff(path, {"StructType": "UTC", "FirstName": {"StrRef": -1, "Value": "stub"}})
+        offset = read_gff(path)["_record_offsets"]["FirstName"]
+
+        GFFPatcher(path, text_encoding="cp1251").patch_multiple(
+            [(offset, "Первый"), (offset, "Второй")]
+        )
+        assert read_gff(path)["FirstName"]["Value"] == "Второй"
+
+    def test_invalid_offset_leaves_file_untouched(self, tmp_path):
+        """A bad offset anywhere in the batch aborts without writing."""
+        path = tmp_path / "abort.utc"
+        patches = self._make_patches(path)
+        before = path.read_bytes()
+
+        with pytest.raises(GFFPatchError):
+            GFFPatcher(path, text_encoding="cp1251").patch_multiple(
+                [patches[0], (0, "bad"), patches[1]]
+            )
+        assert path.read_bytes() == before
 
 
 class TestMultiSubstringCollapse:

@@ -235,11 +235,31 @@ class GFFParser:
         label_offset = struct.unpack("<I", self.data[24:28])[0]
         label_count = struct.unpack("<I", self.data[28:32])[0]
         field_data_offset = struct.unpack("<I", self.data[32:36])[0]  # base for complex fields
-        # field_data_byte_size = 36:40 (not needed for parsing)
+        field_data_byte_size = struct.unpack("<I", self.data[36:40])[0]
         field_indices_offset = struct.unpack("<I", self.data[40:44])[0]
         field_indices_byte_size = struct.unpack("<I", self.data[44:48])[0]
         list_indices_offset = struct.unpack("<I", self.data[48:52])[0]
-        # list_indices_byte_size = 52:56 (not needed; we read on-demand)
+        list_indices_byte_size = struct.unpack("<I", self.data[52:56])[0]
+
+        # Reject headers whose declared blocks lie outside the file before any
+        # allocation: a corrupt or non-GFF header can declare billions of
+        # labels/fields, and the parse loops below would otherwise spin for
+        # minutes or exhaust memory building placeholder lists.
+        size = len(self.data)
+        declared_blocks = (
+            ("structs", struct_offset, struct_count * 12),
+            ("fields", field_offset, field_count * 12),
+            ("labels", label_offset, label_count * 16),
+            ("field data", field_data_offset, field_data_byte_size),
+            ("field indices", field_indices_offset, field_indices_byte_size),
+            ("list indices", list_indices_offset, list_indices_byte_size),
+        )
+        for block_name, block_offset, block_bytes in declared_blocks:
+            if block_offset > size or block_offset + block_bytes > size:
+                raise GFFParseError(
+                    f"GFF header declares {block_name} block outside the file: "
+                    f"offset={block_offset} bytes={block_bytes} file_size={size}"
+                )
 
         # Store for use in _parse_field_value
         self.field_data_offset = field_data_offset

@@ -115,6 +115,8 @@ Code is expected to pass black (line length 100) and mypy; pylint is advisory.
 
 The key consequence of injection: extractors must preserve `_record_offsets` on parsed structs, and injectors must patch the same field names the extractor read. Field mismatches silently drop translations.
 
+CExoLocString policy: the parser reads the first non-empty substring, and the patcher always writes back a single substring with LanguageID 0 — the universal English slot every client displays directly or via the engine's language fallback (target languages such as Russian have no official NWN language id; the community standard is codepage bytes in slot 0). Original gender/language sub-variants are collapsed on patch, with a warning when more than one substring is overwritten.
+
 ## Extractor / Injector contract
 
 - **Extractors** live in `src/nwn_translator/extractors/`. Each subclass of `BaseExtractor` declares `SUPPORTED_TYPES` and returns `ExtractedContent(content_type=..., items=[TranslatableItem(...)])`. A new file type needs the extractor class, registration in `extractors/__init__.py`, and an entry in `TRANSLATABLE_TYPES` in `config.py`.

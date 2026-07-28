@@ -6,9 +6,12 @@ in a binary GFF file. It inserts new string payloads INSIDE the FieldData block
 the DataOffset pointers always stay within the valid FieldDataByteSize range.
 """
 
+import logging
 import struct
 from pathlib import Path
 from typing import List, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class GFFPatchError(Exception):
@@ -130,7 +133,16 @@ class GFFPatcher:
         }
 
     def _build_cexo_locstring_payload(self, new_text: str) -> bytearray:
-        """Binary CExoLocString payload for *new_text* using :attr:`_text_encoding`."""
+        """Binary CExoLocString payload for *new_text* using :attr:`_text_encoding`.
+
+        The payload always carries a single substring with LanguageID 0: the
+        universal English slot that every client displays either directly or
+        via the engine's language fallback. Target languages without an
+        official NWN language id (russian, czech, ...) have no other choice,
+        and a non-zero id would render blank on clients of other languages.
+        Original gender/language sub-variants are therefore collapsed; see
+        :meth:`patch_multiple` for the overwrite warning.
+        """
         safe = sanitize_for_module_encoding(new_text, self._text_encoding)
         encoded = safe.encode(self._text_encoding, errors="replace")
         substring_count = 1 if encoded else 0
@@ -191,10 +203,27 @@ class GFFPatcher:
 
         return new_data
 
+    def _substring_count_at(self, data: bytes, record_offset: int) -> int:
+        """Return the SubStringCount of the CExoLocString field at *record_offset*.
+
+        Reads the current DataOffset from the 12-byte field record and the
+        substring count from its payload; returns 0 when either lies outside
+        the file (the caller treats that as nothing to warn about).
+        """
+        if record_offset + 12 > len(data):
+            return 0
+        data_or_offset = struct.unpack_from("<I", data, record_offset + 8)[0]
+        payload_offset = self._read_header(data)["fielddata_offset"] + data_or_offset
+        if payload_offset + 12 > len(data):
+            return 0
+        return int(struct.unpack_from("<I", data, payload_offset + 8)[0])
+
     def patch_multiple(self, patches: List[Tuple[int, str]]) -> None:
         """Apply several CExoLocString patches in one read/write pass.
 
         Patches are applied in order; each inserts at the then-current end of FieldData.
+        A field that carried several substrings (gender or language variants) is
+        collapsed into the single LanguageID-0 substring, with a warning.
 
         Args:
             patches: ``(record_offset, new_text)`` for each 12-byte field record.
@@ -208,6 +237,15 @@ class GFFPatcher:
         for record_offset, new_text in patches:
             if record_offset <= 0:
                 raise GFFPatchError("Invalid record offset provided")
+            original_count = self._substring_count_at(data, record_offset)
+            if original_count > 1:
+                logger.warning(
+                    "%s: overwriting %d substrings at field record offset %d with a single "
+                    "LanguageID-0 substring; gender/language variants are lost",
+                    self.file_path.name,
+                    original_count,
+                    record_offset,
+                )
             payload = self._build_cexo_locstring_payload(new_text)
             data = self._apply_payload_at_fielddata_end(data, record_offset, payload)
 

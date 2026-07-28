@@ -419,13 +419,11 @@ class TestAtomicWrite:
         writer2 = ERFWriter(out)
         writer2.add_resource("new", ".dlg", b"NEW DATA")
 
-        original_write_bytes = Path.write_bytes
-
-        def broken_write_bytes(self, data):
-            original_write_bytes(self, data[: len(data) // 2])
+        def broken_write(out_fp, src):
+            out_fp.write(b"PARTIAL")
             raise OSError("disk full")
 
-        monkeypatch.setattr(Path, "write_bytes", broken_write_bytes)
+        monkeypatch.setattr(ERFWriter, "_write_resource_data", staticmethod(broken_write))
         with pytest.raises(OSError, match="disk full"):
             writer2.write()
         monkeypatch.undo()
@@ -435,6 +433,52 @@ class TestAtomicWrite:
         entries = reader.read_entries()
         assert [e.res_ref for e in entries] == ["old"]
         assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_source_file_resized_during_write_aborts(self, tmp_path, monkeypatch):
+        """A source file changing size between stat and copy must abort cleanly."""
+        out = tmp_path / "result.mod"
+        writer = ERFWriter(out)
+        writer.add_resource("old", ".dlg", b"OLD DATA")
+        writer.write()
+        old_bytes = out.read_bytes()
+
+        src = tmp_path / "racy.dlg"
+        src.write_bytes(b"A" * 100)
+        writer2 = ERFWriter(out)
+        writer2.add_file(src)
+
+        original = ERFWriter._write_resource_data
+
+        def shrink_then_write(out_fp, source):
+            if isinstance(source, Path):
+                source.write_bytes(b"A" * 10)
+            return original(out_fp, source)
+
+        monkeypatch.setattr(ERFWriter, "_write_resource_data", staticmethod(shrink_then_write))
+        with pytest.raises(ERFWriterError, match="changed size"):
+            writer2.write()
+        monkeypatch.undo()
+
+        assert out.read_bytes() == old_bytes
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_large_file_streams_in_chunks(self, tmp_path):
+        """A file larger than the copy chunk round-trips byte-identically."""
+        payload = bytes(range(256)) * (10 * 1024)  # 2.5 MiB, > two 1 MiB chunks
+        src = tmp_path / "big.dlg"
+        src.write_bytes(payload)
+
+        out = tmp_path / "big.mod"
+        writer = ERFWriter(out)
+        writer.add_file(src)
+        writer.write()
+
+        raw = out.read_bytes()
+        reader = ERFReader(out)
+        entries = reader.read_entries()
+        assert len(entries) == 1
+        entry = entries[0]
+        assert raw[entry.offset : entry.offset + entry.size] == payload
 
     def test_write_replaces_existing_output(self, tmp_path):
         """A successful write over an existing .mod leaves the new content."""

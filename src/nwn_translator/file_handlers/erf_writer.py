@@ -34,7 +34,7 @@ import logging
 import os
 import struct
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from .erf_reader import ERFReader, ERFHeader
 
@@ -93,8 +93,9 @@ class ERFWriter:
         self.output_path = Path(output_path)
         self.version: bytes = version.encode("ascii") if isinstance(version, str) else version
         self.type_overrides: Dict[str, int] = type_overrides or {}
-        # Ordered mapping: filename (stem + ext) → raw bytes
-        self._resources: Dict[str, bytes] = {}
+        # Ordered mapping: filename (stem + ext) → raw bytes, or a Path read
+        # lazily at write() time so large modules never sit in memory whole.
+        self._resources: Dict[str, Union[bytes, Path]] = {}
         # Module description (Localized String List) carried from a source
         # archive; defaults mean "no description".
         self._loc_language_count = 0
@@ -136,14 +137,14 @@ class ERFWriter:
     def add_file(self, file_path: Path) -> None:
         """Add a file from disk to the archive.
 
+        The content is read lazily at :meth:`write` time, not here.
+
         Args:
             file_path: Path to file on disk.
         """
         file_path = Path(file_path)
-        data = file_path.read_bytes()
-        stem = file_path.stem
-        suffix = file_path.suffix.lower()
-        self.add_resource(stem, suffix, data)
+        filename = f"{file_path.stem}{file_path.suffix.lower()}"
+        self._resources[filename] = file_path
 
     def add_directory(self, directory: Path) -> None:
         """Add all files from *directory* recursively.
@@ -162,48 +163,27 @@ class ERFWriter:
     def write(self) -> None:
         """Write the ERF archive to ``self.output_path``.
 
+        The header and tables are built in memory (they are small); resource
+        data is streamed into the file one resource at a time, so peak memory
+        does not scale with the module size.
+
         Raises:
             ERFWriterError: If writing fails.
         """
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        try:
-            binary = self._build()
-        except Exception as exc:
-            raise ERFWriterError(f"Failed to build ERF: {exc}") from exc
-
-        # Write to a sibling temp file and swap it in atomically: rebuild
-        # overwrites an existing .mod in place, and a failure mid-write must
-        # not destroy the previous artifact. os.replace is atomic only
-        # within one volume, hence the same directory.
-        tmp_path = self.output_path.with_name(self.output_path.name + ".tmp")
-        try:
-            tmp_path.write_bytes(binary)
-            os.replace(tmp_path, self.output_path)
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
-        logger.info(
-            "ERF archive written: %s (%d bytes, %d resources)",
-            self.output_path,
-            len(binary),
-            len(self._resources),
-        )
-
-    # ------------------------------------------------------------------
-    # Internal build
-    # ------------------------------------------------------------------
-
-    def _build(self) -> bytes:
-        """Build and return the complete ERF binary.
-
-        Returns:
-            Complete ERF binary data.
-        """
         sorted_resources = sorted(self._resources.items())
         entry_count = len(sorted_resources)
 
-        # ── 1. Calculate section offsets ──────────────────────────────
+        # ── 1. Sizes and section offsets ──────────────────────────────
+        try:
+            sizes = [
+                len(src) if isinstance(src, bytes) else src.stat().st_size
+                for _, src in sorted_resources
+            ]
+        except OSError as exc:
+            raise ERFWriterError(f"Failed to stat resource file: {exc}") from exc
+
         # The Localized String List (module description) sits right after
         # the header, pushing the Key List back by its size.
         key_list_offset = _HEADER_SIZE + len(self._loc_strings_block)
@@ -213,11 +193,9 @@ class ERFWriter:
         # ── 2. Build Key List and Resource List in parallel ────────────
         key_list_bytes = bytearray()
         res_list_bytes = bytearray()
-        res_data_parts: List[bytes] = []
 
         current_data_offset = resource_data_offset
-
-        for res_id, (filename, data) in enumerate(sorted_resources):
+        for res_id, ((filename, _src), size) in enumerate(zip(sorted_resources, sizes)):
             stem = Path(filename).stem
             suffix = Path(filename).suffix.lower()
 
@@ -227,32 +205,54 @@ class ERFWriter:
             else:
                 res_type_id = self.RESOURCE_TYPE_IDS.get(suffix, 0)
 
-            # Key List entry (24 bytes)
             key_list_bytes += self._pack_key_entry(stem, res_id, res_type_id)
+            res_list_bytes += struct.pack("<II", current_data_offset, size)
+            current_data_offset += size
 
-            # Resource List entry (8 bytes)
-            res_list_bytes += struct.pack("<II", current_data_offset, len(data))
+        header = self._build_header(entry_count, key_list_offset, resource_list_offset)
 
-            res_data_parts.append(data)
-            current_data_offset += len(data)
-
-        # ── 3. Build header ───────────────────────────────────────────
-        header = self._build_header(
-            entry_count,
-            key_list_offset,
-            resource_list_offset,
+        # ── 3. Stream into a temp file, then swap atomically ──────────
+        # Rebuild overwrites an existing .mod in place, and a failure
+        # mid-write must not destroy the previous artifact. os.replace is
+        # atomic only within one volume, hence the same directory.
+        tmp_path = self.output_path.with_name(self.output_path.name + ".tmp")
+        try:
+            with open(tmp_path, "wb") as out:
+                out.write(header)
+                out.write(self._loc_strings_block)
+                out.write(key_list_bytes)
+                out.write(res_list_bytes)
+                for (filename, src), size in zip(sorted_resources, sizes):
+                    written = self._write_resource_data(out, src)
+                    if written != size:
+                        # The offsets in the Resource List are already wrong.
+                        raise ERFWriterError(
+                            f"Resource {filename} changed size during write "
+                            f"(declared {size}, wrote {written})"
+                        )
+            os.replace(tmp_path, self.output_path)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        logger.info(
+            "ERF archive written: %s (%d bytes, %d resources)",
+            self.output_path,
+            current_data_offset,
+            len(self._resources),
         )
 
-        # ── 4. Assemble ───────────────────────────────────────────────
-        return b"".join(
-            [
-                header,
-                self._loc_strings_block,
-                bytes(key_list_bytes),
-                bytes(res_list_bytes),
-                *res_data_parts,
-            ]
-        )
+    @staticmethod
+    def _write_resource_data(out, src: Union[bytes, Path]) -> int:
+        """Write one resource's data to *out*; return the byte count written."""
+        if isinstance(src, bytes):
+            out.write(src)
+            return len(src)
+        written = 0
+        with open(src, "rb") as f:
+            while chunk := f.read(1024 * 1024):
+                out.write(chunk)
+                written += len(chunk)
+        return written
 
     @staticmethod
     def _pack_key_entry(res_ref: str, res_id: int, res_type_id: int) -> bytes:

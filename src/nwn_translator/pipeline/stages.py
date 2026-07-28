@@ -817,5 +817,25 @@ def run_pipeline(state: PipelineState) -> Path:
         stage_inject(state, extracted_map, all_translations)
         return stage_repack(state)
     finally:
+        _shutdown_async_resources(state)
         if not state.config.skip_cleanup:
             state._cleanup()
+
+
+def _shutdown_async_resources(state: PipelineState) -> None:
+    """Close the provider's HTTP client and this thread's persistent loop.
+
+    The loop (and the loop-bound client) is reused across ``run_async`` calls
+    for the whole run; without this the web process would keep one open client
+    and loop per finished task thread.
+    """
+    from ..async_utils import run_async, shutdown_thread_loop
+
+    close = getattr(state.provider, "close_async_client", None)
+    try:
+        if close is not None:
+            run_async(close(), timeout=30.0)
+    except Exception:
+        pass
+    finally:
+        shutdown_thread_loop()

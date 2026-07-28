@@ -411,7 +411,7 @@ class TranslationManager:
         try:
             # No overall timeout: large modules may need many minutes to gate.
             # Per-call timeouts and retries live in the provider layer.
-            verdicts = run_async(gate_all(), cleanup=self.provider.close_async_client, timeout=None)
+            verdicts = run_async(gate_all(), timeout=None)
         except Exception as exc:
             logger.warning(
                 "NCS LLM gate failed for %d item(s): %s — defaulting to reject.",
@@ -1048,7 +1048,6 @@ class TranslationManager:
             try:
                 retry_result = run_async(
                     run_retry(),
-                    cleanup=self.provider.close_async_client,
                     timeout=self._ITEM_TIMEOUT,
                 )
             except Exception as exc:
@@ -1368,7 +1367,6 @@ class TranslationManager:
 
         long_results, batch_results = run_async(
             run_all(),
-            cleanup=self.provider.close_async_client,
             timeout=run_timeout,
         )
 
@@ -1621,7 +1619,6 @@ class TranslationManager:
         )
         batch_results = run_async(
             run_batches(),
-            cleanup=self.provider.close_async_client,
             timeout=run_timeout,
         )
 
@@ -1699,7 +1696,6 @@ class TranslationManager:
         limit = max(1, int(self.config.max_concurrent_requests))
         retry_results = run_async(
             run_fallback(),
-            cleanup=self.provider.close_async_client,
             timeout=max(
                 self._RUN_ASYNC_TIMEOUT / 2,
                 self._queued_call_timeout(len(retry_items), self._ITEM_TIMEOUT, limit) + 30.0,
@@ -1772,7 +1768,6 @@ class TranslationManager:
         limit = max(1, int(self.config.max_concurrent_requests))
         results = run_async(
             run_fallback(),
-            cleanup=self.provider.close_async_client,
             timeout=max(
                 self._RUN_ASYNC_TIMEOUT / 2,
                 self._queued_call_timeout(len(items), self._ITEM_TIMEOUT, limit) + 30.0,

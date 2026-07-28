@@ -48,22 +48,6 @@ class TestRunAsyncTimeout:
 
         assert run_async(fast(), timeout=None) == "ok"
 
-    def test_cleanup_called_on_timeout(self):
-        """Cleanup callback must fire even when the coroutine times out."""
-        cleanup_called = False
-
-        async def cleanup():
-            nonlocal cleanup_called
-            cleanup_called = True
-
-        async def slow():
-            await asyncio.sleep(10)
-
-        with pytest.raises(TimeoutError):
-            run_async(slow(), cleanup=cleanup, timeout=0.2)
-
-        assert cleanup_called
-
 
 # ---------------------------------------------------------------------------
 # GlossaryBuilder partial failure

@@ -335,11 +335,11 @@ class TestReasoningFallbackMemory:
         create.calls = []
         mock_async_client.chat.completions.create = create
         p._thread_local.async_client = mock_async_client
-        p._thread_local.last_loop_id = None
+        p._thread_local.client_loop = None
 
         async def run():
             p._thread_local.async_client = mock_async_client
-            p._thread_local.last_loop_id = id(__import__("asyncio").get_running_loop())
+            p._thread_local.client_loop = __import__("asyncio").get_running_loop()
             return await p._chat_completions_create_async(model="m", messages=[])
 
         run_async(run(), timeout=5.0)

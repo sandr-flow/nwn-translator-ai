@@ -238,7 +238,6 @@ class GlossaryBuilder:
                 config,
                 progress_callback,
             ),
-            cleanup=provider.close_async_client,
             timeout=overall_timeout,
         )
 

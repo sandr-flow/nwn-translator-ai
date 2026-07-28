@@ -207,20 +207,24 @@ class OpenRouterProvider(BaseAIProvider):
         )
         recorder.record(metric)
 
+    #: Sentinel distinguishing "no cached loop yet" from a legitimate ``None`` loop.
+    _NO_LOOP_CACHED = object()
+
     @property
     def async_client(self) -> AsyncOpenAI:
         """Get or create an AsyncOpenAI client bound to the current event loop.
 
-        This prevents httpx connection pool errors when using a ThreadPoolExecutor
-        where each thread runs its own asyncio event loop."""
+        The cache key is the loop object itself (a strong reference is kept):
+        comparing ``id(loop)`` values would false-hit when a garbage-collected
+        loop's address is reused by a new one. With the persistent loop of
+        ``run_async`` the same client thus serves every call of a run."""
         try:
-            loop = asyncio.get_running_loop()
-            loop_id = id(loop)
+            loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
         except RuntimeError:
-            loop_id = None
+            loop = None
 
-        if getattr(self._thread_local, "last_loop_id", None) != loop_id:
-            self._thread_local.last_loop_id = loop_id
+        if getattr(self._thread_local, "client_loop", self._NO_LOOP_CACHED) is not loop:
+            self._thread_local.client_loop = loop
             self._thread_local.async_client = AsyncOpenAI(
                 api_key=self.api_key,
                 base_url=self.BASE_URL,
@@ -239,7 +243,7 @@ class OpenRouterProvider(BaseAIProvider):
             except Exception:
                 pass
             self._thread_local.async_client = None
-            self._thread_local.last_loop_id = None
+            self._thread_local.client_loop = self._NO_LOOP_CACHED
 
     def get_default_model(self) -> str:
         """Get the default OpenRouter model.

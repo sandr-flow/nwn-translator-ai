@@ -228,7 +228,6 @@ class ContextualTranslationManager:
                     sanitized_by_key,
                     call_api,
                     run_async,
-                    provider.close_async_client,
                     chunk_index=chunk_index,
                     total_chunks=len(dialog_chunks),
                 )
@@ -268,7 +267,6 @@ class ContextualTranslationManager:
                         retry_prompt,
                         max_tokens=TRANSLATION_MAX_TOKENS,
                     ),
-                    cleanup=provider.close_async_client,
                 )
                 retry_json = self._parse_json_response(retry_raw, file_path.name)
                 if retry_json is None and self._dialog_response_likely_truncated(retry_raw):
@@ -286,7 +284,6 @@ class ContextualTranslationManager:
                             retry_prompt,
                             max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                         ),
-                        cleanup=provider.close_async_client,
                     )
                     retry_json = self._parse_json_response(retry_raw, file_path.name)
 
@@ -350,10 +347,7 @@ class ContextualTranslationManager:
                             )
 
                         try:
-                            line_result = run_async(
-                                run_single_retry(),
-                                cleanup=provider.close_async_client,
-                            )
+                            line_result = run_async(run_single_retry())
                         except TranslationCancelled:
                             raise
                         except Exception as exc:
@@ -530,7 +524,6 @@ class ContextualTranslationManager:
         sanitized_by_key: Dict[str, str],
         call_api: Any,
         run_async: Any,
-        cleanup: Any,
         *,
         chunk_index: int,
         total_chunks: int,
@@ -551,10 +544,7 @@ class ContextualTranslationManager:
                 len(script),
             )
 
-        raw_response = run_async(
-            call_api(system_prompt, user_prompt),
-            cleanup=cleanup,
-        )
+        raw_response = run_async(call_api(system_prompt, user_prompt))
         parsed_json = self._parse_json_response(raw_response, file_path.name)
 
         if parsed_json is None:
@@ -571,7 +561,6 @@ class ContextualTranslationManager:
                         user_prompt,
                         max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                     ),
-                    cleanup=cleanup,
                 )
                 parsed_json = self._parse_json_response(raw_response, file_path.name)
 
@@ -593,7 +582,6 @@ class ContextualTranslationManager:
                             repair_prompt,
                             max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                         ),
-                        cleanup=cleanup,
                     )
                     parsed_json = self._parse_json_response(raw_response, file_path.name)
             else:
@@ -608,10 +596,7 @@ class ContextualTranslationManager:
                     keys_for_api,
                     raw_response,
                 )
-                raw_response = run_async(
-                    call_api(system_prompt, repair_prompt),
-                    cleanup=cleanup,
-                )
+                raw_response = run_async(call_api(system_prompt, repair_prompt))
                 parsed_json = self._parse_json_response(raw_response, file_path.name)
 
                 if parsed_json is None:
@@ -626,7 +611,6 @@ class ContextualTranslationManager:
                             repair_prompt,
                             max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
                         ),
-                        cleanup=cleanup,
                     )
                     parsed_json = self._parse_json_response(raw_response, file_path.name)
 

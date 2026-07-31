@@ -587,16 +587,23 @@ async def task_history(request: Request) -> TaskHistoryResponse:
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(
     task: TranslationTask = Depends(require_task_owner),
+    tm: TaskManager = Depends(web_task_manager),
 ) -> dict:
     """Signal a running task to stop at the next safe checkpoint.
 
     Progress is lost — already-paid-for in-flight API calls finish but their
     results are discarded. Only the owning client can cancel.
+
+    The one-job-per-IP slot is released immediately: the worker may keep
+    running until its next cancellation checkpoint (a hung provider call can
+    take minutes to time out), and the user must not stay locked out of
+    starting a new translation for that long.
     """
     if task.is_finished():
         return {"ok": True, "status": task.status}
 
     task.request_cancel()
+    tm.release_active(task.client_ip, task.task_id)
     return {"ok": True, "status": "cancelling"}
 
 

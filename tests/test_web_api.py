@@ -249,6 +249,30 @@ class TestOneJobPerIpSlot:
         first.status = "completed"
         assert tm.try_register_active("9.9.9.9", second.task_id) is True
 
+    def test_cancel_request_releases_ip_slot(self, isolated_tm: TaskManager) -> None:
+        """Cancel must free the one-job-per-IP slot immediately.
+
+        The worker only releases the slot when it reaches a cancellation
+        checkpoint, and a hung provider call can take minutes to time out;
+        the user must be able to start a new translation right away.
+        """
+        tm = isolated_tm
+        set_task_manager(tm)
+        try:
+            task = tm.create_task("9.9.9.9", "a.mod", client_token="tok")
+            assert tm.try_register_active("9.9.9.9", task.task_id)
+            task.status = "translating"
+            with TestClient(create_app()) as client:
+                resp = client.post(
+                    f"/api/tasks/{task.task_id}/cancel", headers={"X-Client-Token": "tok"}
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "cancelling"
+            assert task.is_cancel_requested()
+            assert tm.active_task_id_for_ip("9.9.9.9") is None
+        finally:
+            set_task_manager(None)
+
     def test_discard_task_removes_memory_and_db_row(self, isolated_tm: TaskManager) -> None:
         tm = isolated_tm
         task = tm.create_task("9.9.9.9", "a.mod")

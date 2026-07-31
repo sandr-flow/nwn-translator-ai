@@ -259,20 +259,28 @@ export function useTranslation() {
     };
   }
 
-  async function loadModels() {
-    try {
-      const data = await fetchModels();
-      t.defaultModelSlug = data.default_model ?? "";
-      t.defaultModels = data.models ?? [];
-      if (!t.model && data.default_model) {
-        t.model = data.default_model;
+  // A cold backend start takes 10-15s to import and bind, so both loaders
+  // keep retrying long enough to cover it instead of leaving the UI empty.
+  async function loadModels(retries = 30, delayMs = 1000) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const data = await fetchModels();
+        t.defaultModelSlug = data.default_model ?? "";
+        t.defaultModels = data.models ?? [];
+        if (!t.model && data.default_model) {
+          t.model = data.default_model;
+        }
+        return;
+      } catch {
+        t.defaultModels = [];
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
       }
-    } catch {
-      t.defaultModels = [];
     }
   }
 
-  async function loadConfig(retries = 5, delayMs = 1000) {
+  async function loadConfig(retries = 30, delayMs = 1000) {
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         const data = await fetchConfig();

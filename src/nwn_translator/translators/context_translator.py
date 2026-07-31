@@ -18,7 +18,7 @@ from ..config import (
     TRANSLATION_TEMPERATURE,
 )
 from ..context.dialog_formatter import DialogFormatter
-from ..context.world_context import WorldContext
+from ..context.world_context import NPCInfo, WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode
 from ..json_utils import json_extract_first_object, strip_json_markdown_fences
 from ..telemetry import llm_phase
@@ -126,6 +126,8 @@ class ContextualTranslationManager:
 
         collect_nodes(tree)
 
+        speakers_block = self._build_speakers_block(file_path.stem, node_map)
+
         original_text_map: Dict[str, str] = {}
         sanitized_by_key: Dict[str, str] = {}
         handlers: Dict[str, TokenHandler] = {}
@@ -230,6 +232,7 @@ class ContextualTranslationManager:
                     run_async,
                     chunk_index=chunk_index,
                     total_chunks=len(dialog_chunks),
+                    speakers_block=speakers_block,
                 )
                 translations.update(chunk_translations)
                 _bump(len(chunk_translations))
@@ -263,6 +266,7 @@ class ContextualTranslationManager:
                         self._build_system_prompt(
                             source_text=retry_script,
                             filename_stem=file_path.stem,
+                            speakers_block=speakers_block,
                         ),
                         retry_prompt,
                         max_tokens=TRANSLATION_MAX_TOKENS,
@@ -280,6 +284,7 @@ class ContextualTranslationManager:
                             self._build_system_prompt(
                                 source_text=retry_script,
                                 filename_stem=file_path.stem,
+                                speakers_block=speakers_block,
                             ),
                             retry_prompt,
                             max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
@@ -527,11 +532,13 @@ class ContextualTranslationManager:
         *,
         chunk_index: int,
         total_chunks: int,
+        speakers_block: str = "",
     ) -> tuple[Dict[str, str], List[str], Dict[str, Dict[str, Any]]]:
         """Translate one dialog script chunk and return accepted plus pending keys."""
         system_prompt = self._build_system_prompt(
             source_text=script,
             filename_stem=filename_stem,
+            speakers_block=speakers_block,
         )
         user_prompt = self._build_user_prompt(file_path.name, script)
         if total_chunks > 1:
@@ -792,7 +799,65 @@ class ContextualTranslationManager:
                 logger.debug("Failed to write to translation log: %s", log_exc)
         return translations, invalid
 
-    def _build_system_prompt(self, source_text: str = "", filename_stem: str = "") -> Any:
+    def _build_speakers_block(
+        self,
+        file_stem: str,
+        node_map: Dict[str, DialogNode],
+    ) -> str:
+        """Describe known dialog speakers so the model uses correct gender forms.
+
+        The dialog's owner NPC almost never mentions their own name in their
+        lines, so the relevance-filtered WORLD CONTEXT block usually omits them
+        and the model has to guess the speaker's gender. This block resolves
+        speakers deterministically: creatures whose ``Conversation`` resref
+        matches the .dlg stem own the unmarked ``[NPC]`` lines, and per-entry
+        ``Speaker`` tags are looked up directly.
+        """
+        if self.world_context is None or not self.world_context.npcs:
+            return ""
+
+        def describe(npc: NPCInfo) -> str:
+            name = " ".join(
+                str(p).strip() for p in (npc.first_name, npc.last_name) if p and str(p).strip()
+            )
+            name = name or npc.tag
+            traits = ", ".join(t for t in (npc.race, npc.gender) if t)
+            return f"{name} ({traits})" if traits else name
+
+        lines: List[str] = []
+        stem_key = file_stem.casefold()
+        owner_descs = sorted(
+            {
+                describe(npc)
+                for npc in self.world_context.npcs.values()
+                if str(npc.conversation).casefold() == stem_key
+            }
+        )
+        if owner_descs:
+            lines.append("- Lines marked [NPC]: spoken by " + "; or ".join(owner_descs))
+
+        tags = sorted(
+            {node.speaker for node in node_map.values() if node.is_entry and node.speaker}
+        )
+        for tag in tags:
+            npc = self.world_context.npcs.get(tag)
+            if npc is not None:
+                lines.append(f"- Lines marked [{tag}]: spoken by {describe(npc)}")
+
+        if not lines:
+            return ""
+        lines.append(
+            "Use each speaker's gender for their grammatical forms (verb endings, "
+            "adjectives, self-references) in the lines they speak."
+        )
+        return "DIALOG SPEAKERS:\n" + "\n".join(lines)
+
+    def _build_system_prompt(
+        self,
+        source_text: str = "",
+        filename_stem: str = "",
+        speakers_block: str = "",
+    ) -> Any:
         """Build the system ``content`` payload for a dialog translation call."""
         from ..prompts import build_dialog_system_prompt_parts
         from ..race_dictionary import match_race_terms
@@ -825,6 +890,9 @@ class ContextualTranslationManager:
         race_block = match_race_terms(source_text, self.config.target_lang)
         if race_block:
             glossary_block = glossary_block + "\n\n" + race_block if glossary_block else race_block
+
+        if speakers_block:
+            world_block = f"{speakers_block}\n\n{world_block}" if world_block else speakers_block
 
         stable, variable = build_dialog_system_prompt_parts(
             self.config.target_lang,

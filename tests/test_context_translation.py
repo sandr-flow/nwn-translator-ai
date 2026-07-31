@@ -10,7 +10,7 @@ from src.nwn_translator.config import (
     TranslationCancelled,
     TranslationConfig,
 )
-from src.nwn_translator.context.world_context import WorldContext
+from src.nwn_translator.context.world_context import NPCInfo, WorldContext
 from src.nwn_translator.extractors.base import DialogNode
 from src.nwn_translator.translators import context_translator as context_module
 from src.nwn_translator.translators.context_translator import (
@@ -340,3 +340,95 @@ def test_generic_api_error_still_degrades_to_partial_result(monkeypatch, caplog)
 
     assert result == {}
     assert "Contextual translation failed" in caplog.text
+
+
+class TestSpeakersBlock:
+    """Speaker gender hints injected into the dialog system prompt."""
+
+    @staticmethod
+    def _world_with_npcs() -> WorldContext:
+        context = WorldContext()
+        context.npcs["sev_tag"] = NPCInfo(
+            tag="sev_tag",
+            first_name="Severina",
+            last_name="",
+            description="",
+            race="Dwarf",
+            gender="Female",
+            conversation="severina",
+        )
+        context.npcs["stumpy_tag"] = NPCInfo(
+            tag="stumpy_tag",
+            first_name="Stumpy",
+            last_name="",
+            description="",
+            race="Dwarf",
+            gender="Male",
+            conversation="stumpy",
+        )
+        return context
+
+    def _manager(self, world: WorldContext) -> ContextualTranslationManager:
+        return ContextualTranslationManager(
+            _make_config(),
+            _FakeOpenRouter([]),
+            world,
+        )
+
+    def test_owner_and_tagged_speakers_resolved(self):
+        manager = self._manager(self._world_with_npcs())
+        node_map = {
+            "E0": DialogNode(node_id=0, text="Hello", is_entry=True),
+            "E1": DialogNode(node_id=1, text="Hmpf", speaker="stumpy_tag", is_entry=True),
+            "R0": DialogNode(node_id=0, text="Hi", is_entry=False),
+        }
+
+        block = manager._build_speakers_block("Severina", node_map)
+
+        assert block.startswith("DIALOG SPEAKERS:")
+        assert "- Lines marked [NPC]: spoken by Severina (Dwarf, Female)" in block
+        assert "- Lines marked [stumpy_tag]: spoken by Stumpy (Dwarf, Male)" in block
+        assert "grammatical forms" in block
+
+    def test_empty_when_no_speaker_matches(self):
+        manager = self._manager(self._world_with_npcs())
+        node_map = {"E0": DialogNode(node_id=0, text="Hello", is_entry=True)}
+
+        assert manager._build_speakers_block("unrelated", node_map) == ""
+
+    def test_empty_without_world_npcs(self):
+        manager = self._manager(WorldContext())
+        node_map = {"E0": DialogNode(node_id=0, text="Hello", is_entry=True)}
+
+        assert manager._build_speakers_block("severina", node_map) == ""
+
+    def test_translate_dialog_injects_block_into_system_prompt(self, monkeypatch):
+        tree = [DialogNode(node_id=1, text="Hello there", is_entry=True)]
+        _patch_dialog_environment(monkeypatch, tree)
+        provider = _FakeOpenRouter(['{"E1":"Привет"}'])
+        manager = ContextualTranslationManager(
+            _make_config(),
+            provider,
+            self._world_with_npcs(),
+        )
+
+        result = manager.translate_dialog(Path("severina.dlg"), parsed_data={})
+
+        assert result == {"Hello there": "Привет"}
+        system_prompt = provider.calls[0]["system_prompt"]
+        assert "DIALOG SPEAKERS:" in system_prompt
+        assert "Severina (Dwarf, Female)" in system_prompt
+
+    def test_translate_dialog_without_matching_npc_omits_block(self, monkeypatch):
+        tree = [DialogNode(node_id=1, text="Hello there", is_entry=True)]
+        _patch_dialog_environment(monkeypatch, tree)
+        provider = _FakeOpenRouter(['{"E1":"Привет"}'])
+        manager = ContextualTranslationManager(
+            _make_config(),
+            provider,
+            self._world_with_npcs(),
+        )
+
+        manager.translate_dialog(Path("unrelated.dlg"), parsed_data={})
+
+        assert "DIALOG SPEAKERS:" not in provider.calls[0]["system_prompt"]

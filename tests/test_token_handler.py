@@ -165,6 +165,39 @@ class TestTokenHandler:
             "-",
         ]
 
+    def test_prose_dashes_are_not_treated_as_action_marker(self):
+        """Regression: spaced prose dashes must not be protected as a marker.
+
+        Previously ``- take it and go -`` matched DASH_ACTION_PATTERN, both
+        dashes became placeholders, and every translation of such prose failed
+        validation with count_mismatch when the model dropped them.
+        """
+        handler = TokenHandler()
+        original = "Yes, yes - take it and go - your job is done pimp !"
+        result = handler.sanitize(original)
+        assert result.sanitized_text == original
+        assert len(result.replacements) == 0
+
+    def test_prose_dashes_in_translation_validate_as_exact_match(self):
+        handler = TokenHandler()
+        handler.sanitize("Yes, yes - take it and go - your job is done pimp !")
+        finalized = handler.finalize_translation(
+            "Да, да - бери его и иди - твоя работа сделана, сводник!"
+        )
+        assert finalized.exact_valid
+        assert finalized.final_text == "Да, да - бери его и иди - твоя работа сделана, сводник!"
+
+    def test_dash_pair_with_space_inside_either_edge_is_not_a_marker(self):
+        handler = TokenHandler()
+        for original in (
+            "And before I tell you - I've this hankering... those pointy ears - they shiver",
+            "-hands over the pouch - and waits",
+            "He said - wait- no more",
+        ):
+            result = handler.sanitize(original)
+            assert result.sanitized_text == original, original
+            assert len(result.replacements) == 0, original
+
     def test_dash_action_validation_catches_dropped_nested_token(self):
         """A nested token corrupted by the model fails exact validation."""
         handler = TokenHandler()

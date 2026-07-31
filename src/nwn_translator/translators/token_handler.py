@@ -98,13 +98,15 @@ class TokenHandler:
     DIALOG_ACTION_PATTERN = re.compile(r"<<[^<>\r\n]+>>")
     # Inner body requires at least one Unicode letter (not just ASCII) so the
     # pattern still matches after restoration of translated text, e.g. "-далее-".
-    DASH_ACTION_PATTERN = re.compile(r"(?<!\w)-[^-\r\n]*[^\W\d_][^-\r\n]*-(?!\w)")
+    # The dashes must hug the body (no space just inside): real action markers
+    # are written "-sighs-", while prose dashes ("go - your job") are spaced.
+    DASH_ACTION_PATTERN = re.compile(r"(?<!\w)-(?!\s)[^-\r\n]*[^\W\d_][^-\r\n]*(?<!\s)-(?!\w)")
     INLINE_TAG_PATTERN = re.compile(r"</?Start[A-Za-z]*>")
     ENGINE_TOKEN_PATTERN = re.compile(r"<([A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*)>")
     UNKNOWN_ANGLE_PATTERN = re.compile(r"<[^<>\r\n]+>")
     PRESERVED_ARTIFACT_PATTERN = re.compile(
         r"<<[^<>\r\n]+>>"
-        r"|(?<!\w)-[^-\r\n]*[^\W\d_][^-\r\n]*-(?!\w)"
+        r"|(?<!\w)-(?!\s)[^-\r\n]*[^\W\d_][^-\r\n]*(?<!\s)-(?!\w)"
         r"|</?Start[A-Za-z]*>"
         r"|<[A-Za-z][A-Za-z0-9_]*(?:[/:][A-Za-z0-9_]+)*>"
         r"|<[^<>\r\n]+>"

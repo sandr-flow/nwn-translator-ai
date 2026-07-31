@@ -163,6 +163,20 @@ def test_task_routes_allow_owner(isolated_app) -> None:
             assert resp.status_code != 403, f"{method} {path} denied owner ({resp.status_code})"
 
 
+def test_downloads_allow_owner_token_via_query_param(isolated_app) -> None:
+    """Plain <a href> download links cannot send headers, so /download and /log
+    accept ?client_token= like SSE does (regression: the UI links 403'd)."""
+    with isolated_app() as client:
+        task_id = _seed_task(owner="owner-tok")
+        for kind in ("download", "log"):
+            resp = client.get(f"/api/tasks/{task_id}/{kind}?client_token=owner-tok")
+            # Ownership gate must pass; the seeded task has no result file or
+            # log rows, so downstream preconditions yield 400/404, never 403.
+            assert resp.status_code != 403, f"{kind} denied owner ({resp.status_code})"
+            foreign = client.get(f"/api/tasks/{task_id}/{kind}?client_token=intruder")
+            assert foreign.status_code == 403, f"{kind} allowed intruder"
+
+
 def test_progress_allows_owner_token_via_query_param(isolated_app) -> None:
     """EventSource cannot send headers, so SSE auth accepts ?client_token=."""
     with isolated_app() as client:

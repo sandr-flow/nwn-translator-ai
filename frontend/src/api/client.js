@@ -101,8 +101,10 @@ export async function fetchConfig() {
 }
 
 export function downloadUrl(taskId, kind) {
-  const base = apiUrl(`/api/tasks/${taskId}/${kind}`);
-  return base;
+  // Plain <a href> navigation cannot send the X-Client-Token header, so the
+  // token rides in the query string (the backend accepts it as a fallback).
+  const token = encodeURIComponent(getClientToken());
+  return apiUrl(`/api/tasks/${taskId}/${kind}?client_token=${token}`);
 }
 
 export async function fetchTranslations(taskId) {

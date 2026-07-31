@@ -14,7 +14,11 @@
       "Bash(cp \"C:/Users/sadsk/AppData/Local/Temp/nwn_extract_81c268wg/studentouch.nss\" /tmp/)",
       "Bash(cp \"C:/Users/sadsk/AppData/Local/Temp/nwn_extract_81c268wg/studentwhine.nss\" /tmp/)",
       "Bash(cp \"C:/Users/sadsk/AppData/Local/Temp/nwn_extract_81c268wg/payneattack.nss\" /tmp/)",
-      "Read(//d/tmp/**)"
+      "Read(//d/tmp/**)",
+      "Bash(ls -la \"$HOME/.claude/projects/\" | grep -i nwn)",
+      "Bash(sort -k9)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d.get\\('timestamp'\\)\\)\")",
+      "Bash(python3 -)"
     ]
   }
 }

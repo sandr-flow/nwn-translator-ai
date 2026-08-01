@@ -385,7 +385,7 @@ class _ParsedDataDialogExtractor:
 
 
 class TestTranslateDialogs:
-    """Concurrent multi-file dialog orchestration."""
+    """Concurrent multi-file dialog orchestration (single-file work units)."""
 
     @staticmethod
     def _patch_env(monkeypatch):
@@ -394,6 +394,9 @@ class TestTranslateDialogs:
         monkeypatch.setattr(
             context_module, "translation_log_writer_for_config", lambda *_a, **_k: _NullWriter()
         )
+        # Force every file onto the single-file path; grouping is covered by
+        # TestDialogGrouping.
+        monkeypatch.setattr(context_module, "_SMALL_DIALOG_CHARS", 0)
 
     @staticmethod
     def _file(name, node_id, text):
@@ -530,6 +533,245 @@ class TestTranslateDialogs:
         )
 
         assert manager.translate_dialogs([]) == ({}, [])
+
+
+class TestDialogGrouping:
+    """Grouped translation of small dialog files."""
+
+    @staticmethod
+    def _patch_env(monkeypatch):
+        monkeypatch.setattr(context_module, "OpenRouterProvider", _FakeOpenRouter)
+        monkeypatch.setattr(context_module, "DialogExtractor", _ParsedDataDialogExtractor)
+        monkeypatch.setattr(
+            context_module, "translation_log_writer_for_config", lambda *_a, **_k: _NullWriter()
+        )
+
+    @staticmethod
+    def _file(name, node_id, text):
+        tree = [DialogNode(node_id=node_id, text=text, is_entry=True)]
+        return (Path(name), {"tree": tree}, 1)
+
+    @staticmethod
+    def _small(name, script):
+        from src.nwn_translator.translators.context_translator import (
+            _PreparedDialog,
+            _SmallDialog,
+        )
+
+        prepared = _PreparedDialog(
+            tree=[],
+            node_map={},
+            original_text_map={},
+            sanitized_by_key={},
+            handlers={},
+            speakers_block="",
+            translations={},
+            keys_for_api=[],
+            all_keys=[],
+        )
+        return _SmallDialog(Path(name), {}, 1, prepared, script)
+
+    # ── 2.1 packer ──────────────────────────────────────────────────────
+
+    def test_packer_respects_char_limit(self, monkeypatch):
+        monkeypatch.setattr(context_module, "_DIALOG_GROUP_TARGET_CHARS", 8000)
+        entries = [
+            self._small("a.dlg", "x" * 4000),
+            self._small("b.dlg", "x" * 4000),
+            self._small("c.dlg", "x" * 4000),
+        ]
+
+        groups, loners = ContextualTranslationManager._pack_dialog_groups(entries)
+
+        assert [[e.file_path.name for e in g] for g in groups] == [["a.dlg", "b.dlg"]]
+        assert [e.file_path.name for e in loners] == ["c.dlg"]
+
+    def test_packer_respects_file_limit(self, monkeypatch):
+        monkeypatch.setattr(context_module, "_DIALOG_GROUP_MAX_FILES", 2)
+        entries = [self._small(f"{n}.dlg", "x" * 10) for n in ("a", "b", "c")]
+
+        groups, loners = ContextualTranslationManager._pack_dialog_groups(entries)
+
+        assert [[e.file_path.name for e in g] for g in groups] == [["a.dlg", "b.dlg"]]
+        assert [e.file_path.name for e in loners] == ["c.dlg"]
+
+    def test_packer_single_file_becomes_loner(self):
+        entries = [self._small("a.dlg", "x" * 10)]
+
+        groups, loners = ContextualTranslationManager._pack_dialog_groups(entries)
+
+        assert groups == []
+        assert [e.file_path.name for e in loners] == ["a.dlg"]
+
+    def test_packer_empty_input(self):
+        assert ContextualTranslationManager._pack_dialog_groups([]) == ([], [])
+
+    # ── 2.2 group prompt ────────────────────────────────────────────────
+
+    def test_group_prompt_headers_and_scoped_speakers(self, monkeypatch):
+        self._patch_env(monkeypatch)
+        world = WorldContext()
+        world.npcs["sev_tag"] = NPCInfo(
+            tag="sev_tag",
+            first_name="Severina",
+            last_name="",
+            description="",
+            race="Dwarf",
+            gender="Female",
+            conversation="severina",
+        )
+        provider = _KeyedFakeOpenRouter(
+            {
+                "=== FILE:": ('{"severina.dlg": {"E1": "Привет"}, "other.dlg": {"E2": "Прощай"}}'),
+            }
+        )
+        manager = ContextualTranslationManager(_make_config(), provider, world)
+        files = [
+            self._file("severina.dlg", 1, "Hello"),
+            self._file("other.dlg", 2, "Goodbye"),
+        ]
+
+        translations, errors = manager.translate_dialogs(files)
+
+        assert errors == []
+        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert len(provider.calls) == 1
+        user_prompt = provider.calls[0]["user_prompt"]
+        assert "=== FILE: severina.dlg ===" in user_prompt
+        assert "=== FILE: other.dlg ===" in user_prompt
+        assert "do not let tone, wording, or context leak" in user_prompt
+        system_prompt = provider.calls[0]["system_prompt"]
+        assert "DIALOG SPEAKERS:" in system_prompt
+        assert (
+            "- In severina.dlg, lines marked [NPC]: spoken by Severina (Dwarf, Female)"
+            in system_prompt
+        )
+
+    # ── 2.3 demux and fallbacks ─────────────────────────────────────────
+
+    def test_group_demux_with_progress(self, monkeypatch):
+        self._patch_env(monkeypatch)
+
+        class _CountingProgress:
+            def __init__(self):
+                self.total = 0
+                self._lock = threading.Lock()
+
+            def bump(self, by=1, filename=None):
+                with self._lock:
+                    self.total += by
+
+        provider = _KeyedFakeOpenRouter(
+            {"=== FILE:": '{"a.dlg": {"E1": "Привет"}, "b.dlg": {"E2": "Прощай"}}'}
+        )
+        manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+        progress = _CountingProgress()
+        files = [self._file("a.dlg", 1, "Hello"), self._file("b.dlg", 2, "Goodbye")]
+
+        translations, errors = manager.translate_dialogs(files, item_progress=progress)
+
+        assert errors == []
+        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert progress.total == 2
+
+    def test_group_partial_answer_falls_back_single_file(self, monkeypatch):
+        self._patch_env(monkeypatch)
+        provider = _FakeOpenRouter(
+            [
+                '{"a.dlg": {"E1": "Привет"}}',  # b.dlg missing from the group answer
+                '{"E2": "Прощай"}',  # single-file fallback for b.dlg
+            ]
+        )
+        manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+        files = [self._file("a.dlg", 1, "Hello"), self._file("b.dlg", 2, "Goodbye")]
+
+        translations, errors = manager.translate_dialogs(files)
+
+        assert errors == []
+        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert len(provider.calls) == 2
+        assert "=== FILE:" in provider.calls[0]["user_prompt"]
+        assert "=== FILE:" not in provider.calls[1]["user_prompt"]
+        assert "b.dlg" in provider.calls[1]["user_prompt"]
+
+    def test_group_total_failure_falls_back_per_file(self, monkeypatch, caplog):
+        self._patch_env(monkeypatch)
+        provider = _FakeOpenRouter(
+            [
+                "not-json-at-all",  # group request
+                "still-not-json",  # group repair retry
+                '{"E1": "Привет"}',  # single a.dlg
+                '{"E2": "Прощай"}',  # single b.dlg
+            ]
+        )
+        manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+        files = [self._file("a.dlg", 1, "Hello"), self._file("b.dlg", 2, "Goodbye")]
+
+        caplog.set_level(logging.WARNING)
+        translations, errors = manager.translate_dialogs(files)
+
+        assert errors == []
+        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert len(provider.calls) == 4
+        assert "falling back to single-file translation" in caplog.text
+
+    def test_group_log_rows_attributed_to_right_files(self, monkeypatch):
+        self._patch_env(monkeypatch)
+
+        class _RecordingWriter:
+            def __init__(self):
+                self.entries = []
+
+            def write(self, entry):
+                self.entries.append(entry)
+
+        writer = _RecordingWriter()
+        monkeypatch.setattr(
+            context_module, "translation_log_writer_for_config", lambda *_a, **_k: writer
+        )
+        provider = _KeyedFakeOpenRouter(
+            {"=== FILE:": '{"a.dlg": {"E1": "Привет"}, "b.dlg": {"E2": "Прощай"}}'}
+        )
+        manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+        files = [self._file("a.dlg", 1, "Hello"), self._file("b.dlg", 2, "Goodbye")]
+
+        manager.translate_dialogs(files)
+
+        by_file = {e["file"]: e for e in writer.entries}
+        assert by_file["a.dlg"]["original"] == "Hello"
+        assert by_file["a.dlg"]["translated"] == "Привет"
+        assert by_file["b.dlg"]["original"] == "Goodbye"
+        assert by_file["b.dlg"]["translated"] == "Прощай"
+
+    # ── 2.4 integration: mixed sizes ────────────────────────────────────
+
+    def test_large_file_stays_single_while_small_files_group(self, monkeypatch):
+        self._patch_env(monkeypatch)
+        big_text = "Long line of dialog text. " * 60  # ~1560 chars > _SMALL_DIALOG_CHARS
+        provider = _KeyedFakeOpenRouter(
+            {
+                "=== FILE:": '{"a.dlg": {"E1": "Привет"}, "b.dlg": {"E2": "Прощай"}}',
+                "Long line of dialog": '{"E3": "Длинная строка"}',
+            }
+        )
+        manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+        files = [
+            self._file("a.dlg", 1, "Hello"),
+            self._file("b.dlg", 2, "Goodbye"),
+            self._file("big.dlg", 3, big_text),
+        ]
+
+        translations, errors = manager.translate_dialogs(files)
+
+        assert errors == []
+        assert translations == {
+            "Hello": "Привет",
+            "Goodbye": "Прощай",
+            big_text: "Длинная строка",
+        }
+        assert len(provider.calls) == 2
+        group_calls = [c for c in provider.calls if "=== FILE:" in c["user_prompt"]]
+        assert len(group_calls) == 1
 
 
 class TestSpeakersBlock:

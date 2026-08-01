@@ -42,6 +42,13 @@ _DIALOG_TRUNCATION_MAX_TOKENS = 32768
 _DIALOG_CHUNK_TARGET_CHARS = 24000
 _DIALOG_CHUNK_MAX_KEYS = 120
 
+# Small dialog scripts are packed into grouped multi-file requests to cut
+# per-request prompt overhead. Limits keep the grouped response comfortably
+# inside TRANSLATION_MAX_TOKENS even with reasoning enabled.
+_SMALL_DIALOG_CHARS = 1000
+_DIALOG_GROUP_TARGET_CHARS = 8000
+_DIALOG_GROUP_MAX_FILES = 12
+
 
 @dataclass
 class _PreparedDialog:
@@ -57,6 +64,17 @@ class _PreparedDialog:
     translations: Dict[str, str]
     keys_for_api: List[str]
     all_keys: List[str]
+
+
+@dataclass
+class _SmallDialog:
+    """A small dialog file queued for grouped translation."""
+
+    file_path: Path
+    parsed_data: Dict[str, Any]
+    item_budget: int
+    prepared: _PreparedDialog
+    script: str
 
 
 class ContextualTranslationManager:
@@ -403,19 +421,67 @@ class ContextualTranslationManager:
         """Translate multiple dialog files concurrently on a thread pool.
 
         Each *dialog_files* entry is ``(file_path, parsed_data, item_budget)``.
-        Failures are isolated per file and returned alongside the aggregated
-        translations; :class:`TranslationCancelled` aborts the whole pool.
+        Small dialog scripts (:data:`_SMALL_DIALOG_CHARS`) are packed into
+        grouped multi-file requests; a file whose grouped answer is missing or
+        invalid falls back to the single-file path, where lines already
+        accepted from the group are served from the translation cache.
+        Failures are isolated per work unit (file or group) and returned
+        alongside the aggregated translations; :class:`TranslationCancelled`
+        aborts the whole pool.
 
         The shared ``translation_cache`` dict is read and written from worker
         threads without a lock: single dict operations are atomic under the
         GIL, and a lost race only costs one duplicate API request.
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 
         all_translations: Dict[str, str] = {}
         errors: List[tuple[Path, Exception]] = []
         if not dialog_files:
             return all_translations, errors
+
+        def bump_full(file_path: Path, item_budget: int) -> None:
+            if item_progress is not None and item_budget > 0:
+                item_progress.bump(by=item_budget, filename=file_path.name)
+
+        singles: List[tuple[Path, Dict[str, Any], int]] = []
+        small: List[_SmallDialog] = []
+        can_group = isinstance(self.provider, OpenRouterProvider)
+        for file_path, parsed_data, item_budget in dialog_files:
+            self._raise_if_cancelled()
+            if not can_group:
+                singles.append((file_path, parsed_data, item_budget))
+                continue
+            try:
+                prepared = self._prepare_dialog(file_path, parsed_data)
+            except TranslationCancelled:
+                raise
+            except Exception as exc:
+                errors.append((file_path, exc))
+                continue
+            if prepared is None:
+                bump_full(file_path, item_budget)
+                continue
+            if not prepared.keys_for_api:
+                all_translations.update(prepared.translations)
+                bump_full(file_path, item_budget)
+                continue
+            script = self._format_prepared_script(prepared)
+            if script and len(script) <= _SMALL_DIALOG_CHARS:
+                small.append(_SmallDialog(file_path, parsed_data, item_budget, prepared, script))
+            else:
+                singles.append((file_path, parsed_data, item_budget))
+
+        groups, loners = self._pack_dialog_groups(small)
+        singles.extend((entry.file_path, entry.parsed_data, entry.item_budget) for entry in loners)
+        if groups:
+            logger.info(
+                "Dialog grouping: %d small file(s) packed into %d group request(s); "
+                "%d file(s) translated individually.",
+                sum(len(group) for group in groups),
+                len(groups),
+                len(singles),
+            )
 
         max_workers = max(1, int(getattr(self.config, "max_concurrent_requests", 4) or 1))
 
@@ -431,24 +497,37 @@ class ContextualTranslationManager:
             )
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_path = {
-                executor.submit(translate_one, file_path, parsed_data, item_budget): file_path
-                for file_path, parsed_data, item_budget in dialog_files
-            }
+            future_meta: Dict[Future[Any], tuple[str, Any]] = {}
+            for file_path, parsed_data, item_budget in singles:
+                future: Future[Any] = executor.submit(
+                    translate_one, file_path, parsed_data, item_budget
+                )
+                future_meta[future] = ("single", file_path)
+            for group in groups:
+                future = executor.submit(self._translate_dialog_group, group, item_progress)
+                future_meta[future] = ("group", group)
             try:
-                for future in as_completed(future_to_path):
-                    file_path = future_to_path[future]
+                for future in as_completed(future_meta):
+                    kind, meta = future_meta[future]
                     try:
-                        translations = future.result()
+                        result = future.result()
                     except TranslationCancelled:
                         raise
                     except Exception as exc:
-                        errors.append((file_path, exc))
+                        if kind == "single":
+                            errors.append((meta, exc))
+                        else:
+                            errors.extend((entry.file_path, exc) for entry in meta)
                     else:
-                        if translations:
-                            all_translations.update(translations)
+                        if kind == "single":
+                            if result:
+                                all_translations.update(result)
+                        else:
+                            group_translations, group_errors = result
+                            all_translations.update(group_translations)
+                            errors.extend(group_errors)
             except TranslationCancelled:
-                for pending in future_to_path:
+                for pending in future_meta:
                     pending.cancel()
                 raise
         return all_translations, errors
@@ -523,6 +602,221 @@ class ContextualTranslationManager:
             keys_for_api=keys_for_api,
             all_keys=list(original_text_map.keys()),
         )
+
+    def _format_prepared_script(self, prepared: _PreparedDialog) -> str:
+        """Format the to-translate script for *prepared* (full tree or node subset)."""
+        if set(prepared.keys_for_api) == set(prepared.all_keys):
+            return self.formatter.format_dialog_tree(
+                prepared.tree,
+                text_overrides=prepared.sanitized_by_key,
+            )
+        return self.formatter.format_nodes(
+            prepared.keys_for_api,
+            prepared.node_map,
+            prepared.original_text_map,
+            text_overrides=prepared.sanitized_by_key,
+        )
+
+    @staticmethod
+    def _pack_dialog_groups(
+        small: List[_SmallDialog],
+    ) -> tuple[List[List[_SmallDialog]], List[_SmallDialog]]:
+        """Greedily pack small dialogs by char/file limits; singletons become loners."""
+        groups: List[List[_SmallDialog]] = []
+        loners: List[_SmallDialog] = []
+        current: List[_SmallDialog] = []
+        current_chars = 0
+
+        def flush() -> None:
+            nonlocal current, current_chars
+            if len(current) > 1:
+                groups.append(current)
+            elif current:
+                loners.append(current[0])
+            current = []
+            current_chars = 0
+
+        for entry in small:
+            if current and (
+                current_chars + len(entry.script) > _DIALOG_GROUP_TARGET_CHARS
+                or len(current) >= _DIALOG_GROUP_MAX_FILES
+            ):
+                flush()
+            current.append(entry)
+            current_chars += len(entry.script)
+        flush()
+        return groups, loners
+
+    def _translate_dialog_group(
+        self,
+        group: List[_SmallDialog],
+        item_progress: Optional[Any] = None,
+    ) -> tuple[Dict[str, str], List[tuple[Path, Exception]]]:
+        """Translate one packed group and demux the answer per file.
+
+        A file whose sub-object is missing, incomplete, or token-invalid is
+        retried through the regular single-file path; its lines already
+        accepted here were cached, so only the gaps are re-requested.
+        """
+        translations: Dict[str, str] = {}
+        errors: List[tuple[Path, Exception]] = []
+        self._raise_if_cancelled()
+        label = f"{group[0].file_path.name}+{len(group) - 1}"
+        try:
+            parsed_group = self._request_group_translation(group, label)
+        except TranslationCancelled:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Dialog group %s: request failed (%s); falling back to single files.",
+                label,
+                exc,
+            )
+            parsed_group = None
+
+        for entry in group:
+            self._raise_if_cancelled()
+            if parsed_group is not None:
+                sub = self._resolve_group_file(parsed_group, entry.file_path)
+            else:
+                sub = None
+            if isinstance(sub, dict):
+                applied, invalid = self._apply_translations(
+                    sub,
+                    entry.prepared.original_text_map,
+                    entry.prepared.handlers,
+                    entry.file_path,
+                    sanitized_by_key=entry.prepared.sanitized_by_key,
+                    session_cache=self.translation_cache,
+                    allow_cleanup=False,
+                )
+                missing = [key for key in entry.prepared.keys_for_api if key not in sub]
+                pending = sorted(set(missing) | set(invalid))
+                if not pending:
+                    translations.update(entry.prepared.translations)
+                    translations.update(applied)
+                    if item_progress is not None and entry.item_budget > 0:
+                        item_progress.bump(by=entry.item_budget, filename=entry.file_path.name)
+                    continue
+            logger.warning(
+                "Dialog group %s: falling back to single-file translation for %s.",
+                label,
+                entry.file_path.name,
+            )
+            try:
+                single = self.translate_dialog(
+                    entry.file_path,
+                    entry.parsed_data,
+                    item_progress=item_progress,
+                    item_budget=entry.item_budget,
+                )
+                translations.update(single)
+            except TranslationCancelled:
+                raise
+            except Exception as exc:
+                errors.append((entry.file_path, exc))
+        return translations, errors
+
+    def _request_group_translation(self, group: List[_SmallDialog], label: str) -> Optional[dict]:
+        """Send one grouped request and return the parsed nested JSON, or ``None``."""
+        if not isinstance(self.provider, OpenRouterProvider):
+            return None
+        provider = self.provider
+
+        names = [entry.file_path.name for entry in group]
+        combined = "\n\n".join(
+            f"=== FILE: {entry.file_path.name} ===\n{entry.script}" for entry in group
+        )
+        speaker_lines: List[str] = []
+        for entry in group:
+            speaker_lines.extend(
+                self._speaker_lines(
+                    entry.file_path.stem,
+                    entry.prepared.node_map,
+                    file_label=entry.file_path.name,
+                )
+            )
+        system_prompt = self._build_system_prompt(
+            source_text=combined,
+            speakers_block=self._wrap_speaker_lines(speaker_lines),
+        )
+        user_prompt = self._build_group_user_prompt(names, combined)
+
+        from ..async_utils import run_async
+
+        async def call_api(sp: str, up: str, *, max_tokens: int = TRANSLATION_MAX_TOKENS) -> str:
+            with llm_phase("dialog"):
+                return await provider.complete_json_chat_async(
+                    sp,
+                    up,
+                    max_tokens=max_tokens,
+                    temperature=TRANSLATION_TEMPERATURE,
+                )
+
+        logger.info(
+            "Sending dialog group %s (%d files, %d chars)...", label, len(group), len(combined)
+        )
+        raw = run_async(call_api(system_prompt, user_prompt))
+        parsed = self._parse_json_response(raw, label)
+        if parsed is None:
+            if self._dialog_response_likely_truncated(raw):
+                logger.warning(
+                    "Dialog group %s: JSON looks truncated; retrying with higher max_tokens...",
+                    label,
+                )
+                raw = run_async(
+                    call_api(system_prompt, user_prompt, max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS)
+                )
+            else:
+                logger.warning(
+                    "Dialog group %s: invalid JSON; retrying with repair prompt...", label
+                )
+                raw = run_async(
+                    call_api(system_prompt, self._build_group_repair_prompt(names, combined, raw))
+                )
+            parsed = self._parse_json_response(raw, label)
+        return parsed
+
+    def _build_group_user_prompt(self, names: List[str], combined_script: str) -> str:
+        """Build the user prompt for a multi-file dialog group request."""
+        names_csv = ", ".join(names)
+        return (
+            f"Translate the following {len(names)} unrelated dialog scripts ({names_csv}). "
+            f"Each script starts with a '=== FILE: <name> ===' header. The conversations "
+            f"are independent: do not let tone, wording, or context leak from one file "
+            f"into another.\n\n"
+            f"{combined_script}\n\n"
+            f"Return ONLY one JSON object. Each top-level key is a file name exactly as "
+            f"written in its header; each value is an object mapping that file's line IDs "
+            f"(e.g. E0, R1) to the translated string. "
+            f'Example: {{"a.dlg": {{"E0": "...", "R1": "..."}}, "b.dlg": {{"E0": "..."}}}}. '
+            f"No markdown fences, no extra keys, no text outside JSON."
+        )
+
+    def _build_group_repair_prompt(
+        self, names: List[str], combined_script: str, bad_response: str
+    ) -> str:
+        """Ask the model to return valid nested JSON after a failed group parse."""
+        names_csv = ", ".join(names)
+        bad_snip = (bad_response or "").strip()[:1200]
+        return (
+            f"The previous answer was not valid JSON or was truncated.\n"
+            f"Return ONLY one JSON object with exactly these top-level keys: {names_csv}. "
+            f"Each value is an object mapping that file's line IDs (same IDs as in the "
+            f"script) to the translated string.\n"
+            f"No markdown, no comments, no text before or after the object.\n\n"
+            f"Dialog scripts:\n\n{combined_script}\n\n"
+            f"Invalid previous output (truncated for context):\n{bad_snip}"
+        )
+
+    @staticmethod
+    def _resolve_group_file(parsed_group: dict, file_path: Path) -> Optional[Any]:
+        """Find the sub-object for *file_path*, tolerating stem/extension variants."""
+        targets = {file_path.name.casefold(), file_path.stem.casefold()}
+        for key, value in parsed_group.items():
+            if str(key).strip().casefold() in targets:
+                return value
+        return None
 
     def _parse_json_response(self, raw: str, filename: str) -> Optional[dict]:
         """Parse a JSON object from a raw AI response string."""
@@ -909,6 +1203,61 @@ class ContextualTranslationManager:
                 logger.debug("Failed to write to translation log: %s", log_exc)
         return translations, invalid
 
+    def _speaker_lines(
+        self,
+        file_stem: str,
+        node_map: Dict[str, DialogNode],
+        file_label: str = "",
+    ) -> List[str]:
+        """Per-dialog speaker description lines (see :meth:`_build_speakers_block`).
+
+        With *file_label* set, each line is scoped to that file so lines from
+        several dialogs can share one grouped speakers block.
+        """
+        if self.world_context is None or not self.world_context.npcs:
+            return []
+
+        def describe(npc: NPCInfo) -> str:
+            name = " ".join(
+                str(p).strip() for p in (npc.first_name, npc.last_name) if p and str(p).strip()
+            )
+            name = name or npc.tag
+            traits = ", ".join(t for t in (npc.race, npc.gender) if t)
+            return f"{name} ({traits})" if traits else name
+
+        scope = f"In {file_label}, lines" if file_label else "Lines"
+        lines: List[str] = []
+        stem_key = file_stem.casefold()
+        owner_descs = sorted(
+            {
+                describe(npc)
+                for npc in self.world_context.npcs.values()
+                if str(npc.conversation).casefold() == stem_key
+            }
+        )
+        if owner_descs:
+            lines.append(f"- {scope} marked [NPC]: spoken by " + "; or ".join(owner_descs))
+
+        tags = sorted(
+            {node.speaker for node in node_map.values() if node.is_entry and node.speaker}
+        )
+        for tag in tags:
+            npc = self.world_context.npcs.get(tag)
+            if npc is not None:
+                lines.append(f"- {scope} marked [{tag}]: spoken by {describe(npc)}")
+        return lines
+
+    @staticmethod
+    def _wrap_speaker_lines(lines: List[str]) -> str:
+        """Wrap speaker lines with the block header and the gender instruction."""
+        if not lines:
+            return ""
+        closing = (
+            "Use each speaker's gender for their grammatical forms (verb endings, "
+            "adjectives, self-references) in the lines they speak."
+        )
+        return "DIALOG SPEAKERS:\n" + "\n".join([*lines, closing])
+
     def _build_speakers_block(
         self,
         file_stem: str,
@@ -923,44 +1272,7 @@ class ContextualTranslationManager:
         matches the .dlg stem own the unmarked ``[NPC]`` lines, and per-entry
         ``Speaker`` tags are looked up directly.
         """
-        if self.world_context is None or not self.world_context.npcs:
-            return ""
-
-        def describe(npc: NPCInfo) -> str:
-            name = " ".join(
-                str(p).strip() for p in (npc.first_name, npc.last_name) if p and str(p).strip()
-            )
-            name = name or npc.tag
-            traits = ", ".join(t for t in (npc.race, npc.gender) if t)
-            return f"{name} ({traits})" if traits else name
-
-        lines: List[str] = []
-        stem_key = file_stem.casefold()
-        owner_descs = sorted(
-            {
-                describe(npc)
-                for npc in self.world_context.npcs.values()
-                if str(npc.conversation).casefold() == stem_key
-            }
-        )
-        if owner_descs:
-            lines.append("- Lines marked [NPC]: spoken by " + "; or ".join(owner_descs))
-
-        tags = sorted(
-            {node.speaker for node in node_map.values() if node.is_entry and node.speaker}
-        )
-        for tag in tags:
-            npc = self.world_context.npcs.get(tag)
-            if npc is not None:
-                lines.append(f"- Lines marked [{tag}]: spoken by {describe(npc)}")
-
-        if not lines:
-            return ""
-        lines.append(
-            "Use each speaker's gender for their grammatical forms (verb endings, "
-            "adjectives, self-references) in the lines they speak."
-        )
-        return "DIALOG SPEAKERS:\n" + "\n".join(lines)
+        return self._wrap_speaker_lines(self._speaker_lines(file_stem, node_map))
 
     def _build_system_prompt(
         self,

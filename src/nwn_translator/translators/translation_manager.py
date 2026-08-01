@@ -606,6 +606,11 @@ class TranslationManager:
     # Larger batch size for very short items (<= 20 chars) — mostly tag names
     # and one-word labels where per-item prompt overhead dominates cost.
     _BATCH_SIZE_VERY_SHORT = 30
+    # Medium tier: non-NCS strings up to this length (descriptions, journal
+    # lines, names over the short threshold) are batched too; only longer
+    # strings keep the individual translation path.
+    _BATCH_MEDIUM_THRESHOLD = 300
+    _BATCH_SIZE_MEDIUM = 8
     # NCS batch sizes by sanitized string length. Single-line strings at or
     # above 100 chars keep the existing individual translation path.
     _NCS_BATCH_SHORT_THRESHOLD = 50
@@ -650,6 +655,15 @@ class TranslationManager:
             return False
         item_type = (item.metadata or {}).get("type", "")
         return item_type in TranslationManager._BATCHABLE_TYPES
+
+    @staticmethod
+    def _is_medium_item(item_data: dict) -> bool:
+        """Non-NCS items up to the medium threshold that missed the short tier."""
+        if TranslationManager._is_short_item(item_data):
+            return False
+        if TranslationManager._is_ncs_item(item_data["item"]):
+            return False
+        return len(item_data["sanitized"]) <= TranslationManager._BATCH_MEDIUM_THRESHOLD
 
     @staticmethod
     def _is_ncs_batchable(item_data: dict) -> bool:
@@ -1157,7 +1171,10 @@ class TranslationManager:
         ncs_batch_items = [d for d in real_items if self._is_ncs_batchable(d)]
         regular_items = [d for d in real_items if not self._is_ncs_batchable(d)]
         short_items = [d for d in regular_items if self._is_short_item(d)]
-        long_items = [d for d in regular_items if not self._is_short_item(d)]
+        medium_items = [d for d in regular_items if self._is_medium_item(d)]
+        long_items = [
+            d for d in regular_items if not self._is_short_item(d) and not self._is_medium_item(d)
+        ]
 
         # Phase 3.5 — adaptive batch size: very short (<=20 chars) items carry
         # so little payload that per-batch prompt overhead dominates; group
@@ -1175,6 +1192,8 @@ class TranslationManager:
             batches.append(very_short_items[i : i + self._BATCH_SIZE_VERY_SHORT])
         for i in range(0, len(regular_short_items), self._BATCH_SIZE):
             batches.append(regular_short_items[i : i + self._BATCH_SIZE])
+        for i in range(0, len(medium_items), self._BATCH_SIZE_MEDIUM):
+            batches.append(medium_items[i : i + self._BATCH_SIZE_MEDIUM])
 
         async def run_all() -> tuple:
             limit = max(1, int(self.config.max_concurrent_requests))
@@ -1375,18 +1394,15 @@ class TranslationManager:
             timeout=run_timeout,
         )
 
-        if short_items:
-            n_batches = (
-                (len(very_short_items) + self._BATCH_SIZE_VERY_SHORT - 1)
-                // self._BATCH_SIZE_VERY_SHORT
-            ) + ((len(regular_short_items) + self._BATCH_SIZE - 1) // self._BATCH_SIZE)
+        if short_items or medium_items:
             logger.info(
-                "Batch-translated %d short items (%d very-short + %d regular) "
+                "Batch-translated %d items (%d very-short + %d short + %d medium) "
                 "in %d batch(es), %d long items individually",
-                len(short_items),
+                len(short_items) + len(medium_items),
                 len(very_short_items),
                 len(regular_short_items),
-                n_batches,
+                len(medium_items),
+                len(batches),
                 len(long_items),
             )
 
@@ -1398,8 +1414,8 @@ class TranslationManager:
             )
 
         # Reorder the item list to match the flattened batch_results ordering
-        # (very-short batches first, then regular-short batches).
-        ordered_short_items = very_short_items + regular_short_items
+        # (very-short batches first, then regular-short, then medium).
+        ordered_batch_items = very_short_items + regular_short_items + medium_items
 
         # Process long results
         for item_data, result in zip(long_items, long_results):
@@ -1409,7 +1425,7 @@ class TranslationManager:
 
         # Process batch results; collect failures for individual retry
         retry_items: List[dict] = []
-        for item_data, result in zip(ordered_short_items, batch_results):
+        for item_data, result in zip(ordered_batch_items, batch_results):
             if result.success:
                 self._process_translation_result(
                     item_data, result, translations, source_filename=source_filename

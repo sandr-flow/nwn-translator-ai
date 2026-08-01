@@ -206,6 +206,38 @@ class TestOpenRouterBatchTranslate:
         assert payload["1"]["hint"] == "SetCustomToken"
         assert payload["2"]["hint"] == "item_name"
 
+    def test_batch_payload_includes_optional_context(self):
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            provider = OpenRouterProvider(api_key=FAKE_KEY)
+        captured = {}
+
+        async def complete(system_content, user_prompt, **kwargs):
+            captured["user_prompt"] = user_prompt
+            return '{"0": "Диван", "1": "Меч"}'
+
+        provider._chat_completion_json_async = complete
+        items = [
+            TranslationItem(
+                original="The sofa seems warm and inviting.",
+                context="Description of placeable 'Couch'",
+                metadata={"type": "placeable_description"},
+            ),
+            TranslationItem(original="Sword"),
+        ]
+
+        result = run_async(
+            provider.translate_batch_async(items, "english", "russian"),
+            timeout=5.0,
+        )
+
+        assert [r.translated for r in result] == ["Диван", "Меч"]
+        payload = json.loads(captured["user_prompt"].split("\n\n", 1)[1])
+        assert payload["0"]["text"] == "The sofa seems warm and inviting."
+        assert payload["0"]["hint"] == "placeable_description"
+        assert payload["0"]["context"] == "Description of placeable 'Couch'"
+        # No hint and no context — the entry stays a plain string.
+        assert payload["1"] == "Sword"
+
 
 class TestCreateProvider:
     """Verify create_provider returns OpenRouter."""

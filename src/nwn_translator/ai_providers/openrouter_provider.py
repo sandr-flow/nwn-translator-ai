@@ -707,10 +707,12 @@ class OpenRouterProvider(BaseAIProvider):
         batch_mode_suffix = (
             "\nBATCH MODE: You will receive a JSON object mapping numeric IDs "
             "to items. Each item is either a plain string or an object "
-            '{"text": "...", "hint": "..."}. '
+            '{"text": "...", "hint": "...", "context": "..."}. '
             'The hint (e.g. "item_name", "creature_first_name", "store_name") '
             "tells you what kind of game entity this is — use it to decide "
             "whether to translate the meaning or transliterate. "
+            "The optional context describes where the string appears in the "
+            "game — use it to choose tone and grammatical forms. "
             "Return a JSON object with the EXACT SAME numeric keys, where each "
             "value is the translated string (NOT an object). "
             "Do NOT rename, add, or remove keys. "
@@ -720,13 +722,19 @@ class OpenRouterProvider(BaseAIProvider):
             stable, variable, stable_suffix=batch_mode_suffix
         )
 
-        # Build the batch payload with optional type hints from metadata
+        # Build the batch payload with optional type hints and per-item context
         batch_input: dict = {}
         for i, item in enumerate(items):
             meta = item.metadata or {}
             hint = meta.get("hint") or meta.get("ncs_hint") or meta.get("type", "")
-            if hint:
-                batch_input[str(i)] = {"text": item.original, "hint": hint}
+            context = (item.context or "").strip()
+            if hint or context:
+                entry: Dict[str, str] = {"text": item.original}
+                if hint:
+                    entry["hint"] = hint
+                if context:
+                    entry["context"] = context
+                batch_input[str(i)] = entry
             else:
                 batch_input[str(i)] = item.original
 

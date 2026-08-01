@@ -203,7 +203,9 @@ class TestTranslateContent:
         assert result["Hello!"] == "Привет!"
         assert result["Who are you?"] == "Кто ты?"
         assert result["Just passing."] == "Просто мимо."
-        assert provider.translate_async.call_count == 3
+        # Untyped short strings ride the medium batch tier in one call.
+        assert provider.translate_batch_async.call_count == 1
+        provider.translate_async.assert_not_called()
 
     def test_dialog_empty_items_returns_empty(self):
         """Empty dialog must return empty translation map."""
@@ -844,7 +846,122 @@ class TestPassthroughEmptyAfterSanitize:
         manager = TranslationManager(_make_config(), provider)
         manager.translate_content(content)
 
-        assert provider.translate_async.call_count == 1
+        # Untyped short string rides the medium batch tier, not passthrough.
+        assert provider.translate_batch_async.call_count == 1
+        provider.translate_async.assert_not_called()
+
+
+class TestMediumBatchTier:
+    """Medium-length strings (up to 300 chars) ride the batch path."""
+
+    @staticmethod
+    def _item_data(sanitized: str, item: TranslatableItem) -> dict:
+        return {"sanitized": sanitized, "item": item}
+
+    def test_medium_classification_boundaries(self):
+        desc = TranslatableItem(text="x", metadata={"type": "placeable_description"})
+        assert TranslationManager._is_medium_item(self._item_data("x" * 300, desc))
+        assert not TranslationManager._is_medium_item(self._item_data("x" * 301, desc))
+
+        short_name = TranslatableItem(text="Sword", metadata={"type": "item_name"})
+        # Whitelisted short names stay in the short tier.
+        assert not TranslationManager._is_medium_item(self._item_data("Sword", short_name))
+
+        untyped = TranslatableItem(text="Sword")
+        # Short but non-whitelisted strings now batch via the medium tier.
+        assert TranslationManager._is_medium_item(self._item_data("Sword", untyped))
+
+        ncs = _make_ncs_item("x" * 120)
+        assert not TranslationManager._is_medium_item(self._item_data("x" * 120, ncs))
+
+    def test_three_tiers_and_long_route_correctly(self):
+        very_short = TranslatableItem(
+            text="Guard", metadata={"type": "creature_first_name"}, item_id="vs"
+        )
+        short = TranslatableItem(
+            text="Sword of the Ancient Flames", metadata={"type": "item_name"}, item_id="s"
+        )
+        medium_text = (
+            "The sofa seems warm and inviting, perfect for a short nap by the fire "
+            "after a long day of adventuring in the dungeon."
+        )
+        medium = TranslatableItem(
+            text=medium_text,
+            context="Description of placeable 'Couch'",
+            metadata={"type": "placeable_description"},
+            item_id="m",
+        )
+        long_text = "A remarkably long placeable description sentence. " * 8
+        long_item = TranslatableItem(
+            text=long_text, metadata={"type": "placeable_description"}, item_id="l"
+        )
+        translations = {
+            "Guard": "Страж",
+            "Sword of the Ancient Flames": "Меч Древнего Пламени",
+            medium_text: "Диван выглядит уютным.",
+            long_text: "Длинное описание.",
+        }
+        provider = _make_provider(translations)
+        manager = TranslationManager(_make_config(), provider)
+        content = ExtractedContent(
+            content_type="mixed",
+            items=[very_short, short, medium, long_item],
+            source_file=Path("x.git"),
+        )
+
+        result = manager.translate_content(content)
+
+        assert result["Guard"] == "Страж"
+        assert result["Sword of the Ancient Flames"] == "Меч Древнего Пламени"
+        assert result[medium_text] == "Диван выглядит уютным."
+        assert result[long_text] == "Длинное описание."
+        assert provider.translate_async.call_count == 1  # only the long item
+        assert provider.translate_batch_async.call_count == 3  # one batch per tier
+        batch_items = [
+            item
+            for call in provider.translate_batch_async.call_args_list
+            for item in call.kwargs["items"]
+        ]
+        medium_sent = [item for item in batch_items if item.original == medium_text]
+        assert medium_sent and medium_sent[0].context == "Description of placeable 'Couch'"
+
+    def test_medium_batch_failure_falls_back_individually(self):
+        medium_text = "The sofa seems warm and inviting, perfect for a short nap."
+        provider = _make_provider({medium_text: "Диван выглядит уютным."})
+
+        async def failing_batch(
+            items,
+            source_lang,
+            target_lang,
+            glossary_block=None,
+            content_profile=None,
+        ):
+            return [
+                TranslationResult(
+                    translated="", original=item.original, success=False, error="boom"
+                )
+                for item in items
+            ]
+
+        provider.translate_batch_async = AsyncMock(side_effect=failing_batch)
+        manager = TranslationManager(_make_config(), provider)
+        content = ExtractedContent(
+            content_type="placeable",
+            items=[
+                TranslatableItem(
+                    text=medium_text,
+                    metadata={"type": "placeable_description"},
+                    item_id="m",
+                )
+            ],
+            source_file=Path("x.utp"),
+        )
+
+        result = manager.translate_content(content)
+
+        assert result[medium_text] == "Диван выглядит уютным."
+        assert provider.translate_batch_async.call_count == 1
+        assert provider.translate_async.call_count == 1  # individual fallback
 
 
 class TestBatchDedupBySanitized:

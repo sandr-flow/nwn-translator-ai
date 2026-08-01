@@ -64,9 +64,7 @@ class GlossaryCurator:
         from .async_utils import run_async
 
         async def run_all() -> List[Dict[str, Dict[str, Any]]]:
-            sem = asyncio.Semaphore(
-                max(1, min(3, int(getattr(config, "max_concurrent_requests", 3))))
-            )
+            sem = asyncio.Semaphore(max(1, int(getattr(config, "max_concurrent_requests", 3))))
 
             async def run_one(idx: int, batch: List[EntityCandidate]) -> Dict[str, Dict[str, Any]]:
                 async with sem:

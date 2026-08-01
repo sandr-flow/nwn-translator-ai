@@ -42,9 +42,6 @@ _BATCH_SIZE = 40
 # How many times to retry the entire glossary build (per batch) on parse failure.
 _MAX_RETRIES = 2
 
-# Max concurrent glossary batches (limits parallel LLM calls).
-_MAX_GLOSSARY_CONCURRENCY = 3
-
 # Ceiling for overall glossary build timeout (seconds).
 _MAX_OVERALL_TIMEOUT = 900.0
 
@@ -181,7 +178,7 @@ class GlossaryBuilder:
         """Collect names from *world_context* and ask the model for translations.
 
         Large name lists are split into batches of ~40 to stay within token
-        limits.  Batches run concurrently (up to ``_MAX_GLOSSARY_CONCURRENCY``).
+        limits.  Batches run concurrently (up to ``config.max_concurrent_requests``).
         Each batch is retried up to ``_MAX_RETRIES`` times on parse failure,
         with partial results merged across attempts.  When no usable entries
         survive at all, the run degrades to an empty glossary with a warning.
@@ -291,7 +288,7 @@ class GlossaryBuilder:
         progress_callback: Optional[ProgressCallback],
     ) -> List[Dict[str, str] | BaseException]:
         """Run all glossary batches concurrently with a semaphore."""
-        sem = asyncio.Semaphore(min(_MAX_GLOSSARY_CONCURRENCY, config.max_concurrent_requests))
+        sem = asyncio.Semaphore(max(1, config.max_concurrent_requests))
         total = len(batches)
 
         async def process_batch(batch_idx: int, batch_names: List[str]):

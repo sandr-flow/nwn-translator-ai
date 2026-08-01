@@ -47,9 +47,6 @@ _MIN_TEXT_LENGTH = 40
 #: Max texts per LLM call (empirically keeps prompt under a few KB).
 _BATCH_TEXT_COUNT = 25
 
-#: Max concurrent extraction batches.
-_MAX_CONCURRENCY = 3
-
 #: Absolute cap on the whole extraction run (seconds).
 _MAX_OVERALL_TIMEOUT = 900.0
 
@@ -210,7 +207,7 @@ class EntityExtractor:
         progress_callback: Optional[ProgressCallback],
     ) -> List[List[Tuple[str, str]] | BaseException]:
         """Run every batch concurrently under a semaphore."""
-        sem = asyncio.Semaphore(min(_MAX_CONCURRENCY, max(1, config.max_concurrent_requests)))
+        sem = asyncio.Semaphore(max(1, config.max_concurrent_requests))
         total = len(batches)
 
         async def _one(idx: int, batch: List[str]):

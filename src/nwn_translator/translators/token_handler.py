@@ -12,11 +12,35 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from ..config import STANDARD_TOKENS
+
+# CJK scripts (Han, kana, Hangul). Target languages are European, so a
+# translation containing these characters when the source does not is a
+# model glitch: the injector would silently drop them, garbling the text.
+FOREIGN_SCRIPT_PATTERN = re.compile(
+    "[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff]"
+)
+
+
+def normalize_translated_text(text: str) -> str:
+    """NFC-normalize model output and drop stray combining marks.
+
+    Models occasionally emit combining accents (e.g. U+0301 in
+    ``Тиндало́са``) that no single-byte NWN codepage can encode. NFC runs
+    first so precomposed forms (``é``, ``й``) survive; any combining mark
+    left after composition is dropped.
+    """
+    if not text:
+        return text
+    composed = unicodedata.normalize("NFC", text)
+    if not any(unicodedata.combining(ch) for ch in composed):
+        return composed
+    return "".join(ch for ch in composed if not unicodedata.combining(ch))
 
 
 @dataclass
@@ -266,8 +290,18 @@ class TokenHandler:
         allow_cleanup: bool = False,
     ) -> TokenProcessingResult:
         """Restore a model output and optionally clean mismatched artifacts."""
-        restored = self.restore(translated_text)
+        restored = self.restore(normalize_translated_text(translated_text))
         report = self.validate_text(restored)
+        foreign_script = bool(FOREIGN_SCRIPT_PATTERN.search(restored)) and not bool(
+            FOREIGN_SCRIPT_PATTERN.search(self.original_text)
+        )
+        if foreign_script and report.is_exact_match:
+            report = TokenMismatchReport(
+                is_exact_match=False,
+                mismatch_type="foreign_script",
+                expected_sequence=report.expected_sequence,
+                actual_sequence=report.actual_sequence,
+            )
         if report.is_exact_match:
             return TokenProcessingResult(
                 restored_text=restored,
@@ -286,7 +320,12 @@ class TokenHandler:
                 mismatch_report=report,
             )
 
-        cleaned = self.cleanup_mismatched_artifacts(restored)
+        if report.mismatch_type == "foreign_script":
+            cleaned = restored
+        else:
+            cleaned = self.cleanup_mismatched_artifacts(restored)
+        if foreign_script:
+            cleaned = FOREIGN_SCRIPT_PATTERN.sub("", cleaned)
         return TokenProcessingResult(
             restored_text=restored,
             final_text=cleaned,

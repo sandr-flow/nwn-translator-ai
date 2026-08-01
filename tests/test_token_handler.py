@@ -5,6 +5,7 @@ import re
 from src.nwn_translator.translators.token_handler import (
     TokenHandler,
     TokenValidator,
+    normalize_translated_text,
     restore_text,
     sanitize_text,
 )
@@ -457,3 +458,56 @@ class TestUnpairedOriginalTags:
         result = handler.finalize_translation(mangled, allow_cleanup=False)
         assert not result.exact_valid
         assert "<StartAction>" in result.mismatch_report.missing
+
+
+class TestNormalizationAndForeignScript:
+    """Accent normalization and CJK rejection at translation accept time."""
+
+    def test_normalize_strips_combining_acute(self):
+        assert normalize_translated_text("Сирани\u0301та") == "Сиранита"
+
+    def test_normalize_keeps_precomposed_forms(self):
+        # NFC composes e + U+0301 into precomposed é instead of dropping it.
+        assert normalize_translated_text("cafe\u0301") == "caf\u00e9"
+        assert normalize_translated_text("й ё") == "й ё"
+
+    def test_finalize_strips_combining_accent_and_stays_valid(self):
+        handler = TokenHandler()
+        handler.sanitize("Hello Siranita")
+        result = handler.finalize_translation("Привет, Сирани\u0301та")
+        assert result.exact_valid
+        assert result.final_text == "Привет, Сиранита"
+
+    def test_cjk_in_translation_is_rejected(self):
+        handler = TokenHandler()
+        handler.sanitize("The Society is not welcome here!")
+        result = handler.finalize_translation("Общество здесь не\u6b22\u8fceно!")
+        assert not result.exact_valid
+        assert result.mismatch_report.mismatch_type == "foreign_script"
+
+    def test_cjk_stripped_on_cleanup_accept(self):
+        handler = TokenHandler()
+        handler.sanitize("The Society is not welcome here!")
+        result = handler.finalize_translation(
+            "Общество здесь не\u6b22\u8fceно!", allow_cleanup=True
+        )
+        assert not result.exact_valid
+        assert result.used_cleanup
+        assert result.final_text == "Общество здесь нено!"
+
+    def test_cjk_present_in_original_is_allowed(self):
+        handler = TokenHandler()
+        handler.sanitize("Welcome sign reads \u6b22\u8fce")
+        result = handler.finalize_translation("Табличка гласит \u6b22\u8fce")
+        assert result.exact_valid
+        assert result.final_text == "Табличка гласит \u6b22\u8fce"
+
+    def test_cjk_rejection_does_not_mask_token_mismatch(self):
+        handler = TokenHandler()
+        sanitized = handler.sanitize("<FirstName>, the Society is not welcome!").sanitized_text
+        mangled = sanitized.replace(handler.artifacts[0].placeholder, "")
+        result = handler.finalize_translation(mangled + " \u6b22\u8fce", allow_cleanup=True)
+        assert not result.exact_valid
+        assert result.used_cleanup
+        assert result.mismatch_report.mismatch_type != "foreign_script"
+        assert "\u6b22" not in result.final_text

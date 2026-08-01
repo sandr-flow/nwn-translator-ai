@@ -853,7 +853,7 @@ class TestPassthroughEmptyAfterSanitize:
 
 
 class TestMediumBatchTier:
-    """Medium-length strings (up to 300 chars) ride the batch path."""
+    """Medium-length strings (up to 1000 chars) ride the batch path."""
 
     @staticmethod
     def _item_data(sanitized: str, item: TranslatableItem) -> dict:
@@ -861,8 +861,8 @@ class TestMediumBatchTier:
 
     def test_medium_classification_boundaries(self):
         desc = TranslatableItem(text="x", metadata={"type": "placeable_description"})
-        assert TranslationManager._is_medium_item(self._item_data("x" * 300, desc))
-        assert not TranslationManager._is_medium_item(self._item_data("x" * 301, desc))
+        assert TranslationManager._is_medium_item(self._item_data("x" * 1000, desc))
+        assert not TranslationManager._is_medium_item(self._item_data("x" * 1001, desc))
 
         short_name = TranslatableItem(text="Sword", metadata={"type": "item_name"})
         # Whitelisted short names stay in the short tier.
@@ -892,7 +892,7 @@ class TestMediumBatchTier:
             metadata={"type": "placeable_description"},
             item_id="m",
         )
-        long_text = "A remarkably long placeable description sentence. " * 8
+        long_text = "A remarkably long placeable description sentence. " * 22
         long_item = TranslatableItem(
             text=long_text, metadata={"type": "placeable_description"}, item_id="l"
         )
@@ -963,6 +963,120 @@ class TestMediumBatchTier:
         assert result[medium_text] == "Диван выглядит уютным."
         assert provider.translate_batch_async.call_count == 1
         assert provider.translate_async.call_count == 1  # individual fallback
+
+    def test_medium_batches_respect_char_budget(self, monkeypatch):
+        monkeypatch.setattr(TranslationManager, "_BATCH_MEDIUM_CHAR_BUDGET", 300)
+        texts = [
+            f"A fairly long unique description number {i} that easily clears the "
+            "short threshold and lands in the medium tier of the batch splitter."
+            for i in range(4)
+        ]
+        provider = _make_provider({t: f"Перевод {i}" for i, t in enumerate(texts)})
+        manager = TranslationManager(_make_config(), provider)
+        content = ExtractedContent(
+            content_type="placeable",
+            items=[
+                TranslatableItem(
+                    text=t, metadata={"type": "placeable_description"}, item_id=f"m{i}"
+                )
+                for i, t in enumerate(texts)
+            ],
+            source_file=Path("x.utp"),
+        )
+
+        result = manager.translate_content(content)
+
+        for i, t in enumerate(texts):
+            assert result[t] == f"Перевод {i}"
+        # ~131 chars per item with a 300-char budget → two items per batch.
+        batch_sizes = [
+            len(call.kwargs["items"]) for call in provider.translate_batch_async.call_args_list
+        ]
+        assert batch_sizes == [2, 2]
+
+
+class TestGenericTimeoutRetry:
+    """A timed-out non-NCS single item is retried once before it is dropped."""
+
+    @staticmethod
+    def _long_item(text: str) -> ExtractedContent:
+        return ExtractedContent(
+            content_type="placeable",
+            items=[
+                TranslatableItem(text=text, metadata={"type": "placeable_description"}, item_id="l")
+            ],
+            source_file=Path("x.utp"),
+        )
+
+    def test_timeout_then_success_recovers(self, monkeypatch):
+        monkeypatch.setattr(TranslationManager, "_ITEM_TIMEOUT", 0.05)
+        long_text = "A remarkably long placeable description sentence. " * 22
+        calls = {"n": 0}
+
+        async def slow_then_fast(text, source_lang, target_lang, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                await asyncio.sleep(0.5)
+            return TranslationResult(translated="Длинное описание.", original=text)
+
+        provider = Mock()
+        provider.translate_async = AsyncMock(side_effect=slow_then_fast)
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(self._long_item(long_text))
+
+        assert result[long_text] == "Длинное описание."
+        assert calls["n"] == 2
+        assert manager.stats["errors"] == []
+
+    def test_double_timeout_records_error(self, monkeypatch):
+        monkeypatch.setattr(TranslationManager, "_ITEM_TIMEOUT", 0.05)
+        long_text = "A remarkably long placeable description sentence. " * 22
+
+        async def always_slow(text, source_lang, target_lang, **kwargs):
+            await asyncio.sleep(0.5)
+            return TranslationResult(translated="late", original=text)
+
+        provider = Mock()
+        provider.translate_async = AsyncMock(side_effect=always_slow)
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(self._long_item(long_text))
+
+        assert long_text not in result
+        assert len(manager.stats["errors"]) == 1
+        assert "retry timed out" in manager.stats["errors"][0]
+
+
+class TestForeignScriptRetry:
+    """CJK characters in a translation trigger the mismatch retry path."""
+
+    def test_cjk_answer_is_retried_and_clean_answer_accepted(self):
+        long_text = "The Auren Society is not welcome in this city, stranger. " * 20
+        provider = Mock()
+        provider.translate_async = AsyncMock(
+            side_effect=[
+                TranslationResult(translated="Общество здесь не欢迎но!", original=long_text),
+                TranslationResult(translated="Общество здесь не приветствуют!", original=long_text),
+            ]
+        )
+        manager = TranslationManager(_make_config(), provider)
+        content = ExtractedContent(
+            content_type="placeable",
+            items=[
+                TranslatableItem(
+                    text=long_text, metadata={"type": "placeable_description"}, item_id="l"
+                )
+            ],
+            source_file=Path("x.utp"),
+        )
+
+        result = manager.translate_content(content)
+
+        assert result[long_text] == "Общество здесь не приветствуют!"
+        assert provider.translate_async.call_count == 2
+        retry_context = provider.translate_async.call_args_list[1].kwargs["context"]
+        assert "foreign script" in retry_context
 
 
 class TestBatchDedupBySanitized:

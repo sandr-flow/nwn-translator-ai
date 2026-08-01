@@ -608,9 +608,12 @@ class TranslationManager:
     _BATCH_SIZE_VERY_SHORT = 60
     # Medium tier: non-NCS strings up to this length (descriptions, journal
     # lines, names over the short threshold) are batched too; only longer
-    # strings keep the individual translation path.
-    _BATCH_MEDIUM_THRESHOLD = 300
+    # strings keep the individual translation path. Medium batches are packed
+    # by a character budget as well as the item cap so response sizes stay
+    # bounded when items approach the threshold.
+    _BATCH_MEDIUM_THRESHOLD = 1000
     _BATCH_SIZE_MEDIUM = 16
+    _BATCH_MEDIUM_CHAR_BUDGET = 6000
     # NCS batch sizes by sanitized string length. Single-line strings at or
     # above 100 chars keep the existing individual translation path.
     _NCS_BATCH_SHORT_THRESHOLD = 50
@@ -816,12 +819,8 @@ class TranslationManager:
                     )
                     result = await self._retry_ncs_timeout_minimal(item_data)
                 else:
-                    result = TranslationResult(
-                        translated="",
-                        original=sanitized,
-                        success=False,
-                        error=f"Timeout after {self._ITEM_TIMEOUT}s",
-                        metadata={},
+                    result = await self._retry_generic_timeout(
+                        item_data, glossary_block, content_profile
                     )
             except Exception as e:
                 result = TranslationResult(
@@ -833,6 +832,47 @@ class TranslationManager:
                 )
         if bump:
             self._async_bump(item_data)
+        return result
+
+    async def _retry_generic_timeout(
+        self,
+        item_data: dict,
+        glossary_block: Optional[str],
+        content_profile: str,
+    ) -> TranslationResult:
+        """Retry a timed-out non-NCS item once before giving up on it."""
+        item = item_data["item"]
+        sanitized = item_data["sanitized"]
+        try:
+            result = await asyncio.wait_for(
+                self.provider.translate_async(
+                    text=sanitized,
+                    source_lang=self.config.source_lang,
+                    target_lang=self.config.target_lang,
+                    context=item.context,
+                    glossary_block=glossary_block,
+                    content_profile=content_profile,
+                ),
+                timeout=self._ITEM_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            return TranslationResult(
+                translated="",
+                original=sanitized,
+                success=False,
+                error=f"Timeout after {self._ITEM_TIMEOUT}s (retry timed out)",
+                metadata={},
+            )
+        except Exception as exc:
+            return TranslationResult(
+                translated="",
+                original=sanitized,
+                success=False,
+                error=f"Timeout retry failed: {exc}",
+                metadata={},
+            )
+        if result.success:
+            logger.info("Timeout retry recovered translation for '%s…'", sanitized[:40])
         return result
 
     def _build_ncs_minimal_retry_context(self, item: Any) -> str:
@@ -947,6 +987,12 @@ class TranslationManager:
         )
         if expected:
             parts.append("Expected preserved artifacts after restoration: " + " | ".join(expected))
+        if mismatch_report is not None and mismatch_report.mismatch_type == "foreign_script":
+            parts.append(
+                "Your previous answer contained characters from a foreign script "
+                f"(such as Chinese). Write the translation in {self.config.target_lang} "
+                "using only that language's alphabet."
+            )
         if mismatch_report is not None and not mismatch_report.is_exact_match:
             parts.append(f"Previous mismatch type: {mismatch_report.mismatch_type}.")
             if mismatch_report.actual_sequence:
@@ -1192,8 +1238,21 @@ class TranslationManager:
             batches.append(very_short_items[i : i + self._BATCH_SIZE_VERY_SHORT])
         for i in range(0, len(regular_short_items), self._BATCH_SIZE):
             batches.append(regular_short_items[i : i + self._BATCH_SIZE])
-        for i in range(0, len(medium_items), self._BATCH_SIZE_MEDIUM):
-            batches.append(medium_items[i : i + self._BATCH_SIZE_MEDIUM])
+        medium_batch: List[dict] = []
+        medium_chars = 0
+        for d in medium_items:
+            item_chars = len(d["sanitized"])
+            if medium_batch and (
+                len(medium_batch) >= self._BATCH_SIZE_MEDIUM
+                or medium_chars + item_chars > self._BATCH_MEDIUM_CHAR_BUDGET
+            ):
+                batches.append(medium_batch)
+                medium_batch = []
+                medium_chars = 0
+            medium_batch.append(d)
+            medium_chars += item_chars
+        if medium_batch:
+            batches.append(medium_batch)
 
         async def run_all() -> tuple:
             limit = max(1, int(self.config.max_concurrent_requests))

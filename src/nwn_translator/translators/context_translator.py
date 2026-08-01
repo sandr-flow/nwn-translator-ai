@@ -43,9 +43,10 @@ _DIALOG_CHUNK_TARGET_CHARS = 24000
 _DIALOG_CHUNK_MAX_KEYS = 120
 
 # Small dialog scripts are packed into grouped multi-file requests to cut
-# per-request prompt overhead. Limits keep the grouped response comfortably
-# inside TRANSLATION_MAX_TOKENS even with reasoning enabled.
-_SMALL_DIALOG_CHARS = 1000
+# per-request prompt overhead. The threshold is measured on the formatted
+# script (with [E0]/[NPC] markup), not raw text. Limits keep the grouped
+# response comfortably inside TRANSLATION_MAX_TOKENS even with reasoning.
+_SMALL_DIALOG_CHARS = 2000
 _DIALOG_GROUP_TARGET_CHARS = 8000
 _DIALOG_GROUP_MAX_FILES = 12
 

@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Dict, Iterable, List, Literal, Optional, Set
+from functools import lru_cache
+from typing import Dict, FrozenSet, Iterable, List, Literal, Optional, Set, Tuple, Union
 
 # Unicode letters only (no digits, no underscore). Works for Latin, Cyrillic,
 # Turkish, Polish, Czech and the like under Python 3's default re.UNICODE.
@@ -72,22 +73,77 @@ def tokenize(text: str) -> Set[str]:
     return {m.group(0) for m in _TOKEN_RE.finditer(normalized)}
 
 
-def is_relevant(entity_text: str, source_tokens: Set[str]) -> bool:
+@lru_cache(maxsize=16384)
+def _entity_tokens_cached(text: str) -> FrozenSet[str]:
+    """Cached tokenization for entity names (repeated across filter calls)."""
+    return frozenset(tokenize(text))
+
+
+class SourceTokenIndex:
+    """Lookup structures for one source-token set (fast is_relevant matching)."""
+
+    __slots__ = ("tokens", "by_len")
+
+    def __init__(self, tokens: Set[str]):
+        self.tokens = tokens
+        #: Fuzzy-eligible tokens (len >= _FUZZY_MIN) bucketed by length so a
+        #: Damerau-Levenshtein <= 1 probe only scans lengths within +/- 1.
+        self.by_len: Dict[int, List[str]] = {}
+        for token in tokens:
+            if len(token) >= _FUZZY_MIN:
+                self.by_len.setdefault(len(token), []).append(token)
+
+
+def _variant_in_tokens(token: str, tokens: Set[str]) -> bool:
+    """Set-lookup equivalent of `_simple_plural_or_possessive_variant` scans."""
+    if len(token) < _PREFIX_MIN:
+        return False
+    if token + "s" in tokens or token + "es" in tokens:
+        return True
+    if token.endswith("s") and len(token) >= _PREFIX_MIN + 1 and token[:-1] in tokens:
+        return True
+    if token.endswith("es") and len(token) >= _PREFIX_MIN + 2 and token[:-2] in tokens:
+        return True
+    return False
+
+
+def _fuzzy_in_index(token: str, index: SourceTokenIndex) -> bool:
+    if len(token) < _FUZZY_MIN:
+        return False
+    for length in (len(token) - 1, len(token), len(token) + 1):
+        for candidate in index.by_len.get(length, ()):
+            if _damerau_levenshtein_le_1(token, candidate):
+                return True
+    return False
+
+
+def is_relevant(entity_text: str, source_tokens: Union[Set[str], SourceTokenIndex]) -> bool:
     """True if *entity_text* is strongly evidenced by *source_tokens*.
 
-    *source_tokens* must already be the output of :func:`tokenize`.
+    *source_tokens* is either the output of :func:`tokenize` or a prebuilt
+    :class:`SourceTokenIndex` (callers filtering many entities against the
+    same corpus should build the index once).
     """
-    if not source_tokens:
+    if isinstance(source_tokens, SourceTokenIndex):
+        index = source_tokens
+    else:
+        index = SourceTokenIndex(source_tokens)
+    tokens = index.tokens
+    if not tokens:
         return False
-    entity_tokens = tokenize(entity_text)
+    entity_tokens = _entity_tokens_cached(entity_text) if entity_text else frozenset()
     if not entity_tokens:
         return False
 
     if len(entity_tokens) == 1:
         token = next(iter(entity_tokens))
-        return _single_token_relevant(token, source_tokens)
+        if token in tokens:
+            return True
+        if not _is_distinctive_token(token):
+            return False
+        return _variant_in_tokens(token, tokens) or _fuzzy_in_index(token, index)
 
-    if entity_tokens.issubset(source_tokens):
+    if entity_tokens.issubset(tokens):
         return True
 
     meaningful_tokens = {t for t in entity_tokens if not _is_magnet_token(t)}
@@ -96,19 +152,18 @@ def is_relevant(entity_text: str, source_tokens: Set[str]) -> bool:
 
     exact_hits: Set[str] = set()
     variant_hits: Set[str] = set()
-    fuzzy_hits: Set[str] = set()
+    strong_hits: Set[str] = set()
 
     for et in meaningful_tokens:
-        for st in source_tokens:
-            kind = _token_match_kind(et, st)
-            if kind == "exact":
-                exact_hits.add(et)
-            elif kind == "variant":
-                variant_hits.add(et)
-            elif kind == "fuzzy":
-                fuzzy_hits.add(et)
+        exact = et in tokens
+        variant = _variant_in_tokens(et, tokens)
+        if exact:
+            exact_hits.add(et)
+        if variant:
+            variant_hits.add(et)
+        if exact or variant or _fuzzy_in_index(et, index):
+            strong_hits.add(et)
 
-    strong_hits = exact_hits | variant_hits | fuzzy_hits
     if len(strong_hits) >= 2:
         return True
 
@@ -234,9 +289,13 @@ def split_hierarchical(name: str) -> Optional[List[str]]:
     ``cul-de-sac``), or names whose components do not all start with an
     uppercase letter.
     """
-    if not name:
-        return None
-    parts = [p.strip() for p in _HIERARCHY_SPLIT_RE.split(str(name))]
+    parts = _split_hierarchical_cached(str(name)) if name else None
+    return list(parts) if parts is not None else None
+
+
+@lru_cache(maxsize=16384)
+def _split_hierarchical_cached(name: str) -> Optional[Tuple[str, ...]]:
+    parts = tuple(p.strip() for p in _HIERARCHY_SPLIT_RE.split(name))
     if len(parts) < 2:
         return None
     if not all(p and p[0].isupper() for p in parts):
@@ -255,7 +314,7 @@ def common_hierarchy_components(
     """
     counts: Dict[str, int] = {}
     for name in names:
-        parts = split_hierarchical(name)
+        parts = _split_hierarchical_cached(str(name)) if name else None
         if not parts:
             continue
         for part in parts:
@@ -280,7 +339,7 @@ def hierarchical_entry_passes(
     ``Loom Avenue`` ↔ ``Dock Ward gates`` false positive that token-level
     relevance would let through via the shared ``ward``/``gates`` magnet.
     """
-    parts = split_hierarchical(name)
+    parts = _split_hierarchical_cached(str(name)) if name else None
     if not parts:
         return True
     folded_name = (name or "").casefold()

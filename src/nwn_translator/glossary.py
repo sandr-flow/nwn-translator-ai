@@ -120,33 +120,54 @@ class Glossary:
     def _filter_entries_by_texts(self, texts: Iterable[str]) -> Dict[str, str]:
         """Return glossary entries whose keys are relevant to *texts*."""
         from .context.relevance import (
-            common_hierarchy_components,
+            SourceTokenIndex,
             hierarchical_entry_passes,
             is_relevant,
             tokenize_corpus,
         )
-        from .context.string_filters import is_generic_entity_label
 
         source_tokens = tokenize_corpus(texts)
         if not source_tokens:
             return {}
+        source_index = SourceTokenIndex(source_tokens)
         source_joined = "\n".join(str(t) for t in texts if t).casefold()
-        common = common_hierarchy_components(self.entries.keys())
+        common, generic_keys = self._entry_invariants()
 
         out: Dict[str, str] = {}
         for en, tr in self.entries.items():
             key = (en or "").strip()
             if not key:
                 continue
-            if is_generic_entity_label(key):
+            if en in generic_keys:
                 if key.casefold() not in source_joined:
                     continue
-            elif not is_relevant(key, source_tokens):
+            elif not is_relevant(key, source_index):
                 continue
             if not hierarchical_entry_passes(key, source_joined, source_tokens, common):
                 continue
             out[en] = tr
         return out
+
+    def _entry_invariants(self) -> tuple:
+        """Cached per-entry facts that only depend on the entry keys.
+
+        ``to_prompt_block`` runs once per translation batch/item; recomputing
+        hierarchy components and generic-label classification for every entry
+        on every call dominated CPU time on large modules.
+        """
+        from .context.relevance import common_hierarchy_components
+        from .context.string_filters import is_generic_entity_label
+
+        keys = tuple(self.entries.keys())
+        cached = self.__dict__.get("_entry_invariants_cache")
+        if cached is not None and cached[0] == keys:
+            return cached[1], cached[2]
+        common = common_hierarchy_components(keys)
+        generic_keys = {
+            en for en in keys if (en or "").strip() and is_generic_entity_label((en or "").strip())
+        }
+        self.__dict__["_entry_invariants_cache"] = (keys, common, generic_keys)
+        return common, generic_keys
 
     def seed_cache(self, cache: Any, *, preserve_tokens: bool) -> None:
         """Populate session translation cache so exact-match strings skip the API.

@@ -44,8 +44,8 @@ logger = logging.getLogger(__name__)
 #: Skip strings shorter than this — names/labels rarely contain embedded proper nouns.
 _MIN_TEXT_LENGTH = 40
 
-#: Max texts per LLM call (empirically keeps prompt under a few KB).
-_BATCH_TEXT_COUNT = 25
+#: Max texts per LLM call (keeps the prompt within a few KB of payload).
+_BATCH_TEXT_COUNT = 50
 
 #: Absolute cap on the whole extraction run (seconds).
 _MAX_OVERALL_TIMEOUT = 900.0

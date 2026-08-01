@@ -37,7 +37,7 @@ GLOSSARY_MAX_ENTRIES = 40
 GLOSSARY_MAX_CHARS = 6000
 
 # Max names per single LLM request to stay within context/token limits.
-_BATCH_SIZE = 40
+_BATCH_SIZE = 80
 
 # How many times to retry the entire glossary build (per batch) on parse failure.
 _MAX_RETRIES = 2

@@ -587,7 +587,8 @@ class TestNcsBatchTranslation:
         batch_sizes = [
             len(call.kwargs["items"]) for call in provider.translate_batch_async.call_args_list
         ]
-        assert batch_sizes == [20, 1, 10, 1]
+        # 21 short (<50) fit one batch of 30; 11 medium (50-99) fit one of 15.
+        assert batch_sizes == [21, 11]
         assert provider.translate_async.call_count == 2
         assert {call.kwargs["text"] for call in provider.translate_async.call_args_list} == {
             long_text,

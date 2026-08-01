@@ -237,15 +237,15 @@ class TestAdaptiveBatchSize:
     """Very-short items group into larger batches than regular-short items."""
 
     def test_very_short_items_use_larger_batch(self):
-        # 31 one-word items (sanitized length <=20) → should be one batch of
-        # 30 + one of 1 (total 2 batches), not 3 batches of 15+15+1.
+        # 61 one-word items (sanitized length <=20) → should be one batch of
+        # 60 + one of 1 (total 2 batches), not 3 batches of 30+30+1.
         items = [
             TranslatableItem(
                 text=f"Guard{i}",  # <=7 chars
                 item_id=f"g:{i}",
                 metadata={"type": "creature_first_name"},
             )
-            for i in range(31)
+            for i in range(61)
         ]
         content = ExtractedContent(
             content_type="creature",
@@ -268,16 +268,16 @@ class TestAdaptiveBatchSize:
         manager = TranslationManager(_make_config(), provider)
         manager.translate_content(content)
 
-        # 31 items → one batch of 30 (very-short) + one batch of 1.
+        # 61 items → one batch of 60 (very-short) + one batch of 1.
         assert provider.translate_batch_async.call_count == 2
         sizes = [
             len(call.kwargs.get("items") or call.args[0])
             for call in provider.translate_batch_async.call_args_list
         ]
-        assert sorted(sizes) == [1, 30]
+        assert sorted(sizes) == [1, 60]
 
-    def test_regular_short_items_keep_batch_size_15(self):
-        # 16 items whose sanitized length is 21+ chars → two batches of 15+1.
+    def test_regular_short_items_keep_batch_size_30(self):
+        # 31 items whose sanitized length is 21+ chars → two batches of 30+1.
         # Build names that are intentionally >20 chars.
         items = [
             TranslatableItem(
@@ -285,7 +285,7 @@ class TestAdaptiveBatchSize:
                 item_id=f"g:{i}",
                 metadata={"type": "creature_first_name"},
             )
-            for i in range(16)
+            for i in range(31)
         ]
         content = ExtractedContent(
             content_type="creature",
@@ -313,7 +313,7 @@ class TestAdaptiveBatchSize:
             len(call.kwargs.get("items") or call.args[0])
             for call in provider.translate_batch_async.call_args_list
         )
-        assert sizes == [1, 15]
+        assert sizes == [1, 30]
 
     def test_mixed_short_items_split_into_two_batch_groups(self):
         """Short items with mixed lengths are partitioned before batching."""
@@ -357,11 +357,11 @@ class TestAdaptiveBatchSize:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
-        # Very-short: 21 → one batch of 30 (unfilled), regular-short: 16 → 15 + 1.
+        # Very-short: 21 → one batch of 60 (unfilled), regular-short: 16 → one of 30 (unfilled).
         sizes = sorted(
             len(call.kwargs.get("items") or call.args[0])
             for call in provider.translate_batch_async.call_args_list
         )
-        assert sizes == [1, 15, 21]
+        assert sizes == [16, 21]
         # Every item got translated, despite being split across two groups.
         assert len(result) == len(items)

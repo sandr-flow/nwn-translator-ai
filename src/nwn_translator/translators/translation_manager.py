@@ -602,21 +602,21 @@ class TranslationManager:
     # Items at or below this length use the larger batch size (Phase 3.5).
     _BATCH_VERY_SHORT_THRESHOLD = 20
     # Maximum items per batch API call (regular short items, 20 < len <= 50).
-    _BATCH_SIZE = 15
+    _BATCH_SIZE = 30
     # Larger batch size for very short items (<= 20 chars) — mostly tag names
     # and one-word labels where per-item prompt overhead dominates cost.
-    _BATCH_SIZE_VERY_SHORT = 30
+    _BATCH_SIZE_VERY_SHORT = 60
     # Medium tier: non-NCS strings up to this length (descriptions, journal
     # lines, names over the short threshold) are batched too; only longer
     # strings keep the individual translation path.
     _BATCH_MEDIUM_THRESHOLD = 300
-    _BATCH_SIZE_MEDIUM = 8
+    _BATCH_SIZE_MEDIUM = 16
     # NCS batch sizes by sanitized string length. Single-line strings at or
     # above 100 chars keep the existing individual translation path.
     _NCS_BATCH_SHORT_THRESHOLD = 50
     _NCS_BATCH_MAX_LENGTH = 100
-    _NCS_BATCH_SIZE_SHORT = 20
-    _NCS_BATCH_SIZE_MEDIUM = 10
+    _NCS_BATCH_SIZE_SHORT = 30
+    _NCS_BATCH_SIZE_MEDIUM = 15
 
     # Timeout (seconds) for a single async translation call.
     _ITEM_TIMEOUT: float = 120.0

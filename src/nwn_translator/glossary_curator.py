@@ -15,7 +15,7 @@ from .telemetry import llm_phase
 
 logger = logging.getLogger(__name__)
 
-_BATCH_SIZE = 40
+_BATCH_SIZE = 80
 _MAX_RETRIES = 1
 _VALID_DECISIONS = {"keep", "local_only", "drop", "alias_of"}
 

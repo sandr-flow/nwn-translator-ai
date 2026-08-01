@@ -14,6 +14,7 @@ transitively by tracing their string parameters into engine calls.
 
 import logging
 import re
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -577,6 +578,9 @@ class NssModuleIndex:
 
 _CACHE_MAX = 4
 _index_cache: "OrderedDict[Tuple[Path, str], NssModuleIndex]" = OrderedDict()
+# Extraction runs .ncs files through a thread pool; without a lock the first
+# wave of cache misses would build the same module index once per worker.
+_index_lock = threading.Lock()
 
 
 def get_module_index(root: Path, encoding: str = "cp1252") -> NssModuleIndex:
@@ -586,16 +590,21 @@ def get_module_index(root: Path, encoding: str = "cp1252") -> NssModuleIndex:
     if cached is not None:
         _index_cache.move_to_end(key)
         return cached
-    index = NssModuleIndex.build(root, encoding)
-    logger.debug(
-        "NSS index for %s: %d sources, %d unique literals",
-        root,
-        index.source_count,
-        len(index._literals),
-    )
-    _index_cache[key] = index
-    while len(_index_cache) > _CACHE_MAX:
-        _index_cache.popitem(last=False)
+    with _index_lock:
+        cached = _index_cache.get(key)
+        if cached is not None:
+            _index_cache.move_to_end(key)
+            return cached
+        index = NssModuleIndex.build(root, encoding)
+        logger.debug(
+            "NSS index for %s: %d sources, %d unique literals",
+            root,
+            index.source_count,
+            len(index._literals),
+        )
+        _index_cache[key] = index
+        while len(_index_cache) > _CACHE_MAX:
+            _index_cache.popitem(last=False)
     return index
 
 

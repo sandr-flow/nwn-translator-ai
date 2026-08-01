@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol
 
@@ -21,6 +22,8 @@ class FileTranslationLogWriter:
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        # Dialog files are translated from worker threads sharing one writer.
+        self._lock = threading.Lock()
 
     def write(self, entry: Dict[str, Any]) -> None:
         """Serialize *entry* as JSON and append one line to the log file.
@@ -29,7 +32,7 @@ class FileTranslationLogWriter:
             entry: JSON-serializable dict (e.g. original/translated pair).
         """
         try:
-            with open(self.path, "a", encoding="utf-8") as f:
+            with self._lock, open(self.path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError as e:
             logger.debug("Failed to write translation log: %s", e)

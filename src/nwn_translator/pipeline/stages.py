@@ -684,25 +684,21 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
         state._ncs_translations_by_item_id = manager.ncs_translations_by_item_id
         state._sync_manager_stats(manager)
 
-    # B-2: Translate dialog files (contextual, sequential to benefit from cache)
-    for file_path in dialog_files:
+    # B-2: Translate dialog files (contextual, concurrent across files)
+    if dialog_files:
         state._check_cancel()
         assert context_manager is not None
-        parsed_data, extracted, file_ext = extracted_map[file_path]
-        file_item_budget = len(extracted.items)
-        try:
-            translations = context_manager.translate_dialog(
-                file_path,
-                parsed_data,
-                item_progress=item_progress,
-                item_budget=file_item_budget,
-            )
-            if translations:
-                all_translations.update(translations)
-        except TranslationCancelled:
-            raise
-        except Exception as e:
-            error_msg = f"Error translating dialog {file_path.name}: {e}"
+        dialog_jobs = [
+            (file_path, extracted_map[file_path][0], len(extracted_map[file_path][1].items))
+            for file_path in dialog_files
+        ]
+        dialog_translations, dialog_errors = context_manager.translate_dialogs(
+            dialog_jobs,
+            item_progress=item_progress,
+        )
+        all_translations.update(dialog_translations)
+        for file_path, exc in dialog_errors:
+            error_msg = f"Error translating dialog {file_path.name}: {exc}"
             with state._stats_lock:
                 state.stats["errors"].append(error_msg)
             logger.error(error_msg)

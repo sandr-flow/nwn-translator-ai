@@ -1,6 +1,7 @@
 """Tests for contextual dialog retry ordering."""
 
 import logging
+import threading
 from pathlib import Path
 
 import pytest
@@ -340,6 +341,195 @@ def test_generic_api_error_still_degrades_to_partial_result(monkeypatch, caplog)
 
     assert result == {}
     assert "Contextual translation failed" in caplog.text
+
+
+class _KeyedFakeOpenRouter(_FakeOpenRouter):
+    """Return the response whose marker substring appears in the user prompt.
+
+    Order-independent, so it stays deterministic under concurrent calls.
+    """
+
+    def __init__(self, responses_by_marker):
+        super().__init__([])
+        self._by_marker = dict(responses_by_marker)
+
+    async def complete_json_chat_async(
+        self,
+        system_prompt,
+        user_prompt,
+        *,
+        max_tokens=0,
+        temperature=0.0,
+        use_reasoning=True,
+    ):
+        self.calls.append(
+            {
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "use_reasoning": use_reasoning,
+            }
+        )
+        for marker, response in self._by_marker.items():
+            if marker in user_prompt:
+                return response
+        raise AssertionError(f"No fake response matches prompt: {user_prompt[:120]!r}")
+
+
+class _ParsedDataDialogExtractor:
+    """Read the fake tree from parsed_data so each file can differ."""
+
+    def build_dialog_tree(self, parsed_data):
+        return parsed_data["tree"]
+
+
+class TestTranslateDialogs:
+    """Concurrent multi-file dialog orchestration."""
+
+    @staticmethod
+    def _patch_env(monkeypatch):
+        monkeypatch.setattr(context_module, "OpenRouterProvider", _FakeOpenRouter)
+        monkeypatch.setattr(context_module, "DialogExtractor", _ParsedDataDialogExtractor)
+        monkeypatch.setattr(
+            context_module, "translation_log_writer_for_config", lambda *_a, **_k: _NullWriter()
+        )
+
+    @staticmethod
+    def _file(name, node_id, text):
+        tree = [DialogNode(node_id=node_id, text=text, is_entry=True)]
+        return (Path(name), {"tree": tree}, 1)
+
+    def test_aggregates_translations_across_files(self, monkeypatch):
+        self._patch_env(monkeypatch)
+        provider = _KeyedFakeOpenRouter(
+            {
+                "Hello": '{"E1":"Привет"}',
+                "Goodbye": '{"E2":"Прощай"}',
+                "Thanks": '{"E3":"Спасибо"}',
+            }
+        )
+        manager = ContextualTranslationManager(
+            _make_config(max_concurrent_requests=3),
+            provider,
+            WorldContext(),
+        )
+        files = [
+            self._file("a.dlg", 1, "Hello"),
+            self._file("b.dlg", 2, "Goodbye"),
+            self._file("c.dlg", 3, "Thanks"),
+        ]
+
+        translations, errors = manager.translate_dialogs(files)
+
+        assert errors == []
+        assert translations == {"Hello": "Привет", "Goodbye": "Прощай", "Thanks": "Спасибо"}
+        assert len(provider.calls) == 3
+
+    def test_file_error_is_isolated(self, monkeypatch):
+        self._patch_env(monkeypatch)
+        provider = _KeyedFakeOpenRouter(
+            {
+                "Hello": '{"E1":"Привет"}',
+                "Goodbye": '{"E3":"Прощай"}',
+            }
+        )
+        manager = ContextualTranslationManager(
+            _make_config(max_concurrent_requests=2),
+            provider,
+            WorldContext(),
+        )
+        boom = RuntimeError("prepare exploded")
+        real_prepare = manager._prepare_dialog
+
+        def failing_prepare(file_path, parsed_data):
+            if file_path.name == "bad.dlg":
+                raise boom
+            return real_prepare(file_path, parsed_data)
+
+        monkeypatch.setattr(manager, "_prepare_dialog", failing_prepare)
+        files = [
+            self._file("a.dlg", 1, "Hello"),
+            self._file("bad.dlg", 2, "Kaboom"),
+            self._file("b.dlg", 3, "Goodbye"),
+        ]
+
+        translations, errors = manager.translate_dialogs(files)
+
+        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert [(path.name, exc) for path, exc in errors] == [("bad.dlg", boom)]
+
+    def test_cancellation_aborts_pool_and_skips_queued_files(self, monkeypatch):
+        self._patch_env(monkeypatch)
+        provider = _KeyedFakeOpenRouter(
+            {
+                "Hello": '{"E1":"Привет"}',
+                "Goodbye": '{"E2":"Прощай"}',
+            }
+        )
+        manager = ContextualTranslationManager(
+            _make_config(
+                max_concurrent_requests=1,
+                cancel_check=lambda: len(provider.calls) >= 1,
+            ),
+            provider,
+            WorldContext(),
+        )
+        files = [
+            self._file("a.dlg", 1, "Hello"),
+            self._file("b.dlg", 2, "Goodbye"),
+        ]
+
+        with pytest.raises(TranslationCancelled):
+            manager.translate_dialogs(files)
+        assert len(provider.calls) == 1  # second file was never requested
+
+    def test_concurrent_progress_bumps_are_aggregated(self, monkeypatch):
+        self._patch_env(monkeypatch)
+
+        class _CountingProgress:
+            def __init__(self):
+                self.total = 0
+                self._lock = threading.Lock()
+
+            def bump(self, by=1, filename=None):
+                with self._lock:
+                    self.total += by
+
+        provider = _KeyedFakeOpenRouter(
+            {
+                "Hello": '{"E1":"Привет"}',
+                "Goodbye": '{"E2":"Прощай"}',
+                "Thanks": '{"E3":"Спасибо"}',
+            }
+        )
+        manager = ContextualTranslationManager(
+            _make_config(max_concurrent_requests=3),
+            provider,
+            WorldContext(),
+        )
+        progress = _CountingProgress()
+        files = [
+            self._file("a.dlg", 1, "Hello"),
+            self._file("b.dlg", 2, "Goodbye"),
+            self._file("c.dlg", 3, "Thanks"),
+        ]
+
+        translations, errors = manager.translate_dialogs(files, item_progress=progress)
+
+        assert errors == []
+        assert len(translations) == 3
+        assert progress.total == 3  # one budgeted item per file, none lost
+
+    def test_empty_file_list_returns_empty(self, monkeypatch):
+        self._patch_env(monkeypatch)
+        manager = ContextualTranslationManager(
+            _make_config(),
+            _KeyedFakeOpenRouter({}),
+            WorldContext(),
+        )
+
+        assert manager.translate_dialogs([]) == ({}, [])
 
 
 class TestSpeakersBlock:

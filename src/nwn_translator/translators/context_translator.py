@@ -6,6 +6,7 @@ Translates entire dialog trees in a single batch using world context.
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -40,6 +41,22 @@ _DIALOG_TRUNCATION_MAX_TOKENS = 32768
 # tokenizer counts, because providers and models vary.
 _DIALOG_CHUNK_TARGET_CHARS = 24000
 _DIALOG_CHUNK_MAX_KEYS = 120
+
+
+@dataclass
+class _PreparedDialog:
+    """Parsed dialog state shared by the cache pass and the API pass."""
+
+    tree: List[DialogNode]
+    node_map: Dict[str, DialogNode]
+    original_text_map: Dict[str, str]
+    sanitized_by_key: Dict[str, str]
+    handlers: Dict[str, TokenHandler]
+    speakers_block: str
+    #: original_text -> final translation, served from the shared translation cache
+    translations: Dict[str, str]
+    keys_for_api: List[str]
+    all_keys: List[str]
 
 
 class ContextualTranslationManager:
@@ -108,58 +125,22 @@ class ContextualTranslationManager:
             return {}
 
         provider: OpenRouterProvider = self.provider
-        extractor = DialogExtractor()
 
-        tree = extractor.build_dialog_tree(parsed_data)
-        if not tree:
+        prepared = self._prepare_dialog(file_path, parsed_data)
+        if prepared is None:
             _finish()
             return {}
 
-        node_map: Dict[str, DialogNode] = {}
+        tree = prepared.tree
+        node_map = prepared.node_map
+        speakers_block = prepared.speakers_block
+        original_text_map = prepared.original_text_map
+        sanitized_by_key = prepared.sanitized_by_key
+        handlers = prepared.handlers
+        translations = prepared.translations
+        keys_for_api = prepared.keys_for_api
+        all_keys = prepared.all_keys
 
-        def collect_nodes(nodes: List[DialogNode]) -> None:
-            for node in nodes:
-                key = f"{'E' if node.is_entry else 'R'}{node.node_id}"
-                if key not in node_map:
-                    node_map[key] = node
-                    collect_nodes(node.replies)
-
-        collect_nodes(tree)
-
-        speakers_block = self._build_speakers_block(file_path.stem, node_map)
-
-        original_text_map: Dict[str, str] = {}
-        sanitized_by_key: Dict[str, str] = {}
-        handlers: Dict[str, TokenHandler] = {}
-
-        for key, node in node_map.items():
-            original_text = node.text
-            if original_text is None or not str(original_text).strip():
-                continue
-
-            original_text_map[key] = original_text
-            sanitized, handler = sanitize_text(
-                original_text,
-                preserve_tokens=self.config.preserve_tokens,
-            )
-            handlers[key] = handler
-            sanitized_by_key[key] = sanitized
-
-        translations: Dict[str, str] = {}
-        keys_for_api: List[str] = []
-
-        for key, original_text in original_text_map.items():
-            san = sanitized_by_key[key]
-            if self.translation_cache is not None and san in self.translation_cache:
-                outcome = handlers[key].finalize_translation(
-                    self.translation_cache[san],
-                    allow_cleanup=True,
-                )
-                translations[original_text] = outcome.final_text
-            else:
-                keys_for_api.append(key)
-
-        all_keys = list(original_text_map.keys())
         cached_served = len(all_keys) - len(keys_for_api)
         if cached_served > 0:
             _bump(cached_served)
@@ -413,6 +394,135 @@ class ContextualTranslationManager:
             logger.error("Contextual translation failed for %s: %s", file_path.name, exc)
             _finish()
             return translations
+
+    def translate_dialogs(
+        self,
+        dialog_files: List[tuple[Path, Dict[str, Any], int]],
+        item_progress: Optional[Any] = None,
+    ) -> tuple[Dict[str, str], List[tuple[Path, Exception]]]:
+        """Translate multiple dialog files concurrently on a thread pool.
+
+        Each *dialog_files* entry is ``(file_path, parsed_data, item_budget)``.
+        Failures are isolated per file and returned alongside the aggregated
+        translations; :class:`TranslationCancelled` aborts the whole pool.
+
+        The shared ``translation_cache`` dict is read and written from worker
+        threads without a lock: single dict operations are atomic under the
+        GIL, and a lost race only costs one duplicate API request.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        all_translations: Dict[str, str] = {}
+        errors: List[tuple[Path, Exception]] = []
+        if not dialog_files:
+            return all_translations, errors
+
+        max_workers = max(1, int(getattr(self.config, "max_concurrent_requests", 4) or 1))
+
+        def translate_one(
+            file_path: Path, parsed_data: Dict[str, Any], item_budget: int
+        ) -> Dict[str, str]:
+            self._raise_if_cancelled()
+            return self.translate_dialog(
+                file_path,
+                parsed_data,
+                item_progress=item_progress,
+                item_budget=item_budget,
+            )
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_path = {
+                executor.submit(translate_one, file_path, parsed_data, item_budget): file_path
+                for file_path, parsed_data, item_budget in dialog_files
+            }
+            try:
+                for future in as_completed(future_to_path):
+                    file_path = future_to_path[future]
+                    try:
+                        translations = future.result()
+                    except TranslationCancelled:
+                        raise
+                    except Exception as exc:
+                        errors.append((file_path, exc))
+                    else:
+                        if translations:
+                            all_translations.update(translations)
+            except TranslationCancelled:
+                for pending in future_to_path:
+                    pending.cancel()
+                raise
+        return all_translations, errors
+
+    def _prepare_dialog(
+        self,
+        file_path: Path,
+        parsed_data: Dict[str, Any],
+    ) -> Optional[_PreparedDialog]:
+        """Parse the dialog tree, sanitize node texts, and serve cache hits.
+
+        Returns ``None`` when the dialog has no tree at all.
+        """
+        extractor = DialogExtractor()
+
+        tree = extractor.build_dialog_tree(parsed_data)
+        if not tree:
+            return None
+
+        node_map: Dict[str, DialogNode] = {}
+
+        def collect_nodes(nodes: List[DialogNode]) -> None:
+            for node in nodes:
+                key = f"{'E' if node.is_entry else 'R'}{node.node_id}"
+                if key not in node_map:
+                    node_map[key] = node
+                    collect_nodes(node.replies)
+
+        collect_nodes(tree)
+
+        speakers_block = self._build_speakers_block(file_path.stem, node_map)
+
+        original_text_map: Dict[str, str] = {}
+        sanitized_by_key: Dict[str, str] = {}
+        handlers: Dict[str, TokenHandler] = {}
+
+        for key, node in node_map.items():
+            original_text = node.text
+            if original_text is None or not str(original_text).strip():
+                continue
+
+            original_text_map[key] = original_text
+            sanitized, handler = sanitize_text(
+                original_text,
+                preserve_tokens=self.config.preserve_tokens,
+            )
+            handlers[key] = handler
+            sanitized_by_key[key] = sanitized
+
+        translations: Dict[str, str] = {}
+        keys_for_api: List[str] = []
+
+        for key, original_text in original_text_map.items():
+            san = sanitized_by_key[key]
+            if self.translation_cache is not None and san in self.translation_cache:
+                outcome = handlers[key].finalize_translation(
+                    self.translation_cache[san],
+                    allow_cleanup=True,
+                )
+                translations[original_text] = outcome.final_text
+            else:
+                keys_for_api.append(key)
+
+        return _PreparedDialog(
+            tree=tree,
+            node_map=node_map,
+            original_text_map=original_text_map,
+            sanitized_by_key=sanitized_by_key,
+            handlers=handlers,
+            speakers_block=speakers_block,
+            translations=translations,
+            keys_for_api=keys_for_api,
+            all_keys=list(original_text_map.keys()),
+        )
 
     def _parse_json_response(self, raw: str, filename: str) -> Optional[dict]:
         """Parse a JSON object from a raw AI response string."""

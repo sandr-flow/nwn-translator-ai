@@ -19,11 +19,13 @@ from typing import Dict, List, Optional, Tuple
 
 from ..config import STANDARD_TOKENS
 
-# CJK scripts (Han, kana, Hangul). Target languages are European, so a
-# translation containing these characters when the source does not is a
-# model glitch: the injector would silently drop them, garbling the text.
+# Non-European scripts (CJK, Hebrew, Arabic, Devanagari, Thai). Target
+# languages are European, so a translation containing these characters when
+# the source does not is a model glitch: the injector would silently drop
+# them, garbling the text (observed: Chinese and Thai chars inside Russian).
 FOREIGN_SCRIPT_PATTERN = re.compile(
-    "[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff]"
+    "[\\u0590-\\u06ff\\u0900-\\u097f\\u0e00-\\u0e7f"
+    "\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff]"
 )
 
 

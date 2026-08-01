@@ -511,3 +511,16 @@ class TestNormalizationAndForeignScript:
         assert result.used_cleanup
         assert result.mismatch_report.mismatch_type != "foreign_script"
         assert "\u6b22" not in result.final_text
+
+    def test_thai_and_arabic_chars_are_rejected_too(self):
+        handler = TokenHandler()
+        handler.sanitize("Amarast!")
+        result = handler.finalize_translation("А\u0e21араст!")
+        assert not result.exact_valid
+        assert result.mismatch_report.mismatch_type == "foreign_script"
+
+        handler2 = TokenHandler()
+        handler2.sanitize("Amarast!")
+        result2 = handler2.finalize_translation("Ама\u0631аст!", allow_cleanup=True)
+        assert result2.used_cleanup
+        assert result2.final_text == "Амааст!"

@@ -10,12 +10,15 @@ from .translation_logging import TranslationLogWriter
 # Callback: phase, current index (0-based), total count, optional message (e.g. filename).
 ProgressCallback = Callable[[str, int, int, Optional[str]], None]
 
-# Model generation parameters
+# Model generation parameters.
+# max_tokens budgets include hidden reasoning tokens on reasoning-by-default
+# models (e.g. DeepSeek v4): keep enough headroom that a long think does not
+# truncate the actual answer.
 TRANSLATION_TEMPERATURE: float = 0.6
-TRANSLATION_MAX_TOKENS: int = 16384
+TRANSLATION_MAX_TOKENS: int = 32768
 GLOSSARY_TEMPERATURE: float = 0.3
 GLOSSARY_FALLBACK_TEMPERATURE: float = 0.2
-GLOSSARY_MAX_TOKENS: int = 8192
+GLOSSARY_MAX_TOKENS: int = 16384
 
 
 def _glossary_llm_timeout() -> float:

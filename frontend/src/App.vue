@@ -16,13 +16,15 @@ const { t: i, locale, setLocale } = useI18n();
 const translation = useTranslation();
 provide(TranslationStateKey, translation);
 
-const { t, loadModels, loadConfig, startTranslation, openHistory } = translation;
+const { t, loadModels, loadConfig, resumeActiveTask, startTranslation, openHistory } =
+  translation;
 const busy = ref(false);
 const formError = ref("");
 
 onMounted(() => {
   loadModels();
   loadConfig();
+  resumeActiveTask();
 });
 
 async function onSubmit() {

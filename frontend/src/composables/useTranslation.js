@@ -18,6 +18,9 @@ import { useI18n } from "./useI18n.js";
 /** provide/inject key for translation UI state */
 export const TranslationStateKey = Symbol("TranslationState");
 
+/** Statuses a task can no longer leave (mirrors TERMINAL_STATUSES in database.py). */
+const TERMINAL_STATUSES = ["completed", "failed", "cancelled", "interrupted"];
+
 const PHASE_KEYS = {
   extracting: "phase.extracting",
   scanning: "phase.scanning",
@@ -299,6 +302,38 @@ export function useTranslation() {
     }
   }
 
+  /**
+   * Reattach to a job that is still running on the server.
+   *
+   * A translation lives in the worker thread, not in the tab, so a reload used
+   * to drop the user on the setup screen while the job kept burning their API
+   * key invisibly.
+   */
+  async function resumeActiveTask() {
+    let items;
+    try {
+      const data = await fetchHistory();
+      items = data.items ?? [];
+    } catch {
+      return; // no history (or backend not up yet) — nothing to resume
+    }
+    const active = items.find((x) => !TERMINAL_STATUSES.includes(x.status));
+    if (!active) return;
+    try {
+      const status = await fetchJson(`/api/tasks/${active.task_id}/status`);
+      if (TERMINAL_STATUSES.includes(status.status)) return;
+      t.taskId = active.task_id;
+      if (status.target_lang) t.targetLang = status.target_lang;
+      applySnapshot({ ...status, file: status.current_file });
+      t.step = "running";
+      sseRetryCount = 0;
+      openSse(active.task_id);
+    } catch {
+      // The row is unfinished but the worker is gone (process restarted before
+      // it could be reconciled) — leave the user on the setup screen.
+    }
+  }
+
   async function startTranslation() {
     if (!t.selectedFile) {
       throw new Error(i("error.noFile"));
@@ -436,6 +471,7 @@ export function useTranslation() {
     reset,
     loadModels,
     loadConfig,
+    resumeActiveTask,
     startTranslation,
     testConnection,
     resultDownloadUrl,

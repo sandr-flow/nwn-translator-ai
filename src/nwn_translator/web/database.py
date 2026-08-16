@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     client_ip      TEXT NOT NULL,
     created_at     REAL NOT NULL,
     status         TEXT NOT NULL DEFAULT 'pending',
+    progress       REAL,
+    phase          TEXT,
+    current_file   TEXT,
     input_filename TEXT NOT NULL DEFAULT '',
     result_path    TEXT,
     extract_dir    TEXT,
@@ -69,7 +72,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """Add columns introduced after the initial schema (idempotent)."""
     cur = conn.execute("PRAGMA table_info(tasks)")
     existing = {row[1] for row in cur.fetchall()}
-    for col, typedef in [("model", "TEXT"), ("updated_at", "REAL")]:
+    for col, typedef in [
+        ("model", "TEXT"),
+        ("updated_at", "REAL"),
+        ("progress", "REAL"),
+        ("phase", "TEXT"),
+        ("current_file", "TEXT"),
+    ]:
         if col not in existing:
             conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {typedef}")
 
@@ -182,8 +191,8 @@ def create_task_row(
 def update_task_row(task_id: str, **fields: Any) -> None:
     """Update one or more columns on a task row.
 
-    Supported fields: status, result_path, extract_dir, input_path, error, stats,
-    target_lang, source_lang.
+    Supported fields: status, progress, phase, current_file, result_path,
+    extract_dir, input_path, error, stats, target_lang, source_lang.
     """
     if not fields:
         return

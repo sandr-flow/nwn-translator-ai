@@ -42,6 +42,11 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 DEFAULT_TASK_TTL_SECONDS = 24 * 3600
 
+#: Minimum seconds between SQLite writes of in-flight progress. The progress
+#: callback fires per translated item — far too often to touch the DB every
+#: time — but a phase change always persists immediately.
+PROGRESS_PERSIST_INTERVAL_SECONDS = 2.0
+
 
 @dataclass
 class TranslationTask:
@@ -64,6 +69,9 @@ class TranslationTask:
     #: Language tags (mirrors SQLite tasks row; used by API status / rebuild fallback).
     target_lang: Optional[str] = None
     source_lang: Optional[str] = None
+    #: Throttling state for persisting in-flight progress to SQLite.
+    persisted_phase: Optional[str] = None
+    last_persist_at: float = 0.0
     #: Thread-safe queue for SSE (worker thread -> async reader)
     event_queue: "Queue[Dict[str, Any]]" = field(default_factory=Queue)
     _done: threading.Event = field(default_factory=threading.Event)
@@ -334,8 +342,34 @@ class TaskManager:
                     "progress": task.progress,
                 },
             )
+            self._persist_progress(task, phase, message)
 
         return callback
+
+    def _persist_progress(self, task: TranslationTask, phase: str, message: Optional[str]) -> None:
+        """Mirror in-flight progress into SQLite, throttled by time.
+
+        Without this the task row keeps the status it had at extraction time,
+        so the history list and any client that lost its SSE stream have no way
+        to learn how far a running job has got.
+
+        Args:
+            task: Task whose current state should be persisted.
+            phase: Pipeline phase reported by the callback.
+            message: Current file or status message, if any.
+        """
+        now = time.time()
+        stale = now - task.last_persist_at >= PROGRESS_PERSIST_INTERVAL_SECONDS
+        if phase != task.persisted_phase or stale:
+            task.persisted_phase = phase
+            task.last_persist_at = now
+            update_task_row(
+                task.task_id,
+                status=task.status,
+                progress=task.progress,
+                phase=phase,
+                current_file=message,
+            )
 
     def run_translation_in_thread(
         self,

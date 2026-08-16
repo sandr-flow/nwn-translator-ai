@@ -45,6 +45,10 @@ _MAX_RETRIES = 2
 # Ceiling for overall glossary build timeout (seconds).
 _MAX_OVERALL_TIMEOUT = 900.0
 
+# Quotation marks a game string may be wrapped in; stripped when matching a
+# model's JSON keys, which never carry them.
+_QUOTE_CHARS = '"“”«»'
+
 
 @dataclass
 class Glossary:
@@ -591,11 +595,27 @@ class GlossaryBuilder:
         normalized = unicodedata.normalize("NFKC", str(key))
         normalized = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", normalized)
         normalized = re.sub(r"\s+", " ", normalized).strip()
-        variants = [normalized] if normalized else []
 
-        bare = re.sub(r"\s*\([^)]*\)\s*$", "", normalized).strip()
-        if bare and bare not in variants:
-            variants.append(bare)
+        variants: List[str] = []
+
+        def add(value: str) -> None:
+            if value and value not in variants:
+                variants.append(value)
+
+        add(normalized)
+
+        # Some modules put quotation marks inside the game string itself, e.g. an
+        # area literally named ``"Thesis Paper Room"``. A model cannot echo that
+        # back as a JSON key without escaping, so it answers with the bare name.
+        if (
+            len(normalized) >= 2
+            and normalized[0] in _QUOTE_CHARS
+            and normalized[-1] in _QUOTE_CHARS
+        ):
+            add(normalized[1:-1].strip())
+
+        for value in list(variants):
+            add(re.sub(r"\s*\([^)]*\)\s*$", "", value).strip())
 
         return variants
 
@@ -656,5 +676,20 @@ class GlossaryBuilder:
                     break
             if v is None:
                 continue
-            out[ek] = v
+            out[ek] = GlossaryBuilder._restore_wrapping_quotes(ek, v)
         return out
+
+    @staticmethod
+    def _restore_wrapping_quotes(key: str, value: str) -> str:
+        """Give *value* back the quotation marks *key* is wrapped in.
+
+        The glossary seeds the exact-match translation cache, so its value
+        replaces the whole game string. A name the module author wrote as
+        ``"Thesis Paper Room"`` must keep its quotes in the patched module,
+        even though the model answers without them.
+        """
+        if len(key) < 2 or key[0] not in _QUOTE_CHARS or key[-1] not in _QUOTE_CHARS:
+            return value
+        if len(value) >= 2 and value[0] in _QUOTE_CHARS and value[-1] in _QUOTE_CHARS:
+            return value
+        return f"{key[0]}{value}{key[-1]}"

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 import time
 from pathlib import Path
@@ -165,24 +164,21 @@ def test_translate_rate_limit_second_request(
     assert r2.status_code == 429
 
 
-def test_sse_progress_snapshot(client: TestClient) -> None:
+def test_status_reports_a_full_snapshot(client: TestClient) -> None:
+    """Task state is the progress API: one request must answer where the job is."""
     files = {"file": ("s.mod", b"\x03" * 200, "application/octet-stream")}
     data = {"api_key": "sk-y", "target_lang": "french"}
     r = client.post("/api/translate", files=files, data=data)
     task_id = r.json()["task_id"]
 
-    with client.stream("GET", f"/api/tasks/{task_id}/progress") as resp:
-        assert resp.status_code == 200
-        buf = b""
-        for chunk in resp.iter_bytes():
-            buf += chunk
-            if b"\n\n" in buf:
-                break
-        text = buf.decode("utf-8", errors="replace")
-        assert "data:" in text
-        line = [ln for ln in text.split("\n") if ln.startswith("data:")][0]
-        payload = json.loads(line.replace("data: ", "", 1))
-        assert payload["type"] == "snapshot"
+    resp = client.get(f"/api/tasks/{task_id}/status")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["task_id"] == task_id
+    assert payload["status"]
+    assert isinstance(payload["progress"], float)
+    assert "phase" in payload
+    assert "current_file" in payload
 
 
 def test_reject_wrong_extension(client: TestClient) -> None:

@@ -130,11 +130,10 @@ def _seed_task(owner: str, status: str = "completed") -> str:
 
 
 def _task_routes(task_id: str):
-    """The six per-task routes that must verify ownership: (method, path, kwargs)."""
+    """The five per-task routes that must verify ownership: (method, path, kwargs)."""
     base = f"/api/tasks/{task_id}"
     return [
         ("get", f"{base}/status", {}),
-        ("get", f"{base}/progress", {}),
         ("get", f"{base}/download", {}),
         ("get", f"{base}/log", {}),
         ("get", f"{base}/translations", {}),
@@ -177,18 +176,18 @@ def test_downloads_allow_owner_token_via_query_param(isolated_app) -> None:
             assert foreign.status_code == 403, f"{kind} allowed intruder"
 
 
-def test_progress_allows_owner_token_via_query_param(isolated_app) -> None:
-    """EventSource cannot send headers, so SSE auth accepts ?client_token=."""
+def test_status_allows_owner_token_via_query_param(isolated_app) -> None:
+    """Plain browser navigations cannot send headers, so auth accepts ?client_token=."""
     with isolated_app() as client:
         task_id = _seed_task(owner="owner-tok")
-        resp = client.get(f"/api/tasks/{task_id}/progress?client_token=owner-tok")
+        resp = client.get(f"/api/tasks/{task_id}/status?client_token=owner-tok")
         assert resp.status_code == 200
 
 
-def test_progress_rejects_foreign_token_via_query_param(isolated_app) -> None:
+def test_status_rejects_foreign_token_via_query_param(isolated_app) -> None:
     with isolated_app() as client:
         task_id = _seed_task(owner="owner-tok")
-        resp = client.get(f"/api/tasks/{task_id}/progress?client_token=intruder")
+        resp = client.get(f"/api/tasks/{task_id}/status?client_token=intruder")
         assert resp.status_code == 403
 
 

@@ -63,17 +63,17 @@ export function useTranslation() {
     historyItems: [],
   });
 
-  let eventSource = null;
-  let sseRetryCount = 0;
-  let sseRetryTimer = null;
   let pollTimer = null;
-  const SSE_MAX_RETRIES = 5;
-  const POLL_INTERVAL_MS = 10000;
+  // Progress is state, not a stream of events: the client reads the task's
+  // current state on a timer. One second oversamples the real rate of change
+  // (translation batches return every few seconds) and, unlike a long-lived
+  // streaming response, survives any intermediary that buffers it.
+  const POLL_INTERVAL_MS = 1000;
 
   const phaseLabel = computed(() => PHASE_KEYS[t.phase] ? i(PHASE_KEYS[t.phase]) : t.phase ?? "");
 
   function reset() {
-    closeSse();
+    stopPolling();
     t.step = "setup";
     t.taskId = "";
     t.status = "";
@@ -88,21 +88,11 @@ export function useTranslation() {
     t.totalFiles = 0;
   }
 
-  function closeSse() {
-    if (sseRetryTimer) {
-      clearTimeout(sseRetryTimer);
-      sseRetryTimer = null;
-    }
+  function stopPolling() {
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
     }
-    if (eventSource) {
-      eventSource.close();
-      eventSource = null;
-    }
-    // sseRetryCount is intentionally NOT reset here: openSse() calls closeSse(),
-    // so resetting would restart the backoff on every reconnect attempt.
   }
 
   function applySnapshot(data) {
@@ -119,17 +109,17 @@ export function useTranslation() {
     try {
       status = await fetchJson(`/api/tasks/${id}/status`);
     } catch {
-      return; // backend unreachable — a running poll timer will retry
+      return; // backend unreachable — the running timer will retry
     }
     if (status.status === "completed") {
-      closeSse();
+      stopPolling();
       t.status = "completed";
       t.progress = 1;
       t.resultFilename = status.result_filename ?? "";
       t.stats = status.stats ?? null;
       t.step = "done";
     } else if (status.status === "failed" || status.status === "interrupted") {
-      closeSse();
+      stopPolling();
       t.status = "failed";
       t.error = status.error ?? i("error.default");
       t.step = "done";
@@ -141,125 +131,9 @@ export function useTranslation() {
   }
 
   function startPolling(id) {
-    if (pollTimer) return;
+    stopPolling();
     pollTimer = setInterval(() => pollTaskStatus(id), POLL_INTERVAL_MS);
     pollTaskStatus(id);
-  }
-
-  function openSse(id) {
-    closeSse();
-    // EventSource cannot send the X-Client-Token header, so the token rides
-    // in the query string (the backend accepts it as a fallback).
-    const url = `/api/tasks/${id}/progress?client_token=${encodeURIComponent(getClientToken())}`;
-    eventSource = new EventSource(url);
-
-    eventSource.onmessage = (ev) => {
-      try {
-        sseRetryCount = 0;
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "snapshot") {
-          applySnapshot(msg);
-          return;
-        }
-        if (msg.type === "progress") {
-          if (msg.phase) t.phase = msg.phase;
-          if (typeof msg.progress === "number") t.progress = msg.progress;
-          if (msg.file != null) t.currentFile = msg.file;
-          if (typeof msg.current === "number") t.currentIndex = msg.current;
-          if (typeof msg.total === "number") t.totalFiles = msg.total;
-          return;
-        }
-        if (msg.type === "status") {
-          if (msg.status) t.status = msg.status;
-          return;
-        }
-        if (msg.type === "completed") {
-          t.status = "completed";
-          t.progress = 1;
-          t.resultFilename = msg.result_filename ?? "";
-          t.stats = msg.stats ?? null;
-          t.step = "done";
-          closeSse();
-          return;
-        }
-        if (msg.type === "failed") {
-          t.status = "failed";
-          t.error = msg.error ?? i("error.default");
-          t.step = "done";
-          closeSse();
-          return;
-        }
-        if (msg.type === "cancelled") {
-          t.status = "cancelled";
-          closeSse();
-          reset();
-          return;
-        }
-        if (msg.type === "done") {
-          closeSse();
-          if (t.status !== "completed" && t.status !== "failed") {
-            startPolling(id);
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-
-    eventSource.onerror = () => {
-      if (eventSource) eventSource.close();
-      eventSource = null;
-      if (
-        t.status !== "completed" &&
-        t.status !== "failed" &&
-        t.status !== "cancelled" &&
-        sseRetryCount < SSE_MAX_RETRIES
-      ) {
-        const delay = Math.min(1000 * 2 ** sseRetryCount, 16000);
-        sseRetryCount++;
-        sseRetryTimer = setTimeout(async () => {
-          try {
-            const res = await fetch(`/api/tasks/${id}/status`, {
-              headers: { "X-Client-Token": getClientToken() },
-            });
-            if (res.status === 404) {
-              t.status = "failed";
-              t.error = i("error.taskNotFound");
-              t.step = "done";
-              return;
-            }
-            if (res.ok) {
-              const status = await res.json();
-              if (status.status === "completed") {
-                t.status = "completed";
-                t.progress = 1;
-                t.resultFilename = status.result_filename ?? "";
-                t.stats = status.stats ?? null;
-                t.step = "done";
-                return;
-              }
-              if (status.status === "failed") {
-                t.status = "failed";
-                t.error = status.error ?? i("error.default");
-                t.step = "done";
-                return;
-              }
-            }
-          } catch {
-            /* backend not reachable — reconnect SSE */
-          }
-          openSse(id);
-        }, delay);
-      } else if (
-        t.status !== "completed" &&
-        t.status !== "failed" &&
-        t.status !== "cancelled"
-      ) {
-        // SSE retries exhausted — degrade to periodic status polling until the
-        // task reaches a terminal status.
-        startPolling(id);
-      }
-    };
   }
 
   // A cold backend start takes 10-15s to import and bind, so both loaders
@@ -326,8 +200,7 @@ export function useTranslation() {
       if (status.target_lang) t.targetLang = status.target_lang;
       applySnapshot({ ...status, file: status.current_file });
       t.step = "running";
-      sseRetryCount = 0;
-      openSse(active.task_id);
+      startPolling(active.task_id);
     } catch {
       // The row is unfinished but the worker is gone (process restarted before
       // it could be reconciled) — leave the user on the setup screen.
@@ -367,8 +240,7 @@ export function useTranslation() {
 
     const { task_id } = await postTranslate(fd);
     t.taskId = task_id;
-    sseRetryCount = 0;
-    openSse(task_id);
+    startPolling(task_id);
   }
 
   async function testConnection() {
@@ -476,7 +348,7 @@ export function useTranslation() {
     testConnection,
     resultDownloadUrl,
     logDownloadUrl,
-    closeSse,
+    stopPolling,
     loadTranslations,
     enterEditor,
     rebuildWithEdits,

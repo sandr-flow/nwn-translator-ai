@@ -8,7 +8,6 @@ import logging
 import os
 import re
 from pathlib import Path
-from queue import Empty
 from typing import Any, Dict, Optional
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -137,8 +136,8 @@ def _client_ip(request: Request) -> str:
 def _client_token(request: Request) -> str:
     """Extract the anonymous client token from ``X-Client-Token`` header.
 
-    Falls back to the ``client_token`` query parameter because browser
-    ``EventSource`` (the SSE progress route) cannot send custom headers.
+    Falls back to the ``client_token`` query parameter because plain browser
+    navigations (download links) cannot send custom headers.
     """
     header = (request.headers.get("x-client-token") or "").strip()
     if header:
@@ -349,71 +348,6 @@ async def task_status(
         error=task.error,
         stats=task.stats,
         target_lang=target_lang,
-    )
-
-
-@router.get("/tasks/{task_id}/progress")
-async def task_progress(
-    task: TranslationTask = Depends(require_task_owner),
-) -> StreamingResponse:
-    """Server-Sent Events stream of progress updates."""
-
-    async def event_stream():
-        # Send current snapshot first
-        snap = {
-            "type": "snapshot",
-            "status": task.status,
-            "progress": task.progress,
-            "phase": task.phase,
-            "file": task.current_file,
-        }
-        yield f"data: {json.dumps(snap, ensure_ascii=False)}\n\n"
-
-        if task.is_finished():
-            if task.status == "completed" and task.result_path:
-                yield f"data: {json.dumps({'type': 'completed', 'result_filename': task.result_path.name, 'stats': task.stats}, ensure_ascii=False)}\n\n"
-            elif task.status == "failed":
-                yield f"data: {json.dumps({'type': 'failed', 'error': task.error}, ensure_ascii=False)}\n\n"
-            elif task.status == "cancelled":
-                yield f"data: {json.dumps({'type': 'cancelled'}, ensure_ascii=False)}\n\n"
-            return
-
-        idle_ticks = 0
-        while True:
-            try:
-                msg = task.event_queue.get_nowait()
-            except Empty:
-                if task.is_finished() and task.event_queue.empty():
-                    if task.status == "completed" and task.result_path:
-                        yield f"data: {json.dumps({'type': 'completed', 'result_filename': task.result_path.name, 'stats': task.stats}, ensure_ascii=False)}\n\n"
-                    elif task.status == "failed":
-                        yield f"data: {json.dumps({'type': 'failed', 'error': task.error}, ensure_ascii=False)}\n\n"
-                    elif task.status == "cancelled":
-                        yield f"data: {json.dumps({'type': 'cancelled'}, ensure_ascii=False)}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0.2)
-                    break
-                idle_ticks += 1
-                # Send SSE comment as heartbeat every ~15s to keep proxies alive
-                if idle_ticks % 30 == 0:
-                    yield ": heartbeat\n\n"
-                await asyncio.sleep(0.5)
-                continue
-            idle_ticks = 0
-            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-            if msg.get("type") in ("completed", "failed", "cancelled"):
-                await asyncio.sleep(0.2)
-                break
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
     )
 
 

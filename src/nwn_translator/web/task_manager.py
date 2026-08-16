@@ -12,7 +12,6 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from queue import Empty, Queue
 from typing import Any, Callable, Dict, List, Optional
 
 from ..config import (
@@ -72,8 +71,6 @@ class TranslationTask:
     #: Throttling state for persisting in-flight progress to SQLite.
     persisted_phase: Optional[str] = None
     last_persist_at: float = 0.0
-    #: Thread-safe queue for SSE (worker thread -> async reader)
-    event_queue: "Queue[Dict[str, Any]]" = field(default_factory=Queue)
     _done: threading.Event = field(default_factory=threading.Event)
     _cancel: threading.Event = field(default_factory=threading.Event)
 
@@ -282,15 +279,6 @@ class TaskManager:
             if self._active_by_ip.get(client_ip) == task_id:
                 del self._active_by_ip[client_ip]
 
-    def _push_event(self, task: TranslationTask, payload: Dict[str, Any]) -> None:
-        """Enqueue an SSE event payload for the task's event stream.
-
-        Args:
-            task: Target translation task.
-            payload: JSON-serializable event dict.
-        """
-        task.event_queue.put(payload)
-
     # Phase -> (start_pct, end_pct) for weighted global progress.
     # ``translating_item`` is the workhorse band (per-item granularity across
     # non-dialog and dialog translations); ``translating`` is kept as a brief
@@ -331,17 +319,6 @@ class TaskManager:
             weighted = start + (end - start) * local
             task.progress = max(task.progress, weighted)
 
-            self._push_event(
-                task,
-                {
-                    "type": "progress",
-                    "phase": phase,
-                    "current": current,
-                    "total": total,
-                    "file": message,
-                    "progress": task.progress,
-                },
-            )
             self._persist_progress(task, phase, message)
 
         return callback
@@ -350,8 +327,8 @@ class TaskManager:
         """Mirror in-flight progress into SQLite, throttled by time.
 
         Without this the task row keeps the status it had at extraction time,
-        so the history list and any client that lost its SSE stream have no way
-        to learn how far a running job has got.
+        so the history list and any client polling task status had no way to
+        learn how far a running job has got.
 
         Args:
             task: Task whose current state should be persisted.
@@ -409,7 +386,6 @@ class TaskManager:
                 module_string_encoding_for_target_lang(target_lang),
             )
             task.status = "extracting"
-            self._push_event(task, {"type": "status", "status": "extracting"})
             update_task_row(task.task_id, status="extracting")
 
             config = TranslationConfig(
@@ -449,14 +425,6 @@ class TaskManager:
             except Exception:
                 pass
             task.progress = 1.0
-            self._push_event(
-                task,
-                {
-                    "type": "completed",
-                    "result_filename": task.result_path.name,
-                    "stats": task.stats,
-                },
-            )
             task.status = "completed"
             update_task_row(
                 task.task_id,
@@ -469,12 +437,10 @@ class TaskManager:
             logger.info("Translation cancelled for task %s", task.task_id)
             task.status = "cancelled"
             task.error = None
-            self._push_event(task, {"type": "cancelled"})
             update_task_row(task.task_id, status="cancelled")
         except Exception as e:
             logger.exception("Translation failed for task %s", task.task_id)
             task.error = str(e)
-            self._push_event(task, {"type": "failed", "error": str(e)})
             task.status = "failed"
             update_task_row(task.task_id, status="failed", error=str(e))
         finally:

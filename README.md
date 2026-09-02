@@ -196,6 +196,20 @@ mypy src
 
 Код ожидается совместимым с black line length 100 и mypy. Pylint полезен как advisory-проверка.
 
+Опциональные e2e-тесты на реальных `.mod` из локального корпуса: `pytest -m realdata`
+(по умолчанию отключены). Подробности — [`tests/realdata/README.md`](tests/realdata/README.md).
+
+## Документация
+
+| Файл | Содержание |
+| --- | --- |
+| [`README_EN.md`](README_EN.md) | English version of this guide |
+| [`docs/README.md`](docs/README.md) | Index of tracked docs |
+| [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) | Conventions for coding agents |
+| [`tests/realdata/README.md`](tests/realdata/README.md) | Real-module corpus tests |
+
+Личные черновики и чеклисты — в `docs/local/` (gitignored).
+
 ## Лицензия
 
 MIT, см. [LICENSE](LICENSE).

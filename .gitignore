@@ -37,11 +37,8 @@ frontend/dist/
 diff_output.txt
 project-tree.txt
 
-# Local planning docs
-plans/
-ARCHITECTURE_REVIEW.md
-ARCHITECTURE_REVIEW_VERIFICATION.md
-REMEDIATION_PLAN.md
+# Personal scratch notes (not published with the repo)
+docs/local/
 
 # Real-module corpus for e2e extraction tests
 test_corpus/

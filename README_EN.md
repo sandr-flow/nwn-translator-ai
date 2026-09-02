@@ -196,6 +196,20 @@ mypy src
 
 Code is expected to pass black with line length 100 and mypy. Pylint is useful as an advisory check.
 
+Optional end-to-end checks against a local real-module corpus: `pytest -m realdata`
+(deselected by default). See [`tests/realdata/README.md`](tests/realdata/README.md).
+
+## Documentation
+
+| File | Contents |
+| --- | --- |
+| [`README.md`](README.md) | Russian version of this guide |
+| [`docs/README.md`](docs/README.md) | Index of tracked docs |
+| [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) | Conventions for coding agents |
+| [`tests/realdata/README.md`](tests/realdata/README.md) | Real-module corpus tests |
+
+Personal scratch notes and checklists go in `docs/local/` (gitignored).
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

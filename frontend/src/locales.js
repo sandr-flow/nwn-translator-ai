@@ -93,6 +93,7 @@ export default {
     "phase.injecting": "Вставка переводов",
     "phase.building": "Сборка .mod",
     "phase.pending": "Ожидание",
+    "phase.uploading": "Загрузка файла",
 
     // ResultPanel
     "result.done": "Готово",
@@ -270,6 +271,7 @@ export default {
     "phase.injecting": "Injecting translations",
     "phase.building": "Building .mod",
     "phase.pending": "Waiting",
+    "phase.uploading": "Uploading file",
 
     // ResultPanel
     "result.done": "Done",

@@ -60,15 +60,7 @@ export async function fetchJson(path, options = {}) {
   return data;
 }
 
-export async function postTranslate(formData) {
-  const res = await fetch(apiUrl("/api/translate"), {
-    method: "POST",
-    headers: {
-      "X-Client-Token": getClientToken(),
-    },
-    body: formData,
-  });
-  const text = await res.text();
+function parseJsonResponse(text) {
   let data = null;
   if (text) {
     try {
@@ -77,11 +69,62 @@ export async function postTranslate(formData) {
       data = { detail: text };
     }
   }
-  if (!res.ok) {
-    const msg = data?.detail ?? res.statusText;
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-  }
   return data;
+}
+
+function errorFromPayload(data, fallback) {
+  const msg = data?.detail ?? data?.message ?? fallback;
+  return new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+}
+
+export async function postTranslate(formData, { onProgress, signal } = {}) {
+  // XHR rather than fetch: upload progress is the only way to tell a 5 MB
+  // POST from a hung connection, and fetch still has no upload events.
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", apiUrl("/api/translate"));
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("X-Client-Token", getClientToken());
+    xhr.setRequestHeader("Accept", "application/json");
+
+    const onAbort = () => xhr.abort();
+    if (signal) {
+      if (signal.aborted) {
+        reject(new DOMException("Aborted", "AbortError"));
+        return;
+      }
+      signal.addEventListener("abort", onAbort);
+    }
+
+    const cleanup = () => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+    };
+
+    if (onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) onProgress(event.loaded, event.total);
+      };
+    }
+
+    xhr.onload = () => {
+      cleanup();
+      const data = parseJsonResponse(xhr.responseText);
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(errorFromPayload(data, xhr.statusText));
+        return;
+      }
+      resolve(data);
+    };
+    xhr.onerror = () => {
+      cleanup();
+      reject(new Error("Network error"));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    xhr.send(formData);
+  });
 }
 
 export async function postTestConnection(body) {

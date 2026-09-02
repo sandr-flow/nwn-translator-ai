@@ -35,6 +35,10 @@ async function onSubmit() {
   try {
     await startTranslation();
   } catch (e) {
+    if (e && e.name === "AbortError") {
+      t.step = "setup";
+      return;
+    }
     formError.value = String(e.message ?? e);
     t.step = "setup";
   } finally {

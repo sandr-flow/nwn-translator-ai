@@ -33,6 +33,7 @@ const PHASE_KEYS = {
   injecting: "phase.injecting",
   building: "phase.building",
   pending: "phase.pending",
+  uploading: "phase.uploading",
 };
 
 function readAbandonedTaskIds() {
@@ -103,6 +104,7 @@ export function useTranslation() {
   });
 
   let pollTimer = null;
+  let uploadAbort = null;
   // Progress is state, not a stream of events: the client reads the task's
   // current state on a timer. One second oversamples the real rate of change
   // (translation batches return every few seconds) and, unlike a long-lived
@@ -111,7 +113,15 @@ export function useTranslation() {
 
   const phaseLabel = computed(() => PHASE_KEYS[t.phase] ? i(PHASE_KEYS[t.phase]) : t.phase ?? "");
 
+  function abortUpload() {
+    if (uploadAbort) {
+      uploadAbort.abort();
+      uploadAbort = null;
+    }
+  }
+
   function reset() {
+    abortUpload();
     stopPolling();
     t.step = "setup";
     t.taskId = "";
@@ -345,7 +355,7 @@ export function useTranslation() {
     t.error = "";
     t.step = "running";
     t.progress = 0;
-    t.phase = "pending";
+    t.phase = "uploading";
     t.status = "pending";
 
     const fd = new FormData();
@@ -365,7 +375,23 @@ export function useTranslation() {
       fd.append("reasoning_effort", reff);
     }
 
-    const { task_id } = await postTranslate(fd);
+    const ac = new AbortController();
+    uploadAbort = ac;
+    let task_id;
+    try {
+      ({ task_id } = await postTranslate(fd, {
+        signal: ac.signal,
+        onProgress(loaded, total) {
+          if (total > 0) t.progress = loaded / total;
+        },
+      }));
+    } catch (e) {
+      uploadAbort = null;
+      if (e && e.name === "AbortError") return;
+      throw e;
+    }
+    uploadAbort = null;
+    t.phase = "pending";
     clearAbandonedTask(task_id);
     t.taskId = task_id;
     startPolling(task_id);
@@ -450,7 +476,11 @@ export function useTranslation() {
   }
 
   async function cancelTranslation() {
-    if (!t.taskId || t.cancelling) return;
+    if (t.cancelling) return;
+    if (!t.taskId) {
+      reset();
+      return;
+    }
     t.cancelling = true;
     try {
       await postCancelTask(t.taskId);

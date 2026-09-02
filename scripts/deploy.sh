@@ -7,8 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 git fetch origin
-git checkout -B main origin/main
-git reset --hard origin/main
+git checkout -f -B main origin/main
 
 docker compose -f docker/docker-compose.yml up --build -d
 docker compose -f docker/docker-compose.yml ps

@@ -21,6 +21,9 @@ export const TranslationStateKey = Symbol("TranslationState");
 /** Statuses a task can no longer leave (mirrors TERMINAL_STATUSES in database.py). */
 const TERMINAL_STATUSES = ["completed", "failed", "cancelled", "interrupted"];
 
+/** localStorage key for task ids the user left without waiting for the worker. */
+const ABANDONED_TASKS_KEY = "nwn_abandoned_tasks";
+
 const PHASE_KEYS = {
   extracting: "phase.extracting",
   scanning: "phase.scanning",
@@ -31,6 +34,39 @@ const PHASE_KEYS = {
   building: "phase.building",
   pending: "phase.pending",
 };
+
+function readAbandonedTaskIds() {
+  try {
+    const raw = localStorage.getItem(ABANDONED_TASKS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeAbandonedTaskIds(ids) {
+  localStorage.setItem(ABANDONED_TASKS_KEY, JSON.stringify(ids.slice(-20)));
+}
+
+function markTaskAbandoned(taskId) {
+  if (!taskId) return;
+  const ids = readAbandonedTaskIds();
+  if (!ids.includes(taskId)) {
+    ids.push(taskId);
+    writeAbandonedTaskIds(ids);
+  }
+}
+
+function isTaskAbandoned(taskId) {
+  return Boolean(taskId) && readAbandonedTaskIds().includes(taskId);
+}
+
+function clearAbandonedTask(taskId) {
+  if (!taskId) return;
+  writeAbandonedTaskIds(readAbandonedTaskIds().filter((id) => id !== taskId));
+}
 
 export function useTranslation() {
   const { t: i } = useI18n();
@@ -61,6 +97,9 @@ export function useTranslation() {
     translationFiles: [],
     rebuilding: false,
     historyItems: [],
+    /** Background job the user left; shown as a soft banner on setup. */
+    backgroundTaskId: "",
+    backgroundStatus: "",
   });
 
   let pollTimer = null;
@@ -88,6 +127,11 @@ export function useTranslation() {
     t.totalFiles = 0;
   }
 
+  function clearBackgroundBanner() {
+    t.backgroundTaskId = "";
+    t.backgroundStatus = "";
+  }
+
   function stopPolling() {
     if (pollTimer) {
       clearInterval(pollTimer);
@@ -113,6 +157,8 @@ export function useTranslation() {
     }
     if (status.status === "completed") {
       stopPolling();
+      clearAbandonedTask(id);
+      clearBackgroundBanner();
       t.status = "completed";
       t.progress = 1;
       t.resultFilename = status.result_filename ?? "";
@@ -120,10 +166,14 @@ export function useTranslation() {
       t.step = "done";
     } else if (status.status === "failed" || status.status === "interrupted") {
       stopPolling();
+      clearAbandonedTask(id);
+      clearBackgroundBanner();
       t.status = "failed";
       t.error = status.error ?? i("error.default");
       t.step = "done";
     } else if (status.status === "cancelled") {
+      clearAbandonedTask(id);
+      clearBackgroundBanner();
       reset();
     } else {
       applySnapshot({ ...status, file: status.current_file });
@@ -182,6 +232,9 @@ export function useTranslation() {
    * A translation lives in the worker thread, not in the tab, so a reload used
    * to drop the user on the setup screen while the job kept burning their API
    * key invisibly.
+   *
+   * Tasks the user explicitly left (or that are already ``cancelling``) are
+   * not auto-resumed — that would trap them on the progress screen again.
    */
   async function resumeActiveTask() {
     let items;
@@ -193,9 +246,21 @@ export function useTranslation() {
     }
     const active = items.find((x) => !TERMINAL_STATUSES.includes(x.status));
     if (!active) return;
+    if (isTaskAbandoned(active.task_id) || active.status === "cancelling") {
+      t.backgroundTaskId = active.task_id;
+      t.backgroundStatus = active.status === "cancelling" ? "cancelling" : active.status;
+      return;
+    }
     try {
       const status = await fetchJson(`/api/tasks/${active.task_id}/status`);
       if (TERMINAL_STATUSES.includes(status.status)) return;
+      if (status.status === "cancelling" || isTaskAbandoned(active.task_id)) {
+        t.backgroundTaskId = active.task_id;
+        t.backgroundStatus = status.status === "cancelling" ? "cancelling" : status.status;
+        return;
+      }
+      clearAbandonedTask(active.task_id);
+      clearBackgroundBanner();
       t.taskId = active.task_id;
       if (status.target_lang) t.targetLang = status.target_lang;
       applySnapshot({ ...status, file: status.current_file });
@@ -207,6 +272,67 @@ export function useTranslation() {
     }
   }
 
+  /**
+   * Leave the progress screen immediately without waiting for the worker.
+   *
+   * Marks the task abandoned so a refresh does not auto-resume onto progress,
+   * signals cancel in the background, and returns to setup.
+   */
+  function leaveProgressScreen({ requestCancel = true } = {}) {
+    const id = t.taskId;
+    if (id) {
+      markTaskAbandoned(id);
+      t.backgroundTaskId = id;
+      t.backgroundStatus = t.cancelling || requestCancel ? "cancelling" : t.status || "translating";
+      if (requestCancel) {
+        postCancelTask(id).catch(() => {});
+      }
+    }
+    reset();
+  }
+
+  async function reopenBackgroundTask() {
+    const id = t.backgroundTaskId;
+    if (!id) return;
+    try {
+      const status = await fetchJson(`/api/tasks/${id}/status`);
+      if (TERMINAL_STATUSES.includes(status.status)) {
+        clearAbandonedTask(id);
+        clearBackgroundBanner();
+        if (status.status === "completed") {
+          t.taskId = id;
+          t.status = "completed";
+          t.resultFilename = status.result_filename ?? "";
+          t.stats = status.stats ?? null;
+          if (status.target_lang) t.targetLang = status.target_lang;
+          t.step = "done";
+        }
+        return;
+      }
+      // User explicitly asked to reopen — clear abandon so polling stays attached.
+      clearAbandonedTask(id);
+      clearBackgroundBanner();
+      t.taskId = id;
+      if (status.target_lang) t.targetLang = status.target_lang;
+      applySnapshot({ ...status, file: status.current_file });
+      t.cancelling = status.status === "cancelling";
+      t.step = "running";
+      startPolling(id);
+    } catch (e) {
+      clearBackgroundBanner();
+      t.error = String(e.message ?? e);
+    }
+  }
+
+  async function dismissBackgroundBanner() {
+    const id = t.backgroundTaskId;
+    if (id) {
+      markTaskAbandoned(id);
+      postCancelTask(id).catch(() => {});
+    }
+    clearBackgroundBanner();
+  }
+
   async function startTranslation() {
     if (!t.selectedFile) {
       throw new Error(i("error.noFile"));
@@ -215,6 +341,7 @@ export function useTranslation() {
       throw new Error(i("error.noKey"));
     }
 
+    clearBackgroundBanner();
     t.error = "";
     t.step = "running";
     t.progress = 0;
@@ -239,6 +366,7 @@ export function useTranslation() {
     }
 
     const { task_id } = await postTranslate(fd);
+    clearAbandonedTask(task_id);
     t.taskId = task_id;
     startPolling(task_id);
   }
@@ -326,15 +454,17 @@ export function useTranslation() {
     t.cancelling = true;
     try {
       await postCancelTask(t.taskId);
-    } catch (e) {
-      t.cancelling = false;
-      throw e;
+    } catch {
+      // Still leave the progress screen — a hung cancel must not trap the user.
     }
+    leaveProgressScreen({ requestCancel: false });
   }
 
   async function deleteHistoryTask(taskId) {
     await deleteTask(taskId);
     t.historyItems = t.historyItems.filter((x) => x.task_id !== taskId);
+    if (t.backgroundTaskId === taskId) clearBackgroundBanner();
+    clearAbandonedTask(taskId);
   }
 
   return {
@@ -357,5 +487,8 @@ export function useTranslation() {
     openHistoryTask,
     deleteHistoryTask,
     cancelTranslation,
+    leaveProgressScreen,
+    reopenBackgroundTask,
+    dismissBackgroundBanner,
   };
 }

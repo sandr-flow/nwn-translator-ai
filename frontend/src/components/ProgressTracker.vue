@@ -3,7 +3,7 @@ import { inject, computed } from "vue";
 import { TranslationStateKey } from "../composables/useTranslation.js";
 import { useI18n } from "../composables/useI18n.js";
 
-const { t, phaseLabel, cancelTranslation } = inject(TranslationStateKey);
+const { t, phaseLabel, cancelTranslation, leaveProgressScreen } = inject(TranslationStateKey);
 const { t: i } = useI18n();
 
 const pct = computed(() => Math.round(Math.min(1, Math.max(0, t.progress)) * 100));
@@ -11,11 +11,11 @@ const pct = computed(() => Math.round(Math.min(1, Math.max(0, t.progress)) * 100
 async function onCancel() {
   if (t.cancelling) return;
   if (!window.confirm(i("progress.cancelConfirm"))) return;
-  try {
-    await cancelTranslation();
-  } catch (e) {
-    window.alert(String(e.message ?? e));
-  }
+  await cancelTranslation();
+}
+
+function onLeaveToSetup() {
+  leaveProgressScreen({ requestCancel: true });
 }
 </script>
 
@@ -45,7 +45,14 @@ async function onCancel() {
       <p class="text-nwn-muted text-xs">{{ i("progress.dontClose") }}</p>
     </div>
 
-    <div class="mt-5 pt-4 border-t border-nwn-muted/20 flex justify-end">
+    <div class="mt-5 pt-4 border-t border-nwn-muted/20 flex flex-wrap items-center justify-between gap-3">
+      <button
+        type="button"
+        class="text-sm text-nwn-muted hover:text-gray-300 transition-colors"
+        @click="onLeaveToSetup"
+      >
+        {{ i("progress.backToSetup") }}
+      </button>
       <button
         type="button"
         class="px-3 py-1.5 rounded-lg text-sm border border-nwn-muted/30 text-nwn-muted hover:text-red-400 hover:border-red-400/50 disabled:opacity-40 disabled:hover:text-nwn-muted disabled:hover:border-nwn-muted/30 transition-colors"

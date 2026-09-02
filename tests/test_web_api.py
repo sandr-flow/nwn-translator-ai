@@ -269,6 +269,57 @@ class TestOneJobPerIpSlot:
         finally:
             set_task_manager(None)
 
+    def test_cancel_persists_cancelling_status(self, isolated_tm: TaskManager) -> None:
+        """Cancel must write ``cancelling`` to memory and SQLite immediately.
+
+        Without this, history/resume keep showing a live translating job while
+        the worker is stuck on an in-flight LLM call.
+        """
+        tm = isolated_tm
+        set_task_manager(tm)
+        try:
+            task = tm.create_task("9.9.9.9", "a.mod", client_token="tok")
+            assert tm.try_register_active("9.9.9.9", task.task_id)
+            task.status = "translating"
+            db.update_task_row(task.task_id, status="translating")
+            with TestClient(create_app()) as client:
+                resp = client.post(
+                    f"/api/tasks/{task.task_id}/cancel", headers={"X-Client-Token": "tok"}
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "cancelling"
+            assert task.status == "cancelling"
+            row = db.get_task_row(task.task_id)
+            assert row is not None
+            assert row["status"] == "cancelling"
+        finally:
+            set_task_manager(None)
+
+    def test_progress_callback_does_not_clobber_cancelling(
+        self, isolated_tm: TaskManager
+    ) -> None:
+        """In-flight progress updates must not overwrite ``cancelling`` status."""
+        tm = isolated_tm
+        task = tm.create_task("9.9.9.9", "a.mod", client_token="tok")
+        task.status = "translating"
+        db.update_task_row(task.task_id, status="translating")
+        cb = tm._make_progress_callback(task)
+
+        task.request_cancel()
+        task.status = "cancelling"
+        db.update_task_row(task.task_id, status="cancelling")
+        # Force an immediate persist by changing phase vs persisted_phase.
+        task.persisted_phase = None
+        task.last_persist_at = 0.0
+        cb("translating", 5, 10, "npc.dlg")
+
+        assert task.status == "cancelling"
+        row = db.get_task_row(task.task_id)
+        assert row is not None
+        assert row["status"] == "cancelling"
+        assert row["phase"] == "translating"
+        assert row["current_file"] == "npc.dlg"
+
     def test_discard_task_removes_memory_and_db_row(self, isolated_tm: TaskManager) -> None:
         tm = isolated_tm
         task = tm.create_task("9.9.9.9", "a.mod")

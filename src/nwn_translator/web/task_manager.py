@@ -307,11 +307,16 @@ class TaskManager:
             message: Optional[str] = None,
         ) -> None:
             task.phase = phase
-            task.status = (
-                phase
-                if phase in ("extracting", "scanning", "translating", "building")
-                else task.status
-            )
+            # Do not clobber ``cancelling`` (or any post-cancel status) with a
+            # phase name — otherwise SQLite looks "still translating" and the
+            # client auto-resumes onto the progress screen after a refresh.
+            if not task.is_cancel_requested() and phase in (
+                "extracting",
+                "scanning",
+                "translating",
+                "building",
+            ):
+                task.status = phase
             task.current_file = message
 
             start, end = self._PHASE_WEIGHTS.get(phase, (0.0, 1.0))

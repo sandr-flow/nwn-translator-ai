@@ -17,7 +17,8 @@ const { t: i, locale, setLocale } = useI18n();
 const translation = useTranslation();
 provide(TranslationStateKey, translation);
 
-const { t, loadModels, loadConfig, resumeActiveTask, startTranslation, openHistory } =
+const { t, loadModels, loadConfig, resumeActiveTask, startTranslation, openHistory,
+  reopenBackgroundTask, dismissBackgroundBanner } =
   translation;
 const busy = ref(false);
 const formError = ref("");
@@ -73,6 +74,34 @@ async function onSubmit() {
       </header>
 
       <div v-if="t.step === 'setup'" class="space-y-6">
+        <div
+          v-if="t.backgroundTaskId"
+          class="rounded-xl border border-nwn-muted/30 bg-nwn-panel/60 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+        >
+          <p class="text-sm text-nwn-muted">
+            {{
+              t.backgroundStatus === "cancelling"
+                ? i("progress.backgroundCancelling")
+                : i("progress.backgroundRunning")
+            }}
+          </p>
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              class="px-3 py-1.5 rounded-lg text-sm bg-nwn-accent text-nwn-dark font-semibold hover:opacity-90"
+              @click="reopenBackgroundTask"
+            >
+              {{ i("progress.backgroundOpen") }}
+            </button>
+            <button
+              type="button"
+              class="px-3 py-1.5 rounded-lg text-sm border border-nwn-muted/30 text-nwn-muted hover:text-gray-300"
+              @click="dismissBackgroundBanner"
+            >
+              {{ i("progress.backgroundDismiss") }}
+            </button>
+          </div>
+        </div>
         <FileUpload />
         <TranslationForm />
         <p v-if="formError" class="text-sm text-red-400">{{ formError }}</p>

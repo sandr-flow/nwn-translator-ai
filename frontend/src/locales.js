@@ -80,6 +80,11 @@ export default {
     "progress.cancelling": "Останавливается…",
     "progress.cancelHint": "Прогресс будет потерян — продолжить перевод потом не получится. Уже отправленные запросы к API всё равно будут оплачены.",
     "progress.cancelConfirm": "Прервать перевод? Прогресс будет потерян.",
+    "progress.backToSetup": "К загрузке модуля",
+    "progress.backgroundRunning": "Перевод ещё выполняется в фоне.",
+    "progress.backgroundCancelling": "Перевод останавливается в фоне.",
+    "progress.backgroundOpen": "Открыть",
+    "progress.backgroundDismiss": "Скрыть",
 
     // Phase labels
     "phase.extracting": "Распаковка модуля",
@@ -148,6 +153,7 @@ export default {
     "history.status.translating": "Перевод",
     "history.status.building": "Сборка",
     "history.status.cancelled": "Отменено",
+    "history.status.cancelling": "Останавливается",
     "history.status.interrupted": "Прервано",
     "history.edited": "изм.",
     "history.expired": "Файлы удалены (истёк срок хранения)",
@@ -251,6 +257,11 @@ export default {
     "progress.cancelling": "Stopping…",
     "progress.cancelHint": "Progress will be lost — you won't be able to resume later. API calls already in flight will still be billed.",
     "progress.cancelConfirm": "Stop the translation? Progress will be lost.",
+    "progress.backToSetup": "Back to module upload",
+    "progress.backgroundRunning": "A translation is still running in the background.",
+    "progress.backgroundCancelling": "A translation is stopping in the background.",
+    "progress.backgroundOpen": "Open",
+    "progress.backgroundDismiss": "Dismiss",
 
     // Phase labels
     "phase.extracting": "Unpacking module",
@@ -319,6 +330,7 @@ export default {
     "history.status.translating": "Translating",
     "history.status.building": "Building",
     "history.status.cancelled": "Cancelled",
+    "history.status.cancelling": "Stopping",
     "history.status.interrupted": "Interrupted",
     "history.edited": "edited",
     "history.expired": "Files deleted (expired)",

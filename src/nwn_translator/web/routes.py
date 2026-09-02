@@ -537,6 +537,11 @@ async def cancel_task(
         return {"ok": True, "status": task.status}
 
     task.request_cancel()
+    # Persist ``cancelling`` immediately so history/resume do not keep showing
+    # a live ``translating`` job while the worker waits on an in-flight LLM call.
+    # Not a terminal status — the worker still owns the eventual cancelled/failed.
+    task.status = "cancelling"
+    update_task_row(task.task_id, status="cancelling")
     tm.release_active(task.client_ip, task.task_id)
     return {"ok": True, "status": "cancelling"}
 

@@ -4,6 +4,7 @@ export default {
     "app.desc": "Перевод модулей Neverwinter Nights через OpenRouter. Загрузите .mod, укажите язык и ключ API.",
     "app.translate": "Перевести модуль",
     "app.translating": "Запуск…",
+    "app.releaseChannel": "закрытая бета",
     "footer.star": "Нравится? Поддержите проект звёздочкой на GitHub",
 
     // FileUpload
@@ -174,6 +175,7 @@ export default {
     "app.desc": "Translate Neverwinter Nights modules via OpenRouter. Upload a .mod, choose a language and provide an API key.",
     "app.translate": "Translate module",
     "app.translating": "Starting…",
+    "app.releaseChannel": "closed beta",
     "footer.star": "Like it? Give us a star on GitHub",
 
     // FileUpload

@@ -11,6 +11,7 @@ import ProgressTracker from "./components/ProgressTracker.vue";
 import ResultPanel from "./components/ResultPanel.vue";
 import TranslationEditor from "./components/TranslationEditor.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
+import { RELEASE_VERSION } from "./version.js";
 
 const { t: i, locale, setLocale } = useI18n();
 const translation = useTranslation();
@@ -65,6 +66,9 @@ async function onSubmit() {
         </h1>
         <p class="text-nwn-muted text-sm max-w-md mx-auto">
           {{ i("app.desc") }}
+        </p>
+        <p class="text-nwn-muted/40 text-xs mt-3 tracking-wide">
+          v{{ RELEASE_VERSION }} · {{ i("app.releaseChannel") }}
         </p>
       </header>
 

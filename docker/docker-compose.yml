@@ -1,6 +1,7 @@
 # Запуск из корня репозитория: docker compose -f docker/docker-compose.yml up --build
 services:
   app:
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -21,11 +22,13 @@ services:
       - nwn_net
 
   nginx:
+    restart: unless-stopped
     build:
       context: ..
       dockerfile: docker/Dockerfile.nginx
     ports:
-      - "8080:80"
+      # Localhost only: put Caddy/another TLS proxy on 80/443 in front.
+      - "127.0.0.1:8080:80"
     depends_on:
       - app
     networks:

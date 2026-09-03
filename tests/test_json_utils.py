@@ -34,5 +34,11 @@ def test_invalid_returns_none() -> None:
     assert json_extract_first_object('{"unclosed": "') is None
 
 
+def test_raw_newlines_inside_string_values() -> None:
+    raw = '{"E0": "hello\nworld", "R1": "ok"}'
+    out = json_extract_first_object(raw)
+    assert out == {"E0": "hello\nworld", "R1": "ok"}
+
+
 def test_array_root_returns_none() -> None:
     assert json_extract_first_object("[1, 2]") is None

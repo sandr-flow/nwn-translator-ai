@@ -7,12 +7,21 @@ from unittest.mock import patch
 
 import pytest
 
+from nwn_translator.file_handlers.ncs_concat import (
+    ConcatLit,
+    ConcatVar,
+    TYPE_ADD_STRING_STRING,
+    find_concat_chains,
+    merged_text,
+    split_concat_translation,
+)
 from nwn_translator.file_handlers.ncs_parser import (
     NCS_HEADER,
     NCSFile,
     NCSInstruction,
     NCSParseError,
     OP_ACTION,
+    OP_ADD,
     OP_CONST,
     OP_CPDOWNSP,
     OP_CPTOPSP,
@@ -98,6 +107,16 @@ def _action(routine: int, arg_count: int = 1) -> bytes:
         + struct.pack(">H", routine)
         + struct.pack(">B", arg_count)
     )
+
+
+def _add_ss() -> bytes:
+    """Build ADD string+string (type 0x23)."""
+    return struct.pack(">BB", OP_ADD, TYPE_ADD_STRING_STRING)
+
+
+def _cptopsp(stack_offset: int = -4, size: int = 4) -> bytes:
+    """Build CPTOPSP (copy top of stack)."""
+    return struct.pack(">BB", OP_CPTOPSP, 0x01) + struct.pack(">iH", stack_offset, size)
 
 
 def _movsp(displacement: int) -> bytes:
@@ -1274,3 +1293,190 @@ class TestProvenPlayerVeto:
         assert _is_definitely_not_translatable("+", proven_player=True)
         assert _is_definitely_not_translatable("3.14", proven_player=True)
         assert _is_definitely_not_translatable("nMin = ", proven_player=True)
+
+
+class TestNcsConcat:
+    """Concat chains are one translation unit with <VARn> placeholders."""
+
+    def test_detect_lit_var_lit(self, tmp_path):
+        path = _write_ncs(
+            tmp_path,
+            "cut.ncs",
+            _consts("Congrats to ye, "),
+            _cptopsp(),
+            _add_ss(),
+            _consts(". How do ye feel?"),
+            _add_ss(),
+            _action(221, 1),
+            _retn(),
+        )
+        chains = find_concat_chains(parse_ncs(path))
+        assert len(chains) == 1
+        chain = next(iter(chains.values()))
+        assert merged_text(chain) == "Congrats to ye, <VAR1>. How do ye feel?"
+        assert [type(p).__name__ for p in chain.parts] == ["ConcatLit", "ConcatVar", "ConcatLit"]
+
+    def test_detect_lit_lit(self, tmp_path):
+        path = _write_ncs(
+            tmp_path,
+            "cut.ncs",
+            _consts("This is only the beginning, we have much to do before "),
+            _consts("we can defeat Saris."),
+            _add_ss(),
+            _action(221, 1),
+            _retn(),
+        )
+        chains = find_concat_chains(parse_ncs(path))
+        assert len(chains) == 1
+        chain = next(iter(chains.values()))
+        assert "<VAR" not in merged_text(chain)
+        assert len(chain.lits()) == 2
+
+    def test_detect_var_lit(self, tmp_path):
+        path = _write_ncs(
+            tmp_path,
+            "cut.ncs",
+            _cptopsp(),
+            _consts("is currently in your party!"),
+            _add_ss(),
+            _action(221, 1),
+            _retn(),
+        )
+        chains = find_concat_chains(parse_ncs(path))
+        assert len(chains) == 1
+        chain = next(iter(chains.values()))
+        assert merged_text(chain) == "<VAR1>is currently in your party!"
+
+    def test_two_chains_separated_by_jz(self, tmp_path):
+        path = _write_ncs(
+            tmp_path,
+            "cut.ncs",
+            _consts("Hello, "),
+            _cptopsp(),
+            _add_ss(),
+            _action(221, 1),
+            _jz(4),
+            _consts("Goodbye, "),
+            _cptopsp(),
+            _add_ss(),
+            _action(221, 1),
+            _retn(),
+        )
+        chains = find_concat_chains(parse_ncs(path))
+        texts = {merged_text(c) for c in chains.values()}
+        assert texts == {"Hello, <VAR1>", "Goodbye, <VAR1>"}
+
+    def test_standalone_const_is_not_a_chain(self, tmp_path):
+        path = _write_ncs(
+            tmp_path,
+            "cut.ncs",
+            _consts("Welcome, hero!"),
+            _action(374, 2),
+            _retn(),
+        )
+        assert find_concat_chains(parse_ncs(path)) == {}
+
+    def test_extractor_emits_one_item(self, tmp_path):
+        path = _write_ncs(
+            tmp_path,
+            "openingcut1.ncs",
+            _consts("Congrats to ye, "),
+            _cptopsp(),
+            _add_ss(),
+            _consts(". How do ye feel?"),
+            _add_ss(),
+            _action(221, 1),
+            _retn(),
+        )
+        ncs = parse_ncs(path)
+        result = NcsExtractor().extract(path, {"_ncs_file": ncs})
+        assert len(result.items) == 1
+        item = result.items[0]
+        assert item.text == "Congrats to ye, <VAR1>. How do ye feel?"
+        first = next(i for i in ncs.instructions if i.is_string_const)
+        assert item.item_id == f"openingcut1:off_{first.offset:x}"
+        assert item.metadata["concat_parts"][0]["offset"] == first.offset
+        assert item.metadata["concat_parts"][1] == {"var": 1}
+
+    def test_concat_skips_fragment_veto(self):
+        merged = "Congrats to ye, <VAR1>. How do ye feel?"
+        assert ncs_hard_veto_reason("Congrats to ye, ") == "sentence_fragment"
+        assert ncs_hard_veto_reason(merged, is_concat=True) is None
+        assert (
+            ncs_hard_veto_reason("LastOpener: GetLastOpenedBy <VAR1>", is_concat=True)
+            == "code_identifier"
+        )
+
+    def test_split_happy_path(self):
+        parts = [
+            ConcatLit(0x10, "Congrats to ye, "),
+            ConcatVar(1),
+            ConcatLit(0x20, ". How do ye feel?"),
+        ]
+        split = split_concat_translation(parts, "Поздравляю тебя, <VAR1>. Как ты?")
+        assert split == [
+            (0x10, "Congrats to ye, ", "Поздравляю тебя, "),
+            (0x20, ". How do ye feel?", ". Как ты?"),
+        ]
+
+    def test_split_literal_only_puts_all_in_first(self):
+        parts = [
+            ConcatLit(0x10, "before "),
+            ConcatLit(0x20, "after."),
+        ]
+        split = split_concat_translation(parts, "до после.")
+        assert split == [
+            (0x10, "before ", "до после."),
+            (0x20, "after.", ""),
+        ]
+
+    def test_split_rejects_missing_reordered_or_duplicate_var(self):
+        parts = [
+            ConcatLit(0x10, "a "),
+            ConcatVar(1),
+            ConcatLit(0x20, " b "),
+            ConcatVar(2),
+            ConcatLit(0x30, " c"),
+        ]
+        assert split_concat_translation(parts, "a <VAR1> b c") is None
+        assert split_concat_translation(parts, "a <VAR2> b <VAR1> c") is None
+        assert split_concat_translation(parts, "a <VAR1> b <VAR1> c") is None
+
+    def test_split_rejects_text_between_adjacent_vars(self):
+        parts = [ConcatVar(1), ConcatVar(2), ConcatLit(0x10, "end")]
+        assert split_concat_translation(parts, "<VAR1>oops<VAR2>end") is None
+        assert split_concat_translation(parts, "<VAR1><VAR2>end") == [
+            (0x10, "end", "end"),
+        ]
+
+    def test_injector_round_trip(self, tmp_path):
+        path = _write_ncs(
+            tmp_path,
+            "cut.ncs",
+            _consts("Congrats to ye, "),
+            _cptopsp(),
+            _add_ss(),
+            _consts(". How do ye feel?"),
+            _add_ss(),
+            _action(221, 1),
+            _retn(),
+        )
+        ncs = parse_ncs(path)
+        extracted = NcsExtractor().extract(path, {"_ncs_file": ncs})
+        item = extracted.items[0]
+        result = NcsInjector().inject(
+            path,
+            {},
+            {},
+            {
+                "ncs_extracted_items": extracted.items,
+                "ncs_translations_by_item_id": {
+                    item.item_id: "Поздравляю тебя, <VAR1>. Как ты себя чувствуешь?"
+                },
+            },
+        )
+        assert result.modified
+        patched = parse_ncs(path)
+        values = [i.string_value for i in patched.string_constants]
+        assert values[0] == "Поздравляю тебя, "
+        assert values[1] == ". Как ты себя чувствуешь?"

@@ -156,6 +156,7 @@ class TestTranslationPrompt:
         assert "player-visible script messages" in stable
         assert "Never translate, rename, or rewrite identifiers" in stable
         assert "debug logs" in stable
+        assert "<VAR1>" in stable
 
 
 class TestDialogPrompt:
@@ -195,6 +196,18 @@ class TestDialogPrompt:
         assert "<StartCheck>" in prompt
         assert "<StartHighlight>" in prompt
         assert "__NWN_TOKEN_ABC__" in prompt
+
+    def test_dialog_prompt_translates_builder_placeholders(self):
+        prompt = build_dialog_system_prompt("english", "male", "WORLD: test")
+        assert "END DIALOG" in prompt
+        assert "Never return an empty translation" in prompt
+
+
+class TestTranslationOutputRules:
+    def test_forbids_empty_and_requires_escaped_newlines(self):
+        prompt = build_translation_system_prompt("english", "male")
+        assert "Never return an empty translation" in prompt
+        assert "escape line breaks as \\n" in prompt
 
 
 class TestGlossaryPrompt:

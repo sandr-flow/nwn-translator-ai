@@ -864,3 +864,95 @@ class TestSpeakersBlock:
         manager.translate_dialog(Path("unrelated.dlg"), parsed_data={})
 
         assert "DIALOG SPEAKERS:" not in provider.calls[0]["system_prompt"]
+
+
+def test_empty_player_reply_retries_then_recovers(monkeypatch):
+    tree = [
+        DialogNode(
+            node_id=1,
+            text="Hello there",
+            is_entry=True,
+            replies=[DialogNode(node_id=3, text="END DIALOG", is_entry=False)],
+        )
+    ]
+    _patch_dialog_environment(monkeypatch, tree)
+    provider = _FakeOpenRouter(
+        [
+            '{"E1":"Привет", "R3":""}',
+            '{"R3":"Закончить разговор."}',
+        ]
+    )
+    manager = ContextualTranslationManager(
+        _make_config(),
+        provider,
+        WorldContext(),
+    )
+
+    result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
+
+    assert result["Hello there"] == "Привет"
+    assert result["END DIALOG"] == "Закончить разговор."
+    assert len(provider.calls) == 2
+
+
+def test_empty_player_reply_keeps_original_after_retries(monkeypatch):
+    from src.nwn_translator.ai_providers.base import TranslationResult
+
+    class _Writer:
+        def __init__(self) -> None:
+            self.entries: list = []
+
+        def write(self, entry):
+            self.entries.append(entry)
+
+    class _EmptyLineFake(_FakeOpenRouter):
+        async def translate_async(
+            self,
+            text,
+            source_lang,
+            target_lang,
+            context=None,
+            glossary_block=None,
+            content_profile=None,
+        ):
+            return TranslationResult(
+                translated="",
+                original=text,
+                success=False,
+                error="empty",
+            )
+
+    writer = _Writer()
+    tree = [
+        DialogNode(
+            node_id=1,
+            text="Hello there",
+            is_entry=True,
+            replies=[DialogNode(node_id=3, text="END DIALOG", is_entry=False)],
+        )
+    ]
+    monkeypatch.setattr(context_module, "OpenRouterProvider", _FakeOpenRouter)
+    monkeypatch.setattr(context_module, "DialogExtractor", lambda: _FakeDialogExtractor(tree))
+    monkeypatch.setattr(
+        context_module, "translation_log_writer_for_config", lambda *_a, **_k: writer
+    )
+    provider = _EmptyLineFake(
+        [
+            '{"E1":"Привет", "R3":""}',
+            '{"R3":""}',
+        ]
+    )
+    manager = ContextualTranslationManager(
+        _make_config(),
+        provider,
+        WorldContext(),
+    )
+
+    result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
+
+    assert result.get("Hello there") == "Привет"
+    assert "END DIALOG" not in result
+    assert not any(
+        entry.get("original") == "END DIALOG" and not str(entry.get("translated") or "").strip()
+        for entry in writer.entries
+    )

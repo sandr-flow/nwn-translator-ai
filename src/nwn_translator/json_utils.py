@@ -25,7 +25,7 @@ def json_extract_first_object(raw: str) -> Optional[Dict[str, Any]]:
         or :exc:`json.JSONDecodeError`).
     """
     cleaned = strip_json_markdown_fences(raw)
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(strict=False)
     idx = cleaned.find("{")
     if idx == -1:
         return None

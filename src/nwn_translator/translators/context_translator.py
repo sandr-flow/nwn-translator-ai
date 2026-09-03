@@ -1171,6 +1171,18 @@ class ContextualTranslationManager:
             elif not isinstance(translated_sanitized, str):
                 translated_sanitized = str(translated_sanitized)
 
+            if str(original_text).strip() and not str(translated_sanitized).strip():
+                invalid[key] = {
+                    "translated_sanitized": translated_sanitized,
+                    "report": None,
+                }
+                logger.warning(
+                    "%s: empty translation rejected for dialog node %s",
+                    file_path.name,
+                    key,
+                )
+                continue
+
             outcome = handlers[key].finalize_translation(
                 translated_sanitized,
                 allow_cleanup=allow_cleanup,

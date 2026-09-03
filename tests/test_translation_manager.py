@@ -207,6 +207,20 @@ class TestTranslateContent:
         assert provider.translate_batch_async.call_count == 1
         provider.translate_async.assert_not_called()
 
+    def test_empty_model_output_is_rejected(self):
+        items = [
+            TranslatableItem(text="Sword of Fire", item_id="item:name"),
+        ]
+        content = ExtractedContent(
+            content_type="item",
+            items=items,
+            source_file=Path("sword.uti"),
+        )
+        provider = _make_provider({"Sword of Fire": ""})
+        manager = TranslationManager(_make_config(), provider)
+        result = manager.translate_content(content)
+        assert "Sword of Fire" not in result
+
     def test_dialog_empty_items_returns_empty(self):
         """Empty dialog must return empty translation map."""
         content = ExtractedContent(

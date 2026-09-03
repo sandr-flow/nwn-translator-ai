@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .base import BaseInjector, InjectedContent
+from ..file_handlers.ncs_concat import parts_from_metadata, split_concat_translation
 from ..file_handlers.ncs_patcher import NCSPatchError, patch_ncs_string_replacements
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ class NcsInjector(BaseInjector):
             )
 
         replacements = []
+        concat_split_failed: list[str] = []
         for item in ncs_items:
             tid = item.item_id
             if not tid or tid not in ncs_by_item_id:
@@ -68,17 +70,35 @@ class NcsInjector(BaseInjector):
             translated = ncs_by_item_id[tid]
             if translated == item.text:
                 continue
+            concat_parts = (item.metadata or {}).get("concat_parts")
+            if concat_parts:
+                split = split_concat_translation(parts_from_metadata(concat_parts), translated)
+                if split is None:
+                    logger.warning(
+                        "NCS concat split failed for %s in %s; leaving original",
+                        tid,
+                        file_path.name,
+                    )
+                    concat_split_failed.append(tid)
+                    continue
+                replacements.extend(split)
+                continue
             off = (item.metadata or {}).get("offset")
             if off is None:
                 continue
             replacements.append((int(off), item.text, translated))
 
         if not replacements:
+            meta_out: Dict[str, Any] = {"type": "ncs_script"}
+            if concat_split_failed:
+                meta_out["error"] = "concat_split_failed: " + ", ".join(concat_split_failed)
+                meta_out["ncs_patch_failed"] = True
+                meta_out["concat_split_failed"] = concat_split_failed
             return InjectedContent(
                 source_file=file_path,
                 modified=False,
                 items_updated=0,
-                metadata={"type": "ncs_script"},
+                metadata=meta_out,
             )
 
         enc = (metadata or {}).get("module_text_encoding") or "cp1251"
@@ -100,9 +120,14 @@ class NcsInjector(BaseInjector):
                 },
             )
 
+        out_meta: Dict[str, Any] = {"type": "ncs_script"}
+        if concat_split_failed:
+            out_meta["error"] = "concat_split_failed: " + ", ".join(concat_split_failed)
+            out_meta["ncs_patch_failed"] = True
+            out_meta["concat_split_failed"] = concat_split_failed
         return InjectedContent(
             source_file=file_path,
             modified=patched_count > 0,
             items_updated=patched_count,
-            metadata={"type": "ncs_script"},
+            metadata=out_meta,
         )

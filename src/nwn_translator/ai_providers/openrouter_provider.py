@@ -77,7 +77,7 @@ def _extract_retry_after_seconds(exc: BaseException) -> Optional[float]:
         except (TypeError, ValueError):
             value = None
         else:
-            if value > 0:
+            if value is not None and value > 0:
                 return value
 
     response = getattr(exc, "response", None)
@@ -409,8 +409,10 @@ class OpenRouterProvider(BaseAIProvider):
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw_response.strip())
             cleaned = re.sub(r"\s*```\s*$", "", cleaned)
 
-            # Use raw_decode for precise extraction of the first valid JSON object
-            decoder = json.JSONDecoder()
+            # Use raw_decode for precise extraction of the first valid JSON object.
+            # strict=False accepts raw newlines inside JSON strings (models often
+            # emit them instead of escaped \n).
+            decoder = json.JSONDecoder(strict=False)
             # Find the first '{' and decode from there
             idx = cleaned.find("{")
             if idx == -1:
@@ -574,30 +576,39 @@ class OpenRouterProvider(BaseAIProvider):
             system_content = self.make_system_message_content(stable, variable)
             user_prompt = self._create_user_prompt(text, source_lang, context)
 
-            t0 = time.monotonic()
-            response = await self._chat_completions_create_async(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=TRANSLATION_TEMPERATURE,
-                max_tokens=TRANSLATION_MAX_TOKENS,
-                response_format={"type": "json_object"},
-            )
-            self._record_llm_metric(
-                phase=current_llm_phase("generic_single"),
-                system_prompt=system_content,
-                user_prompt=user_prompt,
-                batch_size=1,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                success=True,
-                response=response,
-                glossary_chars=len(gb),
-            )
-
-            raw_response = (response.choices[0].message.content or "").strip()
-            translated_text = self._parse_model_json_response(raw_response)
+            translated_text = ""
+            for attempt in range(2):
+                t0 = time.monotonic()
+                response = await self._chat_completions_create_async(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_content},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=TRANSLATION_TEMPERATURE,
+                    max_tokens=TRANSLATION_MAX_TOKENS,
+                    response_format={"type": "json_object"},
+                )
+                self._record_llm_metric(
+                    phase=current_llm_phase("generic_single"),
+                    system_prompt=system_content,
+                    user_prompt=user_prompt,
+                    batch_size=1,
+                    latency_ms=int((time.monotonic() - t0) * 1000),
+                    success=True,
+                    response=response,
+                    glossary_chars=len(gb),
+                )
+                raw_response = (response.choices[0].message.content or "").strip()
+                translated_text = self._parse_model_json_response(raw_response)
+                if translated_text:
+                    break
+                if attempt == 0:
+                    logger.warning(
+                        "Unparseable or empty JSON from model, retrying once. "
+                        "Raw (first 200 chars): %s",
+                        (raw_response or "")[:200],
+                    )
 
             if not translated_text:
                 return TranslationResult(
@@ -847,8 +858,9 @@ class OpenRouterProvider(BaseAIProvider):
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
             cleaned = re.sub(r"\s*```\s*$", "", cleaned)
 
-            # Use raw_decode to handle trailing junk
-            decoder = json.JSONDecoder()
+            # Use raw_decode to handle trailing junk. strict=False accepts
+            # raw newlines inside JSON strings.
+            decoder = json.JSONDecoder(strict=False)
             idx = cleaned.find("{")
             if idx == -1:
                 raise json.JSONDecodeError("No JSON object found", cleaned, 0)

@@ -469,3 +469,76 @@ class TestNoJsonResponseRejected:
         assert parse("") == ""
         assert parse('```json\n{"translation": "Привет"}\n```') == "Привет"
         assert parse('Sure! {"translation": "Привет"}') == "Привет"
+        assert parse('{"translation": "строка1\nстрока2"}') == "строка1\nстрока2"
+
+
+class TestTranslateAsyncJsonRetry:
+    """translate_async retries once when the model returns unparseable JSON."""
+
+    def _provider(self) -> OpenRouterProvider:
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            return OpenRouterProvider(api_key=FAKE_KEY)
+
+    @staticmethod
+    def _response(content: str) -> MagicMock:
+        mock_msg = MagicMock()
+        mock_msg.content = content
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        return mock_response
+
+    def test_raw_newlines_in_translation_parse(self):
+        p = self._provider()
+        raw = '{"translation": "список:\n- хлеб\n- молоко"}'
+        assert OpenRouterProvider._parse_model_json_response(raw) == "список:\n- хлеб\n- молоко"
+
+    def test_translate_async_retries_once_on_unparseable_json(self):
+        p = self._provider()
+        calls: list[str] = []
+
+        async def fake_create(**kwargs):
+            if not calls:
+                calls.append("bad")
+                return self._response("Sure, here is the translation without JSON")
+            calls.append("ok")
+            return self._response('{"translation": "Список покупок"}')
+
+        p._chat_completions_create_async = fake_create  # type: ignore[method-assign]
+        result = run_async(p.translate_async("Shopping list", "english", "russian"), timeout=5.0)
+        assert result.success is True
+        assert result.translated == "Список покупок"
+        assert calls == ["bad", "ok"]
+
+    def test_translate_async_unparseable_twice_fails(self):
+        p = self._provider()
+        calls = {"n": 0}
+
+        async def fake_create(**kwargs):
+            calls["n"] += 1
+            return self._response("not json at all")
+
+        p._chat_completions_create_async = fake_create  # type: ignore[method-assign]
+        result = run_async(p.translate_async("Shopping list", "english", "russian"), timeout=5.0)
+        assert result.success is False
+        assert "unparseable" in (result.error or "")
+        assert calls["n"] == 2
+
+
+class TestBatchRawNewlines:
+    def test_batch_parses_raw_newlines_inside_values(self):
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            provider = OpenRouterProvider(api_key=FAKE_KEY)
+
+        async def complete(system_content, user_prompt, **kwargs):
+            return '{"0": "строка1\nстрока2"}'
+
+        provider._chat_completion_json_async = complete  # type: ignore[method-assign]
+        items = [TranslationItem(original="line1\nline2")]
+        result = run_async(
+            provider.translate_batch_async(items, "english", "russian"),
+            timeout=5.0,
+        )
+        assert result[0].success is True
+        assert result[0].translated == "строка1\nстрока2"

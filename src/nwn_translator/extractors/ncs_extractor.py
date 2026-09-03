@@ -24,6 +24,7 @@ from ..file_handlers.ncs_parser import (
     OP_NEQUAL,
     TYPE_STRING,
 )
+from ..file_handlers.ncs_concat import find_concat_chains, merged_text
 
 # ---------------------------------------------------------------------------
 # Engine function numbers for context-based classification
@@ -234,7 +235,12 @@ def _contains_code_identifiers(text: str) -> bool:
     return bool(_RE_CAMEL_CASE.search(text) or _RE_FUNC_DOT.search(text))
 
 
-def ncs_hard_veto_reason(text: str, proven_player: bool = False) -> Optional[str]:
+def ncs_hard_veto_reason(
+    text: str,
+    proven_player: bool = False,
+    *,
+    is_concat: bool = False,
+) -> Optional[str]:
     """Return a deterministic reason why an NCS string must never be translated.
 
     This is stricter than extraction filtering and is used as a final safety
@@ -245,6 +251,9 @@ def ncs_hard_veto_reason(text: str, proven_player: bool = False) -> Optional[str
     letters only ("Goodbye", "Farewell") is no longer treated as a resref when
     a player-facing ACTION provably consumes it. Identifier shapes with digits,
     underscores, or known prefixes stay vetoed regardless.
+
+    ``is_concat=True`` skips the sentence-fragment rule: concat units are
+    merged literals whose edges often carry spaces around ``<VARn>`` slots.
     """
     stripped = text.strip()
     if not stripped:
@@ -253,10 +262,12 @@ def ncs_hard_veto_reason(text: str, proven_player: bool = False) -> Optional[str
     # Concatenation fragments keep a leading space (" hour(s)…") or a trailing
     # space on an unfinished prefix ("You must wait "). A finished bark that
     # merely has a stray trailing space after ".!?" is left alone.
-    if text[:1].isspace():
-        return "sentence_fragment"
-    if text[-1:].isspace() and stripped[-1] not in ".!?;:…":
-        return "sentence_fragment"
+    # Merged concat chains skip this: the fragments are one translation unit.
+    if not is_concat:
+        if text[:1].isspace():
+            return "sentence_fragment"
+        if text[-1:].isspace() and stripped[-1] not in ".!?;:…":
+            return "sentence_fragment"
 
     if _RE_ALPHABET_DUMP.match(stripped):
         return "alphabet_dump"
@@ -440,6 +451,9 @@ class NcsExtractor(BaseExtractor):
 
         instructions = ncs_file.instructions
         items: List[TranslatableItem] = []
+        chains = find_concat_chains(ncs_file)
+        chain_lit_offsets = {part.offset for chain in chains.values() for part in chain.lits()}
+        emitted_chain_offsets: Set[int] = set()
 
         # The module-wide .nss index is the primary oracle; the bytecode
         # heuristics below are the fallback for modules without sources.
@@ -454,12 +468,27 @@ class NcsExtractor(BaseExtractor):
             if not instr.is_string_const or instr.string_value is None:
                 continue
 
-            text = instr.string_value
-            if not text.strip():
+            chain = chains.get(instr.offset)
+            extra_meta: Dict[str, Any] = {}
+            if chain is not None:
+                if instr.offset in emitted_chain_offsets:
+                    continue
+                emitted_chain_offsets.add(instr.offset)
+                text = merged_text(chain)
+                scan_idx = chain.last_instr_index
+                lookup_text = max((lit.text for lit in chain.lits()), key=len)
+                extra_meta["concat_parts"] = chain.to_metadata()
+            elif instr.offset in chain_lit_offsets:
                 continue
+            else:
+                text = instr.string_value
+                if not text.strip():
+                    continue
+                scan_idx = idx
+                lookup_text = text
 
-            verdict = index.verdict(text) if has_sources and index is not None else "absent"
-            action_class = _classify_by_action_context(idx, instructions)
+            verdict = index.verdict(lookup_text) if has_sources and index is not None else "absent"
+            action_class = _classify_by_action_context(scan_idx, instructions)
 
             # Dispatch keys must never be translated: the per-occurrence
             # bytecode compare and the module-wide source compare are both
@@ -487,9 +516,9 @@ class NcsExtractor(BaseExtractor):
             ):
                 continue
 
-            bytecode_ctx = _bytecode_context(idx, instructions)
+            bytecode_ctx = _bytecode_context(scan_idx, instructions)
             nss_snippet = (
-                index.snippet(text, encoding, prefer_stem=file_path.stem)
+                index.snippet(lookup_text, encoding, prefer_stem=file_path.stem)
                 if has_sources and index is not None
                 else None
             )
@@ -497,8 +526,8 @@ class NcsExtractor(BaseExtractor):
             # High-confidence player-facing: deterministic pass (no LLM gate)
             if source_is_player or bytecode_is_player:
                 action_name = "script function"
-                for i in range(1, min(_ACTION_SCAN_WINDOW + 1, len(instructions) - idx)):
-                    next_i = instructions[idx + i]
+                for i in range(1, min(_ACTION_SCAN_WINDOW + 1, len(instructions) - scan_idx)):
+                    next_i = instructions[scan_idx + i]
                     if (
                         next_i.is_action
                         and next_i.action_routine is not None
@@ -507,7 +536,7 @@ class NcsExtractor(BaseExtractor):
                         action_name = _action_name(next_i.action_routine)
                         break
                 if action_name == "script function" and source_is_player and index is not None:
-                    action_name = index.player_consumer(text) or action_name
+                    action_name = index.player_consumer(lookup_text) or action_name
                 context = (
                     f"Script text shown to player via {action_name} "
                     f"in {file_path.stem}.ncs. Translate naturally."
@@ -563,8 +592,8 @@ class NcsExtractor(BaseExtractor):
 
             ncs_hint = "unknown"
             if bytecode_is_player or source_is_player:
-                for i in range(1, min(_ACTION_SCAN_WINDOW + 1, len(instructions) - idx)):
-                    next_i = instructions[idx + i]
+                for i in range(1, min(_ACTION_SCAN_WINDOW + 1, len(instructions) - scan_idx)):
+                    next_i = instructions[scan_idx + i]
                     if (
                         next_i.is_action
                         and next_i.action_routine is not None
@@ -593,6 +622,7 @@ class NcsExtractor(BaseExtractor):
                         "nss_snippet": nss_snippet,
                         "bytecode_context": bytecode_ctx,
                         "source_class": verdict,
+                        **extra_meta,
                     },
                 )
             )

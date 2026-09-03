@@ -639,7 +639,7 @@ class GlossaryBuilder:
     @staticmethod
     def _load_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
         """Load the first valid JSON object from a model response."""
-        decoder = json.JSONDecoder()
+        decoder = json.JSONDecoder(strict=False)
         last_error: Optional[json.JSONDecodeError] = None
 
         for match in re.finditer(r"\{", raw):
@@ -653,7 +653,7 @@ class GlossaryBuilder:
                 return data
 
         try:
-            data = json.loads(raw)
+            data = json.loads(raw, strict=False)
         except json.JSONDecodeError as exc:
             last_error = exc
         else:

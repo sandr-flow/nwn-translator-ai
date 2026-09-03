@@ -360,7 +360,9 @@ class TranslationManager:
                 continue
             iid = item.item_id or ""
             hard_veto = ncs_hard_veto_reason(
-                item.text, proven_player=bool(meta.get("proven_player"))
+                item.text,
+                proven_player=bool(meta.get("proven_player")),
+                is_concat=bool(meta.get("concat_parts")),
             )
             if hard_veto:
                 self._ncs_gate_approval[iid] = False
@@ -1061,6 +1063,12 @@ class TranslationManager:
         translated = outcome.final_text
         translated = _unescape_literal_newlines(item.text, translated)
         translated = GlossaryBuilder._restore_wrapping_quotes(item.text, translated)
+        if (item.text or "").strip() and not (translated or "").strip():
+            logger.warning(
+                "Empty translation rejected for %s",
+                item.item_id or (item.text or "")[:40],
+            )
+            return False
         with self._stats_lock:
             if outcome.exact_valid:
                 self.translation_cache[cache_key] = full_translated_sanitized

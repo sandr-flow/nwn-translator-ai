@@ -19,11 +19,15 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          command_timeout: 20m
+          # Covers the build plus up to 3h of waiting for translations to finish.
+          command_timeout: 3h20m
           script: |
             set -euo pipefail
             cd /opt/nwn-translator
             git fetch origin
             git checkout -f -B main origin/main
-            docker compose -f docker/docker-compose.yml up --build -d
+            docker compose -f docker/docker-compose.yml build
+            # Recreating the container kills running translations: wait for idle.
+            bash scripts/wait_for_idle.sh
+            docker compose -f docker/docker-compose.yml up -d
             docker compose -f docker/docker-compose.yml ps

@@ -52,7 +52,56 @@ def client(task_workspace: Path, monkeypatch: pytest.MonkeyPatch):
 def test_health(client: TestClient) -> None:
     r = client.get("/api/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    assert r.json() == {"status": "ok", "active_tasks": 0}
+
+
+def test_health_counts_running_job_until_it_finishes(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deploy waits on ``active_tasks``; it must reflect a live worker."""
+    release = threading.Event()
+
+    def blocking_translate(self):
+        release.wait(timeout=5)
+        out = self.config.output_file
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"DONE")
+        return out
+
+    monkeypatch.setattr(
+        "nwn_translator.web.task_manager.ModuleTranslator.translate",
+        blocking_translate,
+    )
+
+    files = {"file": ("h.mod", b"\x05" * 200, "application/octet-stream")}
+    data = {"api_key": "sk-x", "target_lang": "english"}
+    r = client.post("/api/translate", files=files, data=data)
+    assert r.status_code == 200
+    task_id = r.json()["task_id"]
+
+    assert client.get("/api/health").json()["active_tasks"] == 1
+
+    release.set()
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if client.get(f"/api/tasks/{task_id}/status").json()["status"] == "completed":
+            break
+        time.sleep(0.05)
+    assert client.get("/api/health").json()["active_tasks"] == 0
+
+
+def test_health_ignores_tasks_interrupted_by_a_restart(
+    task_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rows left unfinished by a dead process are terminal and must not block deploys."""
+    tm = TaskManager(workspace_root=task_workspace)
+    task = tm.create_task("1.2.3.4", "old.mod")
+    task.status = "translating"
+    db.update_task_row(task.task_id, status="translating")
+
+    restarted = TaskManager(workspace_root=task_workspace)
+    assert restarted.get(task.task_id).status == "interrupted"
+    assert restarted.active_task_count() == 0
 
 
 def test_models(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

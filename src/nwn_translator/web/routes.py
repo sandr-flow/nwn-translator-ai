@@ -113,9 +113,13 @@ async def _stream_upload_to_file(upload: UploadFile, dest: Path, max_bytes: int)
 
 
 @router.get("/health")
-async def health() -> dict:
-    """Liveness check for Docker / балансировщики."""
-    return {"status": "ok"}
+async def health(tm: TaskManager = Depends(web_task_manager)) -> dict:
+    """Liveness check for Docker / балансировщики.
+
+    ``active_tasks`` is the number of unfinished translation jobs; the deploy
+    script polls it and recreates the container only when it reaches zero.
+    """
+    return {"status": "ok", "active_tasks": tm.active_task_count()}
 
 
 def _client_ip(request: Request) -> str:

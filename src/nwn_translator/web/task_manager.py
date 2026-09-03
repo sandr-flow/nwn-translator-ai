@@ -158,6 +158,16 @@ class TaskManager:
         with self._lock:
             return self._tasks.get(task_id)
 
+    def active_task_count(self) -> int:
+        """Return how many tasks have not reached a terminal status.
+
+        Exposed via ``/api/health`` so the deploy can wait for an idle service
+        before recreating the container: a restart kills every worker thread,
+        and there is no resume.
+        """
+        with self._lock:
+            return sum(1 for t in self._tasks.values() if not t.is_finished())
+
     def active_task_id_for_ip(self, ip: str) -> Optional[str]:
         """Return the active (non-finished) task ID for *ip*, or ``None``.
 

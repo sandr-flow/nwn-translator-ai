@@ -1,2 +1,4 @@
 # cmd's goto can miss labels in batch files with LF-only endings.
 *.bat text eol=crlf
+# Deploy scripts run on the Linux VPS; a stray CR breaks the shebang line.
+*.sh text eol=lf

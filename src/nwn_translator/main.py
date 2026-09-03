@@ -153,7 +153,7 @@ def rebuild_module(
     # re-extraction and injector-side re-reads decode with the target code page.
     read_enc = text_enc
 
-    # NCS item_ids are globally unique (file stem + offset), so the per-file
+    # NCS item_ids are globally unique (file stem + CONSTS index), so the per-file
     # maps can be flattened for the bytecode injector's by-item_id channel.
     ncs_by_item_id: Dict[str, str] = {}
     for fname, per_file in translations_by_item_id.items():

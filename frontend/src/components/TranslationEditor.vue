@@ -10,6 +10,7 @@ const loading = ref(true);
 const error = ref("");
 const selectedFileIdx = ref(0);
 const searchQuery = ref("");
+const failedOnly = ref(Boolean(t.editorFailedOnly));
 
 // Deep-copy translations so edits are local until "rebuild"
 const editableFiles = ref([]);
@@ -19,7 +20,7 @@ onMounted(async () => {
     await loadTranslations();
     editableFiles.value = t.translationFiles.map((f) => ({
       filename: f.filename,
-      items: f.items.map((item) => ({ ...item })),
+      items: f.items.map((item) => ({ ...item, failed: Boolean(item.failed) })),
     }));
     const groups = fileGroups.value;
     const init = {};
@@ -29,6 +30,10 @@ onMounted(async () => {
     collapsedGroups.value = init;
     if (groups.length && groups[0][1].length) {
       selectedFileIdx.value = groups[0][1][0].idx;
+    }
+    if (failedOnly.value) {
+      const idx = editableFiles.value.findIndex((f) => f.items.some((it) => it.failed));
+      if (idx !== -1) selectedFileIdx.value = idx;
     }
     loading.value = false;
     resizeAllTextareas();
@@ -73,17 +78,24 @@ const fileGroups = computed(() => {
 
 const visibleFileGroups = computed(() => {
   const q = searchQuery.value.toLowerCase().trim();
-  if (!q) return fileGroups.value;
-  const fileMatches = (file) =>
-    file.items.some(
+  const fileMatches = (file) => {
+    const items = failedOnly.value ? file.items.filter((item) => item.failed) : file.items;
+    if (!items.length) return false;
+    if (!q) return true;
+    return items.some(
       (item) =>
         item.original.toLowerCase().includes(q) ||
         item.translated.toLowerCase().includes(q),
     );
+  };
   return fileGroups.value
     .map(([label, entries]) => [label, entries.filter(({ file }) => fileMatches(file))])
     .filter(([, entries]) => entries.length > 0);
 });
+
+const visibleFileCount = computed(() =>
+  visibleFileGroups.value.reduce((n, [, entries]) => n + entries.length, 0),
+);
 
 function isGroupCollapsed(label) {
   if (searchQuery.value.trim()) return false;
@@ -139,12 +151,24 @@ function navigateToFile(filename) {
 const filteredItems = computed(() => {
   if (!selectedFile.value) return [];
   const q = searchQuery.value.toLowerCase().trim();
-  if (!q) return selectedFile.value.items;
-  return selectedFile.value.items.filter(
-    (item) =>
-      item.original.toLowerCase().includes(q) ||
-      item.translated.toLowerCase().includes(q)
-  );
+  return selectedFile.value.items.filter((item) => {
+    if (failedOnly.value && !item.failed) return false;
+    if (!q) return true;
+    return (
+      item.original.toLowerCase().includes(q) || item.translated.toLowerCase().includes(q)
+    );
+  });
+});
+
+function fileItemCount(file) {
+  if (failedOnly.value) return file.items.filter((item) => item.failed).length;
+  return file.items.length;
+}
+
+const emptyListMessage = computed(() => {
+  if (searchQuery.value.trim()) return i("editor.noMatches");
+  if (failedOnly.value) return i("editor.noFailed");
+  return i("editor.noMatches");
 });
 
 const editedCount = computed(() => {
@@ -210,6 +234,16 @@ function resizeAllTextareas() {
 
 watch(selectedFileIdx, resizeAllTextareas);
 watch(searchQuery, resizeAllTextareas);
+watch(failedOnly, () => {
+  if (failedOnly.value) {
+    const current = editableFiles.value[selectedFileIdx.value];
+    if (!current || !current.items.some((it) => it.failed)) {
+      const idx = editableFiles.value.findIndex((f) => f.items.some((it) => it.failed));
+      if (idx !== -1) selectedFileIdx.value = idx;
+    }
+  }
+  resizeAllTextareas();
+});
 
 function goBack() {
   t.step = "done";
@@ -240,7 +274,7 @@ function goBack() {
         <!-- File list sidebar grouped by type -->
         <div class="w-56 shrink-0 overflow-y-auto border-r border-nwn-muted/20 pr-3 editor-sidebar" style="max-height: 75vh">
           <p class="text-xs text-nwn-muted mb-2">
-            {{ i("editor.files") }} ({{ editableFiles.length }})
+            {{ i("editor.files") }} ({{ visibleFileCount }})
           </p>
           <div v-for="[label, entries] in visibleFileGroups" :key="label" class="mb-1.5">
             <button
@@ -266,7 +300,7 @@ function goBack() {
                 @click="selectedFileIdx = idx"
               >
                 {{ file.filename }}
-                <span class="text-xs text-nwn-muted">({{ file.items.length }})</span>
+                <span class="text-xs text-nwn-muted">({{ fileItemCount(file) }})</span>
               </button>
             </div>
           </div>
@@ -284,6 +318,14 @@ function goBack() {
               :placeholder="i('editor.search')"
               class="px-2 py-1 rounded bg-nwn-dark border border-nwn-muted/30 text-sm text-gray-200 placeholder-nwn-muted/50 w-48"
             />
+            <label class="flex items-center gap-1.5 text-xs text-nwn-muted cursor-pointer select-none">
+              <input
+                type="checkbox"
+                v-model="failedOnly"
+                class="accent-nwn-accent"
+              />
+              {{ i("editor.failedOnly") }}
+            </label>
             <label class="flex items-center gap-1.5 text-xs text-nwn-muted cursor-pointer select-none ml-auto">
               <input
                 type="checkbox"
@@ -336,7 +378,7 @@ function goBack() {
               v-if="filteredItems.length === 0"
               class="text-sm text-nwn-muted py-4 text-center"
             >
-              {{ i("editor.noMatches") }}
+              {{ emptyListMessage }}
             </p>
           </div>
           </div>

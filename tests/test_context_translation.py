@@ -952,6 +952,8 @@ def test_empty_player_reply_keeps_original_after_retries(monkeypatch):
 
     assert result.get("Hello there") == "Привет"
     assert "END DIALOG" not in result
+    assert "END DIALOG" in manager.failed_originals
+    assert "Hello there" not in manager.failed_originals
     assert not any(
         entry.get("original") == "END DIALOG" and not str(entry.get("translated") or "").strip()
         for entry in writer.entries

@@ -101,6 +101,8 @@ class TranslationItem(BaseModel):
     translated: str
     #: Stable per-file identifier used to address this item on rebuild.
     item_id: str = ""
+    #: True when the model was asked to translate this line and the result was rejected.
+    failed: bool = False
     shared_with: List[str] = Field(
         default_factory=list,
         description="Other filenames containing the same original text",

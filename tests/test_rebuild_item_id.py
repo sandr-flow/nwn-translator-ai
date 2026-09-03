@@ -354,3 +354,39 @@ def test_two_sequential_rebuilds_keep_both_edits(rebuild_client) -> None:
     data = client.get(f"/api/tasks/{task_id}/translations").json()
     by_file = {f["filename"]: f["items"][0]["translated"] for f in data["files"]}
     assert by_file == {"a.utc": "Гоблин!", "b.utc": "Орк!"}
+
+
+def test_get_translations_marks_failed_rows(rebuild_client) -> None:
+    client, tmp_path = rebuild_client
+    task_id = str(uuid.uuid4())
+    db.create_task_row(
+        task_id=task_id,
+        client_token="tok",
+        client_ip="1.1.1.1",
+        created_at=1.0,
+        input_filename="in.mod",
+    )
+    db.update_task_row(task_id, status="completed")
+    db.insert_translation(
+        task_id=task_id,
+        original="Hello",
+        translated="Hello",
+        file="a.utc",
+        item_id="hello",
+        success=False,
+    )
+    db.insert_translation(
+        task_id=task_id,
+        original="Bye",
+        translated="Пока",
+        file="a.utc",
+        item_id="bye",
+        success=True,
+    )
+
+    data = client.get(f"/api/tasks/{task_id}/translations").json()
+    items = {item["item_id"]: item for item in data["files"][0]["items"]}
+    assert items["hello"]["failed"] is True
+    assert items["hello"]["translated"] == "Hello"
+    assert items["bye"]["failed"] is False
+    assert items["bye"]["translated"] == "Пока"

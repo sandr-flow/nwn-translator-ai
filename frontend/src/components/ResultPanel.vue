@@ -60,6 +60,14 @@ const partial = computed(() => ok.value && Number(errCount.value) > 0);
           {{ i("result.editTranslation") }}
         </button>
         <button
+          v-if="partial"
+          type="button"
+          class="inline-flex items-center px-4 py-2 rounded-lg border border-amber-400/60 hover:border-amber-400 text-sm text-amber-300"
+          @click="enterEditor({ failedOnly: true })"
+        >
+          {{ i("result.editFailed") }}
+        </button>
+        <button
           type="button"
           class="text-sm text-nwn-muted hover:text-gray-300"
           @click="reset"

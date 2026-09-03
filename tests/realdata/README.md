@@ -22,10 +22,10 @@ archives.
 - Inventory and provenance: `test_corpus/manifest.json`.
 - If the corpus is absent, each test is collected as a single **skipped** case,
   so `pytest -m realdata` is green on a machine without the corpus.
-- Current corpus: 5 modules (Almraiven, A Dance with Rogues, LES LIONS DIFFAMES
-  [French/cp1252], Midnight, Prophet III). TLK resolution was removed from the
-  pipeline — StrRef-only fields are left untouched — so custom-TLK strings are
-  intentionally out of scope.
+- Current corpus: 6 modules (Almraiven, A Dance with Rogues, LES LIONS DIFFAMES
+  [French/cp1252], Midnight, Prophet III, Torn Asunder part 1). TLK resolution
+  was removed from the pipeline — StrRef-only fields are left untouched — so
+  custom-TLK strings are intentionally out of scope.
 
 ## The five runs
 
@@ -45,10 +45,10 @@ the world-context / glossary / contextual-dialog subsystems stay out of the loop
 
 | Run | Result | Notes |
 |---|---|---|
-| parse-all | **pass** 5/5 | Parser never raises across the corpus. |
-| identity round-trip | **pass** 5/5 (both cases) | ERF read/write is byte-faithful, including type IDs from the canonical table with overrides disabled. |
-| no-op patch | **pass** 5/5 | Injectors skip identical text, so a no-op truly changes nothing. |
-| mock-translate | **pass** 5/5 | NCS opcode sizes and preamble `T` updates are correct; fields that sanitize to empty (punctuation-only / token-only) are exempt from the marker metric. |
+| parse-all | **pass** 6/6 | Parser never raises across the corpus. |
+| identity round-trip | **pass** 6/6 (both cases) | ERF read/write is byte-faithful, including type IDs from the canonical table with overrides disabled. |
+| no-op patch | **pass** 6/6 | Injectors skip identical text, so a no-op truly changes nothing. |
+| mock-translate | **pass** 6/6 | NCS opcode sizes and preamble `T` updates are correct; fields that sanitize to empty (punctuation-only / token-only) are exempt from the marker metric. |
 | encoding diacritics | **pass** on declared non-English modules | French/cp1252 module covered. |
 
 ### H6 batch-dedup metric (Almraiven, mock-translate)

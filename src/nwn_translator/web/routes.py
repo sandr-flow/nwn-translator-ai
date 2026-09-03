@@ -429,6 +429,7 @@ async def get_translations(
                     original=original,
                     translated=translated,
                     item_id=entry.get("item_id") or "",
+                    failed=entry.get("success", 1) in (0, False, "0"),
                 )
             )
             if original not in text_to_files:

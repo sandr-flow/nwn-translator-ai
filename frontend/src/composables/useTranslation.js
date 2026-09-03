@@ -97,6 +97,7 @@ export function useTranslation() {
     totalFiles: 0,
     translationFiles: [],
     rebuilding: false,
+    editorFailedOnly: false,
     historyItems: [],
     /** Background job the user left; shown as a soft banner on setup. */
     backgroundTaskId: "",
@@ -135,6 +136,7 @@ export function useTranslation() {
     t.stats = null;
     t.currentIndex = 0;
     t.totalFiles = 0;
+    t.editorFailedOnly = false;
   }
 
   function clearBackgroundBanner() {
@@ -428,7 +430,8 @@ export function useTranslation() {
     t.translationFiles = data.files ?? [];
   }
 
-  function enterEditor() {
+  function enterEditor(opts = {}) {
+    t.editorFailedOnly = Boolean(opts.failedOnly);
     t.step = "editing";
   }
 

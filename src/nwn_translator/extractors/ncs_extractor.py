@@ -454,6 +454,9 @@ class NcsExtractor(BaseExtractor):
         chains = find_concat_chains(ncs_file)
         chain_lit_offsets = {part.offset for chain in chains.values() for part in chain.lits()}
         emitted_chain_offsets: Set[int] = set()
+        const_index_by_offset = {
+            instr.offset: i for i, instr in enumerate(ncs_file.string_constants)
+        }
 
         # The module-wide .nss index is the primary oracle; the bytecode
         # heuristics below are the fallback for modules without sources.
@@ -610,7 +613,7 @@ class NcsExtractor(BaseExtractor):
                 TranslatableItem(
                     text=text,
                     context=context,
-                    item_id=f"{file_path.stem}:off_{instr.offset:x}",
+                    item_id=f"{file_path.stem}:c{const_index_by_offset[instr.offset]}",
                     location=str(file_path),
                     metadata={
                         "type": "ncs_string",

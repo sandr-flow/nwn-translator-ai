@@ -311,8 +311,11 @@ class PipelineState:
                 translated = all_translations.get(item.text)
                 if translated is None and (item.metadata or {}).get("type") == "ncs_string":
                     translated = manager.ncs_translations_by_item_id.get(item.item_id)
-                if translated is None:
+                failed = item.text in manager.failed_originals
+                if translated is None and not failed:
                     continue
+                if translated is None:
+                    translated = item.text
                 log_key = (file_path.name, item.item_id)
                 if log_key in already_logged:
                     continue
@@ -323,6 +326,7 @@ class PipelineState:
                     context=item.context,
                     source_filename=file_path.name,
                     item_id=item.item_id,
+                    success=not failed,
                 )
 
     def _patch_git_files(
@@ -705,6 +709,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
             with state._stats_lock:
                 state.stats["errors"].append(error_msg)
             logger.error(error_msg)
+        manager.failed_originals.update(context_manager.failed_originals)
 
     logger.info("Phase B complete: %d translations collected", len(all_translations))
 

@@ -705,6 +705,7 @@ class TestNcsExtractor:
         result = extractor.extract(path, {"_ncs_file": ncs})
         assert len(result.items) == 1
         assert result.items[0].text == "Welcome, hero!"
+        assert result.items[0].item_id == "test:c0"
         assert result.items[0].metadata["confidence"] == "high"
 
     def test_two_strings_before_player_action_both_high(self, tmp_path):
@@ -1394,7 +1395,7 @@ class TestNcsConcat:
         item = result.items[0]
         assert item.text == "Congrats to ye, <VAR1>. How do ye feel?"
         first = next(i for i in ncs.instructions if i.is_string_const)
-        assert item.item_id == f"openingcut1:off_{first.offset:x}"
+        assert item.item_id == "openingcut1:c0"
         assert item.metadata["concat_parts"][0]["offset"] == first.offset
         assert item.metadata["concat_parts"][1] == {"var": 1}
 

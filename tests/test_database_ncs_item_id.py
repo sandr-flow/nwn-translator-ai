@@ -64,6 +64,31 @@ def test_sqlite_log_writer_ignores_diagnostic_events(isolated_db: None) -> None:
     assert db.get_ncs_translation_map_by_task("t1") == {}
 
 
+def test_sqlite_log_writer_persists_failed_row_with_original(isolated_db: None) -> None:
+    db.create_task_row(
+        task_id="t1",
+        client_token="tok",
+        client_ip="127.0.0.1",
+        created_at=1.0,
+        input_filename="m.mod",
+    )
+    writer = db.SqliteTranslationLogWriter("t1")
+    writer.write(
+        {
+            "original": "Boom",
+            "translated": "Boom",
+            "file": "a.uti",
+            "item_id": "x:0",
+            "success": False,
+        }
+    )
+    rows = db.get_translations_by_task("t1")
+    assert len(rows) == 1
+    assert rows[0]["original"] == "Boom"
+    assert rows[0]["translated"] == "Boom"
+    assert rows[0]["success"] == 0
+
+
 def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Older DB without ``item_id`` gets column via ``_migrate``."""
     db.close_db()
@@ -97,6 +122,7 @@ def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyP
     cur = db.get_db().execute("PRAGMA table_info(translations)")
     cols = {row[1] for row in cur.fetchall()}
     assert "item_id" in cols
+    assert "success" in cols
 
 
 def test_concurrent_access_is_serialized(isolated_db: None) -> None:

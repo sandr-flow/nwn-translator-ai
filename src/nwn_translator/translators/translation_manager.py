@@ -9,7 +9,7 @@ import logging
 import re
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, cast
 
 from tqdm import tqdm
 
@@ -198,10 +198,12 @@ class TranslationManager:
                 preserve_tokens=config.preserve_tokens,
             )
 
-        #: Final NCS translations keyed by :attr:`TranslatableItem.item_id` (per bytecode offset).
+        #: Final NCS translations keyed by :attr:`TranslatableItem.item_id` (CONSTS index).
         self.ncs_translations_by_item_id: Dict[str, str] = {}
         #: LLM gate (or deterministic bypass) approval per ``item_id`` for ``ncs_string`` items.
         self._ncs_gate_approval: Dict[str, bool] = {}
+        #: Originals sent to the model whose output was rejected (API fail, empty, unparseable).
+        self.failed_originals: Set[str] = set()
         #: Shared per-item progress counter (set during ``translate_content``).
         self._active_item_progress: Optional[Any] = None
 
@@ -283,6 +285,7 @@ class TranslationManager:
         context: Optional[str],
         source_filename: str,
         item_id: Optional[str] = None,
+        success: bool = True,
     ) -> None:
         """Write one translation log row for web per-file grouping (non-dialog paths)."""
         try:
@@ -294,6 +297,7 @@ class TranslationManager:
                     "model": self.config.model,
                     "file": source_filename,
                     "item_id": item_id,
+                    "success": success,
                 }
             )
         except Exception:
@@ -1917,6 +1921,22 @@ class TranslationManager:
         )
         self._async_bump(item_data)
 
+    def _record_rejected_item(self, item: Any, *, error: Optional[str]) -> None:
+        """Record an original that was sent to the model but never accepted."""
+        error_msg = f"Translation failed for {item.item_id}: {error}"
+        if self._is_ncs_item(item):
+            self._record_ncs_diagnostic(
+                item,
+                reason="translation_failed",
+                count_field="failed",
+                error=error,
+            )
+        with self._stats_lock:
+            if item.text:
+                self.failed_originals.add(item.text)
+            self.stats["errors"].append(error_msg)
+        logger.warning(error_msg)
+
     def _process_translation_result(
         self,
         item_data: dict,
@@ -1934,26 +1954,17 @@ class TranslationManager:
                 model=result.metadata.get("model", self.config.model),
             ):
                 return
-            self._retry_token_mismatch(
+            if self._retry_token_mismatch(
                 item_data,
                 result.translated,
                 translations,
                 source_filename=source_filename,
                 model=result.metadata.get("model", self.config.model),
-            )
-        else:
-            item = item_data["item"]
-            error_msg = f"Translation failed for {item.item_id}: {result.error}"
-            if self._is_ncs_item(item):
-                self._record_ncs_diagnostic(
-                    item,
-                    reason="translation_failed",
-                    count_field="failed",
-                    error=result.error,
-                )
-            with self._stats_lock:
-                self.stats["errors"].append(error_msg)
-            logger.warning(error_msg)
+            ):
+                return
+            self._record_rejected_item(item_data["item"], error="rejected after retries")
+            return
+        self._record_rejected_item(item_data["item"], error=result.error)
 
     def get_statistics(self) -> Dict[str, Any]:
         """Get translation statistics.

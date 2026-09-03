@@ -814,6 +814,29 @@ class TestTranslationCache:
         assert result == {}
         stats = manager.get_statistics()
         assert stats["total_errors"] == 1
+        assert "Boom" in manager.failed_originals
+
+    def test_empty_translation_after_retries_marks_failed_original(self):
+        """A successful API call that yields an empty line is recorded as a failure."""
+        text = "The ancient seal on the northern gate begins to crack and crumble as you approach."
+        empty = TranslationResult(translated="", original=text, success=True)
+        provider = Mock()
+        provider.translate.return_value = empty
+        provider.translate_async = AsyncMock(return_value=empty)
+        provider.translate_batch_async = AsyncMock(return_value=[empty])
+        provider.close_async_client = AsyncMock(return_value=None)
+        manager = TranslationManager(_make_config(), provider)
+        content = ExtractedContent(
+            content_type="item",
+            items=[TranslatableItem(text=text, item_id="x:0")],
+            source_file=Path("test.uti"),
+        )
+
+        result = manager.translate_content(content)
+
+        assert result == {}
+        assert text in manager.failed_originals
+        assert manager.get_statistics()["total_errors"] >= 1
 
 
 class TestPassthroughEmptyAfterSanitize:

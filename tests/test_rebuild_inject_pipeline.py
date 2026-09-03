@@ -86,3 +86,108 @@ def test_module_translator_records_ncs_patch_failure_stats(tmp_path: Path, monke
             "error": "validation failed",
         }
     ]
+
+
+def test_log_per_file_emits_failed_originals(tmp_path: Path) -> None:
+    writer = CapturingWriter()
+    config = TranslationConfig(
+        api_key="test-key",
+        input_file=tmp_path / "m.mod",
+        translation_log_writer=writer,
+    )
+    from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+    from nwn_translator.pipeline.stages import PipelineState
+    from nwn_translator.translators.translation_manager import TranslationManager
+
+    manager = TranslationManager(config, Mock())
+    manager.failed_originals.add("Boom")
+    src = tmp_path / "a.uti"
+    extracted = ExtractedContent(
+        content_type="item",
+        items=[TranslatableItem(text="Boom", item_id="x:0", location=str(src))],
+        source_file=src,
+    )
+    skipped = ExtractedContent(
+        content_type="item",
+        items=[TranslatableItem(text="Internal", item_id="skip", location=str(src))],
+        source_file=src,
+    )
+    state = PipelineState(config=config, provider=Mock())
+    state._log_per_file_translations(
+        {src: ({}, extracted, ".uti")},
+        {},
+        manager,
+    )
+    failed_rows = [e for e in writer.entries if e.get("success") is False]
+    assert len(failed_rows) == 1
+    assert failed_rows[0]["original"] == "Boom"
+    assert failed_rows[0]["translated"] == "Boom"
+    assert failed_rows[0]["item_id"] == "x:0"
+    assert failed_rows[0]["file"] == "a.uti"
+
+    writer.entries.clear()
+    other = tmp_path / "b.uti"
+    state._log_per_file_translations(
+        {other: ({}, skipped, ".uti")},
+        {},
+        manager,
+    )
+    assert writer.entries == []
+
+
+def test_ncs_item_id_stable_after_length_changing_patch(tmp_path: Path) -> None:
+    """CONSTS index ids survive a length-changing patch of an earlier string."""
+    from tests.test_ncs import _action
+
+    path = _write_ncs(
+        tmp_path,
+        "scene.ncs",
+        _consts("NW_TAG"),
+        _action(200, 1),
+        _consts("Alpha line."),
+        _action(39, 1),
+        _consts("Beta line."),
+        _action(39, 1),
+        _consts("Gamma line."),
+        _action(39, 1),
+        _retn(),
+    )
+    loaded = load_parsed_and_extracted(path, ".ncs", None)
+    assert loaded is not None
+    parsed, extracted = loaded
+    ids = [item.item_id for item in extracted.items]
+    assert ids == ["scene:c1", "scene:c2", "scene:c3"]
+    offsets_before = {item.item_id: item.metadata["offset"] for item in extracted.items}
+
+    inject_translations_into_file(
+        path,
+        parsed,
+        extracted,
+        {},
+        ncs_translations_by_item_id={
+            "scene:c1": "Alpha line is now much longer than before!",
+        },
+    )
+
+    loaded2 = load_parsed_and_extracted(path, ".ncs", None)
+    assert loaded2 is not None
+    parsed2, extracted2 = loaded2
+    assert [item.item_id for item in extracted2.items] == ["scene:c1", "scene:c2", "scene:c3"]
+    offsets_after = {item.item_id: item.metadata["offset"] for item in extracted2.items}
+    assert offsets_after["scene:c1"] == offsets_before["scene:c1"]
+    assert offsets_after["scene:c2"] != offsets_before["scene:c2"]
+    assert offsets_after["scene:c3"] != offsets_before["scene:c3"]
+
+    inject_translations_into_file(
+        path,
+        parsed2,
+        extracted2,
+        {},
+        ncs_translations_by_item_id={"scene:c3": "Gamma-EDITED"},
+    )
+    values = [instr.string_value for instr in parse_ncs(path).string_constants]
+    assert values[0] == "NW_TAG"
+    assert "Alpha line is now much longer than before!" in values
+    assert "Beta line." in values
+    assert "Gamma-EDITED" in values
+    assert "Gamma line." not in values

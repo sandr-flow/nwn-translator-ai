@@ -8,7 +8,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 from ..ai_providers import BaseAIProvider
 from ..ai_providers.base import RateLimitError
@@ -103,6 +103,20 @@ class ContextualTranslationManager:
             config.translation_log_writer,
         )
         self.formatter = DialogFormatter()
+        #: Originals sent to the model whose output was never accepted.
+        self.failed_originals: Set[str] = set()
+
+    def _mark_untranslated_api_keys(
+        self,
+        keys_for_api: List[str],
+        original_text_map: Dict[str, str],
+        translations: Dict[str, str],
+    ) -> None:
+        """Record dialog originals that were sent to the model but never accepted."""
+        for key in keys_for_api:
+            original = original_text_map.get(key)
+            if original and original not in translations:
+                self.failed_originals.add(original)
 
     def _raise_if_cancelled(self) -> None:
         """Raise :class:`TranslationCancelled` when the config's cancel check fires."""
@@ -197,6 +211,7 @@ class ContextualTranslationManager:
                 sanitized_by_key,
             )
             if not dialog_chunks:
+                self._mark_untranslated_api_keys(keys_for_api, original_text_map, translations)
                 _finish()
                 return translations
 
@@ -405,6 +420,7 @@ class ContextualTranslationManager:
                             translations.update(cleaned_translations)
                             _bump(len(cleaned_translations))
 
+            self._mark_untranslated_api_keys(keys_for_api, original_text_map, translations)
             _finish()
             return translations
 
@@ -412,6 +428,7 @@ class ContextualTranslationManager:
             raise
         except Exception as exc:
             logger.error("Contextual translation failed for %s: %s", file_path.name, exc)
+            self._mark_untranslated_api_keys(keys_for_api, original_text_map, translations)
             _finish()
             return translations
 
@@ -678,6 +695,11 @@ class ContextualTranslationManager:
             )
             for entry in group:
                 errors.append((entry.file_path, exc))
+                self._mark_untranslated_api_keys(
+                    entry.prepared.keys_for_api,
+                    entry.prepared.original_text_map,
+                    entry.prepared.translations,
+                )
                 if item_progress is not None and entry.item_budget > 0:
                     item_progress.bump(by=entry.item_budget, filename=entry.file_path.name)
             return translations, errors

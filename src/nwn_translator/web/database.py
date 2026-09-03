@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS translations (
     model      TEXT,
     file       TEXT,
     item_id    TEXT,
+    success    INTEGER NOT NULL DEFAULT 1,
 
     UNIQUE(task_id, file, item_id)
 );
@@ -88,6 +89,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE translations ADD COLUMN item_id TEXT")
 
     _migrate_translations_unique_key(conn)
+
+    cur_tr = conn.execute("PRAGMA table_info(translations)")
+    tr_cols = {row[1] for row in cur_tr.fetchall()}
+    if "success" not in tr_cols:
+        conn.execute("ALTER TABLE translations ADD COLUMN success INTEGER NOT NULL DEFAULT 1")
 
 
 def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
@@ -329,13 +335,15 @@ def insert_translation(
     model: Optional[str] = None,
     file: Optional[str] = None,
     item_id: Optional[str] = None,
+    success: bool = True,
 ) -> None:
     db = get_db()
     with _lock:
         db.execute(
-            "INSERT OR REPLACE INTO translations (task_id, original, translated, context, model, file, item_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (task_id, original, translated, context, model, file, item_id),
+            "INSERT OR REPLACE INTO translations "
+            "(task_id, original, translated, context, model, file, item_id, success) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, original, translated, context, model, file, item_id, 1 if success else 0),
         )
         db.commit()
 
@@ -359,7 +367,8 @@ def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
     db = get_db()
     with _lock:
         cur = db.execute(
-            "SELECT original, translated, context, model, file, item_id FROM translations WHERE task_id = ?",
+            "SELECT original, translated, context, model, file, item_id, success "
+            "FROM translations WHERE task_id = ?",
             (task_id,),
         )
         cur.row_factory = sqlite3.Row
@@ -429,6 +438,7 @@ class SqliteTranslationLogWriter:
         translated = entry.get("translated", "")
         if not original:
             return
+        success_raw = entry.get("success", True)
         try:
             insert_translation(
                 task_id=self.task_id,
@@ -438,6 +448,7 @@ class SqliteTranslationLogWriter:
                 model=entry.get("model"),
                 file=entry.get("file"),
                 item_id=entry.get("item_id"),
+                success=success_raw not in (False, 0, "0"),
             )
         except Exception as e:
             logger.debug("Failed to write translation to SQLite: %s", e)

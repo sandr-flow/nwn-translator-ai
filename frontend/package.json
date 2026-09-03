@@ -1,7 +1,7 @@
 {
   "name": "nwn-translator-web",
   "private": true,
-  "version": "0.1001",
+  "version": "0.1002",
   "type": "module",
   "scripts": {
     "dev": "vite",

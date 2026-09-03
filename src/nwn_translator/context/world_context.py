@@ -25,6 +25,24 @@ logger = logging.getLogger(__name__)
 WORLD_CONTEXT_MAX_ENTRIES = 30
 WORLD_CONTEXT_MAX_CHARS = 12000
 
+#: Creature blueprint event-script ResRef fields (Aurora UTC). SpeakString in
+#: those scripts runs as OBJECT_SELF — the creature that owns the assignment.
+UTC_SCRIPT_FIELDS: Tuple[str, ...] = (
+    "ScriptAttacked",
+    "ScriptDamaged",
+    "ScriptDeath",
+    "ScriptDialogue",
+    "ScriptDisturbed",
+    "ScriptEndRound",
+    "ScriptHeartbeat",
+    "ScriptOnBlocked",
+    "ScriptOnNotice",
+    "ScriptRested",
+    "ScriptSpawn",
+    "ScriptSpellAt",
+    "ScriptUserDefined",
+)
+
 
 @dataclass
 class NPCInfo:
@@ -37,6 +55,13 @@ class NPCInfo:
     race: str
     gender: str
     conversation: str
+
+    @property
+    def display_name(self) -> str:
+        """First + last name, or empty when the creature has no localized name."""
+        return " ".join(
+            p for p in (self.first_name, self.last_name) if p and str(p).strip()
+        ).strip()
 
 
 @dataclass
@@ -51,6 +76,84 @@ class WorldContext:
     #: Populated after Phase A, before glossary build.
     extracted_names: List[Tuple[str, str]] = field(default_factory=list)
     candidates: EntityCandidateRegistry = field(default_factory=EntityCandidateRegistry)
+    #: Script ResRef (casefolded) → creatures that assign that script on an event.
+    script_owners: Dict[str, List[NPCInfo]] = field(default_factory=dict)
+
+    def register_script_owner(self, resref: object, npc: NPCInfo) -> None:
+        """Record that *npc* runs *resref* as an event script (OBJECT_SELF)."""
+        key = str(resref or "").strip().casefold()
+        if not key or key in {"****", "nw_"}:
+            return
+        owners = self.script_owners.setdefault(key, [])
+        if any(existing.tag == npc.tag for existing in owners):
+            return
+        owners.append(npc)
+
+    def speaker_hint_for_script(self, script_stem: object) -> Optional[str]:
+        """Compact speaker metadata for NCS translation of *script_stem*.
+
+        Returns ``None`` when no UTC assigns this script. Shared blueprints
+        (many goblins → one bark script) summarize race/gender instead of
+        listing every name.
+        """
+        key = str(script_stem or "").strip().casefold()
+        if not key:
+            return None
+        owners = self.script_owners.get(key) or []
+        if not owners:
+            return None
+
+        if len(owners) == 1:
+            npc = owners[0]
+            parts: List[str] = []
+            name = npc.display_name
+            if name:
+                parts.append(name)
+            if npc.race:
+                parts.append(npc.race)
+            if npc.gender:
+                parts.append(npc.gender)
+            if not parts:
+                parts.append(f"tag {npc.tag}" if npc.tag else "creature")
+            return "Speaker (OBJECT_SELF / in-character): " + ", ".join(parts)
+
+        races = sorted({n.race for n in owners if n.race})
+        genders = sorted({n.gender for n in owners if n.gender})
+        summary_parts: List[str] = ["in-character"]
+        if len(races) == 1:
+            summary_parts.append(races[0])
+        if len(genders) == 1:
+            summary_parts.append(genders[0])
+        summary_parts.append(f"shared by {len(owners)} creatures")
+        return "Speaker (OBJECT_SELF): " + ", ".join(summary_parts)
+
+    def enrich_ncs_item_context(self, item: Any) -> None:
+        """Append speaker metadata to a ``ncs_string`` item's context in place."""
+        meta = getattr(item, "metadata", None) or {}
+        if meta.get("type") != "ncs_string":
+            return
+        location = getattr(item, "location", None) or ""
+        stem = Path(str(location)).stem if location else ""
+        hint = self.speaker_hint_for_script(stem)
+        if not hint:
+            return
+        current = (getattr(item, "context", None) or "").strip()
+        if hint in current:
+            return
+        item.context = f"{current} {hint}".strip() if current else hint
+
+    def gender_for_character_name(self, name: object) -> Optional[str]:
+        """Return NPC gender when *name* matches a known FirstName or full name."""
+        needle = " ".join(str(name or "").split()).strip().casefold()
+        if not needle:
+            return None
+        for npc in self.npcs.values():
+            first = (npc.first_name or "").strip().casefold()
+            full = npc.display_name.casefold()
+            if needle == first or needle == full:
+                gender = (npc.gender or "").strip()
+                return gender or None
+        return None
 
     def get_all_names(self) -> List[Tuple[str, str]]:
         """Collect (name, category) pairs for glossary pre-translation.
@@ -416,20 +519,27 @@ class WorldScanner:
         race_str = race_label(race_id) or "Creature"
         gender_str = gender_label(gender_id)
 
+        npc = NPCInfo(
+            tag=tag,
+            first_name=first_name,
+            last_name=last_name,
+            description=desc,
+            race=race_str,
+            gender=gender_str,
+            conversation=conversation if isinstance(conversation, str) else str(conversation or ""),
+        )
+        for script_field in UTC_SCRIPT_FIELDS:
+            resref = data.get(script_field, "")
+            if isinstance(resref, bytes):
+                resref = resref.decode("ascii", errors="ignore")
+            context.register_script_owner(resref, npc)
+
         # Only add to context if it has a conversation or a description,
         # otherwise we might fill context window with generic monsters.
         # But for unique names, it's also worth keeping.
         if conversation or desc or first_name:
-            context.npcs[tag] = NPCInfo(
-                tag=tag,
-                first_name=first_name,
-                last_name=last_name,
-                description=desc,
-                race=race_str,
-                gender=gender_str,
-                conversation=conversation,
-            )
-            full_name = " ".join(p for p in (first_name, last_name) if p).strip()
+            context.npcs[tag] = npc
+            full_name = npc.display_name
             if full_name:
                 context.candidates.add(
                     full_name,

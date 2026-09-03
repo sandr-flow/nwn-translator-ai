@@ -81,7 +81,7 @@ export function useTranslation() {
     preserveTokens: true,
     useContext: true,
     playerGender: "male",
-    reasoningEffort: "",
+    reasoningEffort: "none",
     taskId: "",
     status: "",
     cancelling: false,

@@ -29,6 +29,7 @@ from ..ai_providers import (
 )
 from .deps import web_task_manager
 from .database import (
+    compact_stats_for_api,
     delete_task_row,
     get_item_translation_map_by_task,
     get_task_row,
@@ -346,7 +347,7 @@ async def task_status(
         phase=task.phase,
         result_filename=result_name,
         error=task.error,
-        stats=task.stats,
+        stats=compact_stats_for_api(task.stats),
         target_lang=target_lang,
     )
 
@@ -499,7 +500,7 @@ async def task_history(request: Request) -> TaskHistoryResponse:
         stats = None
         if r.get("stats"):
             try:
-                stats = json.loads(r["stats"])
+                stats = compact_stats_for_api(json.loads(r["stats"]))
             except (json.JSONDecodeError, TypeError):
                 pass
         items.append(

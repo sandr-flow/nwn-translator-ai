@@ -12,19 +12,30 @@ const err = computed(() => t.error || (t.status === "failed" ? i("result.unknown
 const filesProcessed = computed(() => t.stats?.files_processed ?? "—");
 const textsTranslated = computed(() => t.stats?.texts_translated ?? "—");
 const errCount = computed(() => t.stats?.total_errors ?? t.stats?.errors?.length ?? 0);
+const partial = computed(() => ok.value && Number(errCount.value) > 0);
 </script>
 
 <template>
   <div class="rounded-xl bg-nwn-panel/80 border border-nwn-muted/20 p-6">
     <template v-if="ok">
-      <h2 class="text-lg font-semibold text-emerald-400 mb-4">{{ i("result.done") }}</h2>
+      <h2
+        class="text-lg font-semibold mb-4"
+        :class="partial ? 'text-amber-400' : 'text-emerald-400'"
+      >
+        {{ partial ? i("result.partial") : i("result.done") }}
+      </h2>
+      <p v-if="partial" class="text-sm text-amber-200/90 mb-4">
+        {{ i("result.partialHint") }}
+      </p>
       <p class="text-sm text-nwn-muted mb-4">
         {{ i("result.file") }} <span class="text-gray-200">{{ t.resultFilename }}</span>
       </p>
       <div class="text-sm text-nwn-muted mb-4 space-y-1">
         <p>{{ i("result.filesProcessed") }} {{ filesProcessed }}</p>
         <p>{{ i("result.textsTranslated") }} {{ textsTranslated }}</p>
-        <p v-if="errCount">{{ i("result.errors") }} {{ errCount }}</p>
+        <p v-if="errCount" :class="partial ? 'text-amber-300' : ''">
+          {{ i("result.errors") }} {{ errCount }}
+        </p>
       </div>
       <div class="flex flex-wrap gap-3">
         <a

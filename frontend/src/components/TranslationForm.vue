@@ -32,15 +32,14 @@ const genderOptions = computed(() => [
   { value: "female", label: i("form.genderFemale") },
 ]);
 
-const REASONING_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "none"];
+const REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
 
-const reasoningOptions = computed(() => [
-  { value: "", label: i("form.reasoning.off") },
-  ...REASONING_LEVELS.map((v) => ({
+const reasoningOptions = computed(() =>
+  REASONING_LEVELS.map((v) => ({
     value: v,
     label: i(`form.reasoning.${v}`),
-  })),
-]);
+  }))
+);
 
 // Provider auto-detection from the API key prefix.
 // Must match the server-side rules in ai_providers/__init__.py.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nwn-modules-translator"
-version = "0.1001"
+version = "0.1002"
 description = "AI-powered tool for translating Neverwinter Nights modules"
 readme = "README.md"
 requires-python = ">=3.10"

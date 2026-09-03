@@ -35,21 +35,21 @@ export default {
     "form.reasoningEffort": "Reasoning (OpenRouter)",
     "form.reasoningEffortHint":
       "Для моделей с поддержкой расширенного рассуждения. Остальные продолжают работать: при отказе API запрос повторится без этого параметра.",
-    "form.reasoning.off": "Выкл.",
+    "form.reasoning.none": "Выкл.",
     "form.reasoning.minimal": "minimal — минимум",
     "form.reasoning.low": "low — низкий",
     "form.reasoning.medium": "medium — средний",
     "form.reasoning.high": "high — высокий",
     "form.reasoning.xhigh": "xhigh — максимум",
-    "form.reasoning.none": "none (явно)",
 
     // ModelSelect
     "model.choose": "Выбрать модель…",
     "model.chooseFromList": "Выбрать из списка",
     "model.custom": "Другая модель…",
-    "model.gpt41.desc": "Отличное качество, дороже",
-    "model.geminiFlash.desc": "Лучший баланс цены и качества",
-    "model.geminiFlashLite.desc": "Дешевле, больше ошибок",
+    "model.gemini31FlashLite.desc": "Дешевле и быстрее",
+    "model.gemini35FlashLite.desc": "Новый лайт",
+    "model.gemini38Flash.desc": "Баланс цены и качества",
+    "model.gpt56Luna.desc": "Качество OpenAI, дороже",
 
     // Languages
     "lang.auto": "Авто",
@@ -97,6 +97,8 @@ export default {
 
     // ResultPanel
     "result.done": "Готово",
+    "result.partial": "Перевод частичный",
+    "result.partialHint": "Часть строк не переведена. Модуль можно скачать, но в нём останется английский текст.",
     "result.file": "Файл:",
     "result.filesProcessed": "Обработано файлов:",
     "result.textsTranslated": "Текстов переведено:",
@@ -213,21 +215,21 @@ export default {
     "form.reasoningEffort": "Reasoning (OpenRouter)",
     "form.reasoningEffortHint":
       "For models that support extended reasoning. Others keep working: if the API rejects the parameter, the request is retried without it.",
-    "form.reasoning.off": "Off",
+    "form.reasoning.none": "Off",
     "form.reasoning.minimal": "minimal",
     "form.reasoning.low": "low",
     "form.reasoning.medium": "medium",
     "form.reasoning.high": "high",
     "form.reasoning.xhigh": "xhigh",
-    "form.reasoning.none": "none (explicit)",
 
     // ModelSelect
     "model.choose": "Choose model…",
     "model.chooseFromList": "Choose from list",
     "model.custom": "Other model…",
-    "model.gpt41.desc": "Excellent quality, higher cost",
-    "model.geminiFlash.desc": "Best balance of price and quality",
-    "model.geminiFlashLite.desc": "Cheaper, more errors",
+    "model.gemini31FlashLite.desc": "Cheaper and faster",
+    "model.gemini35FlashLite.desc": "Newer lite",
+    "model.gemini38Flash.desc": "Best balance of price and quality",
+    "model.gpt56Luna.desc": "OpenAI quality, higher cost",
 
     // Languages
     "lang.auto": "Auto",
@@ -275,6 +277,8 @@ export default {
 
     // ResultPanel
     "result.done": "Done",
+    "result.partial": "Partial translation",
+    "result.partialHint": "Some lines were not translated. You can download the module, but English text will remain.",
     "result.file": "File:",
     "result.filesProcessed": "Files processed:",
     "result.textsTranslated": "Texts translated:",

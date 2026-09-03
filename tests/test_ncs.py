@@ -655,6 +655,9 @@ class TestStringFilter:
             == "alphabet_dump"
         )
         assert ncs_hard_veto_reason("Welcome, adventurer!") is None
+        assert ncs_hard_veto_reason("You must wait ") == "sentence_fragment"
+        assert ncs_hard_veto_reason(" hour(s) before resting again.") == "sentence_fragment"
+        assert ncs_hard_veto_reason("Welcome, adventurer! ") is None
 
     # Source-based classification now lives in nss_index; see
     # tests/test_nss_index.py for the equivalents of the old

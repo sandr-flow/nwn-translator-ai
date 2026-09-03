@@ -62,6 +62,76 @@ from ..telemetry import (
 #: ``InternalServerError`` covers every HTTP status >= 500 from the gateway.
 _RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError, InternalServerError)
 
+#: Shared exponential wait; floor raised when ``Retry-After`` exceeds it.
+_EXPONENTIAL_WAIT = wait_exponential(multiplier=1, min=2, max=120)
+
+_RETRY_AFTER_RE = re.compile(r"retry[- ]after[:\s=]+(\d+(?:\.\d+)?)", re.IGNORECASE)
+
+
+def _extract_retry_after_seconds(exc: BaseException) -> Optional[float]:
+    """Parse ``Retry-After`` from a RateLimitError, HTTP response, or message."""
+    if isinstance(exc, RateLimitError) and exc.retry_after_seconds is not None:
+        try:
+            value = float(exc.retry_after_seconds)
+        except (TypeError, ValueError):
+            value = None
+        else:
+            if value > 0:
+                return value
+
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if headers is not None:
+        raw = None
+        try:
+            raw = headers.get("retry-after") or headers.get("Retry-After")
+        except Exception:
+            raw = None
+        if raw is not None:
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                value = None
+            else:
+                if value > 0:
+                    return value
+
+    match = _RETRY_AFTER_RE.search(str(exc))
+    if match:
+        try:
+            value = float(match.group(1))
+        except (TypeError, ValueError):
+            return None
+        if value > 0:
+            return value
+    return None
+
+
+def _wait_with_retry_after(retry_state: Any) -> float:
+    """Exponential backoff floored at the provider's ``Retry-After`` hint."""
+    base = float(_EXPONENTIAL_WAIT(retry_state))
+    outcome = getattr(retry_state, "outcome", None)
+    exc = outcome.exception() if outcome is not None and outcome.failed else None
+    retry_after = _extract_retry_after_seconds(exc) if exc is not None else None
+    if retry_after is None:
+        return base
+    # Small jitter so concurrent slots do not stampede the same second.
+    jitter = 1.0 + (0.05 * (hash(str(exc)) % 21) / 20.0)
+    return max(base, retry_after) * jitter
+
+
+def _is_rate_or_budget_error(error_msg: str, exc: Exception) -> bool:
+    """True for HTTP 429/402 and OpenRouter in-flight budget exhaustion."""
+    status = getattr(exc, "status_code", None)
+    if status in (429, 402):
+        return True
+    lower = error_msg.lower()
+    if "rate_limit" in lower or "429" in lower:
+        return True
+    if "402" in lower or "in_flight_budget" in lower:
+        return True
+    return False
+
 
 class OpenRouterError(ProviderError):
     """OpenRouter-specific error."""
@@ -88,19 +158,14 @@ class OpenRouterProvider(BaseAIProvider):
     PROVIDER_NAME = "openrouter"
 
     #: Default model — change via config or ``--model`` CLI flag.
-    DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+    DEFAULT_MODEL = "google/gemini-3.8-flash"
 
-    #: A curated shortlist for reference; not an exhaustive list.
+    #: A curated shortlist for the web UI; not an exhaustive list.
     POPULAR_MODELS = [
-        "deepseek/deepseek-v3.2",
-        "minimax/minimax-m2.7",
-        "openai/gpt-oss-120b",
-        "openai/gpt-4o",
-        "anthropic/claude-3.5-sonnet",
-        "google/gemini-2.0-flash-001",
-        "deepseek/deepseek-chat",
-        "deepseek/deepseek-r1",
-        "meta-llama/llama-3.3-70b-instruct",
+        "google/gemini-3.1-flash-lite",
+        "google/gemini-3.5-flash-lite",
+        "google/gemini-3.8-flash",
+        "openai/gpt-5.6-luna",
     ]
 
     def __init__(
@@ -115,7 +180,7 @@ class OpenRouterProvider(BaseAIProvider):
 
         Args:
             api_key: OpenRouter API key (sk-or-…).
-            model: Model slug (default: deepseek/deepseek-v3.2).
+            model: Model slug (default: google/gemini-3.8-flash).
             site_url: Your app's URL, forwarded as HTTP-Referer header.
                 OpenRouter uses this for attribution / rate-limit tiers.
             site_name: Your app's name, forwarded as X-Title header.
@@ -352,13 +417,16 @@ class OpenRouterProvider(BaseAIProvider):
     def _map_openrouter_exception(self, e: Exception) -> NoReturn:
         """Raise RateLimitError or OpenRouterError from a caught API exception."""
         error_msg = str(e)
-        if "rate_limit" in error_msg.lower() or "429" in error_msg:
-            raise RateLimitError(f"{self.PROVIDER_LABEL} rate limit exceeded: {error_msg}") from e
+        if _is_rate_or_budget_error(error_msg, e):
+            raise RateLimitError(
+                f"{self.PROVIDER_LABEL} rate limit exceeded: {error_msg}",
+                retry_after_seconds=_extract_retry_after_seconds(e),
+            ) from e
         raise OpenRouterError(f"{self.PROVIDER_LABEL} translation failed: {error_msg}") from e
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
+        wait=_wait_with_retry_after,
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
@@ -454,7 +522,7 @@ class OpenRouterProvider(BaseAIProvider):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
+        wait=_wait_with_retry_after,
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
@@ -599,7 +667,7 @@ class OpenRouterProvider(BaseAIProvider):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
+        wait=_wait_with_retry_after,
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
@@ -659,7 +727,7 @@ class OpenRouterProvider(BaseAIProvider):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
+        wait=_wait_with_retry_after,
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,
@@ -1000,7 +1068,7 @@ class OpenRouterProvider(BaseAIProvider):
 
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=60),
+        wait=_wait_with_retry_after,
         retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
         before_sleep=before_sleep_log(logger, logging.WARNING),
         reraise=True,

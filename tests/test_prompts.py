@@ -237,6 +237,8 @@ class TestEntityExtractionPrompt:
         prompt = build_entity_extraction_system_prompt("English")
         assert "PassGate" not in prompt
         assert "Western Gate" in prompt
+        assert "sword-one" in prompt
+        assert "staff-one" not in prompt
 
 
 class TestStableVariableSplit:

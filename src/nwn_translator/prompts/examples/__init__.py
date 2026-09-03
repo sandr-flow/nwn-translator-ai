@@ -9,6 +9,8 @@ Each language module exposes an ``EXAMPLES`` dict with the following keys:
 - ``dialog_output``: dict mapping node IDs to sample translated lines (for JSON output example)
 - ``glossary_personal``: list of (english, translated) for glossary personal-name examples
 - ``glossary_descriptive``: list of (english, translated_good, translated_bad) for glossary descriptive examples
+- ``glossary_nicknames``: optional list of (english, good, bad_translit, bad_numeral)
+  for vocative epithets; missing keys fall back to English
 """
 
 from __future__ import annotations

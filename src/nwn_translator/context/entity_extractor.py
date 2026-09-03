@@ -299,9 +299,15 @@ def _select_texts(items: List["TranslatableItem"]) -> List[str]:
     out: List[str] = []
     for item in items:
         text = (item.text or "").strip()
-        if len(text) < _MIN_TEXT_LENGTH:
+        if not text:
             continue
-        if should_skip_entity_source_text(text, item.metadata or {}):
+        meta = item.metadata or {}
+        # Proven player-facing NCS barks are often short ("Stay back, sword-one!")
+        # but still carry nicknames the glossary must lock.
+        short_ncs_ok = meta.get("type") == "ncs_string" and bool(meta.get("proven_player"))
+        if len(text) < _MIN_TEXT_LENGTH and not short_ncs_ok:
+            continue
+        if should_skip_entity_source_text(text, meta):
             continue
         if text in seen:
             continue

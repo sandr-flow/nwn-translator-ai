@@ -37,6 +37,15 @@ class TestOpenRouterProviderInit:
             p = OpenRouterProvider(api_key=FAKE_KEY)
         assert p.model == OpenRouterProvider.DEFAULT_MODEL
 
+    def test_popular_models_pool(self):
+        assert OpenRouterProvider.DEFAULT_MODEL == "google/gemini-3.8-flash"
+        assert OpenRouterProvider.POPULAR_MODELS == [
+            "google/gemini-3.1-flash-lite",
+            "google/gemini-3.5-flash-lite",
+            "google/gemini-3.8-flash",
+            "openai/gpt-5.6-luna",
+        ]
+
     def test_custom_model(self):
         """Custom model slug is stored correctly."""
         with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):

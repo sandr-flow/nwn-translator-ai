@@ -430,24 +430,51 @@ class TaskManager:
             except Exception:
                 pass
             task.progress = 1.0
+            task.phase = None
+            task.current_file = None
             task.status = "completed"
             update_task_row(
                 task.task_id,
                 status="completed",
+                progress=1.0,
+                phase=None,
+                current_file=None,
                 result_path=str(task.result_path),
                 extract_dir=str(task.extract_dir),
                 stats=task.stats,
+                updated_at=time.time(),
             )
         except TranslationCancelled:
             logger.info("Translation cancelled for task %s", task.task_id)
             task.status = "cancelled"
             task.error = None
-            update_task_row(task.task_id, status="cancelled")
+            task.progress = 1.0
+            task.phase = None
+            task.current_file = None
+            update_task_row(
+                task.task_id,
+                status="cancelled",
+                progress=1.0,
+                phase=None,
+                current_file=None,
+                updated_at=time.time(),
+            )
         except Exception as e:
             logger.exception("Translation failed for task %s", task.task_id)
             task.error = str(e)
             task.status = "failed"
-            update_task_row(task.task_id, status="failed", error=str(e))
+            task.progress = 1.0
+            task.phase = None
+            task.current_file = None
+            update_task_row(
+                task.task_id,
+                status="failed",
+                error=str(e),
+                progress=1.0,
+                phase=None,
+                current_file=None,
+                updated_at=time.time(),
+            )
         finally:
             task.mark_done()
             self.release_active(task.client_ip, task.task_id)

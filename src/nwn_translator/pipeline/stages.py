@@ -639,6 +639,9 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
     non_dialog_items: List[TranslatableItem] = []
     for file_path, (_parsed_data, extracted, _file_ext) in extracted_map.items():
         if file_path not in dialog_files:
+            if state.world_context is not None:
+                for item in extracted.items:
+                    state.world_context.enrich_ncs_item_context(item)
             non_dialog_items.extend(extracted.items)
 
     # Initialize translation managers for Phase B (need glossary).

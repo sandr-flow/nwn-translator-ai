@@ -192,7 +192,8 @@ def update_task_row(task_id: str, **fields: Any) -> None:
     """Update one or more columns on a task row.
 
     Supported fields: status, progress, phase, current_file, result_path,
-    extract_dir, input_path, error, stats, target_lang, source_lang.
+    extract_dir, input_path, error, stats, target_lang, source_lang,
+    updated_at, model.
     """
     if not fields:
         return
@@ -210,6 +211,35 @@ def update_task_row(task_id: str, **fields: Any) -> None:
     with _lock:
         db.execute(f"UPDATE tasks SET {cols} WHERE task_id = ?", vals)  # noqa: S608
         db.commit()
+
+
+#: Max error strings returned on status/history polls (full list stays in SQLite).
+_STATS_ERROR_SAMPLE_LIMIT = 5
+
+
+def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return a poll-safe copy of task stats without unbounded error dumps.
+
+    Keeps ``total_errors`` and a short ``errors`` sample. Nested
+    ``metrics.requests`` (per-LLM-call telemetry) is dropped from the API
+    projection; the full payload remains in the SQLite ``stats`` column.
+    """
+    if stats is None:
+        return None
+    out = dict(stats)
+    errors = out.get("errors")
+    if isinstance(errors, list):
+        total = out.get("total_errors")
+        if not isinstance(total, int):
+            total = len(errors)
+            out["total_errors"] = total
+        out["errors"] = errors[:_STATS_ERROR_SAMPLE_LIMIT]
+    metrics = out.get("metrics")
+    if isinstance(metrics, dict):
+        metrics_out = dict(metrics)
+        metrics_out.pop("requests", None)
+        out["metrics"] = metrics_out
+    return out
 
 
 def get_task_row(task_id: str) -> Optional[Dict[str, Any]]:

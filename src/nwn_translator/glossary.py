@@ -259,6 +259,7 @@ class GlossaryBuilder:
                 provider,
                 config,
                 progress_callback,
+                world_context,
             ),
             timeout=overall_timeout,
         )
@@ -290,6 +291,8 @@ class GlossaryBuilder:
             )
             return Glossary()
 
+        GlossaryBuilder._seed_character_name_parts(all_entries, seen)
+
         missing = len(sorted_names) - len(all_entries)
         if missing > 0:
             logger.warning(
@@ -311,6 +314,7 @@ class GlossaryBuilder:
         provider: "OpenRouterProvider",
         config: "TranslationConfig",
         progress_callback: Optional[ProgressCallback],
+        world_context: Optional["WorldContextType"] = None,
     ) -> List[Dict[str, str] | BaseException]:
         """Run all glossary batches concurrently with a semaphore."""
         sem = asyncio.Semaphore(max(1, config.max_concurrent_requests))
@@ -326,6 +330,7 @@ class GlossaryBuilder:
                 batch_idx,
                 total,
                 progress_callback,
+                world_context,
             )
 
         results = await asyncio.gather(
@@ -343,6 +348,7 @@ class GlossaryBuilder:
         batch_idx: int,
         total_batches: int,
         progress_callback: Optional[ProgressCallback],
+        world_context: Optional["WorldContextType"] = None,
     ) -> Dict[str, str]:
         """Translate one batch of names with retries, merging partial results.
 
@@ -390,7 +396,7 @@ class GlossaryBuilder:
                 )
 
             names_lines = [
-                f"- {name} ({attempt_seen[name]})"
+                GlossaryBuilder._format_glossary_name_line(name, attempt_seen[name], world_context)
                 for name in sorted(attempt_seen.keys(), key=str.lower)
             ]
             user_prompt = (
@@ -514,6 +520,75 @@ class GlossaryBuilder:
             )
 
         return all_batch_entries
+
+    @staticmethod
+    def _format_glossary_name_line(
+        name: str,
+        category: str,
+        world_context: Optional["WorldContextType"] = None,
+    ) -> str:
+        """One glossary user-prompt line with category / gender / field hints."""
+        hints: List[str] = [category or "unknown"]
+        cat = (category or "").strip().lower()
+        if cat == "nickname":
+            hints.append("vocative epithet; translate meaning, not a name")
+        gender = None
+        if world_context is not None and hasattr(world_context, "gender_for_character_name"):
+            gender = world_context.gender_for_character_name(name)
+        if gender and cat in {"character", "nickname"}:
+            gender_l = gender.strip().lower()
+            words = name.split()
+            if len(words) == 1:
+                hints.append(f"{gender_l} given name")
+            else:
+                hints.append(gender_l)
+            first_only = False
+            full_match = False
+            for npc in getattr(world_context, "npcs", {}).values():
+                first = (getattr(npc, "first_name", "") or "").strip().casefold()
+                display = getattr(npc, "display_name", "") or ""
+                needle = name.strip().casefold()
+                if needle and needle == first:
+                    first_only = True
+                if needle and needle == display.casefold():
+                    full_match = True
+            if first_only and not full_match:
+                hints.append("FirstName")
+            elif full_match:
+                hints.append("FirstName/LastName")
+        return f"- {name} ({', '.join(hints)})"
+
+    @staticmethod
+    def _seed_character_name_parts(
+        entries: Dict[str, str],
+        categories: Dict[str, str],
+    ) -> None:
+        """Add FirstName/LastName exact keys from multi-word character entries.
+
+        UTC FirstName fields are translated separately; without these seeds a
+        glossary hit on ``Dawn Ioza`` would not cover bare ``Dawn``.
+        """
+        extras: Dict[str, str] = {}
+        for name, translated in list(entries.items()):
+            cat = (categories.get(name) or "").strip().lower()
+            if cat not in {"character", "nickname"}:
+                continue
+            en_parts = str(name).split()
+            tr_parts = str(translated).split()
+            if len(en_parts) < 2 or len(en_parts) != len(tr_parts):
+                continue
+            for en_part, tr_part in zip(en_parts, tr_parts):
+                if not en_part or not tr_part:
+                    continue
+                if en_part in entries or en_part in extras:
+                    continue
+                extras[en_part] = tr_part
+        if extras:
+            logger.info(
+                "Glossary: seeded %d name-part exact entries from multi-word characters",
+                len(extras),
+            )
+            entries.update(extras)
 
     @staticmethod
     async def _call_llm_async(

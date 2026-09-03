@@ -250,6 +250,14 @@ def ncs_hard_veto_reason(text: str, proven_player: bool = False) -> Optional[str
     if not stripped:
         return "empty"
 
+    # Concatenation fragments keep a leading space (" hour(s)…") or a trailing
+    # space on an unfinished prefix ("You must wait "). A finished bark that
+    # merely has a stray trailing space after ".!?" is left alone.
+    if text[:1].isspace():
+        return "sentence_fragment"
+    if text[-1:].isspace() and stripped[-1] not in ".!?;:…":
+        return "sentence_fragment"
+
     if _RE_ALPHABET_DUMP.match(stripped):
         return "alphabet_dump"
 

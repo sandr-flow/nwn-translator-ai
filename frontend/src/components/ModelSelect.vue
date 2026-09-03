@@ -5,9 +5,10 @@ import { useI18n } from "../composables/useI18n.js";
 const { t: i } = useI18n();
 
 const presetDefs = [
-  { value: "openai/gpt-4.1", label: "GPT-4.1", descKey: "model.gpt41.desc" },
-  { value: "google/gemini-3-flash-preview", label: "Gemini Flash", descKey: "model.geminiFlash.desc" },
-  { value: "google/gemini-3.1-flash-lite-preview", label: "Gemini Flash Lite", descKey: "model.geminiFlashLite.desc" },
+  { value: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", descKey: "model.gemini31FlashLite.desc" },
+  { value: "google/gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", descKey: "model.gemini35FlashLite.desc" },
+  { value: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash", descKey: "model.gemini38Flash.desc" },
+  { value: "openai/gpt-5.6-luna", label: "GPT-5.6 Luna", descKey: "model.gpt56Luna.desc" },
 ];
 
 const CUSTOM_KEY = "__custom__";

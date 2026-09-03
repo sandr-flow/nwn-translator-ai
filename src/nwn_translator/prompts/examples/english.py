@@ -12,6 +12,8 @@ EXAMPLES = {
         ("Perin Izrick", "Perin Izrick"),
         ("Talias Allenthel", "Talias Allenthel"),
         ("Drixie", "Drixie"),
+        ("Dawn", "Dawn"),
+        ("Thrall", "Thrall"),
     ],
     "speech_low_int": [
         (
@@ -47,6 +49,8 @@ EXAMPLES = {
     "glossary_personal": [
         ("Perin Izrick", "Perin Izrick"),
         ("Drixie", "Drixie"),
+        ("Dawn", "Dawn"),
+        ("Thrall", "Thrall"),
     ],
     "glossary_descriptive": [
         ("Inn of the Lance", "Inn of the Lance", "Inn of ze Lans"),
@@ -54,5 +58,9 @@ EXAMPLES = {
         ("Dark Ranger", "Dark Ranger", "Darkranger"),
         ("Horde Raven", "Horde Raven", "HordeRaven"),
         ("Fearling", "Fearling", "Firling"),
+    ],
+    # (english, good, bad transliteration, bad numeral calque of "-one")
+    "glossary_nicknames": [
+        ("sword-one", "you with the sword", "Sword-uan", "sword number one"),
     ],
 }

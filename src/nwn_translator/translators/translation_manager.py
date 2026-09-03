@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, cast
 from tqdm import tqdm
 
 from ..config import TranslationCancelled, TranslationConfig
+from ..glossary import GlossaryBuilder
 from ..prompts._builder import (
     CONTENT_PROFILE_DEFAULT,
     CONTENT_PROFILE_SCRIPT_MESSAGE,
@@ -28,6 +29,20 @@ from ..extractors import ExtractedContent
 from ..ai_providers import BaseAIProvider, TranslationItem, TranslationResult
 from .prefix_translation_cache import PrefixAwareTranslationCache
 from .token_handler import TokenHandler, sanitize_text
+
+
+def _unescape_literal_newlines(original: str, translated: str) -> str:
+    """Turn model ``\\n`` sequences into real newlines when the source has them.
+
+    Only runs when *original* contains a real newline. Leaves ordinary
+    backslashes alone when the source has no line breaks.
+    """
+    if "\n" not in original and "\r" not in original:
+        return translated
+    if "\\n" not in translated and "\\r" not in translated:
+        return translated
+    return translated.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+
 
 # Minimum length (characters) for a cached key to qualify as a prefix match.
 _MIN_PREFIX_LEN = 20
@@ -535,9 +550,11 @@ class TranslationManager:
                     self.translation_cache[cache_key],
                     allow_cleanup=True,
                 )
-                translations[item.text] = outcome.final_text
+                translated = _unescape_literal_newlines(item.text, outcome.final_text)
+                translated = GlossaryBuilder._restore_wrapping_quotes(item.text, translated)
+                translations[item.text] = translated
                 if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
-                    self.ncs_translations_by_item_id[item.item_id] = outcome.final_text
+                    self.ncs_translations_by_item_id[item.item_id] = translated
                     self._increment_ncs_count("translated")
                 with self._stats_lock:
                     self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
@@ -1042,6 +1059,8 @@ class TranslationManager:
             return False
 
         translated = outcome.final_text
+        translated = _unescape_literal_newlines(item.text, translated)
+        translated = GlossaryBuilder._restore_wrapping_quotes(item.text, translated)
         with self._stats_lock:
             if outcome.exact_valid:
                 self.translation_cache[cache_key] = full_translated_sanitized

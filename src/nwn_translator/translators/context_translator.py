@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ..ai_providers import BaseAIProvider
+from ..ai_providers.base import RateLimitError
 from ..ai_providers.openrouter_provider import OpenRouterProvider
 from ..config import (
     TranslationCancelled,
@@ -667,6 +668,19 @@ class ContextualTranslationManager:
             parsed_group = self._request_group_translation(group, label)
         except TranslationCancelled:
             raise
+        except RateLimitError as exc:
+            # Group request already exhausted provider retries. Fan-out into
+            # one call per file would multiply in-flight budget pressure.
+            logger.warning(
+                "Dialog group %s: rate/budget limit (%s); not falling back to single files.",
+                label,
+                exc,
+            )
+            for entry in group:
+                errors.append((entry.file_path, exc))
+                if item_progress is not None and entry.item_budget > 0:
+                    item_progress.bump(by=entry.item_budget, filename=entry.file_path.name)
+            return translations, errors
         except Exception as exc:
             logger.warning(
                 "Dialog group %s: request failed (%s); falling back to single files.",
@@ -1191,12 +1205,18 @@ class ContextualTranslationManager:
                     key,
                 )
 
+            # DialogExtractor item_ids are ``{stem}:entry:{i}`` / ``{stem}:reply:{i}``;
+            # tree keys are ``E{i}`` / ``R{i}`` with the same list index.
+            kind = "entry" if key.startswith("E") else "reply"
+            node_index = key[1:] if len(key) > 1 else key
+            item_id = f"{file_path.stem}:{kind}:{node_index}"
             log_entry = {
                 "original": original_text,
                 "translated": final_translated,
                 "context": f"Dialog node {key} in {file_path.name}",
                 "model": self.provider.model,
                 "file": file_path.name,
+                "item_id": item_id,
             }
             try:
                 self._log_writer.write(log_entry)

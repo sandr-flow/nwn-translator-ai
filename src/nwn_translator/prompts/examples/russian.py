@@ -12,6 +12,8 @@ EXAMPLES = {
         ("Perin Izrick", "Перин Изрик"),
         ("Talias Allenthel", "Талиас Аллентел"),
         ("Drixie", "Дрикси"),
+        ("Dawn", "Доун"),
+        ("Thrall", "Тралл"),
     ],
     "declension_note": (
         "DECLENSION OF FOREIGN NAMES in Russian:\n"
@@ -70,6 +72,8 @@ EXAMPLES = {
     "glossary_personal": [
         ("Perin Izrick", "Перин Изрик"),
         ("Drixie", "Дрикси"),
+        ("Dawn", "Доун"),
+        ("Thrall", "Тралл"),
     ],
     "glossary_descriptive": [
         ("Inn of the Lance", "Таверна Копья", "Инн оф зэ Ланс"),
@@ -77,5 +81,9 @@ EXAMPLES = {
         ("Dark Ranger", "Тёмный Рейнджер", "Дарк Рейнджер"),
         ("Horde Raven", "Стайный Ворон", "ХордРейвен"),
         ("Fearling", "Страхолик", "Фирлинг"),
+    ],
+    # (english, good, bad transliteration, bad numeral calque of "-one")
+    "glossary_nicknames": [
+        ("sword-one", "ты с мечом", "Сворд-уан", "меч-один"),
     ],
 }

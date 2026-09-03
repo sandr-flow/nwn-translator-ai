@@ -15,6 +15,24 @@ from typing import Any, Dict, List, Tuple
 
 from .examples import get_examples
 
+
+def _nickname_examples(target_lang: str) -> List[Tuple[str, str, str, str]]:
+    """Few-shot nickname tuples: (english, good, bad_translit, bad_numeral)."""
+    raw = get_examples(target_lang).get("glossary_nicknames")
+    if not raw:
+        raw = get_examples("english")["glossary_nicknames"]
+    return [(str(a), str(b), str(c), str(d)) for a, b, c, d in raw]
+
+
+def _format_nickname_examples(target_lang: str, *, indent: str = "      ") -> str:
+    lines = [
+        f'{indent}- "{eng}" -> "{good}" (GOOD) \u2014 NOT "{bad_t}" '
+        f'(transliteration) \u2014 NOT "{bad_n}" (numeral calque of "-one")'
+        for eng, good, bad_t, bad_n in _nickname_examples(target_lang)
+    ]
+    return "\n".join(lines)
+
+
 #: Deterministic content profile used by :func:`build_translation_system_prompt_parts`
 #: to swap between compact and full rule sets.  Phase 3.4: ``short_label`` skips
 #: speech-style and player-gender rules (irrelevant for names/tags) so the cached
@@ -98,6 +116,7 @@ def _proper_names_rules(target_lang: str) -> str:
         for eng, good, bad in descriptive
     )
     pers_lines = "\n".join(f'      - "{eng}" -> "{tr}"' for eng, tr in personal)
+    nick_lines = _format_nickname_examples(target_lang)
 
     declension_note = ex.get("declension_note", "")
     declension_block = f"   {declension_note}" if declension_note else ""
@@ -107,11 +126,23 @@ def _proper_names_rules(target_lang: str) -> str:
         "   a) Descriptive/meaningful names: TRANSLATE the meaning. "
         "NEVER produce phonetic transliterations of English words.\n"
         f"      Examples:\n{desc_lines}\n"
-        "   b) Personal names (first/last names of characters): TRANSLITERATE.\n"
+        "   b) Personal names (first/last names of characters): TRANSLITERATE, "
+        "even when the token is also an ordinary English word "
+        '(given name Dawn/Grace/Hunter — NOT a calque of "dawn"/"grace"/"hunter").\n'
         f"      Examples:\n{pers_lines}\n"
-        "   When in doubt whether a name is descriptive or personal, check: does the name "
-        "consist of ordinary English words with clear meaning? Then translate the meaning. "
-        "Is it a made-up fantasy name? Then transliterate.\n"
+        "   c) Recurring nicknames and vocatives used as forms of address "
+        "(category nickname): TRANSLATE the meaning as a short natural epithet "
+        '("the one who is/has X"), not as a personal name. Fit vocative vs '
+        "grammatical object to the sentence; do not freeze an English-shaped "
+        "compound. Do NOT phonetic-transliterate ordinary English words. "
+        'Do NOT calque the English suffix "-one" as a numeral '
+        "— that suffix is speaker pidgin, not a number.\n"
+        f"      Examples:\n{nick_lines}\n"
+        "   When in doubt: character given/family names transliterate. "
+        "Nicknames built from ordinary English words translate as an epithet. "
+        "Multi-word descriptive titles (locations, items, quests composed of "
+        "ordinary English words) translate the meaning. Made-up fantasy words "
+        "transliterate.\n"
         f"{declension_block}"
     )
 
@@ -411,8 +442,8 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
         'adventurer(s), yes?"\n'
         '[4] "Hello! I\'m the Magical Plot Fairy. Do you need a recap?"\n'
         '[5] "Contact R. Freely in Stout Village for details."\n'
-        '[6] "Stay back, staff-one!"\n'
-        '[7] "Must.. protect... staff-one... ghh"\n\n'
+        '[6] "Stay back, sword-one!"\n'
+        '[7] "Must.. protect... sword-one... ghh"\n\n'
         "Output:\n"
         '{"entities": [\n'
         '  {"name": "Stout Village", "type": "location"},\n'
@@ -421,7 +452,7 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
         '  {"name": "Guild of Middlemen", "type": "organization"},\n'
         '  {"name": "Magical Plot Fairy", "type": "character"},\n'
         '  {"name": "R. Freely", "type": "character"},\n'
-        '  {"name": "staff-one", "type": "nickname"}\n'
+        '  {"name": "sword-one", "type": "nickname"}\n'
         "]}\n\n"
         "Negative examples that MUST return no entities:\n"
         '[0] "DMFI Admin Server Wand"\n'
@@ -462,6 +493,7 @@ def build_glossary_system_prompt(target_lang: str) -> str:
 
     pers_ex = ", ".join(f'"{eng}" -> "{tr}"' for eng, tr in personal)
     desc_ex = ", ".join(f'"{eng}" -> "{good}" (NOT "{bad}")' for eng, good, bad in descriptive)
+    nick_ex = _format_nickname_examples(target_lang, indent="  ")
 
     return (
         f"You are preparing a translation glossary for the game Neverwinter Nights.\n"
@@ -469,16 +501,30 @@ def build_glossary_system_prompt(target_lang: str) -> str:
         "Translate each proper name below into the target language.\n\n"
         "KEY RULES \u2014 translating vs transliterating:\n"
         "- Personal names (character first/last names, unique fantasy names): "
-        "TRANSLITERATE into target-language script.\n"
+        "TRANSLITERATE into target-language script, even when the token coincides "
+        "with an ordinary English word (Dawn, Grace, Hunter as given names — "
+        "NOT calques of the common nouns).\n"
         f"  Examples: {pers_ex}\n"
+        "- Nicknames / vocatives (category nickname): TRANSLATE the meaning as a "
+        'short natural epithet ("the one who is/has X"), not as a personal name. '
+        "Fit vocative vs grammatical object to the sentence; do not freeze an "
+        "English-shaped compound. Do NOT phonetic-transliterate ordinary English "
+        'words. Do NOT calque the English suffix "-one" as a numeral '
+        "— that suffix is speaker pidgin, not a number.\n"
+        f"  Examples:\n{nick_ex}\n"
         "- Descriptive/meaningful names (locations, items, quests, titles composed of "
         "real English words with clear meaning): TRANSLATE the meaning. "
         "NEVER produce phonetic transliteration of English words.\n"
         f"  Examples: {desc_ex}\n"
-        "- When in doubt: if the name consists of ordinary English words, translate the meaning. "
-        "If it is a made-up fantasy word, transliterate.\n\n"
-        "Return each value in nominative (dictionary) form only; "
-        "the game will inflect in context later.\n\n"
+        "- When in doubt: character given/family names transliterate. "
+        "Nicknames built from ordinary English words translate as an epithet. "
+        "Multi-word descriptive titles translate the meaning. "
+        "Made-up fantasy words transliterate.\n\n"
+        "Hints in parentheses may include gender (feminine/masculine) and field "
+        "(FirstName) — use them; do not put those hints into JSON keys.\n\n"
+        "Return personal names in nominative (dictionary) form only; the game will "
+        "inflect in context later. For nicknames, store a short epithet the "
+        "translator can adapt (vocative vs object), not a frozen compound.\n\n"
         "OUTPUT: A single JSON object whose keys are the EXACT English name "
         "(WITHOUT the category hint in parentheses) and values are the translations.\n"
         'Example: the list entry "- Perin Izrick (character)" '

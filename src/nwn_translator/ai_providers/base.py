@@ -19,9 +19,20 @@ class ProviderError(Exception):
 
 
 class RateLimitError(ProviderError):
-    """Exception raised when rate limit is exceeded."""
+    """Exception raised when rate limit or in-flight budget is exceeded.
 
-    pass
+    ``retry_after_seconds``, when set, is the provider's ``Retry-After`` hint
+    (seconds). Tenacity wait callbacks should honour it as a floor.
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        retry_after_seconds: Optional[float] = None,
+    ) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass

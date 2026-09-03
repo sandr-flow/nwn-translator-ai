@@ -16,7 +16,7 @@ def db_connection(request: Request) -> sqlite3.Connection:
 
 
 def web_task_manager(request: Request) -> TaskManager:
-    """In-process task manager shared with background workers."""
+    """In-process task manager shared with the background translation workers."""
     tm = getattr(request.app.state, "task_manager", None)
     if isinstance(tm, TaskManager):
         return tm

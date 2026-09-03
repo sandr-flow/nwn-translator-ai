@@ -1,11 +1,11 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+Canonical conventions for coding agents. [CLAUDE.md](CLAUDE.md) points here.
 
 ## Language conventions
 
-- **User-facing replies must be in Russian.** Every chat message back to the user (explanations, status updates, summaries, questions) is written in Russian.
-- **Code stays in English.** All identifiers, comments, and docstrings are written in English regardless of the chat language. Existing user-facing UI strings in Russian (for example `frontend/src/locales.js` RU block and FastAPI error messages) remain as they are; do not translate them to English.
+- **Replies to the user are in Russian.**
+- **Code stays in English** (identifiers, comments, docstrings). Existing Russian UI strings (`frontend/src/locales.js` RU block, FastAPI error messages) stay Russian.
 
 ## Working principles
 
@@ -57,83 +57,86 @@ For multi-step tasks, state a brief plan with a verification step per item:
 ```
 Strong success criteria let you loop independently. Weak criteria ("make it work") force constant clarification.
 
+### Documentation
+Public docs describe the product as it is. Do not pin historical data: old metrics, pass/fail snapshots, "we used to X / then dropped Y", changelog-in-disguise. Scratch and one-off measurements stay in `docs/local/` (gitignored).
+
 ## Project
 
-AI-powered translator for Neverwinter Nights (NWN/NWN:EE) modules. It takes a `.mod`, `.erf`, or `.hak` archive, extracts translatable strings from binary GFF resources and compiled NCS scripts, translates them via an OpenAI-compatible provider, and byte-patches the strings back into a new archive without fully rewriting GFF files.
+Translator for Neverwinter Nights (NWN/NWN:EE) `.mod` / `.erf` / `.hak` archives: extract strings from GFF and compiled NCS, translate via an OpenAI-compatible provider (OpenRouter or POLZA.AI, chosen by API key prefix), byte-patch them back.
 
-The active user-facing surface is a FastAPI + Vue web UI plus the Python library API. A stale historical `nwn-translate` CLI exists only in generated `egg-info` / `__pycache__` artifacts; do not document or rely on it unless a source `src/nwn_translator/cli.py` and matching `pyproject.toml` entrypoint are restored.
+User-facing surface: FastAPI + Vue web UI and the Python library (`translate_module`). There is no CLI.
 
 ## Common commands
 
 ```bash
-# Install for development
-pip install -e ".[dev]"          # core + dev tools
-pip install -e ".[web]"          # adds FastAPI / uvicorn for the web UI
+pip install -e ".[dev]"          # core + tests/lint
+pip install -e ".[web]"          # FastAPI / uvicorn
 
-# Tests
 pytest
-pytest tests/test_git_extractor.py
-pytest tests/test_extractors.py::TestEncounterExtractor
-pytest -k "placeable and locname"
 pytest --cov=src
-
-# Lint / format / type-check
 black src tests
-pylint src/nwn_translator
-mypy src
+pylint src/nwn_translator        # advisory
+mypy src                         # expected to pass (black line length 100 too)
 
-# Web UI dev (two terminals, or use run-web-ui.bat on Windows)
-python -m nwn_translator.web
-cd frontend && npm install && npm run dev   # http://localhost:5173, /api proxied
+python -m nwn_translator.web     # or nwn-translate-web; Windows: run-web-ui.bat
+cd frontend && npm install && npm run dev   # http://localhost:5173, /api → :8000
 
-# Docker (production)
-docker compose -f docker/docker-compose.yml up --build
+python scripts/stage.py unpack module.mod --out work
+docker compose -f docker/docker-compose.yml up --build   # http://127.0.0.1:8080
 ```
-
-Code is expected to pass black (line length 100) and mypy; pylint is advisory.
 
 ## Local environment
 
-- The project-local virtual environment is `.venv/`.
-- `.env` is local and gitignored. Use `.env.example` as the template.
-- `NWN_TRANSLATE_API_KEY` selects the provider by prefix: `sk-or-...` for OpenRouter, `pza...` for POLZA.AI, fallback to OpenRouter for unknown prefixes.
-- The model is not read from `NWN_TRANSLATE_MODEL`; pass it through the web/API request or `TranslationConfig(model=...)`.
-- `workspace/`, `check_this/`, `frontend/dist/`, `frontend/node_modules/`, caches and logs are local artifacts and should not be committed.
+- Venv: `.venv/`. Env template: `.env.example`.
+- Provider from `NWN_TRANSLATE_API_KEY` prefix: `sk-or-...` OpenRouter, `pza...` POLZA.AI, else OpenRouter.
+- Model: web/API request or `TranslationConfig(model=...)`. Unset → `OpenRouterProvider.DEFAULT_MODEL` (`google/gemini-3.8-flash`).
+- Injection encoding: `module_string_encoding_for_target_lang` (`cp1251` / `cp1250` / `cp1252`). Offered languages are the keys of `_LANG_TO_WINDOWS_ENCODING` in `config.py`.
+- Do not commit `workspace/`, `check_this/`, `docs/local/`, `frontend/dist/`, `frontend/node_modules/`, caches, logs.
 
 ## Pipeline
 
-`translate_module` / `run_translation_pipeline` in `src/nwn_translator/main.py` orchestrate the run:
+`translate_module` / `run_translation_pipeline` in `main.py` build `PipelineState` and call `run_pipeline` in `pipeline/stages.py`. Isolated stages: `scripts/stage.py`. Artifacts: `pipeline/artifacts.py`.
 
-1. **ERF read** (`file_handlers/erf_reader.py`) unpacks the input archive to a temp dir.
-2. **GFF/NCS parse** (`file_handlers/gff_parser.py`, `gff_handler.py`, `ncs_parser.py`) parses resources. Only embedded strings are translated; fields stored as a StrRef with no embedded text are left untouched (the engine resolves them from the player's `dialog.tlk` at runtime).
-3. **Extract** (`extractors/`) produces `ExtractedContent` with `TranslatableItem`s. Extractors are registered in `extractors/__init__.py`.
-4. **World context** (`context/world_context.py`, `context/entity_extractor.py`) scans extracted content for NPCs, areas, quests, and proper nouns.
-5. **Glossary** (`glossary.py`, `race_dictionary.py`) builds and injects terminology into prompts.
-6. **Translate** (`translators/translation_manager.py`, `context_translator.py`) batches non-dialog items and translates dialogs contextually. `token_handler.py` protects NWN tokens and inline tags with placeholders before LLM calls and restores them afterwards.
-7. **Inject** (`injectors/`, `file_handlers/gff_patcher.py`, `ncs_patcher.py`) byte-patches localized GFF fields and NCS string constants.
-8. **ERF write** (`file_handlers/erf_writer.py`) bundles patched resources into the output archive.
+1. **Unpack** — `file_handlers/erf_reader.py`
+2. **World scan** — `context/world_context.py` (when `use_context`)
+3. **Extract** — `extractors/` (GFF/NCS parse: `gff_parser.py`, `gff_handler.py`, `ncs_parser.py`). Only embedded strings; StrRef-only fields are left for the player's `dialog.tlk`.
+4. **Entities** — `context/entity_extractor.py`
+5. **Glossary** — `glossary_curator.py`, then `glossary.py` / `race_dictionary.py`
+6. **Translate** — `translators/translation_manager.py` (batches) and `context_translator.py` (dialogs). `token_handler.py` protects NWN tokens and inline tags.
+7. **Inject** — `injectors/` + `gff_patcher.py` / `ncs_patcher.py` / `git_injector.py` (byte-patch, not a full GFF rewrite)
+8. **Repack** — `file_handlers/erf_writer.py`
 
-The key consequence of injection: extractors must preserve `_record_offsets` on parsed structs, and injectors must patch the same field names the extractor read. Field mismatches silently drop translations.
+Extractors must keep `_record_offsets`; injectors must patch the same field names. Mismatches silently drop translations.
+
+CExoLocString: parser takes the first non-empty substring; patcher writes one substring with LanguageID 0 (community standard for languages with no official NWN id). Extra gender/language variants are collapsed, with a warning.
+
+`rebuild_module` re-injects editor edits by `item_id` (on-disk text is already translated).
 
 ## Extractor / Injector contract
 
-- **Extractors** live in `src/nwn_translator/extractors/`. Each subclass of `BaseExtractor` declares `SUPPORTED_TYPES` and returns `ExtractedContent(content_type=..., items=[TranslatableItem(...)])`. A new file type needs the extractor class, registration in `extractors/__init__.py`, and an entry in `TRANSLATABLE_TYPES` in `config.py`.
-- **Injectors** live in `src/nwn_translator/injectors/`. Simple field-level resources go through `GenericInjector` (`SUPPORTED_TYPES` + `FIELD_MAP`). Dialogs, journals, `.git` instance lists, and `.ncs` bytecode have bespoke injectors.
-- `.git` is special: area instances contain per-instance `LocalizedName`, `LocName`, `Description`, and nested inventory/store shelf strings. Keep `GitExtractor` and `git_injector.patch_git_file` in sync via `INSTANCE_LISTS` and `INSTANCE_NESTED_ITEM_LISTS`.
-- Internal engine tags (`WP_...`, `DST_...`, `NW_...`, `POST_...`, `ARCH_...`, `YOURTAGHERE`, spaceless `snake_case`/CamelCase identifiers) must not be translated. `context/string_filters.py` is the single source of truth: `ENGINE_TAG_PREFIXES` is shared with the NCS extractor, and `should_skip_entity_source_text` is the gate both the `.git` extractor and entity extraction call. Add new prefixes there, not in a local list.
-- NWN save-game behaviour: `.git` instances are baked into a player's save on first area visit. Re-translating later affects only unvisited areas; visited areas require a new game.
+- New file type: extractor class (`SUPPORTED_TYPES` → `ExtractedContent`), register in `extractors/__init__.py`, add to `TRANSLATABLE_TYPES` in `config.py`.
+- Simple GFF resources: `GenericInjector` (`FIELD_MAP`). Dialogs, journals, `.git`, `.ncs` have their own injectors.
+- `.git`: keep `GitExtractor` and `git_injector.patch_git_file` in sync via `INSTANCE_LISTS` and `INSTANCE_NESTED_ITEM_LISTS`.
+- Engine tags (`WP_`, `DST_`, `NW_`, `POST_`, `ARCH_`, `YOURTAGHERE`, spaceless identifiers) are not translated. Source of truth: `context/string_filters.py` (`ENGINE_TAG_PREFIXES`, `should_skip_entity_source_text`).
+- `.git` instances bake into a save on first area visit; later re-translation affects only unvisited areas.
 
 ## Other subsystems
 
-- **`ai_providers/`** - OpenRouter and POLZA.AI. `openrouter_provider.py` owns shared OpenAI-compatible request logic, retries, reasoning-effort fallback, batch translation, glossary calls, and the NCS translate gate. `polza_provider.py` subclasses it with a different base URL.
-- **`prompts/`** - prompt builder and per-language examples. Changes here affect translation quality across all content types.
-- **`translators/prefix_translation_cache.py`** - prefix reuse for repeated text variants.
-- **`web/`** - FastAPI app with routes, schemas, SQLite database, and task manager. SPA lives in `frontend/`.
-- **`scripts/dump_gff_strings.py`** - diagnostic helper for inspecting GFF strings in single files or modules.
+- **`ai_providers/`** — `openrouter_provider.py` (shared OpenAI-compatible logic); `polza_provider.py` only changes the base URL.
+- **`extractors/nss_index.py`** — NCS translatability from packed `.nss` sources; bytecode heuristics in `ncs_extractor.py` are fallback.
+- **`prompts/`** — prompt builder and per-language examples.
+- **`web/`** — FastAPI + task manager. Persistence is raw `sqlite3` (no ORM): schema and additive migrations (`CREATE TABLE IF NOT EXISTS`, `_migrate` / `ALTER TABLE`) live in `database.py`. No Alembic.
+- **`scripts/dump_gff_strings.py`** — dump CExoLocString from a file or module.
+
+## Frontend
+
+Vue 3 with Composition API (`<script setup>`).
+Bundler: Vite 5.
+Styles: Tailwind CSS 3 (PostCSS, `frontend/src/style.css`).
+State in `composables/`; i18n in `locales.js`.
 
 ## Test expectations
 
-- `tests/` uses pytest with `addopts = "-v --tb=short -m 'not realdata'"` from `pyproject.toml`.
-- Many tests construct parsed-GFF dicts by hand; do not depend on `check_this/` fixtures for automated tests.
-- `tests/realdata/` holds opt-in end-to-end checks against a local module corpus (`test_corpus/`, gitignored; path via `NWN_TEST_CORPUS`). They carry the `realdata` marker and are **deselected by default**; run with `pytest -m realdata`. They skip cleanly when the corpus is absent. See `tests/realdata/README.md` for the five runs (parse-all, identity round-trip, no-op patch, mock-translate, encoding diacritics) and the current known-issues baseline.
-- When changing extractor/injector behaviour, add focused regression tests that cover both the positive extraction/patching case and internal-tag negative cases where relevant. Treat these regression tests as the verification step for the change (see "Goal-driven execution").
+- pytest `addopts` deselects `realdata` (`pyproject.toml`). Unit tests build GFF dicts by hand.
+- Corpus e2e: `pytest -m realdata` (`test_corpus/` or `NWN_TEST_CORPUS`). Skips if the corpus is absent. See `tests/realdata/README.md`.
+- Extractor/injector changes need regression tests for the positive case and internal-tag skips.

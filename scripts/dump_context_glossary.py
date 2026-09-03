@@ -24,6 +24,7 @@ from typing import Any, Dict, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from nwn_translator.config import TranslationConfig
 from nwn_translator.context.entity_candidates import EntityCandidateRegistry
 from nwn_translator.context.entity_extractor import EntityExtractor
@@ -37,7 +38,7 @@ from nwn_translator.pipeline.artifacts import candidate_to_dict, world_context_t
 logger = logging.getLogger(__name__)
 
 
-CONTEXT_GLOSSARY_DEFAULT_MODEL = "google/gemini-3-flash-preview"
+CONTEXT_GLOSSARY_DEFAULT_MODEL = OpenRouterProvider.DEFAULT_MODEL
 
 ExtractedMap = Dict[Path, Tuple[Dict[str, Any], ExtractedContent, str]]
 

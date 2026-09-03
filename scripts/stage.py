@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from nwn_translator.config import TranslationConfig
 from nwn_translator.file_handlers.erf_reader import ERFReader
 from nwn_translator.main import ModuleTranslator
@@ -54,7 +55,7 @@ from nwn_translator.pipeline.stages import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "google/gemini-3-flash-preview"
+DEFAULT_MODEL = OpenRouterProvider.DEFAULT_MODEL
 
 
 def _load_env_file(path: Optional[Path]) -> None:

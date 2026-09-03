@@ -4,6 +4,8 @@
 
 Web tool and Python library for translating Neverwinter Nights / NWN:EE modules through OpenAI-compatible AI providers. The current providers are OpenRouter and POLZA.AI; provider selection is automatic from the API key prefix.
 
+A hosted instance is in closed beta. If you'd like to help test it, email [sandr.flow.ai@gmail.com](mailto:sandr.flow.ai@gmail.com).
+
 ## How it works
 
 Translation runs as a pipeline of sequential stages:
@@ -11,22 +13,16 @@ Translation runs as a pipeline of sequential stages:
 1. **Unpack** the `.mod`/`.erf`/`.hak` archive and find translatable resources (GFF and compiled NCS scripts).
 2. **World context** — scan NPCs, areas, quests, and proper nouns for consistent translation.
 3. **Glossary** — collect and curate terminology that is then injected into prompts.
-4. **Translate** — dialogs are translated contextually (aware of branching), other strings in batches; NWN tokens and inline tags are protected with placeholders.
+4. **Translate** — dialogs are translated contextually (aware of branching), other strings in batches; NWN tokens and inline tags (`<FirstName>`, `<CustomToken:123>`, `<StartAction>`) are protected with placeholders.
 5. **Inject** — byte-level patching of strings back into GFF/NCS without fully rewriting binary resources.
 6. **Repack** the new archive.
-
-These stages can be run individually via `scripts/stage.py` (see below).
 
 ## Features
 
 - Translation of NWN `.mod`, `.erf`, and `.hak` archives.
 - FastAPI backend and Vue 3 + Vite + Tailwind web UI.
-- Context-aware dialog translation using dialog trees, areas, NPCs, quests, and glossary terms.
-- Preservation of NWN tokens and inline tags such as `<FirstName>`, `<CustomToken:123>`, and `<StartAction>`.
-- Byte-level GFF/NCS string patching without fully rewriting binary GFF resources.
-- Support for `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, and `.ncs`.
-- Rebuild flow after manual translation edits in the web editor.
-- Isolated execution of individual pipeline stages (`scripts/stage.py`): world context, extraction, entities, glossary, translation, injection, and repack — for debugging and quality evaluation without the full run.
+- Resource types: `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, `.ncs`.
+- Rebuild after manual translation edits in the web editor.
 - SQLite-backed web tasks so long-running translations survive reconnects.
 - Docker setup for production deployment.
 
@@ -80,8 +76,6 @@ Windows users can use `run-web-ui.bat` after Python and npm dependencies are ins
 
 ## Python API
 
-The project no longer publishes a current `nwn-translate` CLI. For programmatic translation, use the library API:
-
 ```python
 from pathlib import Path
 
@@ -96,6 +90,7 @@ print(output_path)
 ```
 
 The API key is read from `NWN_TRANSLATE_API_KEY` or passed as `TranslationConfig(api_key=...)`.
+The model is set via web/API or `TranslationConfig(model=...)`; otherwise `OpenRouterProvider.DEFAULT_MODEL` (`google/gemini-3.8-flash`).
 
 ## Docker
 
@@ -103,7 +98,7 @@ The API key is read from `NWN_TRANSLATE_API_KEY` or passed as `TranslationConfig
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-The application will be available on port `8080`.
+The app is at [http://127.0.0.1:8080](http://127.0.0.1:8080) (Compose binds localhost only; remote access needs a TLS proxy in front of nginx). No server key is passed into the container: BYOK, the user enters it in the UI.
 
 ## Configuration
 
@@ -113,13 +108,13 @@ Primary environment variables:
 | --- | --- | --- |
 | `NWN_TRANSLATE_API_KEY` | OpenRouter (`sk-or-...`) or POLZA.AI (`pza...`) API key | required |
 | `NWN_TRANSLATE_MAX_CONCURRENT` | Maximum parallel AI requests | `12` |
-| `NWN_TRANSLATE_PROMPT_CACHE` | Enables explicit prompt-cache breakpoints; set `0` to disable | `1` |
+| `NWN_TRANSLATE_PROMPT_CACHE` | Explicit prompt-cache breakpoints; `0` disables | `1` |
 | `NWN_GLOSSARY_LLM_TIMEOUT` | Timeout for one glossary LLM call, seconds | `300` |
 | `NWN_GLOSSARY_RUN_TIMEOUT` | Overall glossary wrapper timeout, seconds | `360` |
 | `NWN_WEB_HOST` | Web server host | `127.0.0.1` |
 | `NWN_WEB_PORT` | Web server port | `8000` |
 | `NWN_WEB_RELOAD` | Backend auto-reload in development | disabled |
-| `NWN_WEB_CORS_ORIGINS` | Comma-separated allowed CORS origins (or `*`) | empty (cross-origin denied) |
+| `NWN_WEB_CORS_ORIGINS` | Comma-separated CORS origins (or `*`) | empty (cross-origin denied) |
 | `NWN_WEB_STATIC_DIR` | Production SPA static directory | unset |
 | `NWN_WEB_TASK_ROOT` | Web task workspace root | `workspace/web` |
 | `NWN_WEB_DB_PATH` | SQLite task database path | `workspace/web/translations.db` |
@@ -134,81 +129,43 @@ NWN_WEB_HOST=127.0.0.1
 NWN_WEB_PORT=8000
 ```
 
-The model is selected through web/API parameters or `TranslationConfig(model=...)`; the current code does not read a separate `NWN_TRANSLATE_MODEL` environment variable.
-
 ### API key and BYOK
 
-The product is **BYOK (Bring Your Own Key)**: in the web UI each user enters their own API key,
-and `POST /api/translate` always requires the key from the client. The server does **not** hand
-its `NWN_TRANSLATE_API_KEY` to the browser.
+The product is **BYOK (Bring Your Own Key)**: each user enters their own API key in the web UI, and `POST /api/translate` always requires it from the client. The server does not hand its `NWN_TRANSLATE_API_KEY` to the browser.
 
-The one exception is a local single-user run: when `python -m nwn_translator.web` binds to
-loopback (`NWN_WEB_HOST` defaults to `127.0.0.1`) it enables local mode, and `/api/config`
-returns the `.env` key so the UI can autofill the field. Any non-local launch (binding to
-`0.0.0.0`, Docker, an instance behind nginx) does not enable that mode, so the `.env` key never
-leaves the server.
+The exception is a local loopback run (`NWN_WEB_HOST` defaults to `127.0.0.1`): `/api/config` returns the `.env` key so the UI can autofill. Binding to `0.0.0.0`, Docker, or an instance behind nginx does not enable that mode.
 
-## Pipeline stages and diagnostics
+### Languages and encoding
 
-`scripts/stage.py` runs a single pipeline stage in isolation. Each stage reads its input artifacts (`--from`) and writes its outputs (`--out`); the extraction directory (`--extract-dir`) is reused between stages, so deterministic stages re-parse it from disk while the LLM stages (`entities`, `glossary`, `translate`) can be run alone against the real API and their output inspected or hand-edited before the next stage. Stages: `unpack`, `worldscan`, `extract`, `entities`, `glossary`, `translate`, `inject`, `repack`, plus `all` for a full run.
+| Code page | Languages |
+| --- | --- |
+| cp1251 | Russian, Ukrainian |
+| cp1250 | Polish, Czech, Hungarian, Romanian |
+| cp1252 | English, German, French, Spanish, Italian, Portuguese, Dutch |
 
-```bash
-# Unpack the archive and keep the extraction directory
-python scripts/stage.py unpack module.mod --out work
-
-# Build only the glossary (real API) from a saved world context
-python scripts/stage.py glossary --extract-dir work/extract --from work --out work
-
-# Translate only NCS scripts
-python scripts/stage.py translate --extract-dir work/extract --from work --out work --only-ext .ncs
-
-# Inject saved translations and repack the module (no LLM calls)
-python scripts/stage.py inject --extract-dir work/extract --from work
-python scripts/stage.py repack --extract-dir work/extract --out work
-```
-
-`scripts/dump_gff_strings.py` dumps all CExoLocString fields from a GFF file or module resource:
-
-```bash
-python scripts/dump_gff_strings.py file path/to/file.utc
-python scripts/dump_gff_strings.py file path/to/file.utc --compare path/to/original.utc
-python scripts/dump_gff_strings.py module path/to/module.mod talias.utc drixie.dlg
-```
-
-Additional research scripts: `dump_context_glossary.py` (world context and glossary without translation) and `run_ncs_translation_compare.py` (batch vs single NCS translation routing).
+An unknown slug falls back to cp1252. The patcher writes a single CExoLocString substring with LanguageID 0.
 
 ## Development
-
-Tests:
 
 ```bash
 pytest
 pytest --cov=src
-```
-
-Checks:
-
-```bash
 black src tests
 pylint src/nwn_translator
 mypy src
 ```
 
-Code is expected to pass black with line length 100 and mypy. Pylint is useful as an advisory check.
+Code is expected to pass black (line length 100) and mypy. Pylint is advisory.
 
-Optional end-to-end checks against a local real-module corpus: `pytest -m realdata`
-(deselected by default). See [`tests/realdata/README.md`](tests/realdata/README.md).
+Isolated pipeline stages: `scripts/stage.py`. Dump CExoLocString fields: `scripts/dump_gff_strings.py`.
 
 ## Documentation
 
 | File | Contents |
 | --- | --- |
 | [`README.md`](README.md) | Russian version of this guide |
-| [`docs/README.md`](docs/README.md) | Index of tracked docs |
-| [`AGENTS.md`](AGENTS.md) / [`CLAUDE.md`](CLAUDE.md) | Conventions for coding agents |
-| [`tests/realdata/README.md`](tests/realdata/README.md) | Real-module corpus tests |
-
-Personal scratch notes and checklists go in `docs/local/` (gitignored).
+| [`AGENTS.md`](AGENTS.md) | Canonical conventions for coding agents |
+| [`CLAUDE.md`](CLAUDE.md) | Pointer to AGENTS.md for Claude Code |
 
 ## License
 

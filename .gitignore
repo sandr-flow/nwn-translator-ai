@@ -37,6 +37,7 @@ frontend/dist/
 # Diagnostic artifacts
 diff_output.txt
 project-tree.txt
+check_this/
 
 # Personal scratch notes (not published with the repo)
 docs/local/

@@ -19,11 +19,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-#: Gemini 3.x and other reasoning-by-default models treat an omitted
-#: ``reasoning`` field as "think". ``effort: none`` alone is also remapped to
-#: the nearest thinking level on Gemini 3, so Off must send both.
-_REASONING_OFF_EXTRA_BODY: Dict[str, Any] = {"reasoning": {"effort": "none", "enabled": False}}
-
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -47,6 +42,7 @@ from .base import (
     ProviderError,
     RateLimitError,
 )
+from .openrouter_models import resolve_reasoning_effort
 from ..config import (
     TRANSLATION_TEMPERATURE,
     TRANSLATION_MAX_TOKENS,
@@ -331,25 +327,40 @@ class OpenRouterProvider(BaseAIProvider):
         """
         return self.PROVIDER_NAME
 
-    def _reasoning_extra_body(self, *, force_off: bool = False) -> Optional[Dict[str, Any]]:
-        """OpenRouter ``extra_body`` fragment for ``reasoning``, or ``None``.
-
-        ``force_off`` is for JSON-only calls (glossary, entity extract) that
-        must not inherit the model's default thinking. Omitting the field is
-        not the same as Off on reasoning-by-default models.
-        """
+    def _resolved_reasoning_effort(self, *, use_reasoning: bool) -> Optional[str]:
+        """Effort to send, or ``None`` to omit the reasoning field."""
         if self._reasoning_unsupported:
             return None
-        if force_off or self._reasoning_effort == "none":
-            return dict(_REASONING_OFF_EXTRA_BODY)
-        if not self._reasoning_effort:
-            return None
-        return {"reasoning": {"effort": self._reasoning_effort}}
+        requested = self._reasoning_effort
+        if not use_reasoning:
+            requested = "none"
+        return resolve_reasoning_effort(self.model, requested)
+
+    @staticmethod
+    def _with_reasoning_kwargs(kwargs: Dict[str, Any], effort: str) -> Dict[str, Any]:
+        return {
+            **kwargs,
+            "reasoning_effort": effort,
+            "extra_body": {"reasoning": {"effort": effort}},
+        }
+
+    @staticmethod
+    def _is_reasoning_mandatory_error(error: BadRequestError) -> bool:
+        """True when the model forbids disabling reasoning (Gemini 3.8 Flash)."""
+        msg = str(error).lower()
+        return "cannot be disabled" in msg or "reasoning is mandatory" in msg
 
     @staticmethod
     def _is_reasoning_rejection(error: BadRequestError) -> bool:
-        """Heuristic: the 400 complains about the ``reasoning`` request field."""
-        return "reasoning" in str(error).lower()
+        """True when the model has no reasoning parameter (omit is correct)."""
+        if OpenRouterProvider._is_reasoning_mandatory_error(error):
+            return False
+        msg = str(error).lower()
+        if "reasoning" not in msg:
+            return False
+        if "effort" in msg:
+            return False
+        return "not supported" in msg or "unsupported" in msg
 
     def _handle_reasoning_rejection(self, error: BadRequestError) -> None:
         """Remember that the model rejects ``reasoning``; re-raise unrelated 400s."""
@@ -362,16 +373,14 @@ class OpenRouterProvider(BaseAIProvider):
         self._reasoning_unsupported = True
 
     def _chat_completions_create_sync(self, *, use_reasoning: bool = True, **kwargs: Any):
-        """``chat.completions.create`` with optional ``reasoning``; one 400 retry without it."""
-        reasoning_extra = self._reasoning_extra_body(force_off=not use_reasoning)
-        if reasoning_extra:
-            call_kw = {**kwargs, "extra_body": reasoning_extra}
-            try:
-                return self.client.chat.completions.create(**call_kw)
-            except BadRequestError as e:
-                self._handle_reasoning_rejection(e)
-                return self.client.chat.completions.create(**kwargs)
-        return self.client.chat.completions.create(**kwargs)
+        """``chat.completions.create`` with catalog-clamped reasoning."""
+        effort = self._resolved_reasoning_effort(use_reasoning=use_reasoning)
+        call_kw = self._with_reasoning_kwargs(kwargs, effort) if effort else dict(kwargs)
+        try:
+            return self.client.chat.completions.create(**call_kw)
+        except BadRequestError as e:
+            self._handle_reasoning_rejection(e)
+            return self.client.chat.completions.create(**kwargs)
 
     async def _chat_completions_create_async(
         self,
@@ -379,16 +388,14 @@ class OpenRouterProvider(BaseAIProvider):
         use_reasoning: bool = True,
         **kwargs: Any,
     ):
-        """Async ``chat.completions.create`` with optional ``reasoning``; one 400 retry without it."""
-        reasoning_extra = self._reasoning_extra_body(force_off=not use_reasoning)
-        if reasoning_extra:
-            call_kw = {**kwargs, "extra_body": reasoning_extra}
-            try:
-                return await self.async_client.chat.completions.create(**call_kw)
-            except BadRequestError as e:
-                self._handle_reasoning_rejection(e)
-                return await self.async_client.chat.completions.create(**kwargs)
-        return await self.async_client.chat.completions.create(**kwargs)
+        """Async ``chat.completions.create`` with catalog-clamped reasoning."""
+        effort = self._resolved_reasoning_effort(use_reasoning=use_reasoning)
+        call_kw = self._with_reasoning_kwargs(kwargs, effort) if effort else dict(kwargs)
+        try:
+            return await self.async_client.chat.completions.create(**call_kw)
+        except BadRequestError as e:
+            self._handle_reasoning_rejection(e)
+            return await self.async_client.chat.completions.create(**kwargs)
 
     @staticmethod
     def _parse_model_json_response(raw_response: str) -> str:

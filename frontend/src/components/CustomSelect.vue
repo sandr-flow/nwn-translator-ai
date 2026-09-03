@@ -5,6 +5,7 @@ const props = defineProps({
   modelValue: { type: String, required: true },
   options: { type: Array, required: true }, // [{ value, label }]
   widthClass: { type: String, default: "w-full" },
+  disabled: { type: Boolean, default: false },
 });
 const emit = defineEmits(["update:modelValue"]);
 
@@ -26,6 +27,7 @@ const selected = computed(() => {
 });
 
 function toggle() {
+  if (props.disabled) return;
   if (!open.value) {
     // Determine direction before opening
     if (trigger.value) {
@@ -57,8 +59,12 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onClickOutside))
     <button
       ref="trigger"
       type="button"
+      :disabled="disabled"
       class="flex items-center justify-between gap-2 w-full rounded-lg bg-nwn-dark border px-3 py-2 text-sm text-left focus:outline-none transition-colors"
-      :class="open ? 'border-nwn-accent' : 'border-nwn-muted/30'"
+      :class="[
+        open ? 'border-nwn-accent' : 'border-nwn-muted/30',
+        disabled ? 'opacity-50 cursor-not-allowed' : '',
+      ]"
       @click="toggle"
     >
       <span class="truncate">{{ selected.label }}</span>

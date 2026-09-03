@@ -57,11 +57,35 @@ class DetectProviderResponse(BaseModel):
     label: str
 
 
+class ModelReasoningInfo(BaseModel):
+    """OpenRouter reasoning metadata for one model slug."""
+
+    supported: bool
+    mandatory: bool = False
+    default_effort: Optional[str] = None
+    supported_efforts: List[str] = Field(default_factory=list)
+
+
+class ModelListItem(BaseModel):
+    """One curated model in the UI pool."""
+
+    id: str
+    reasoning: ModelReasoningInfo
+
+
 class ModelsResponse(BaseModel):
-    """Curated model list for the UI."""
+    """Curated model list for the UI, with per-model reasoning options."""
 
     default_model: str
-    models: List[str]
+    models: List[ModelListItem]
+
+
+class ModelLookupResponse(BaseModel):
+    """Live OpenRouter catalog lookup for a custom model slug."""
+
+    id: str
+    found: bool
+    reasoning: ModelReasoningInfo
 
 
 class ErrorResponse(BaseModel):

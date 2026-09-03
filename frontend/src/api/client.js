@@ -139,6 +139,11 @@ export async function fetchModels() {
   return fetchJson("/api/models");
 }
 
+export async function fetchModelLookup(slug) {
+  const q = encodeURIComponent(slug);
+  return fetchJson(`/api/models/lookup?slug=${q}`);
+}
+
 export async function fetchConfig() {
   return fetchJson("/api/config");
 }

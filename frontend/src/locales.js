@@ -33,14 +33,20 @@ export default {
     "form.genderMale": "Мужской",
     "form.genderFemale": "Женский",
     "form.reasoningEffort": "Reasoning (OpenRouter)",
-    "form.reasoningEffortHint":
-      "Для моделей с поддержкой расширенного рассуждения. Остальные продолжают работать: при отказе API запрос повторится без этого параметра.",
+    "form.reasoningHelp": "Пояснение",
+    "form.reasoningMandatory":
+      "У этой модели reasoning обязателен — выбран минимальный уровень.",
+    "form.reasoningUnsupported":
+      "Эта модель не использует reasoning.",
+    "form.reasoningUnknown":
+      "Модели нет в каталоге OpenRouter — показаны все уровни.",
     "form.reasoning.none": "Выкл.",
-    "form.reasoning.minimal": "minimal — минимум",
-    "form.reasoning.low": "low — низкий",
-    "form.reasoning.medium": "medium — средний",
-    "form.reasoning.high": "high — высокий",
-    "form.reasoning.xhigh": "xhigh — максимум",
+    "form.reasoning.minimal": "minimal",
+    "form.reasoning.low": "low",
+    "form.reasoning.medium": "medium",
+    "form.reasoning.high": "high",
+    "form.reasoning.xhigh": "xhigh",
+    "form.reasoning.max": "max",
 
     // ModelSelect
     "model.choose": "Выбрать модель…",
@@ -213,14 +219,20 @@ export default {
     "form.genderMale": "Male",
     "form.genderFemale": "Female",
     "form.reasoningEffort": "Reasoning (OpenRouter)",
-    "form.reasoningEffortHint":
-      "For models that support extended reasoning. Others keep working: if the API rejects the parameter, the request is retried without it.",
+    "form.reasoningHelp": "About this setting",
+    "form.reasoningMandatory":
+      "This model requires reasoning — the lowest level is selected.",
+    "form.reasoningUnsupported":
+      "This model does not use reasoning.",
+    "form.reasoningUnknown":
+      "This model is not in the OpenRouter catalog — all levels are listed.",
     "form.reasoning.none": "Off",
     "form.reasoning.minimal": "minimal",
     "form.reasoning.low": "low",
     "form.reasoning.medium": "medium",
     "form.reasoning.high": "high",
     "form.reasoning.xhigh": "xhigh",
+    "form.reasoning.max": "max",
 
     // ModelSelect
     "model.choose": "Choose model…",

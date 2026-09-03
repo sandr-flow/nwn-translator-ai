@@ -55,13 +55,53 @@ def test_health(client: TestClient) -> None:
     assert r.json() == {"status": "ok"}
 
 
-def test_models(client: TestClient) -> None:
+def test_models(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from nwn_translator.ai_providers.openrouter_models import FALLBACK
+
+    monkeypatch.setattr(web_routes, "refresh_catalog", lambda force=False: dict(FALLBACK))
     r = client.get("/api/models")
     assert r.status_code == 200
     data = r.json()
-    assert "default_model" in data
+    assert data["default_model"]
     assert isinstance(data["models"], list)
     assert len(data["models"]) >= 1
+    first = data["models"][0]
+    assert "id" in first
+    assert "reasoning" in first
+    flash = next(m for m in data["models"] if m["id"] == "google/gemini-3.8-flash")
+    assert flash["reasoning"]["supported"] is True
+    assert flash["reasoning"]["mandatory"] is True
+    assert flash["reasoning"]["supported_efforts"] == ["low", "medium", "high"]
+
+
+def test_model_lookup_found(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from nwn_translator.ai_providers.openrouter_models import FALLBACK
+
+    def fake_lookup(slug: str):
+        info = FALLBACK.get(slug)
+        return (info is not None), info
+
+    monkeypatch.setattr(web_routes, "lookup_model_reasoning", fake_lookup)
+    r = client.get("/api/models/lookup", params={"slug": "google/gemini-3.8-flash"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["found"] is True
+    assert "none" not in body["reasoning"]["supported_efforts"]
+    assert body["reasoning"]["supported_efforts"][0] == "low"
+
+
+def test_model_lookup_not_found(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(web_routes, "lookup_model_reasoning", lambda slug: (False, None))
+    r = client.get("/api/models/lookup", params={"slug": "vendor/does-not-exist"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["found"] is False
+    assert body["reasoning"]["supported"] is False
+
+
+def test_model_lookup_invalid_slug(client: TestClient) -> None:
+    r = client.get("/api/models/lookup", params={"slug": "not a slug"})
+    assert r.status_code == 400
 
 
 def test_test_connection_mocked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -295,9 +335,7 @@ class TestOneJobPerIpSlot:
         finally:
             set_task_manager(None)
 
-    def test_progress_callback_does_not_clobber_cancelling(
-        self, isolated_tm: TaskManager
-    ) -> None:
+    def test_progress_callback_does_not_clobber_cancelling(self, isolated_tm: TaskManager) -> None:
         """In-flight progress updates must not overwrite ``cancelling`` status."""
         tm = isolated_tm
         task = tm.create_task("9.9.9.9", "a.mod", client_token="tok")

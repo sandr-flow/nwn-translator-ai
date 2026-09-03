@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 
 from ..config import (
     max_concurrent_from_environment,
@@ -26,6 +26,13 @@ from ..ai_providers import (
     PolzaProvider,
     create_provider,
     detect_provider_from_key,
+)
+from ..ai_providers.openrouter_models import (
+    FALLBACK as OPENROUTER_REASONING_FALLBACK,
+    is_valid_model_slug,
+    lookup_model_reasoning,
+    reasoning_payload,
+    refresh_catalog,
 )
 from .deps import web_task_manager
 from .database import (
@@ -42,7 +49,10 @@ from .schemas import (
     ConfigResponse,
     DetectProviderRequest,
     DetectProviderResponse,
+    ModelLookupResponse,
+    ModelReasoningInfo,
     ModelsResponse,
+    ModelListItem,
     RebuildRequest,
     RebuildResponse,
     TaskHistoryItem,
@@ -611,10 +621,34 @@ async def detect_provider(body: DetectProviderRequest) -> DetectProviderResponse
 
 @router.get("/models", response_model=ModelsResponse)
 async def list_models() -> ModelsResponse:
-    """Return the default model and a curated list of popular OpenRouter slugs."""
+    """Return the curated pool with per-model OpenRouter reasoning options."""
+    catalog = await asyncio.to_thread(refresh_catalog)
+    items: list[ModelListItem] = []
+    for slug in OpenRouterProvider.POPULAR_MODELS:
+        info = catalog.get(slug) or OPENROUTER_REASONING_FALLBACK.get(slug)
+        items.append(
+            ModelListItem(
+                id=slug,
+                reasoning=ModelReasoningInfo(**reasoning_payload(info)),
+            )
+        )
     return ModelsResponse(
         default_model=OpenRouterProvider.DEFAULT_MODEL,
-        models=list(OpenRouterProvider.POPULAR_MODELS),
+        models=items,
+    )
+
+
+@router.get("/models/lookup", response_model=ModelLookupResponse)
+async def lookup_model(slug: str = Query(..., min_length=1, max_length=200)) -> ModelLookupResponse:
+    """Look up reasoning options for a custom OpenRouter model slug."""
+    key = slug.strip()
+    if not is_valid_model_slug(key):
+        raise HTTPException(status_code=400, detail="Invalid model slug")
+    found, info = await asyncio.to_thread(lookup_model_reasoning, key)
+    return ModelLookupResponse(
+        id=key,
+        found=found,
+        reasoning=ModelReasoningInfo(**reasoning_payload(info if found else None)),
     )
 
 

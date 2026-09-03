@@ -50,7 +50,7 @@ GLOSSARY_RUN_TIMEOUT: float = _glossary_run_timeout()
 
 # OpenRouter Chat API ``reasoning.effort`` (see OpenRouter schema).
 OPENROUTER_REASONING_EFFORT_VALUES = frozenset(
-    {"xhigh", "high", "medium", "low", "minimal", "none"}
+    {"max", "xhigh", "high", "medium", "low", "minimal", "none"}
 )
 
 

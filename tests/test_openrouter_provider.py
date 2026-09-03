@@ -152,6 +152,35 @@ class TestOpenRouterTranslate:
         kw = mock_client.chat.completions.create.call_args.kwargs
         assert kw["extra_body"] == {"reasoning": {"effort": "medium"}}
 
+    def test_translate_off_sends_explicit_none(self):
+        """Off must send effort none + enabled false, not omit the field."""
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="none")
+        mock_msg = MagicMock()
+        mock_msg.content = '{"translation": "x"}'
+        mock_choice = MagicMock()
+        mock_choice.message = mock_msg
+        mock_response = MagicMock()
+        mock_response.choices = [mock_choice]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = mock_response
+        p.client = mock_client
+        result = p.translate("a", "english", "russian")
+        assert result.success is True
+        kw = mock_client.chat.completions.create.call_args.kwargs
+        assert kw["extra_body"] == {"reasoning": {"effort": "none", "enabled": False}}
+
+    def test_use_reasoning_false_still_sends_explicit_none(self):
+        """JSON-only calls must not omit reasoning (Gemini 3.x would think)."""
+        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
+            p = OpenRouterProvider(api_key=FAKE_KEY, reasoning_effort="high")
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = MagicMock()
+        p.client = mock_client
+        p._chat_completions_create_sync(use_reasoning=False, model="m", messages=[])
+        kw = mock_client.chat.completions.create.call_args.kwargs
+        assert kw["extra_body"] == {"reasoning": {"effort": "none", "enabled": False}}
+
     def test_translate_bad_request_retries_without_reasoning(self):
         """HTTP 400 rejecting reasoning must retry once without extra_body."""
         with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):

@@ -371,9 +371,7 @@ export function useTranslation() {
     fd.append("use_context", t.useContext ? "true" : "false");
     fd.append("player_gender", t.playerGender);
     const reff = typeof t.reasoningEffort === "string" ? t.reasoningEffort.trim() : "";
-    if (reff) {
-      fd.append("reasoning_effort", reff);
-    }
+    fd.append("reasoning_effort", reff || "none");
 
     const ac = new AbortController();
     uploadAbort = ac;
@@ -408,7 +406,7 @@ export function useTranslation() {
       target_lang: t.targetLang,
     };
     if (modelSlug) body.model = modelSlug;
-    if (reff) body.reasoning_effort = reff;
+    body.reasoning_effort = reff || "none";
     return postTestConnection(body);
   }
 

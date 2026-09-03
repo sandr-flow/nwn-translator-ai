@@ -19,6 +19,11 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+#: Gemini 3.x and other reasoning-by-default models treat an omitted
+#: ``reasoning`` field as "think". ``effort: none`` alone is also remapped to
+#: the nearest thinking level on Gemini 3, so Off must send both.
+_REASONING_OFF_EXTRA_BODY: Dict[str, Any] = {"reasoning": {"effort": "none", "enabled": False}}
+
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -326,9 +331,18 @@ class OpenRouterProvider(BaseAIProvider):
         """
         return self.PROVIDER_NAME
 
-    def _reasoning_extra_body(self) -> Optional[Dict[str, Any]]:
-        """OpenRouter ``extra_body`` fragment for ``reasoning``, or ``None``."""
-        if not self._reasoning_effort or self._reasoning_unsupported:
+    def _reasoning_extra_body(self, *, force_off: bool = False) -> Optional[Dict[str, Any]]:
+        """OpenRouter ``extra_body`` fragment for ``reasoning``, or ``None``.
+
+        ``force_off`` is for JSON-only calls (glossary, entity extract) that
+        must not inherit the model's default thinking. Omitting the field is
+        not the same as Off on reasoning-by-default models.
+        """
+        if self._reasoning_unsupported:
+            return None
+        if force_off or self._reasoning_effort == "none":
+            return dict(_REASONING_OFF_EXTRA_BODY)
+        if not self._reasoning_effort:
             return None
         return {"reasoning": {"effort": self._reasoning_effort}}
 
@@ -349,7 +363,7 @@ class OpenRouterProvider(BaseAIProvider):
 
     def _chat_completions_create_sync(self, *, use_reasoning: bool = True, **kwargs: Any):
         """``chat.completions.create`` with optional ``reasoning``; one 400 retry without it."""
-        reasoning_extra = self._reasoning_extra_body() if use_reasoning else None
+        reasoning_extra = self._reasoning_extra_body(force_off=not use_reasoning)
         if reasoning_extra:
             call_kw = {**kwargs, "extra_body": reasoning_extra}
             try:
@@ -366,7 +380,7 @@ class OpenRouterProvider(BaseAIProvider):
         **kwargs: Any,
     ):
         """Async ``chat.completions.create`` with optional ``reasoning``; one 400 retry without it."""
-        reasoning_extra = self._reasoning_extra_body() if use_reasoning else None
+        reasoning_extra = self._reasoning_extra_body(force_off=not use_reasoning)
         if reasoning_extra:
             call_kw = {**kwargs, "extra_body": reasoning_extra}
             try:

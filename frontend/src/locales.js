@@ -52,10 +52,6 @@ export default {
     "model.choose": "Выбрать модель…",
     "model.chooseFromList": "Выбрать из списка",
     "model.custom": "Другая модель…",
-    "model.gemini31FlashLite.desc": "Дешевле и быстрее",
-    "model.gemini35FlashLite.desc": "Новый лайт",
-    "model.gemini38Flash.desc": "Баланс цены и качества",
-    "model.gpt56Luna.desc": "Качество OpenAI, дороже",
 
     // Languages
     "lang.auto": "Авто",
@@ -241,10 +237,6 @@ export default {
     "model.choose": "Choose model…",
     "model.chooseFromList": "Choose from list",
     "model.custom": "Other model…",
-    "model.gemini31FlashLite.desc": "Cheaper and faster",
-    "model.gemini35FlashLite.desc": "Newer lite",
-    "model.gemini38Flash.desc": "Best balance of price and quality",
-    "model.gpt56Luna.desc": "OpenAI quality, higher cost",
 
     // Languages
     "lang.auto": "Auto",

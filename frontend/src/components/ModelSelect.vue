@@ -5,10 +5,10 @@ import { useI18n } from "../composables/useI18n.js";
 const { t: i } = useI18n();
 
 const presetDefs = [
-  { value: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", descKey: "model.gemini31FlashLite.desc" },
-  { value: "google/gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", descKey: "model.gemini35FlashLite.desc" },
-  { value: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash", descKey: "model.gemini38Flash.desc" },
-  { value: "openai/gpt-5.6-luna", label: "GPT-5.6 Luna", descKey: "model.gpt56Luna.desc" },
+  { value: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
+  { value: "google/gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite" },
+  { value: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+  { value: "openai/gpt-5.6-luna", label: "GPT-5.6 Luna" },
 ];
 
 const CUSTOM_KEY = "__custom__";
@@ -141,7 +141,6 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onClickOutside))
               ? 'bg-nwn-accent/20 text-nwn-accent'
               : 'text-gray-300 hover:bg-nwn-accent/10 hover:text-gray-200'
           "
-          :title="i(opt.descKey)"
           @mousedown.prevent="pick(opt)"
         >
           {{ opt.label }}

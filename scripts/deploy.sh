@@ -16,3 +16,4 @@ docker compose -f docker/docker-compose.yml build
 bash scripts/wait_for_idle.sh
 docker compose -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml ps
+curl --fail --silent --show-error --retry 12 --retry-connrefused --retry-delay 5 --max-time 5 http://127.0.0.1:8080/api/health

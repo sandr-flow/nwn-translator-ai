@@ -1,0 +1,17 @@
+.git
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.env
+*.env
+docs/local
+workspace
+check_this
+test_corpus
+test_modules
+tests
+frontend/node_modules
+frontend/dist

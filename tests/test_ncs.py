@@ -46,6 +46,7 @@ from nwn_translator.file_handlers.ncs_patcher import (
     patch_ncs_strings,
 )
 from nwn_translator.extractors.base import TranslatableItem
+from nwn_translator.extractors.ncs_context import TYPE_STRING_STRING
 from nwn_translator.extractors.ncs_extractor import (
     NcsExtractor,
     _is_definitely_not_translatable,
@@ -73,6 +74,11 @@ def _consts(text: str, encoding: str = "cp1252") -> bytes:
 def _consti(value: int) -> bytes:
     """Build a CONSTI (integer) instruction."""
     return struct.pack(">BB", OP_CONST, TYPE_INT) + struct.pack(">i", value)
+
+
+def _consto(value: int = 0) -> bytes:
+    """Build a CONSTO (object) instruction."""
+    return struct.pack(">BBI", OP_CONST, 0x06, value)
 
 
 def _jmp(offset: int) -> bytes:
@@ -697,6 +703,7 @@ class TestNcsExtractor:
             tmp_path,
             "test.ncs",
             _consts("Welcome, hero!"),
+            _consto(),
             _action(374, 2),  # SendMessageToPC
             _retn(),
         )
@@ -708,14 +715,15 @@ class TestNcsExtractor:
         assert result.items[0].item_id == "test:c0"
         assert result.items[0].metadata["confidence"] == "high"
 
-    def test_two_strings_before_player_action_both_high(self, tmp_path):
-        """Multiple CONSTS pushed before one SpeakString — both classify as player."""
+    def test_only_consumed_string_before_player_action_is_high(self, tmp_path):
+        """An unrelated stack value must not borrow a later speech call's proof."""
         path = _write_ncs(
             tmp_path,
             "test.ncs",
             _consts("First line."),
+            _consti(0),  # talk volume for the second line
             _consts("Second line."),
-            _action(39, 2),  # SpeakString, 2 args on stack
+            _action(39, 2),  # ActionSpeakString consumes only the second line
             _retn(),
         )
         ncs = parse_ncs(path)
@@ -723,7 +731,8 @@ class TestNcsExtractor:
         result = extractor.extract(path, {"_ncs_file": ncs})
         texts = {it.text for it in result.items}
         assert texts == {"First line.", "Second line."}
-        assert all(it.metadata["confidence"] == "high" for it in result.items)
+        assert result.items[0].metadata["needs_llm_gate"] is True
+        assert result.items[1].metadata["confidence"] == "high"
 
     def test_int_compare_between_string_and_speak_does_not_flag_compare_nearby(self, tmp_path):
         """Regression: int OP_EQUAL between a CONST string and SpeakString must
@@ -736,12 +745,15 @@ class TestNcsExtractor:
         The int compare here is unrelated to the literal — flagging
         ``compare_nearby`` would silently drop player-facing barks.
         """
-        int_equal = struct.pack(">BB", OP_EQUAL, TYPE_INT)
+        int_equal = struct.pack(">BB", OP_EQUAL, 0x20)
         path = _write_ncs(
             tmp_path,
             "test.ncs",
             _consts("Ow."),
+            _consti(1),
+            _consti(0),
             int_equal,
+            _movsp(-4),
             _action(39, 1),  # ActionSpeakString
             _retn(),
         )
@@ -752,8 +764,8 @@ class TestNcsExtractor:
         meta = result.items[0].metadata
         bc = meta["bytecode_context"]
         assert bc["compare_nearby"] is False
-        assert bc["next_action_name"] == "ActionSpeakString"
-        assert meta["confidence"] == "high"
+        assert bc["consumer_proven"] is True
+        assert meta["needs_llm_gate"] is True
 
     def test_skip_internal_string(self, tmp_path):
         """String followed by GetObjectByTag ACTION should be skipped."""
@@ -857,24 +869,26 @@ class TestNcsExtractor:
         result = extractor.extract(path, {"_ncs_file": ncs})
         assert len(result.items) == 1
 
-    def test_nss_source_skips_debug(self, tmp_path):
-        """When .nss source shows PrintString, string should be skipped."""
+    def test_nss_debug_context_is_passed_to_gate(self, tmp_path):
+        """Source context alone cannot establish a compiled consumer."""
         path = _write_ncs(
             tmp_path,
             "test.ncs",
-            _consts("Generate Treasure nSpecific here."),
+            _consts("The treasure has been generated."),
             _retn(),
         )
         # Create corresponding .nss file
         nss_path = tmp_path / "test.nss"
         nss_path.write_text(
-            'void main() { PrintString("Generate Treasure nSpecific here."); }',
+            'void main() { PrintString("The treasure has been generated."); }',
             encoding="utf-8",
         )
         ncs = parse_ncs(path)
         extractor = NcsExtractor()
         result = extractor.extract(path, {"_ncs_file": ncs})
-        assert len(result.items) == 0
+        assert len(result.items) == 1
+        assert "PrintString" in result.items[0].metadata["nss_snippet"]
+        assert result.items[0].metadata["proven_player"] is False
 
     def test_nss_source_keeps_player(self, tmp_path):
         """When .nss source shows SpeakString, string should be extracted."""
@@ -893,10 +907,10 @@ class TestNcsExtractor:
         extractor = NcsExtractor()
         result = extractor.extract(path, {"_ncs_file": ncs})
         assert len(result.items) == 1
-        assert result.items[0].metadata["confidence"] == "high"
+        assert result.items[0].metadata["confidence"] == "medium"
 
-    def test_code_identifiers_downgrade_confidence(self, tmp_path):
-        """Strings with CamelCase get low confidence and require LLM gate."""
+    def test_code_identifiers_are_vetoed_at_extraction(self, tmp_path):
+        """The same technical-text veto applies before the model call."""
         path = _write_ncs(
             tmp_path,
             "test.ncs",
@@ -906,9 +920,7 @@ class TestNcsExtractor:
         ncs = parse_ncs(path)
         extractor = NcsExtractor()
         result = extractor.extract(path, {"_ncs_file": ncs})
-        assert len(result.items) == 1
-        assert result.items[0].metadata["confidence"] == "low"
-        assert result.items[0].metadata.get("needs_llm_gate") is True
+        assert result.items == []
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1103,12 +1115,12 @@ class TestRoutineTables:
     """Pin the key ACTION routine ids so a typo cannot silently reclassify."""
 
     def test_player_facing_ids(self):
-        from nwn_translator.extractors.ncs_extractor import PLAYER_FACING_ACTIONS
+        from nwn_translator.extractors.ncs_context import PLAYER_FACING_ACTIONS
 
-        assert {39, 221, 284, 374, 526, 830, 837, 901} == PLAYER_FACING_ACTIONS
+        assert {39, 221, 284, 374, 526, 554, 820, 830, 837, 858, 860, 901} == PLAYER_FACING_ACTIONS
 
     def test_internal_ids_cover_local_variable_family(self):
-        from nwn_translator.extractors.ncs_extractor import NON_PLAYER_ACTIONS
+        from nwn_translator.extractors.ncs_context import NON_PLAYER_ACTIONS
 
         # GetLocal* 51-54, SetLocal* 55-58: the wrong old ids (13-17, 29-33)
         # made the classifier scan past variable reads into a later speech
@@ -1117,7 +1129,7 @@ class TestRoutineTables:
         assert 417 in NON_PLAYER_ACTIONS  # SpeakOneLinerConversation: resref arg
 
     def test_wrong_legacy_ids_gone(self):
-        from nwn_translator.extractors.ncs_extractor import (
+        from nwn_translator.extractors.ncs_context import (
             NON_PLAYER_ACTIONS,
             PLAYER_FACING_ACTIONS,
         )
@@ -1201,7 +1213,7 @@ class TestProvenPlayerFiltering:
     def test_compare_before_speech_still_internal(self, tmp_path):
         """A string-typed compare before any speech ACTION marks a dispatch
         key; a later SpeakString in the window must not resurrect it."""
-        str_equal = struct.pack(">BB", OP_EQUAL, TYPE_STRING)
+        str_equal = struct.pack(">BB", OP_EQUAL, TYPE_STRING_STRING)
         result = self._extract(
             tmp_path,
             _consts("animal empathy"),
@@ -1226,7 +1238,7 @@ class TestProvenPlayerFiltering:
         assert [it.text for it in result.items] == ["Excellent form, Raywen!"]
         meta = result.items[0].metadata
         assert meta["needs_llm_gate"] is True
-        assert meta["confidence"] == "low"
+        assert meta["confidence"] == "medium"
         assert meta["proven_player"] is False
 
     def test_sentence_consumed_by_adjacent_internal_call_skipped(self, tmp_path):
@@ -1240,13 +1252,11 @@ class TestProvenPlayerFiltering:
         )
         assert result.items == []
 
-    def test_bare_lowercase_word_not_rescued_by_nearby_speech(self, tmp_path):
-        """Var names like 'triggered'/'caravanrun' stay rejected even when a
-        speech ACTION appears in the scan window: the anywhere-in-window proof
-        is too weak for a bare all-lowercase word."""
-        for word in ("triggered", "caravanrun"):
-            result = self._extract(tmp_path, _consts(word), _action(221, 2), _retn())
-            assert result.items == [], word
+    def test_displayed_words_do_not_depend_on_capitalization(self, tmp_path):
+        for word in ("hello", "HELP", "oui", "OK"):
+            result = self._extract(tmp_path, _consti(0), _consts(word), _action(221, 2), _retn())
+            assert [item.text for item in result.items] == [word]
+            assert result.items[0].metadata["needs_llm_gate"] is True
 
     def test_floating_text_is_player_facing(self, tmp_path):
         """FloatingTextStringOnCreature is 526; the old table had 468/525."""
@@ -1260,8 +1270,6 @@ class TestProvenPlayerFiltering:
             "nw_c2_default9",
             "my_var_name",
             "NW_FLAG_HEARTBEAT",
-            "BJArrested",
-            "oAssignedHorse",
         ):
             result = self._extract(tmp_path, _consts(bad), _action(221, 2), _retn())
             assert result.items == [], bad
@@ -1274,8 +1282,8 @@ class TestProvenPlayerVeto:
         assert ncs_hard_veto_reason("Goodbye") == "resref_like_identifier"
         assert ncs_hard_veto_reason("Goodbye", proven_player=True) is None
         assert ncs_hard_veto_reason("Farewell", proven_player=True) is None
-        # Bare lowercase words stay vetoed: identifiers, not barks.
-        assert ncs_hard_veto_reason("triggered", proven_player=True) is not None
+        # Letter case cannot establish whether a displayed word is technical.
+        assert ncs_hard_veto_reason("hello", proven_player=True) is None
 
     def test_identifiers_stay_vetoed_despite_proof(self):
         assert ncs_hard_veto_reason("NRB1_Guard", proven_player=True) is not None
@@ -1304,7 +1312,7 @@ class TestNcsConcat:
             tmp_path,
             "cut.ncs",
             _consts("Congrats to ye, "),
-            _cptopsp(),
+            _cptopsp(-8),
             _add_ss(),
             _consts(". How do ye feel?"),
             _add_ss(),
@@ -1337,7 +1345,7 @@ class TestNcsConcat:
         path = _write_ncs(
             tmp_path,
             "cut.ncs",
-            _cptopsp(),
+            _cptopsp(-8),
             _consts("is currently in your party!"),
             _add_ss(),
             _action(221, 1),
@@ -1353,12 +1361,12 @@ class TestNcsConcat:
             tmp_path,
             "cut.ncs",
             _consts("Hello, "),
-            _cptopsp(),
+            _cptopsp(-8),
             _add_ss(),
             _action(221, 1),
             _jz(4),
             _consts("Goodbye, "),
-            _cptopsp(),
+            _cptopsp(-8),
             _add_ss(),
             _action(221, 1),
             _retn(),
@@ -1382,7 +1390,7 @@ class TestNcsConcat:
             tmp_path,
             "openingcut1.ncs",
             _consts("Congrats to ye, "),
-            _cptopsp(),
+            _cptopsp(-8),
             _add_ss(),
             _consts(". How do ye feel?"),
             _add_ss(),
@@ -1455,7 +1463,7 @@ class TestNcsConcat:
             tmp_path,
             "cut.ncs",
             _consts("Congrats to ye, "),
-            _cptopsp(),
+            _cptopsp(-8),
             _add_ss(),
             _consts(". How do ye feel?"),
             _add_ss(),

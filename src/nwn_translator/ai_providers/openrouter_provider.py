@@ -919,14 +919,18 @@ class OpenRouterProvider(BaseAIProvider):
             "- `text`: the literal string from the bytecode.\n"
             "- `file`: script filename (e.g. `dmfi_execute.ncs`).\n"
             "- `nss_snippet`: source window around the literal when available. "
-            "THIS IS YOUR PRIMARY SIGNAL — read the surrounding lines carefully.\n"
+            "It comes only from the matching script, but may be stale or show another "
+            "occurrence of the same text. It never overrides a proven bytecode consumer.\n"
             "- `bytecode_context`: structured hint from bytecode analysis. "
-            "`next_action_name` names the engine routine that consumes the string "
-            "(e.g. `SendMessageToPC`, `SpeakString`, `SetCustomToken`). "
-            "`compare_nearby: true` means OP_EQUAL/OP_NEQUAL fires before any "
-            "ACTION — the literal is almost certainly a comparison target.\n"
-            "- `confidence` and `source_class`: prior heuristic classification "
-            "(`high` + `player` = probable player-facing, but VERIFY).\n"
+            "When `consumer_proven` is true, `next_action_name` and the zero-based "
+            "`argument_index` identify the argument receiving this string. "
+            "A function can receive both text and identifiers; use the argument role. "
+            "`compare_nearby: true` means a string comparison consumes this value. "
+            "Missing consumer evidence is inconclusive.\n"
+            "`player_action_nearby` only indicates a display call nearby in the file; "
+            "it does not prove that this string reaches that call.\n"
+            "- `confidence`: prior heuristic classification "
+            "(candidate hints, not proof).\n"
             "\n"
             "## Rules — output `translate: false` when ANY of these hold\n"
             '1. The literal appears as `== "X"`, `!= "X"`, `"X" ==`, `"X" !=` '
@@ -938,16 +942,24 @@ class OpenRouterProvider(BaseAIProvider):
             '2. Used as a tag/resref argument: `GetObjectByTag("X")`, '
             '`GetWaypointByTag("X")`, `CreateObject(..., "X", ...)`, '
             '`GetNearestObjectByTag`, `StartNewModule("X")`, '
-            '`ExecuteScript("X", ...)`.\n'
+            '`ExecuteScript("X", ...)`. The dialog arguments of '
+            "`SpeakOneLinerConversation`, `ActionStartConversation` and "
+            "`BeginConversation` are resrefs, not the conversation text. "
+            "Journal plot IDs, listen patterns, 2DA names/columns and "
+            "PostString's argument 9 (font name) are also internal.\n"
             '3. Local-variable name argument: `GetLocalInt(oObj, "X")`, '
             '`SetLocalString(..., "X", ...)`, `GetLocalObject`, '
-            "`DeleteLocalInt`, and any `*Local*` family call — the string "
-            "names a variable, never player text.\n"
+            "`DeleteLocalInt`: argument 1 names a variable. Campaign arguments "
+            "0 and 1 are database/variable names. SetLocalString and "
+            "SetCampaignString argument 2 is a stored value: approve it only "
+            "when source context establishes a later player-visible use.\n"
             "4. Looks like an identifier: `snake_case`, `UPPER_SNAKE`, "
             "`CamelCase` with no spaces, resref (≤16 chars alnum+underscore), "
             "dotted `module.function`, or an alphabet dump "
             "(`ABC...XYZ`). Even when passed to a player-facing function, these "
             "are usually debug fragments concatenated into a larger message.\n"
+            "A natural single word such as Goodbye or a displayed name is not "
+            "automatically a resref: verify its use in the source or argument context.\n"
             "5. Debug scaffolding: `PrintString`, `SendMessageToAllDMs`, "
             "`WriteTimestampedLogEntry`, or obvious developer text like "
             '`"Module Leadership = "` used as a `+ IntToString(x)` prefix. '
@@ -959,22 +971,24 @@ class OpenRouterProvider(BaseAIProvider):
             "## Rules — output `translate: true` when ALL these hold\n"
             "- The literal is natural-language text in the source language.\n"
             "- nss_snippet shows it flowing into a player-visible consumer: "
-            "`SpeakString`, `ActionSpeakString`, `SpeakOneLinerConversation`, "
+            "`SpeakString`, `ActionSpeakString`, "
             "`FloatingTextStringOnCreature`, `SetCustomToken` (token body shown "
-            "in dialog), `SetDescription`, or `SendMessageToPC` carrying an "
+            "in dialog), `SetName`, `SetDescription`, `SetKeyRequiredFeedback`, "
+            "`PopUpDeathGUIPanel` (help text), `CreateArea`/`CopyArea` (argument 2, "
+            "display name), `PostString` (argument 1, message), or `SendMessageToPC` carrying an "
             "actual sentence, not a debug concatenation.\n"
-            "- It is a full or near-full utterance, not a fragment glued to "
-            'variables. Short barks (`"Help!"`, `"Mommy."`, '
+            "- It is a full or near-full utterance. A merged concatenation uses "
+            "<VARn> placeholders for runtime values; judge the whole utterance. "
+            'Short barks (`"Help!"`, `"Mommy."`, '
             '`"I\'m okay, sir."`) count as dialogue; approve them.\n'
             '- Informal or broken in-character English (`"Oi, ye git!"`) is '
             "still dialogue — approve.\n"
             "\n"
             "## When nss_snippet is missing\n"
-            "Fall back to bytecode_context. `next_action_name` of "
-            "`SpeakString` / `ActionSpeakString` / `SpeakOneLinerConversation` / "
-            "`FloatingTextStringOnCreature` with natural-language text → true. "
-            "Anything else → be conservative, prefer false unless the text is "
-            "unmistakably a sentence.\n"
+            "Fall back to bytecode_context. A proven player-visible argument "
+            "with natural-language text supports translation. Without a proven "
+            "consumer or source evidence, prefer false: sentence shape alone "
+            "does not establish player-visible use.\n"
             "\n"
             "## Output format\n"
             'Return ONLY a JSON object. Keys match input keys (`"0"`, `"1"`, …). '
@@ -1007,8 +1021,6 @@ class OpenRouterProvider(BaseAIProvider):
                 cell["bytecode_context"] = e["bytecode_context"]
             if e.get("confidence"):
                 cell["confidence"] = e["confidence"]
-            if e.get("source_class"):
-                cell["source_class"] = e["source_class"]
             user_payload[str(e["key"])] = cell
         return f"Source language label: {source_lang}. Classify each entry.\n\n" + json.dumps(
             user_payload, ensure_ascii=False
@@ -1021,11 +1033,9 @@ class OpenRouterProvider(BaseAIProvider):
     ) -> Dict[str, Dict[str, Any]]:
         cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```\s*$", "", cleaned)
-        decoder = json.JSONDecoder()
-        idx = cleaned.find("{")
-        if idx == -1:
-            raise json.JSONDecodeError("No JSON object", cleaned, 0)
-        parsed, _ = decoder.raw_decode(cleaned, idx)
+        parsed = json.loads(cleaned)
+        if not isinstance(parsed, dict):
+            raise json.JSONDecodeError("NCS gate response must be an object", cleaned, 0)
 
         out: Dict[str, Dict[str, Any]] = {}
         for e in entries:
@@ -1033,11 +1043,9 @@ class OpenRouterProvider(BaseAIProvider):
             cell: Union[Dict[str, Any], bool, None] = parsed.get(k)
             if isinstance(cell, dict):
                 out[k] = {
-                    "translate": bool(cell.get("translate", False)),
+                    "translate": cell.get("translate") is True,
                     "reason": str(cell.get("reason", "")) or "unspecified",
                 }
-            elif isinstance(cell, bool):
-                out[k] = {"translate": cell, "reason": "legacy_bool"}
             else:
                 out[k] = {"translate": False, "reason": "missing_verdict"}
         return out

@@ -123,7 +123,7 @@ CExoLocString: parser takes the first non-empty substring; patcher writes one su
 ## Other subsystems
 
 - **`ai_providers/`** — `openrouter_provider.py` (shared OpenAI-compatible logic); `polza_provider.py` only changes the base URL.
-- **`extractors/nss_index.py`** — NCS translatability from packed `.nss` sources; bytecode heuristics in `ncs_extractor.py` are fallback.
+- **NCS selection** — `extractors/ncs_context.py` traces argument-specific bytecode consumers; `nss_index.py` supplies engine argument roles and matching-source context, never module-wide proof. `ncs_extractor.py` emits candidates for the model gate. See `docs/ncs-translation.md` for validation.
 - **`prompts/`** — prompt builder and per-language examples.
 - **`web/`** — FastAPI + task manager. Persistence is raw `sqlite3` (no ORM): schema and additive migrations (`CREATE TABLE IF NOT EXISTS`, `_migrate` / `ALTER TABLE`) live in `database.py`. No Alembic.
 - **`scripts/dump_gff_strings.py`** — dump CExoLocString from a file or module.

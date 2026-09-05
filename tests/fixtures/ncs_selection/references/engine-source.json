@@ -1,0 +1,258 @@
+{
+  "origin": "Neverwinter Nights/data/base_scripts.bif",
+  "sha256": "bd4f74a80159fb715ab5978a4c0d6a7ae352fd14463d9bfa3c0dc38b984c8ac4",
+  "excerpts": {
+    "NW_MODES_CONDITION": {
+      "byte_start": 15833946,
+      "byte_end": 15834426,
+      "sha256": "76216633beb8243193886cda0d7fc1e7bf7e4953f064ebd8ab1c81cedbc7c3f2",
+      "encoding": "cp1252",
+      "text": "o make this actually work\r\n\r\n/**********************************************************************\r\n * CONSTANTS\r\n **********************************************************************/\r\n\r\nconst string sModeVarname = \"NW_MODES_CONDITION\";\r\n\r\nconst int NW_MODE_STEALTH                = 0x00000001;\r\nconst int NW_MODE_DETECT                 = 0x00000002;\r\n\r\n// int NW_MODE_                = 0x00000000;\r\n\r\n/**********************************************************************\r\n"
+    },
+    "NW_ASSOCIATE_MASTER": {
+      "byte_start": 5927467,
+      "byte_end": 5927948,
+      "sha256": "c8d1ed38cf339b8f2b4f3d0ece77731d402af8f30c4dc920546d16ad25e3d6d7",
+      "encoding": "cp1252",
+      "text": "red(GetBeenHired(oSource), oTarget);\r\n  SetStoryVar(1, GetStoryVar(1, oSource), oTarget);\r\n  SetStoryVar(2, GetStoryVar(2, oSource), oTarget);\r\n  SetStoryVar(3, GetStoryVar(3, oSource), oTarget);\r\n  SetLocalInt(oTarget, \"NW_ASSOCIATE_MASTER\", GetLocalInt(oSource, \"NW_ASSOCIATE_MASTER\"));\r\n//  AssignCommand(PC(),SpeakString(IntToString(GetLocalInt(oSource, \"NW_ASSOCIATE_MASTER\"))));\r\n//  AssignCommand(PC(),SpeakString(IntToString(GetLocalInt(oTarget, \"NW_ASSOCIATE_MASTER\"))));\r"
+    },
+    "X0_COMBAT_CONDITION": {
+      "byte_start": 15578858,
+      "byte_end": 15579339,
+      "sha256": "941af6c07027f6c8c589d68141c78c359628ea2b03db7e6ebdad0b91d65c746c",
+      "encoding": "cp1252",
+      "text": "**********************************************************\r\n * CONSTANTS\r\n **********************************************************************/\r\n\r\n// Special combat behavior flags\r\n\r\nconst string sCombatCondVarname = \"X0_COMBAT_CONDITION\";\r\n\r\nconst int X0_COMBAT_FLAG_RANGED            = 0x00000001;\r\nconst int X0_COMBAT_FLAG_DEFENSIVE         = 0x00000002;\r\nconst int X0_COMBAT_FLAG_COWARDLY          = 0x00000004;\r\nconst int X0_COMBAT_FLAG_AMBUSHER          = 0x00000008;\r\n\r\n/"
+    },
+    "NW_GENERIC_MASTER": {
+      "byte_start": 5900992,
+      "byte_end": 5901471,
+      "sha256": "4e43b53ced1b92590acc6a1fc1422d77ec06ada0c1bd8a331ea2030f25342631",
+      "encoding": "cp1252",
+      "text": "ose having this as a variable made it easier to change at one point....\r\n     //but it never changes, and is only used twice, so we don't need it\r\n     //float fDelay =  6.0;\r\n\r\n     int nPlot = GetLocalInt(OBJECT_SELF, \"NW_GENERIC_MASTER\");\r\n\r\n     if(nPlot & NW_FLAG_TELEPORT_RETURN || nPlot & NW_FLAG_TELEPORT_LEAVE)\r\n     {\r\n        effect eVis = EffectVisualEffect(VFX_IMP_UNSUMMON);\r\n        ApplyEffectToObject(DURATION_TYPE_INSTANT, eVis, OBJECT_SELF);\r\n        if(nPlot "
+    },
+    "NW_WALK_CONDITION": {
+      "byte_start": 16151624,
+      "byte_end": 16152103,
+      "sha256": "0127623b6327e8df4ef243642b9015a94e01cee61f5ac95462a233b718038580",
+      "encoding": "cp1252",
+      "text": "lude \"x0_i0_spawncond\"\r\n\r\n/**********************************************************************\r\n * CONSTANTS\r\n **********************************************************************/\r\n\r\nconst string sWalkwayVarname = \"NW_WALK_CONDITION\";\r\n\r\n// If set, the creature's waypoints have been initialized.\r\nconst int NW_WALK_FLAG_INITIALIZED                 = 0x00000001;\r\n\r\n// If set, the creature will walk its waypoints constantly,\r\n// moving on in each OnHeartbeat event. Otherw"
+    },
+    "x0_npc_homeconv": {
+      "byte_start": 15483790,
+      "byte_end": 15484267,
+      "sha256": "949e402a724036c48422225a203b9bec3a5e7d98ad142a3e69dd373b95dfc18d",
+      "encoding": "cp1252",
+      "text": "t float ANIM_LOOPING_LENGTH = 4.0;\r\nconst float ANIM_LOOPING_SPEED = 1.0;\r\n\r\n// Conversation file that holds the random one-liners for\r\n// NPCs to speak when a PC comes into their home.\r\nconst string ANIM_CONVERSATION = \"x0_npc_homeconv\";\r\n\r\n// Variable that holds the animation flags\r\nconst string sAnimCondVarname = \"NW_ANIM_CONDITION\";\r\n\r\n// ***  Available animation flags  *** //\r\n\r\n// If set, the NPC has been initialized\r\nconst int NW_ANIM_FLAG_INITIALIZED             = "
+    },
+    "NW_ANIM_CONDITION": {
+      "byte_start": 15483888,
+      "byte_end": 15484367,
+      "sha256": "cc616e2a7f0c2d8eb6a734f986e152cf3fdedec8cf10cf0c0515ebc9443f40ad",
+      "encoding": "cp1252",
+      "text": "that holds the random one-liners for\r\n// NPCs to speak when a PC comes into their home.\r\nconst string ANIM_CONVERSATION = \"x0_npc_homeconv\";\r\n\r\n// Variable that holds the animation flags\r\nconst string sAnimCondVarname = \"NW_ANIM_CONDITION\";\r\n\r\n// ***  Available animation flags  *** //\r\n\r\n// If set, the NPC has been initialized\r\nconst int NW_ANIM_FLAG_INITIALIZED             = 0x00000001;\r\n\r\n// If set, the NPC will animate on every OnHeartbeat event.\r\n// Otherwise, the NPC wi"
+    },
+    "nw_campaign_db_default": {
+      "byte_start": 15570886,
+      "byte_end": 15571370,
+      "sha256": "81abf54e52b4dae94773101ab537c3aebd1ddeaf8588abccc6aa1940f4f2ac29",
+      "encoding": "cp1252",
+      "text": "****************************************/\r\n\r\n//******** Add new database names here (for official campaigns only!)\r\n// Actual db name is arbitrary, but suggest sticking to the below model\r\n\r\nstring X0_DATABASE_DEFAULT = \"nw_campaign_db_default\";\r\n\r\nstring X0_DATABASE_XP1 = \"nw_campaign_db_xp1\";\r\n\r\n/**********************************************************************\r\n * FUNCTION PROTOTYPES\r\n **********************************************************************/\r\n\r\n// Return th"
+    },
+    "nw_campaign_db_xp1": {
+      "byte_start": 15570940,
+      "byte_end": 15571420,
+      "sha256": "695a6a0468ffcdb32d4de3353e7535116215c403bfb033f76382db52abab0a9d",
+      "encoding": "cp1252",
+      "text": "* Add new database names here (for official campaigns only!)\r\n// Actual db name is arbitrary, but suggest sticking to the below model\r\n\r\nstring X0_DATABASE_DEFAULT = \"nw_campaign_db_default\";\r\n\r\nstring X0_DATABASE_XP1 = \"nw_campaign_db_xp1\";\r\n\r\n/**********************************************************************\r\n * FUNCTION PROTOTYPES\r\n **********************************************************************/\r\n\r\n// Return the name of the campaign database that should be use"
+    },
+    "_MET": {
+      "byte_start": 15595324,
+      "byte_end": 15595790,
+      "sha256": "0af4e1ef3b712655afef0a05eb97da87c8f6920d180afa752b5967a9d7ddee8b",
+      "encoding": "cp1252",
+      "text": "RD = 3;\r\nconst int DIFFICULTY_IMPOSSIBLE = 4;\r\n\r\n/**** Suffixes for item tags & local vars ****/\r\n\r\n// This gets tacked onto the NPC's tag to denote\r\n// the tag for their \"home\" waypoint.\r\n\r\nconst string sHasMetSuffix = \"_MET\";\r\nconst string sHasHiredSuffix = \"_HIRED\";\r\nconst string sDidQuitSuffix = \"_QUIT\";\r\nconst string sFriendSuffix = \"_FR\";\r\nconst string sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdvi"
+    },
+    "_HIRED": {
+      "byte_start": 15595364,
+      "byte_end": 15595832,
+      "sha256": "a803685bac9f10997dd5f0189e24287ad9254f947862e57e10162956a632c519",
+      "encoding": "cp1252",
+      "text": " = 4;\r\n\r\n/**** Suffixes for item tags & local vars ****/\r\n\r\n// This gets tacked onto the NPC's tag to denote\r\n// the tag for their \"home\" waypoint.\r\n\r\nconst string sHasMetSuffix = \"_MET\";\r\nconst string sHasHiredSuffix = \"_HIRED\";\r\nconst string sDidQuitSuffix = \"_QUIT\";\r\nconst string sFriendSuffix = \"_FR\";\r\nconst string sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuade"
+    },
+    "_QUIT": {
+      "byte_start": 15595405,
+      "byte_end": 15595872,
+      "sha256": "6a7f134203195d0b4d76389d5a26e565650e4127df085654b1ba21d0167a477d",
+      "encoding": "cp1252",
+      "text": "ocal vars ****/\r\n\r\n// This gets tacked onto the NPC's tag to denote\r\n// the tag for their \"home\" waypoint.\r\n\r\nconst string sHasMetSuffix = \"_MET\";\r\nconst string sHasHiredSuffix = \"_HIRED\";\r\nconst string sDidQuitSuffix = \"_QUIT\";\r\nconst string sFriendSuffix = \"_FR\";\r\nconst string sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuadeAttemptSuffix = \"_PERSUADE\";\r\nconst stri"
+    },
+    "_FR": {
+      "byte_start": 15595444,
+      "byte_end": 15595909,
+      "sha256": "225e9cb340872385da4ad763057b9d13acae55b3436b8ee567b6957a08079b16",
+      "encoding": "cp1252",
+      "text": "onto the NPC's tag to denote\r\n// the tag for their \"home\" waypoint.\r\n\r\nconst string sHasMetSuffix = \"_MET\";\r\nconst string sHasHiredSuffix = \"_HIRED\";\r\nconst string sDidQuitSuffix = \"_QUIT\";\r\nconst string sFriendSuffix = \"_FR\";\r\nconst string sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuadeAttemptSuffix = \"_PERSUADE\";\r\nconst string sPersuadeSuccessSuffix = \"_PERSUAD"
+    },
+    "_INTJ": {
+      "byte_start": 15595490,
+      "byte_end": 15595957,
+      "sha256": "5ae96fa2da680d07bcd9e9578037c2f521db527e8609a46c5898dcba4c5a28a1",
+      "encoding": "cp1252",
+      "text": "heir \"home\" waypoint.\r\n\r\nconst string sHasMetSuffix = \"_MET\";\r\nconst string sHasHiredSuffix = \"_HIRED\";\r\nconst string sDidQuitSuffix = \"_QUIT\";\r\nconst string sFriendSuffix = \"_FR\";\r\nconst string sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuadeAttemptSuffix = \"_PERSUADE\";\r\nconst string sPersuadeSuccessSuffix = \"_PERSUADE_SUCC\";\r\nconst string sThreatenSuffix = \"_THREA"
+    },
+    "_INTJ_SET": {
+      "byte_start": 15595538,
+      "byte_end": 15596009,
+      "sha256": "db5490fc59b513311a1185bf34cbcfac9569e4b04c0e5f6e6f559e5c2a462ecd",
+      "encoding": "cp1252",
+      "text": "fix = \"_MET\";\r\nconst string sHasHiredSuffix = \"_HIRED\";\r\nconst string sDidQuitSuffix = \"_QUIT\";\r\nconst string sFriendSuffix = \"_FR\";\r\nconst string sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuadeAttemptSuffix = \"_PERSUADE\";\r\nconst string sPersuadeSuccessSuffix = \"_PERSUADE_SUCC\";\r\nconst string sThreatenSuffix = \"_THREAT\";\r\n\r\n/**** Names for the local variables that go o"
+    },
+    "_ADV": {
+      "byte_start": 15595581,
+      "byte_end": 15596047,
+      "sha256": "5b6ca7a345880b07cd4e7ff129304d00fe91668aa48c5bf907b3ff61c02f5ef4",
+      "encoding": "cp1252",
+      "text": " = \"_HIRED\";\r\nconst string sDidQuitSuffix = \"_QUIT\";\r\nconst string sFriendSuffix = \"_FR\";\r\nconst string sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuadeAttemptSuffix = \"_PERSUADE\";\r\nconst string sPersuadeSuccessSuffix = \"_PERSUADE_SUCC\";\r\nconst string sThreatenSuffix = \"_THREAT\";\r\n\r\n/**** Names for the local variables that go on the NPCs ****/\r\n\r\n// Holds the curre"
+    },
+    "_PERSUADE": {
+      "byte_start": 15595628,
+      "byte_end": 15596099,
+      "sha256": "7a2b5ce6d7d927c4241960950c35e105da0166b8e244b6c5eeadabdfe4c8dd06",
+      "encoding": "cp1252",
+      "text": "UIT\";\r\nconst string sFriendSuffix = \"_FR\";\r\nconst string sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuadeAttemptSuffix = \"_PERSUADE\";\r\nconst string sPersuadeSuccessSuffix = \"_PERSUADE_SUCC\";\r\nconst string sThreatenSuffix = \"_THREAT\";\r\n\r\n/**** Names for the local variables that go on the NPCs ****/\r\n\r\n// Holds the current one-liner\r\nconst string sOneLinerVarname = \"X0_CU"
+    },
+    "_PERSUADE_SUCC": {
+      "byte_start": 15595680,
+      "byte_end": 15596156,
+      "sha256": "3d8bd4ec2f0222ef8aa7ed6dd9f4a5332f91b972e68f04def1e6ce28dd76f2d8",
+      "encoding": "cp1252",
+      "text": "ring sHasInterjectionSuffix = \"_INTJ\";\r\nconst string sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuadeAttemptSuffix = \"_PERSUADE\";\r\nconst string sPersuadeSuccessSuffix = \"_PERSUADE_SUCC\";\r\nconst string sThreatenSuffix = \"_THREAT\";\r\n\r\n/**** Names for the local variables that go on the NPCs ****/\r\n\r\n// Holds the current one-liner\r\nconst string sOneLinerVarname = \"X0_CURRENT_ONE_LINER\";\r\n\r\n// Holds whether this NPC's one-shot"
+    },
+    "_THREAT": {
+      "byte_start": 15595730,
+      "byte_end": 15596199,
+      "sha256": "5e581a49ed7634dfe72d5cfd5446e326463f68610099d785566a6a18f580075d",
+      "encoding": "cp1252",
+      "text": "ng sInterjectionSetSuffix = \"_INTJ_SET\";\r\nconst string sAdviceSuffix = \"_ADV\";\r\nconst string sPersuadeAttemptSuffix = \"_PERSUADE\";\r\nconst string sPersuadeSuccessSuffix = \"_PERSUADE_SUCC\";\r\nconst string sThreatenSuffix = \"_THREAT\";\r\n\r\n/**** Names for the local variables that go on the NPCs ****/\r\n\r\n// Holds the current one-liner\r\nconst string sOneLinerVarname = \"X0_CURRENT_ONE_LINER\";\r\n\r\n// Holds whether this NPC's one-shot event has occurred\r\nconst string sOneShotV"
+    },
+    "X0_CURRENT_ONE_LINER": {
+      "byte_start": 15595873,
+      "byte_end": 15596355,
+      "sha256": "6ee6154054253555a6e1a31e26832576cd1db510f260910417375dffe6bb44c9",
+      "encoding": "cp1252",
+      "text": "g sPersuadeSuccessSuffix = \"_PERSUADE_SUCC\";\r\nconst string sThreatenSuffix = \"_THREAT\";\r\n\r\n/**** Names for the local variables that go on the NPCs ****/\r\n\r\n// Holds the current one-liner\r\nconst string sOneLinerVarname = \"X0_CURRENT_ONE_LINER\";\r\n\r\n// Holds whether this NPC's one-shot event has occurred\r\nconst string sOneShotVarname = \"X0_ONE_SHOT_EVENT\";\r\n\r\n/**** Event router tags ****/\r\n/* The event router is the object in each module that will\r\n * be responsible for receiving "
+    },
+    "X0_ONE_SHOT_EVENT": {
+      "byte_start": 15595988,
+      "byte_end": 15596467,
+      "sha256": "232c745fc2f1aea4292d860ad627c80656cfdc43acf319dfce3475eafa878813",
+      "encoding": "cp1252",
+      "text": "l variables that go on the NPCs ****/\r\n\r\n// Holds the current one-liner\r\nconst string sOneLinerVarname = \"X0_CURRENT_ONE_LINER\";\r\n\r\n// Holds whether this NPC's one-shot event has occurred\r\nconst string sOneShotVarname = \"X0_ONE_SHOT_EVENT\";\r\n\r\n/**** Event router tags ****/\r\n/* The event router is the object in each module that will\r\n * be responsible for receiving user-defined events (eg, for quest\r\n * start or completion), and then in turn sending events out\r\n * to the henc"
+    },
+    "X0_EVT_ROUTER_M": {
+      "byte_start": 15596350,
+      "byte_end": 15596827,
+      "sha256": "55e5091ded0c0e48c4f226e9f528def954463577cb12c4907fea90e84a44928c",
+      "encoding": "cp1252",
+      "text": "ving user-defined events (eg, for quest\r\n * start or completion), and then in turn sending events out\r\n * to the henchmen and other NPCs as appropriate to trigger\r\n * new effects on them.\r\n */\r\nconst string sRouterTag = \"X0_EVT_ROUTER_M\";\r\n\r\n/**** Starting Location ****/\r\n// This variable marks the starting location of a creature\r\nconst string sStartLocationVarname = \"X0_START_LOC\";\r\n\r\n/**** Respawn Point ****/\r\n// This is the variable that goes on the PC to specify the\r\n/"
+    },
+    "X0_START_LOC": {
+      "byte_start": 15596500,
+      "byte_end": 15596974,
+      "sha256": "0c82bc4920423a3ba1498926e4f5c891358e7e28ca34f32d2e35a7b564f58b4b",
+      "encoding": "cp1252",
+      "text": "e to trigger\r\n * new effects on them.\r\n */\r\nconst string sRouterTag = \"X0_EVT_ROUTER_M\";\r\n\r\n/**** Starting Location ****/\r\n// This variable marks the starting location of a creature\r\nconst string sStartLocationVarname = \"X0_START_LOC\";\r\n\r\n/**** Respawn Point ****/\r\n// This is the variable that goes on the PC to specify the\r\n// respawn point for them and their henchman.\r\nconst string sRespawnLocationVarname = \"X0_RESPAWN_LOC\";\r\n\r\n\r\n/**** Conversation attempt delay ****/\r"
+    },
+    "X0_RESPAWN_LOC": {
+      "byte_start": 15596692,
+      "byte_end": 15597168,
+      "sha256": "554a3f01a01a8773a661119cedcabe5aeccdece73e0953b0caefa8cd7915f7d9",
+      "encoding": "cp1252",
+      "text": "ing sStartLocationVarname = \"X0_START_LOC\";\r\n\r\n/**** Respawn Point ****/\r\n// This is the variable that goes on the PC to specify the\r\n// respawn point for them and their henchman.\r\nconst string sRespawnLocationVarname = \"X0_RESPAWN_LOC\";\r\n\r\n\r\n/**** Conversation attempt delay ****/\r\n\r\n// This controls the amount of delay between persistent conversation\r\n// attempts.\r\nconst float CONVERSATION_ATTEMPT_DELAY = 3.0;\r\n\r\n\r\n/*******************************************************"
+    },
+    "X0_HEN_DEE": {
+      "byte_start": 172336,
+      "byte_end": 172808,
+      "sha256": "e65fe3abfe8fccc31643d4ff1cdc0e68d4a1924bcd77ae8496515af01144f904",
+      "encoding": "cp1252",
+      "text": "X0_HEN_DOR\"), EventUserDefined(2101));\r\n        break;\r\n\r\n    case 2201:\r\n        // Approach Hall of Bones\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_XAN\"), EventUserDefined(2104));\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_DEE\"), EventUserDefined(2121));\r\n        break;\r\n\r\n    case 2202:\r\n        // Approach Kobold Caves\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_DEE\"), EventUserDefined(2122));\r\n        break;\r\n\r\n    case 2203:\r\n        // Approach puzzle in Nur"
+    },
+    "X0_HEN_DOR": {
+      "byte_start": 172115,
+      "byte_end": 172587,
+      "sha256": "7527154290266c3789ea5dbae0562b7877b542be42e8d2f7659743699e43d439",
+      "encoding": "cp1252",
+      "text": "//////////\r\n\r\n\r\n#include \"x0_i0_henchman\"\r\n\r\nvoid main()\r\n{\r\n    int nEvent = GetUserDefinedEventNumber();\r\n    switch (nEvent) {\r\n\r\n    case 2200:\r\n        // Approach Abandoned Mine\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_DOR\"), EventUserDefined(2101));\r\n        break;\r\n\r\n    case 2201:\r\n        // Approach Hall of Bones\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_XAN\"), EventUserDefined(2104));\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_DEE\"), EventUserDefined"
+    },
+    "X0_HEN_XAN": {
+      "byte_start": 172260,
+      "byte_end": 172732,
+      "sha256": "6443b329de5f59e873c2a8dd83f5c68bcffd1ffae2a975d8114444642f1384b1",
+      "encoding": "cp1252",
+      "text": "0:\r\n        // Approach Abandoned Mine\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_DOR\"), EventUserDefined(2101));\r\n        break;\r\n\r\n    case 2201:\r\n        // Approach Hall of Bones\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_XAN\"), EventUserDefined(2104));\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_DEE\"), EventUserDefined(2121));\r\n        break;\r\n\r\n    case 2202:\r\n        // Approach Kobold Caves\r\n        SignalEvent(GetObjectByTag(\"X0_HEN_DEE\"), EventUserDefined("
+    },
+    "NW_L_HEN_I_DIED": {
+      "byte_start": 4177486,
+      "byte_end": 4177963,
+      "sha256": "95ecbce2e34fd76cab6f05c68404f48a3f07f5196e50b8edae4b45e204a1e088",
+      "encoding": "cp1252",
+      "text": "is is to prevent 'double hits' from stopping\r\n            // * the henchmen from moving to the temple of tyr\r\n            // * I.e., henchmen dies 'twice', once after leaving  your party\r\n            || GetLocalInt(oMe, \"NW_L_HEN_I_DIED\") == TRUE)\r\n        {\r\n            // -----------------------------------------------------------------------------\r\n            // Georg, 2003-10-08\r\n            // Rewrote code from here.\r\n            // ----------------------------------"
+    },
+    "X0_IS_CURRENTLY_HIRED": {
+      "byte_start": 15712153,
+      "byte_end": 15712636,
+      "sha256": "1f90d0cf25cc42ee5f969fb80421d924acd360ac20c465c8599958b9d7f2759c",
+      "encoding": "cp1252",
+      "text": "X0_HEN_DEE\";\r\nconst string sDorna = \"X0_HEN_DOR\";\r\nconst string sXandos = \"X0_HEN_XAN\";\r\n\r\n/**** variable names and suffixes ****/\r\nconst string sHenchmanDeathVarname = \"NW_L_HEN_I_DIED\";\r\nconst string sIsHiredVarname = \"X0_IS_CURRENTLY_HIRED\";\r\nconst string sLastMasterVarname = \"X0_LAST_MASTER_TAG\";\r\nconst string sHenchmanKilledSuffix = \"_GOTKILLED\";\r\nconst string sHenchmanResurrectedSuffix = \"_RESURRECTED\";\r\nconst string sHenchmanDyingVarname = \"X0_HEN_IS_DYING\";\r\nconst string"
+    },
+    "X0_LAST_MASTER_TAG": {
+      "byte_start": 15712213,
+      "byte_end": 15712693,
+      "sha256": "241ed4ffb875fea2a579f4b9af9a5e3ecc950e1f3562c94f03f1b51dadabf6d4",
+      "encoding": "cp1252",
+      "text": "ing sXandos = \"X0_HEN_XAN\";\r\n\r\n/**** variable names and suffixes ****/\r\nconst string sHenchmanDeathVarname = \"NW_L_HEN_I_DIED\";\r\nconst string sIsHiredVarname = \"X0_IS_CURRENTLY_HIRED\";\r\nconst string sLastMasterVarname = \"X0_LAST_MASTER_TAG\";\r\nconst string sHenchmanKilledSuffix = \"_GOTKILLED\";\r\nconst string sHenchmanResurrectedSuffix = \"_RESURRECTED\";\r\nconst string sHenchmanDyingVarname = \"X0_HEN_IS_DYING\";\r\nconst string sStoredHenchmanVarname = \"X0_HEN_STORED\";\r\n\r\n// Amount o"
+    },
+    "_GOTKILLED": {
+      "byte_start": 15712273,
+      "byte_end": 15712745,
+      "sha256": "e96672bb1e84796fd6cf05fa15d8602622102918108180b947937abccf816393",
+      "encoding": "cp1252",
+      "text": "ixes ****/\r\nconst string sHenchmanDeathVarname = \"NW_L_HEN_I_DIED\";\r\nconst string sIsHiredVarname = \"X0_IS_CURRENTLY_HIRED\";\r\nconst string sLastMasterVarname = \"X0_LAST_MASTER_TAG\";\r\nconst string sHenchmanKilledSuffix = \"_GOTKILLED\";\r\nconst string sHenchmanResurrectedSuffix = \"_RESURRECTED\";\r\nconst string sHenchmanDyingVarname = \"X0_HEN_IS_DYING\";\r\nconst string sStoredHenchmanVarname = \"X0_HEN_STORED\";\r\n\r\n// Amount of time to pass between respawn checks\r\nconst float D"
+    },
+    "_RESURRECTED": {
+      "byte_start": 15712330,
+      "byte_end": 15712804,
+      "sha256": "ae8e434f09db2776c9b0ad3bb2bba8aa5610351b26f5a197039c652b0e95c6a7",
+      "encoding": "cp1252",
+      "text": "N_I_DIED\";\r\nconst string sIsHiredVarname = \"X0_IS_CURRENTLY_HIRED\";\r\nconst string sLastMasterVarname = \"X0_LAST_MASTER_TAG\";\r\nconst string sHenchmanKilledSuffix = \"_GOTKILLED\";\r\nconst string sHenchmanResurrectedSuffix = \"_RESURRECTED\";\r\nconst string sHenchmanDyingVarname = \"X0_HEN_IS_DYING\";\r\nconst string sStoredHenchmanVarname = \"X0_HEN_STORED\";\r\n\r\n// Amount of time to pass between respawn checks\r\nconst float DELAY_BETWEEN_RESPAWN_CHECKS = 3.0f;\r\n\r\n// * duration henchm"
+    },
+    "X0_HEN_IS_DYING": {
+      "byte_start": 15712384,
+      "byte_end": 15712861,
+      "sha256": "a8e91fb02f3e89fb61a7aa956a4e2a15f1c54fd7dce5068e8c39fc9ee9f62512",
+      "encoding": "cp1252",
+      "text": "ENTLY_HIRED\";\r\nconst string sLastMasterVarname = \"X0_LAST_MASTER_TAG\";\r\nconst string sHenchmanKilledSuffix = \"_GOTKILLED\";\r\nconst string sHenchmanResurrectedSuffix = \"_RESURRECTED\";\r\nconst string sHenchmanDyingVarname = \"X0_HEN_IS_DYING\";\r\nconst string sStoredHenchmanVarname = \"X0_HEN_STORED\";\r\n\r\n// Amount of time to pass between respawn checks\r\nconst float DELAY_BETWEEN_RESPAWN_CHECKS = 3.0f;\r\n\r\n// * duration henchmen play their die animations\r\nconst float HENCHMEN_DIE_AN"
+    },
+    "X0_HEN_STORED": {
+      "byte_start": 15712442,
+      "byte_end": 15712917,
+      "sha256": "86a8cf2c33ca1fe489ca5910a64b6dd0e46d3b3a96852f84a67c8af74317bb46",
+      "encoding": "cp1252",
+      "text": "MASTER_TAG\";\r\nconst string sHenchmanKilledSuffix = \"_GOTKILLED\";\r\nconst string sHenchmanResurrectedSuffix = \"_RESURRECTED\";\r\nconst string sHenchmanDyingVarname = \"X0_HEN_IS_DYING\";\r\nconst string sStoredHenchmanVarname = \"X0_HEN_STORED\";\r\n\r\n// Amount of time to pass between respawn checks\r\nconst float DELAY_BETWEEN_RESPAWN_CHECKS = 3.0f;\r\n\r\n// * duration henchmen play their die animations\r\nconst float HENCHMEN_DIE_ANIM_DURATION = 6500000000.0f;\r\n\r\n// The maximum length of"
+    },
+    "x0_ch_hen_gohome": {
+      "byte_start": 15712819,
+      "byte_end": 15713297,
+      "sha256": "c66a26f7ed0f4c8b17a68a38e73a7213a9e26da017930c357aa4e57f2196f5cf",
+      "encoding": "cp1252",
+      "text": "ie animations\r\nconst float HENCHMEN_DIE_ANIM_DURATION = 6500000000.0f;\r\n\r\n// The maximum length of the wait before respawn\r\nconst float MAX_RESPAWN_WAIT = 60.0f;\r\n\r\n/**** Script names ****/\r\nconst string sGoHomeScript = \"x0_ch_hen_gohome\";\r\n\r\n\r\n\r\n/**********************************************************************\r\n * FUNCTION PROTOTYPES\r\n **********************************************************************/\r\n\r\n/**** GENERAL FUNCTIONS ****/\r\n\r\n// Copy all henchman-rela"
+    },
+    "X2_L_LAST_ITEM_EVENT": {
+      "byte_start": 28970052,
+      "byte_end": 28970534,
+      "sha256": "468d57600518c1a39c34ad0ddd8337795593f2463c70a952e8f7a99a6ced636d",
+      "encoding": "cp1252",
+      "text": "UIRE\r\n// X2_ITEM_EVENT_UNACQUIRE\r\n// X2_ITEM_EVENT_SPELLCAST_AT\r\n//----------------------------------------------------------------------------\r\nint GetUserDefinedItemEventNumber()\r\n{\r\n    return GetLocalInt(OBJECT_SELF,\"X2_L_LAST_ITEM_EVENT\");\r\n}\r\n\r\n//----------------------------------------------------------------------------\r\n// Set the current UserDefined Item Event Number\r\n// X2_ITEM_EVENT_ACTIVATE\r\n// X2_ITEM_EVENT_EQUIP\r\n// X2_ITEM_EVENT_UNEQUIP\r\n// X2_ITEM_EVENT_ONHITCA"
+    }
+  }
+}

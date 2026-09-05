@@ -1,0 +1,1810 @@
+{
+  "schema_version": 2,
+  "annotation_policy": "../../../docs/ncs-translation.md",
+  "reviewer": "Codex; source and bytecode review, not extractor-generated labels",
+  "cases": [
+    {
+      "id": "adwr/do_bj_knock",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "do_bj_knock",
+      "files": {
+        "ncs": {
+          "path": "adwr/do_bj_knock/do_bj_knock.ncs",
+          "sha256": "d43aedc079efd3fa8d0ae5aa8b5160d59acf86b679dbe8b416a1ea3f6ef38b7a"
+        },
+        "nss": {
+          "path": "adwr/do_bj_knock/do_bj_knock.nss",
+          "sha256": "deed92dc12ae3af637ee6effd020e2b193ff327b749fdb75ebfc332d7dff5293"
+        }
+      },
+      "constant_count": 35
+    },
+    {
+      "id": "adwr/check_bluff_10",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "check_bluff_10",
+      "files": {
+        "ncs": {
+          "path": "adwr/check_bluff_10/check_bluff_10.ncs",
+          "sha256": "fc461ffdd382ef21db6fc6bab93d1e043e62682dded6780c64d1bc2f513e29b2"
+        },
+        "nss": {
+          "path": "adwr/check_bluff_10/check_bluff_10.nss",
+          "sha256": "3ea22d94cad1638edb13fd0f2e7057f0d5d16cf91fd28fa23a7ea85cbfc7fd23"
+        }
+      },
+      "constant_count": 2
+    },
+    {
+      "id": "almraiven/commoner_blk_inn",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "commoner_blk_inn",
+      "files": {
+        "ncs": {
+          "path": "almraiven/commoner_blk_inn/commoner_blk_inn.ncs",
+          "sha256": "f20f00af43c06e671ae75510c713f044f0e5b6a7f378581ca78e013a509f1ede"
+        },
+        "nss": {
+          "path": "almraiven/commoner_blk_inn/commoner_blk_inn.nss",
+          "sha256": "e7551e35db2ffde4e46dd727a5e42ef71c0f1e68d2ab4dde8bcadd4d6f64fbf6"
+        }
+      },
+      "constant_count": 32
+    },
+    {
+      "id": "almraiven/set_abelianname",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "set_abelianname",
+      "files": {
+        "ncs": {
+          "path": "almraiven/set_abelianname/set_abelianname.ncs",
+          "sha256": "9ba6761a2df38706f8b32138800cd7c94df914242834554156edd5eea3349809"
+        },
+        "nss": {
+          "path": "almraiven/set_abelianname/set_abelianname.nss",
+          "sha256": "71cd55fe61e9cfd6075fe4fae0ed293c3056f8518f2b0d7484473d97e5cb06d7"
+        }
+      },
+      "constant_count": 3
+    },
+    {
+      "id": "lions/a_addquest",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "a_addquest",
+      "files": {
+        "ncs": {
+          "path": "lions/a_addquest/a_addquest.ncs",
+          "sha256": "2739f3fba1c7096f06c27e44e9376bea70e7324602492bc29393a001a9dce7fb"
+        },
+        "nss": {
+          "path": "lions/a_addquest/a_addquest.nss",
+          "sha256": "80db2130d7e7996c896c6ca72b528ac1792dfe708b844500f00fcd24ec8711f1"
+        }
+      },
+      "constant_count": 8
+    },
+    {
+      "id": "lions/a_telep_from_obj",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "a_telep_from_obj",
+      "files": {
+        "ncs": {
+          "path": "lions/a_telep_from_obj/a_telep_from_obj.ncs",
+          "sha256": "b9a598bc2217dbc20e891279f552ff8e4b7653fd15ea08bc023b2914422630b7"
+        },
+        "nss": {
+          "path": "lions/a_telep_from_obj/a_telep_from_obj.nss",
+          "sha256": "583cd08331ada75a4b44ccfa78f168d37bb4f7e882bc57c489975f3accc194f8"
+        }
+      },
+      "constant_count": 13
+    },
+    {
+      "id": "midnight/at_enu",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "at_enu",
+      "files": {
+        "ncs": {
+          "path": "midnight/at_enu/at_enu.ncs",
+          "sha256": "9ac853d42a41f2ed91f9a9724f89f4076de78f503a3420825cf35ae3b12c907c"
+        },
+        "nss": {
+          "path": "midnight/at_enu/at_enu.nss",
+          "sha256": "d52dfdbd8196d22ef98cec06fc84201e80346209841edf372c194fc46226b3e5"
+        }
+      },
+      "constant_count": 50
+    },
+    {
+      "id": "midnight/c_kashia2_1",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "c_kashia2_1",
+      "files": {
+        "ncs": {
+          "path": "midnight/c_kashia2_1/c_kashia2_1.ncs",
+          "sha256": "cefa374130b5db88753ebe929318664d39cd9bc61734cd7bb8205659acc58314"
+        },
+        "nss": {
+          "path": "midnight/c_kashia2_1/c_kashia2_1.nss",
+          "sha256": "14cac9e3fcb188283eab715a857f02c70b6353903dacc5b33e0e40365cfe11a3"
+        }
+      },
+      "constant_count": 48
+    },
+    {
+      "id": "prophet/69_client_enter",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "69_client_enter",
+      "files": {
+        "ncs": {
+          "path": "prophet/69_client_enter/69_client_enter.ncs",
+          "sha256": "d11c23b04d95fe8bcbd32fd2fc4cf27807d65aab809a977bbc75415e04c973de"
+        },
+        "nss": {
+          "path": "prophet/69_client_enter/69_client_enter.nss",
+          "sha256": "5e7d90369299fab307310ec32a51264a38c16e4f16842f21659776d189661f0d"
+        }
+      },
+      "constant_count": 18
+    },
+    {
+      "id": "prophet/69_hench_whatxp",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "69_hench_whatxp",
+      "files": {
+        "ncs": {
+          "path": "prophet/69_hench_whatxp/69_hench_whatxp.ncs",
+          "sha256": "a8a06837258d12704a7aee39ffcea057ada2ce587bdd42e48ac849694baf5767"
+        },
+        "nss": {
+          "path": "prophet/69_hench_whatxp/69_hench_whatxp.nss",
+          "sha256": "037d51c20d86e63b046883d74d7cffdb2da7badf6793871435945a8b7476d7ec"
+        }
+      },
+      "constant_count": 3
+    },
+    {
+      "id": "torn/at_pol1_attack",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "at_pol1_attack",
+      "files": {
+        "ncs": {
+          "path": "torn/at_pol1_attack/at_pol1_attack.ncs",
+          "sha256": "e7edb144b5505ac91359dc12295a489e5d093819e239c65bbce01bb1ccb08c65"
+        },
+        "nss": {
+          "path": "torn/at_pol1_attack/at_pol1_attack.nss",
+          "sha256": "f8338a059340883968cd13b3e3259fa7b531b5d240ee671f8dad507fdab5b29a"
+        }
+      },
+      "constant_count": 1
+    },
+    {
+      "id": "torn/bkba_giveorder",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "bkba_giveorder",
+      "files": {
+        "ncs": {
+          "path": "torn/bkba_giveorder/bkba_giveorder.ncs",
+          "sha256": "4a0e8a6824352cf533d916079058028e0de134747558eec81e49421498a8824e"
+        },
+        "nss": {
+          "path": "torn/bkba_giveorder/bkba_giveorder.nss",
+          "sha256": "519343798b79df7d7ce012501c987df71c2871137c307a630cd3d2940c04fc5c"
+        }
+      },
+      "constant_count": 18
+    },
+    {
+      "id": "torn/amuletofevil",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "amuletofevil",
+      "files": {
+        "ncs": {
+          "path": "torn/amuletofevil/amuletofevil.ncs",
+          "sha256": "64d9c17e6c0db286bfcee7067366b93124b1709e73a3063974830acc74823832"
+        },
+        "nss": {
+          "path": "torn/amuletofevil/amuletofevil.nss",
+          "sha256": "8e18833f22b7a5bc60e9378fccd169b4a4a0bf9209dc5a516b5d3087a6513623"
+        }
+      },
+      "constant_count": 10
+    },
+    {
+      "id": "controls/same_literal",
+      "kind": "hand_assembled",
+      "encoding": "cp1252",
+      "resource": "same_literal",
+      "constant_count": 4,
+      "files": {
+        "ncs": {
+          "path": "controls/same_literal/same_literal.ncs",
+          "sha256": "2d5c8916e904b1880a6909c063725c350ba47111824ef57c280aa3969d3420cd"
+        },
+        "asm": {
+          "path": "controls/same_literal/same_literal.asm",
+          "sha256": "9e9c47490e80b90457e403292c79673fdd18cf4f6761d4855d9091c56b9d15c1"
+        }
+      }
+    },
+    {
+      "id": "controls/short_speech",
+      "kind": "hand_assembled",
+      "encoding": "cp1252",
+      "resource": "short_speech",
+      "constant_count": 8,
+      "files": {
+        "ncs": {
+          "path": "controls/short_speech/short_speech.ncs",
+          "sha256": "14a36061c801c899d47cd92bbf3d6d9b6f155db4adbd41e5f1cddeb6879bc0fe"
+        },
+        "asm": {
+          "path": "controls/short_speech/short_speech.asm",
+          "sha256": "407642b0bcea2b6d0af2bddd7308fbb9efd9c85fb8547212768a1fa5558257b5"
+        }
+      }
+    },
+    {
+      "id": "controls/stored_value",
+      "kind": "hand_assembled",
+      "encoding": "cp1252",
+      "resource": "stored_value",
+      "constant_count": 2,
+      "files": {
+        "ncs": {
+          "path": "controls/stored_value/stored_value.ncs",
+          "sha256": "141468238849d6a972fb0eb1fa37dddc8cc0b64805bc68e60d7e705eda23e73b"
+        },
+        "asm": {
+          "path": "controls/stored_value/stored_value.asm",
+          "sha256": "d6d3dc3b2cbcf0d1310452b7ec74ef6d2667984131f822fff12364652ba9f607"
+        }
+      }
+    },
+    {
+      "id": "controls/concat_feedback",
+      "kind": "hand_assembled",
+      "encoding": "cp1252",
+      "resource": "concat_feedback",
+      "constant_count": 2,
+      "files": {
+        "ncs": {
+          "path": "controls/concat_feedback/concat_feedback.ncs",
+          "sha256": "480f95806a9aa641203756e3379cb4f92de58bd059f9a7af44676d2ac387dad5"
+        },
+        "asm": {
+          "path": "controls/concat_feedback/concat_feedback.asm",
+          "sha256": "fb581653ac7b7ceb055e56806bece8d0b2c4e83466bb8166e00611d96f4d9032"
+        }
+      }
+    },
+    {
+      "id": "adwr/do_bet_40_gold",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "do_bet_40_gold",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "adwr/do_bet_40_gold/do_bet_40_gold.ncs",
+          "sha256": "0004fd3326f40c8448b4d7875df9420f1beb713589e92b3213652e76ffe0ee70"
+        },
+        "nss": {
+          "path": "adwr/do_bet_40_gold/do_bet_40_gold.nss",
+          "sha256": "edc846193a931755e4014061c2ff6be5f808aa81c5019e572182df5b4d0036c1"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "adwr/do_klc_text1",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "do_klc_text1",
+      "constant_count": 3,
+      "files": {
+        "ncs": {
+          "path": "adwr/do_klc_text1/do_klc_text1.ncs",
+          "sha256": "000dd40346fc2f84c3099f26768c745ceb98c69480c2e72680110c3b1cca9de3"
+        },
+        "nss": {
+          "path": "adwr/do_klc_text1/do_klc_text1.nss",
+          "sha256": "a1d3447f45b69ce313189b250b571f16e9865defc01daa4ba08fad630daee164"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "adwr/has_sp_curedisea",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "has_sp_curedisea",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "adwr/has_sp_curedisea/has_sp_curedisea.ncs",
+          "sha256": "00210cf60c369fbcc73142a7a4258c83d436ef4d0406a75a4f579c8283459f0d"
+        },
+        "nss": {
+          "path": "adwr/has_sp_curedisea/has_sp_curedisea.nss",
+          "sha256": "921df683b9e6cf7bf08e42712ffd10be605c61c0ba1df34d15dd65480ae144ed"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "adwr/do_setspell_vico",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "do_setspell_vico",
+      "constant_count": 2,
+      "files": {
+        "ncs": {
+          "path": "adwr/do_setspell_vico/do_setspell_vico.ncs",
+          "sha256": "003ccf57ae137bbc353c98b755f12052ca966b69f3cc93ff69f625ec97ab977b"
+        },
+        "nss": {
+          "path": "adwr/do_setspell_vico/do_setspell_vico.nss",
+          "sha256": "a57b425e35ab5f190cf4cf21b67df9b70245311f30a97cdf52f4cfabc88ebc86"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "adwr/on_enter_ravtowe",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "on_enter_ravtowe",
+      "constant_count": 29,
+      "files": {
+        "ncs": {
+          "path": "adwr/on_enter_ravtowe/on_enter_ravtowe.ncs",
+          "sha256": "003a757a95dc8cf38abc2fa27ec35796cfa929fa05268bde6ed9b0410bd698fc"
+        },
+        "nss": {
+          "path": "adwr/on_enter_ravtowe/on_enter_ravtowe.nss",
+          "sha256": "b4f726aac0ad9503bffe4c4a6c0849707e5385ed3c20d1add956788585973d57"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "adwr/has_only_dancedr",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "has_only_dancedr",
+      "constant_count": 18,
+      "files": {
+        "ncs": {
+          "path": "adwr/has_only_dancedr/has_only_dancedr.ncs",
+          "sha256": "008209502127aa8b86677d3623741382cc8adf5369ccc1d6e710c26fce47b4bc"
+        },
+        "nss": {
+          "path": "adwr/has_only_dancedr/has_only_dancedr.nss",
+          "sha256": "ce411dc2ebff22a1c173e936cc872fd2d9c91eeee20ccda545aa51e758b2f190"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "adwr/on_death_dv2_dv",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "on_death_dv2_dv",
+      "constant_count": 16,
+      "files": {
+        "ncs": {
+          "path": "adwr/on_death_dv2_dv/on_death_dv2_dv.ncs",
+          "sha256": "00fcbb66ad21c5c4eeff1bfc3872d398d31d31ad0b87f7593aeaec6504b5c65e"
+        },
+        "nss": {
+          "path": "adwr/on_death_dv2_dv/on_death_dv2_dv.nss",
+          "sha256": "01b0d3ed78fcd71874ea78991ebd02548b7c3bcd9660f30fd1fdc6eb0579653b"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "adwr/do_goto_ravgues2",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "do_goto_ravgues2",
+      "constant_count": 15,
+      "files": {
+        "ncs": {
+          "path": "adwr/do_goto_ravgues2/do_goto_ravgues2.ncs",
+          "sha256": "055d5fed5d6f8428176c1675a229ae84cfabb29943cba271624a9334092fd86c"
+        },
+        "nss": {
+          "path": "adwr/do_goto_ravgues2/do_goto_ravgues2.nss",
+          "sha256": "6a2ce1490df30f4ceae2332392402f4ce7943b167ad58d5a7bb4c53c08479945"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "adwr/do_obt9_cutscene",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "do_obt9_cutscene",
+      "constant_count": 62,
+      "files": {
+        "ncs": {
+          "path": "adwr/do_obt9_cutscene/do_obt9_cutscene.ncs",
+          "sha256": "04b008ce5a2d47a02340ce7a854a83ae6beec828f81c0d71bebab4ab84a3badc"
+        },
+        "nss": {
+          "path": "adwr/do_obt9_cutscene/do_obt9_cutscene.nss",
+          "sha256": "8cb98eb2d3e253332ca7c25ed640ad2e60866327fb5d428b44808920275ffab8"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "adwr/debug_goto_dvtem",
+      "kind": "real",
+      "module": "A Dance with Rogues Part 1 V1.50.mod",
+      "module_sha256": "120b823752722c77be8666688a0c1c1375e175451976ff82c84d2a287b26b64f",
+      "encoding": "cp1252",
+      "resource": "debug_goto_dvtem",
+      "constant_count": 54,
+      "files": {
+        "ncs": {
+          "path": "adwr/debug_goto_dvtem/debug_goto_dvtem.ncs",
+          "sha256": "09e866e407595d9275cc0c492309fbb18c108223302e73328a08d86ab79c073f"
+        },
+        "nss": {
+          "path": "adwr/debug_goto_dvtem/debug_goto_dvtem.nss",
+          "sha256": "49f74ada064e212f9f5522ae8740a6db20904b9448ba2fc75705da6137e46114"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "almraiven/sc_mansit",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "sc_mansit",
+      "constant_count": 4,
+      "files": {
+        "ncs": {
+          "path": "almraiven/sc_mansit/sc_mansit.ncs",
+          "sha256": "0003c84b94ec9bf26c3bffae0d97b14e26d6190002905bfca2f5275fe5f1865c"
+        },
+        "nss": {
+          "path": "almraiven/sc_mansit/sc_mansit.nss",
+          "sha256": "a31916cf6fa4eb5a278589a3995f165af26e271edc8b89b8b212184cc1eb5549"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "almraiven/chk_wun_q25",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "chk_wun_q25",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "almraiven/chk_wun_q25/chk_wun_q25.ncs",
+          "sha256": "000c93e0095df1856ae2c96f791542af1714d67a3aad825511e99c2f4ed203a7"
+        },
+        "nss": {
+          "path": "almraiven/chk_wun_q25/chk_wun_q25.nss",
+          "sha256": "237faae018ced460564aadaf67555e367606c23676867f04fba4c8d0ffdc5106"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "almraiven/_climb_ebl_1",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "_climb_ebl_1",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "almraiven/_climb_ebl_1/_climb_ebl_1.ncs",
+          "sha256": "00109be807cea6e4fb44bf6d6455359a3230e15fe4aa939b3729c38a344ff8a0"
+        },
+        "nss": {
+          "path": "almraiven/_climb_ebl_1/_climb_ebl_1.nss",
+          "sha256": "fb127bce46c9fdf5863db541470ef9af32adbac68e3610c72244bfaadb3c25f9"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "almraiven/sc_mettactanner1",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "sc_mettactanner1",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "almraiven/sc_mettactanner1/sc_mettactanner1.ncs",
+          "sha256": "001a40d6fa5160dc962e0041302454b2fdda536b7b925e53c8735eef4fa564ef"
+        },
+        "nss": {
+          "path": "almraiven/sc_mettactanner1/sc_mettactanner1.nss",
+          "sha256": "eef0744420b7151c85b25b3bee45ab0b0254c9b9d4d9a4db97beb40d39d80124"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "almraiven/69_hen_spawnin",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "69_hen_spawnin",
+      "constant_count": 27,
+      "files": {
+        "ncs": {
+          "path": "almraiven/69_hen_spawnin/69_hen_spawnin.ncs",
+          "sha256": "000bb866e150d72b8a909c3d128af41c711e4362a4f127b7dc45243988f0e038"
+        },
+        "nss": {
+          "path": "almraiven/69_hen_spawnin/69_hen_spawnin.nss",
+          "sha256": "525a8ba9bf5754a612c6467d377444aab65e47858e45b8865593dba93cf48fe6"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "almraiven/_bejalascene",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "_bejalascene",
+      "constant_count": 40,
+      "files": {
+        "ncs": {
+          "path": "almraiven/_bejalascene/_bejalascene.ncs",
+          "sha256": "01ae5ec476d4a608a1d5c93261afeccadcd25d04a292d823d57ed77ba785f281"
+        },
+        "nss": {
+          "path": "almraiven/_bejalascene/_bejalascene.nss",
+          "sha256": "a4c8cdd4efa224a53bf38c15a3d04d360c80732cf165e5d17bfe2e51d724b36e"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "almraiven/_speak_cbamerc",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "_speak_cbamerc",
+      "constant_count": 37,
+      "files": {
+        "ncs": {
+          "path": "almraiven/_speak_cbamerc/_speak_cbamerc.ncs",
+          "sha256": "025915380ad8b66a8595bd7f8e06379f3adbb0c50ae29b633d34085c1153b66a"
+        },
+        "nss": {
+          "path": "almraiven/_speak_cbamerc/_speak_cbamerc.nss",
+          "sha256": "bc782a2891e2efc40033c010bb8a16c7dea30cd9962e50860dda48932dc13216"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "almraiven/_create_wood",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "_create_wood",
+      "constant_count": 29,
+      "files": {
+        "ncs": {
+          "path": "almraiven/_create_wood/_create_wood.ncs",
+          "sha256": "0271c5a39cdd343006719f7bb40222e1d598e922d7e4f001581a3de510e317f4"
+        },
+        "nss": {
+          "path": "almraiven/_create_wood/_create_wood.nss",
+          "sha256": "98cf69c3726eb45de4d270bbc6551861a62e399fb15f15bf581d76cf1af4306e"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "almraiven/gennpc_heartbeat",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "gennpc_heartbeat",
+      "constant_count": 178,
+      "files": {
+        "ncs": {
+          "path": "almraiven/gennpc_heartbeat/gennpc_heartbeat.ncs",
+          "sha256": "009826f2cbc0ced6469aea0d1da3241d1f29c121531fa74412757e8c4d6e6a91"
+        },
+        "nss": {
+          "path": "almraiven/gennpc_heartbeat/gennpc_heartbeat.nss",
+          "sha256": "0ee2d2410cd5aa5a947e4aa0c96266063ae0de8c382731e7050e041bd12c4ba1"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "almraiven/_medusa_move_11e",
+      "kind": "real",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31",
+      "encoding": "cp1252",
+      "resource": "_medusa_move_11e",
+      "constant_count": 66,
+      "files": {
+        "ncs": {
+          "path": "almraiven/_medusa_move_11e/_medusa_move_11e.ncs",
+          "sha256": "0159fe8e260a5ad569045692371b99c94f8048b884c60c8fd02db5219ad26f94"
+        },
+        "nss": {
+          "path": "almraiven/_medusa_move_11e/_medusa_move_11e.nss",
+          "sha256": "56f81cd2ab97e9bb6977a4fb9832bc5609f5035c1808cdbd1c20d7a4ba13459f"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "lions/mess_porte_egou4",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "mess_porte_egou4",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "lions/mess_porte_egou4/mess_porte_egou4.ncs",
+          "sha256": "00222fe5bedb3376c76bf0eeea94a850fee9e28d6138cc69bd9998a018389330"
+        },
+        "nss": {
+          "path": "lions/mess_porte_egou4/mess_porte_egou4.nss",
+          "sha256": "f3ea92f35d431ced660e0f520429b02ffcfe0bdcfdcd66a087ada1a7b02e7199"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "lions/bruitsdecombat",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "bruitsdecombat",
+      "constant_count": 3,
+      "files": {
+        "ncs": {
+          "path": "lions/bruitsdecombat/bruitsdecombat.ncs",
+          "sha256": "00ce479536600d726ca4595dc65f8c4a8286fd5c3eaf234cfefde37c372512db"
+        },
+        "nss": {
+          "path": "lions/bruitsdecombat/bruitsdecombat.nss",
+          "sha256": "c470dbb836744b7896d00a678cd6a326cc4d2a67519c201f9729445c8bd3d8a9"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "lions/i_bordel_on",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "i_bordel_on",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "lions/i_bordel_on/i_bordel_on.ncs",
+          "sha256": "00ea0ca538b0229f20c5003fbe7e567fcaedb3d513109bb8fe526e2ef2f0da83"
+        },
+        "nss": {
+          "path": "lions/i_bordel_on/i_bordel_on.nss",
+          "sha256": "c84ba8174cf4a37f35a697d9c5b21fb4374cadf6053974f5fa3d73d87965ebb3"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "lions/destroy_dauphin",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "destroy_dauphin",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "lions/destroy_dauphin/destroy_dauphin.ncs",
+          "sha256": "00f03fda0169740c52412483298a2455268d7b61458b62b44d0d76044b44a657"
+        },
+        "nss": {
+          "path": "lions/destroy_dauphin/destroy_dauphin.nss",
+          "sha256": "b44dc618bdf761e5a8ff9d914938b59de789ac9a86bb965e254508396e3612c8"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "lions/etat_q_guilla3_2",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "etat_q_guilla3_2",
+      "constant_count": 44,
+      "files": {
+        "ncs": {
+          "path": "lions/etat_q_guilla3_2/etat_q_guilla3_2.ncs",
+          "sha256": "0198d180167bae14ee2833de9dca4a71869046abc15e53fe676c80bfe4e5eb4e"
+        },
+        "nss": {
+          "path": "lions/etat_q_guilla3_2/etat_q_guilla3_2.nss",
+          "sha256": "ef1c612b4f15a622fc5506f1dbbdc1c39e091addda9204653c276793b8fc7aa9"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "lions/a_jump_multi",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "a_jump_multi",
+      "constant_count": 15,
+      "files": {
+        "ncs": {
+          "path": "lions/a_jump_multi/a_jump_multi.ncs",
+          "sha256": "06240f7e777ffa1c7a556328a7d61ff553a85d94a94fa4035aac38f02a72c8f6"
+        },
+        "nss": {
+          "path": "lions/a_jump_multi/a_jump_multi.nss",
+          "sha256": "3b76dfbb6607e20923355fcd80052be03b7df65c44a743ad76d76a649bf4b2da"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "lions/ohb_batard5",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "ohb_batard5",
+      "constant_count": 22,
+      "files": {
+        "ncs": {
+          "path": "lions/ohb_batard5/ohb_batard5.ncs",
+          "sha256": "0cfde0290eacc25339093f95d936d40c390687a762e743053bf3605e1084c1be"
+        },
+        "nss": {
+          "path": "lions/ohb_batard5/ohb_batard5.nss",
+          "sha256": "05cbaba289fa67460df75b62f6fe0de1cf3a8c1889010d95b251cccd96c52534"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "lions/od_ogreboiteux",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "od_ogreboiteux",
+      "constant_count": 19,
+      "files": {
+        "ncs": {
+          "path": "lions/od_ogreboiteux/od_ogreboiteux.ncs",
+          "sha256": "1105c2c44a8f7008d51677f70f02110993e72d1b64cddfb97dae6d3cbc26b588"
+        },
+        "nss": {
+          "path": "lions/od_ogreboiteux/od_ogreboiteux.nss",
+          "sha256": "a5ba55187a551935bdf0bf4e4ad89bddb8be0d3964cfe9b8e5b0cda219cc4f9a"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "lions/a_attaque",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "a_attaque",
+      "constant_count": 111,
+      "files": {
+        "ncs": {
+          "path": "lions/a_attaque/a_attaque.ncs",
+          "sha256": "08a2f043bb5667682abcea4255f57515fe60f3747f87a1e5370b1de334c3af6e"
+        },
+        "nss": {
+          "path": "lions/a_attaque/a_attaque.nss",
+          "sha256": "b5f0050245fd8ffc35bed93305170345f4e540ee3cacb3558a33f1c9350d16ac"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "lions/a_lycanthrope",
+      "kind": "real",
+      "module": "LES LIONS DIFFAMES_25fev2007.mod",
+      "module_sha256": "a058f3cb59020002d2c2d8aa8b7c6c20cea360ef09f3e3cbd871e39ae078e994",
+      "encoding": "cp1252",
+      "resource": "a_lycanthrope",
+      "constant_count": 115,
+      "files": {
+        "ncs": {
+          "path": "lions/a_lycanthrope/a_lycanthrope.ncs",
+          "sha256": "09e88abb00d35c3622536828bfff6df62e3deba33b4de219b687935715216126"
+        },
+        "nss": {
+          "path": "lions/a_lycanthrope/a_lycanthrope.nss",
+          "sha256": "499143bd7c6db12dcb6b67eeb89dde77ada326742c72f4c89943d23cf0ed4454"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "midnight/setgbints4",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "setgbints4",
+      "constant_count": 4,
+      "files": {
+        "ncs": {
+          "path": "midnight/setgbints4/setgbints4.ncs",
+          "sha256": "00347d4b5e7fe43778f4ca1d481f9cb10732ec4e221fb1a6255491638e46af7d"
+        },
+        "nss": {
+          "path": "midnight/setgbints4/setgbints4.nss",
+          "sha256": "4a6fcab74930cebcb3b75ac43edeb649e8a0926e2d2187920e14ce2e06fa1330"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "midnight/c_dw_2",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "c_dw_2",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "midnight/c_dw_2/c_dw_2.ncs",
+          "sha256": "007771081a34722e4822fda0309bcea6e6f120917fafd7ee748733680f2149a8"
+        },
+        "nss": {
+          "path": "midnight/c_dw_2/c_dw_2.nss",
+          "sha256": "0549ef633e65117a44a565fadc2137b2875c0b6c1cdc3159f885f43a6ab29622"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "midnight/setprice500",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "setprice500",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "midnight/setprice500/setprice500.ncs",
+          "sha256": "007dfd9d8dd7c4f8a3073c8c9e9b7c03edbec1461d8d7ce9f5884974ef0ff479"
+        },
+        "nss": {
+          "path": "midnight/setprice500/setprice500.nss",
+          "sha256": "36c071da83193af65fef5c1d8abf4d896fb34c9642d15b2daa67811029b985ff"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "midnight/ifd_ih_exit",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "ifd_ih_exit",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "midnight/ifd_ih_exit/ifd_ih_exit.ncs",
+          "sha256": "009b45488382a175c83bb42f67e7ad3fde27aadb86a6d0e5b63abeb8a95c646a"
+        },
+        "nss": {
+          "path": "midnight/ifd_ih_exit/ifd_ih_exit.nss",
+          "sha256": "c48473a8ba44bba4cbc62ba80a1211cb4c51d359ab160148827a1616392b27d2"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "midnight/c_end_nemudai",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "c_end_nemudai",
+      "constant_count": 43,
+      "files": {
+        "ncs": {
+          "path": "midnight/c_end_nemudai/c_end_nemudai.ncs",
+          "sha256": "001853a5e7319a040faf44eca45ffe89d06bd61196fea27d8b53f06052e3ff8f"
+        },
+        "nss": {
+          "path": "midnight/c_end_nemudai/c_end_nemudai.nss",
+          "sha256": "a95db829706780e233e84e1f16608ec78071cdac740ec4d6ee989a65fc36ddaa"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "midnight/c_mirrortable_0",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "c_mirrortable_0",
+      "constant_count": 40,
+      "files": {
+        "ncs": {
+          "path": "midnight/c_mirrortable_0/c_mirrortable_0.ncs",
+          "sha256": "001d97f10eca8022b508aa8b79689ee7740d07c2aae6e70d0a07b8f23a3f0041"
+        },
+        "nss": {
+          "path": "midnight/c_mirrortable_0/c_mirrortable_0.nss",
+          "sha256": "3ca86e96fb1bc013908053789247c755b44cea977889c7e18a90677a58cfa744"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "midnight/c_ds1_7",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "c_ds1_7",
+      "constant_count": 36,
+      "files": {
+        "ncs": {
+          "path": "midnight/c_ds1_7/c_ds1_7.ncs",
+          "sha256": "003f13f9be41c016cc775ce2deca3882f077a0dbe0e7d9d664a4f1106185364d"
+        },
+        "nss": {
+          "path": "midnight/c_ds1_7/c_ds1_7.nss",
+          "sha256": "668a0416eb405519f37fed4eb43a9c2d35d4c8298f268faac5a44b82cad7a0d1"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "midnight/c_piro3_1",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "c_piro3_1",
+      "constant_count": 38,
+      "files": {
+        "ncs": {
+          "path": "midnight/c_piro3_1/c_piro3_1.ncs",
+          "sha256": "003fe0b8a47e8d5c5b0e576f5ef092af92dab05d20995ae9a60637b14483695d"
+        },
+        "nss": {
+          "path": "midnight/c_piro3_1/c_piro3_1.nss",
+          "sha256": "a4063b70030041d109818094e1a79366c103345e4753b77afa38e10f71f323c6"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "midnight/enter_syh",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "enter_syh",
+      "constant_count": 110,
+      "files": {
+        "ncs": {
+          "path": "midnight/enter_syh/enter_syh.ncs",
+          "sha256": "00301aea78cb35d23acdea2f94056606c5dd0e5b6259adfcd5a002b91656d763"
+        },
+        "nss": {
+          "path": "midnight/enter_syh/enter_syh.nss",
+          "sha256": "f1d56ef4d13b6453f24e212fbe428ec0c1f46d2efba2b6dbf5941a1b73c68fa2"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "midnight/ud_ionah",
+      "kind": "real",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de",
+      "encoding": "cp1252",
+      "resource": "ud_ionah",
+      "constant_count": 128,
+      "files": {
+        "ncs": {
+          "path": "midnight/ud_ionah/ud_ionah.ncs",
+          "sha256": "0178ac0e5ab30eaf2aaa981c8d27c45403faa55fd29328d0d800fdcd4b2509e7"
+        },
+        "nss": {
+          "path": "midnight/ud_ionah/ud_ionah.nss",
+          "sha256": "e88699b8f3e499b7b85795e57fabbed16a1906a2ae6d089663a1110120d426af"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "prophet/pc_zombiedream",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "pc_zombiedream",
+      "constant_count": 6,
+      "files": {
+        "ncs": {
+          "path": "prophet/pc_zombiedream/pc_zombiedream.ncs",
+          "sha256": "000a923885a6ef522da01e861431c93a5ff7f46b639fbfa0c54e0f13f8da6d71"
+        },
+        "nss": {
+          "path": "prophet/pc_zombiedream/pc_zombiedream.nss",
+          "sha256": "0528d9425321d619610a3cf5dae22c6e7e387dad30c531c2193ff621b28becc2"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "prophet/at_torlethdisc",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "at_torlethdisc",
+      "constant_count": 4,
+      "files": {
+        "ncs": {
+          "path": "prophet/at_torlethdisc/at_torlethdisc.ncs",
+          "sha256": "001e5fda15a8ea9f83a5b14b9a6d68ed1d69d72c86001f596f722277c65bdc54"
+        },
+        "nss": {
+          "path": "prophet/at_torlethdisc/at_torlethdisc.nss",
+          "sha256": "46b2804272f7d2d6496409917aa85c4c45c2c8783c4077ccc48adeaeb3a8df86"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "prophet/sc_havepentanar",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "sc_havepentanar",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "prophet/sc_havepentanar/sc_havepentanar.ncs",
+          "sha256": "002c6fea14f19c45c250c8c6b63c61b001b9e2a57fc819294eb830595b3f56c7"
+        },
+        "nss": {
+          "path": "prophet/sc_havepentanar/sc_havepentanar.nss",
+          "sha256": "5b0e8427f7d8196e7130ed255af7e976ce987315fc11206a319aa7b78a2c982e"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "prophet/sc_kurlucid30",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "sc_kurlucid30",
+      "constant_count": 3,
+      "files": {
+        "ncs": {
+          "path": "prophet/sc_kurlucid30/sc_kurlucid30.ncs",
+          "sha256": "003c4204010af9a5c1d69ebc2e76388043be578008d7a64a7030698c6c853289"
+        },
+        "nss": {
+          "path": "prophet/sc_kurlucid30/sc_kurlucid30.nss",
+          "sha256": "f2cb73b38088f190239d77e098d2da93d0ae86379276cea7ea8d32bf90fdc2cc"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "prophet/pc_cursetrig",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "pc_cursetrig",
+      "constant_count": 17,
+      "files": {
+        "ncs": {
+          "path": "prophet/pc_cursetrig/pc_cursetrig.ncs",
+          "sha256": "098fba3d201b32b9d31bd228bd6bc109473ed7cd19d5b062297c58a2c9388319"
+        },
+        "nss": {
+          "path": "prophet/pc_cursetrig/pc_cursetrig.nss",
+          "sha256": "a1a9dd7f68d8ff103ebc920c73f454e586a12315f627b1bb8ef36b35145b8a6d"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "prophet/pc_prophetsgrave",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "pc_prophetsgrave",
+      "constant_count": 19,
+      "files": {
+        "ncs": {
+          "path": "prophet/pc_prophetsgrave/pc_prophetsgrave.ncs",
+          "sha256": "0e23424102401c12a78cf7c2d444978fd6ca95db192490e06e8c314923e7ef91"
+        },
+        "nss": {
+          "path": "prophet/pc_prophetsgrave/pc_prophetsgrave.nss",
+          "sha256": "e3f0df67b482628395944c395024f6f28bfd4c37667ebb78c4e90efb498e9864"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "prophet/pc_rebeldeath",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "pc_rebeldeath",
+      "constant_count": 22,
+      "files": {
+        "ncs": {
+          "path": "prophet/pc_rebeldeath/pc_rebeldeath.ncs",
+          "sha256": "10f6a9a5dc2e86d4c79cf22639cd5915db53818387ffc35c16d4d4f181647650"
+        },
+        "nss": {
+          "path": "prophet/pc_rebeldeath/pc_rebeldeath.nss",
+          "sha256": "c3a202f6dca99c92330d6127d891c92ec98c57d718fd5b2dcdc18bc70377d788"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "prophet/69_hench_canlvl",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "69_hench_canlvl",
+      "constant_count": 15,
+      "files": {
+        "ncs": {
+          "path": "prophet/69_hench_canlvl/69_hench_canlvl.ncs",
+          "sha256": "11674fc3fdc3ef7070db5996b7e6959fbf2ddf2e6066189cf323a4240637fdf5"
+        },
+        "nss": {
+          "path": "prophet/69_hench_canlvl/69_hench_canlvl.nss",
+          "sha256": "6ed63980cae559b169f5b0186594256be461352aca1702d1e661e1b8ef1cb1a1"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "prophet/pc_c2_default7",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "pc_c2_default7",
+      "constant_count": 50,
+      "files": {
+        "ncs": {
+          "path": "prophet/pc_c2_default7/pc_c2_default7.ncs",
+          "sha256": "0a6ebf82cb2b1b66c795e92a58f0e07678225d7240802731b89ba23329dacd37"
+        },
+        "nss": {
+          "path": "prophet/pc_c2_default7/pc_c2_default7.nss",
+          "sha256": "23a78d82d769dfa76a6431094b5b79504fc2940efc8b0172c40c33b75a9f8649"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "prophet/pcp1_heartbeat",
+      "kind": "real",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014",
+      "encoding": "cp1252",
+      "resource": "pcp1_heartbeat",
+      "constant_count": 150,
+      "files": {
+        "ncs": {
+          "path": "prophet/pcp1_heartbeat/pcp1_heartbeat.ncs",
+          "sha256": "0c7fb43fc8b0978470bc564bbf16d2035acaef36c9c9ec775c7016a006eacb20"
+        },
+        "nss": {
+          "path": "prophet/pcp1_heartbeat/pcp1_heartbeat.nss",
+          "sha256": "6dcf7c857ea6df39dfee08f504c6d959a1b1c75f9199b1d04f86ae060a9e7034"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "torn/dri_onor_q2s",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "dri_onor_q2s",
+      "constant_count": 5,
+      "files": {
+        "ncs": {
+          "path": "torn/dri_onor_q2s/dri_onor_q2s.ncs",
+          "sha256": "002a7c45f53bf207b8af1fc9bd35456b214ffe310b18217dc2de41adda983a2c"
+        },
+        "nss": {
+          "path": "torn/dri_onor_q2s/dri_onor_q2s.nss",
+          "sha256": "c1246ef12d588e35258baae8ab4fa39f9e64b01151f23829bf6962dcc791bdca"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "torn/tear_battlecheck",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "tear_battlecheck",
+      "constant_count": 2,
+      "files": {
+        "ncs": {
+          "path": "torn/tear_battlecheck/tear_battlecheck.ncs",
+          "sha256": "003c124e88531c7cca1d42366a91d68b5258be8c6d1338e9d278ba237f326db4"
+        },
+        "nss": {
+          "path": "torn/tear_battlecheck/tear_battlecheck.nss",
+          "sha256": "f55f0ac12a7fb11076b80458c9190ac230e0d6ea86ec0d414d48543b3dd5c821"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "torn/sevo_wraith5",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "sevo_wraith5",
+      "constant_count": 4,
+      "files": {
+        "ncs": {
+          "path": "torn/sevo_wraith5/sevo_wraith5.ncs",
+          "sha256": "0046499a5d933cb25ee5ba2f7e411e16ec0d2653200851e05ebdbf48e1c2c9b4"
+        },
+        "nss": {
+          "path": "torn/sevo_wraith5/sevo_wraith5.nss",
+          "sha256": "b399f57b11cb2c1b6315d93639af7552a34ed37e918e6225850166911b81f5f5"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "torn/at_pol2_gold",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "at_pol2_gold",
+      "constant_count": 1,
+      "files": {
+        "ncs": {
+          "path": "torn/at_pol2_gold/at_pol2_gold.ncs",
+          "sha256": "0055f445fcc3a5717347e630635c06283d79b83d3ed800c9791dd0811c968a76"
+        },
+        "nss": {
+          "path": "torn/at_pol2_gold/at_pol2_gold.nss",
+          "sha256": "d4725f469731a9673343c6fd793f3717765905fe76d8f6e32d3a8870ae75b422"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "small"
+    },
+    {
+      "id": "torn/ta_arenafights",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "ta_arenafights",
+      "constant_count": 33,
+      "files": {
+        "ncs": {
+          "path": "torn/ta_arenafights/ta_arenafights.ncs",
+          "sha256": "045819507fbb4f9b832fa657882318c56b12da7eae035b7e517d99b8ee6fbc31"
+        },
+        "nss": {
+          "path": "torn/ta_arenafights/ta_arenafights.nss",
+          "sha256": "ea660747002f22e5e0a74a2e9945e2161ded8a80e8ffadfb1b6ac0864e3dd645"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "torn/crusherchest",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "crusherchest",
+      "constant_count": 19,
+      "files": {
+        "ncs": {
+          "path": "torn/crusherchest/crusherchest.ncs",
+          "sha256": "06b7f6a53a301742ad442f347132a1ea9d3d8ce86e05eeeb32205711ac68ea11"
+        },
+        "nss": {
+          "path": "torn/crusherchest/crusherchest.nss",
+          "sha256": "47818dd2e6b256875a9e4aa34f114f22e7ac8d863fbac83b6a0684e51a57d364"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "torn/needlechest",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "needlechest",
+      "constant_count": 19,
+      "files": {
+        "ncs": {
+          "path": "torn/needlechest/needlechest.ncs",
+          "sha256": "0746b11652c1b794d908e9563c1f03728b2827a5050d04a919f0faa2fc0b5974"
+        },
+        "nss": {
+          "path": "torn/needlechest/needlechest.nss",
+          "sha256": "be6184e98672f947ab1224d4ab40703a931d659a559a256966fe0d829421cb73"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "torn/fiercewind1chest",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "fiercewind1chest",
+      "constant_count": 19,
+      "files": {
+        "ncs": {
+          "path": "torn/fiercewind1chest/fiercewind1chest.ncs",
+          "sha256": "0806afe88ee7a2de6fbaeccfa4e86ffa7861eefc26cbbc98fb82d0cee92f6f10"
+        },
+        "nss": {
+          "path": "torn/fiercewind1chest/fiercewind1chest.nss",
+          "sha256": "2369368b0187b6f8e03bce98bccd6fbd3770c913f63cae75794d893a0489dd57"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "medium"
+    },
+    {
+      "id": "torn/sev_pol1_onenter",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "sev_pol1_onenter",
+      "constant_count": 87,
+      "files": {
+        "ncs": {
+          "path": "torn/sev_pol1_onenter/sev_pol1_onenter.ncs",
+          "sha256": "0659ee6c41f5310f4f5512551311cee82d3ef9c02915cfae592c42204448f0c0"
+        },
+        "nss": {
+          "path": "torn/sev_pol1_onenter/sev_pol1_onenter.nss",
+          "sha256": "557c7d403517e7c99c3acb7b8fe631d491ae600c2bf9e7a926bd633a4c305037"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    },
+    {
+      "id": "torn/sev_clue_4",
+      "kind": "real",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d",
+      "encoding": "cp1252",
+      "resource": "sev_clue_4",
+      "constant_count": 54,
+      "files": {
+        "ncs": {
+          "path": "torn/sev_clue_4/sev_clue_4.ncs",
+          "sha256": "109aecdc5f5ef3a94915f006fd3b4f8cb65d99b529de1e8dc2483bd8ff3932bd"
+        },
+        "nss": {
+          "path": "torn/sev_clue_4/sev_clue_4.nss",
+          "sha256": "7924a6ef9109e1c37f4c519b75a0c052ac4ff7cca5a97c0fc6a3d13b375fb02d"
+        }
+      },
+      "cohort": "hash_stratified",
+      "stratum": "large"
+    }
+  ],
+  "references": [
+    {
+      "path": "references/69_leadership.nss",
+      "sha256": "5e44860bc3d4abc240fa476efc6ae20e45a91c32471a50e780fb2a836cd1f8b4"
+    },
+    {
+      "path": "references/engine-source.json",
+      "sha256": "de3e53a878895e0f96fe9eb7387e4888a619064846adecf6467c406af5f6304d"
+    },
+    {
+      "path": "references/knightmayor1.nss",
+      "sha256": "3cfaf82ce83f207e58726550dd0ca1bc6c2409f1c8820a735318edbf416c777d"
+    },
+    {
+      "path": "references/almraiven/69_hench_lib.nss",
+      "sha256": "80159c2c91b0beb40b93db77299aa8ff9e55f88f47eaf26e6b15e0ac5a309622",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31"
+    },
+    {
+      "path": "references/almraiven/69_inc_henai.nss",
+      "sha256": "f35fc148f5f58a9666e9ee0f4855a70e57fd873bb8381c2b7c995179a8ad118d",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31"
+    },
+    {
+      "path": "references/almraiven/in_g_cutscene.nss",
+      "sha256": "30bb33337ccf3cba9ee1efd75725da3782f47d215717554abd6ef1e475d40f5c",
+      "module": "Almraiven.mod",
+      "module_sha256": "75185b701aedb9e8132f83c79ba7c1596ebb72bc66529eb6ef0bcbae122eeb31"
+    },
+    {
+      "path": "references/midnight/enter_exit1.nss",
+      "sha256": "f409ff85855b50c5c1adbe9a72ce11384bead6deb2ab237616bf9e52686cfa61",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de"
+    },
+    {
+      "path": "references/midnight/monstermaker.nss",
+      "sha256": "6dbed014d1cf898e371daa1e5992fe4e8d4644b51e1a96db4e8e1beeb379880e",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de"
+    },
+    {
+      "path": "references/midnight/nw_i0_generic.nss",
+      "sha256": "89f8c098e498e4d63337658699751c70dabba5325046291e983153b35f7c1c85",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de"
+    },
+    {
+      "path": "references/midnight/x0_i0_anims.nss",
+      "sha256": "d576d549376efc178879117c2c8ce835ce821420d9ee554b6a27eb3687eed1f2",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de"
+    },
+    {
+      "path": "references/midnight/x0_i0_combat.nss",
+      "sha256": "7398c7f3d19ef82e7438f84df04beb582845324f6644936d53b8b2ebdcc55252",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de"
+    },
+    {
+      "path": "references/midnight/x0_i0_spawncond.nss",
+      "sha256": "7ce1d78c39e88bfcad148dc4a248e7818b0637e6d3c1652ec0b4c05c742af2bc",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de"
+    },
+    {
+      "path": "references/midnight/x0_i0_walkway.nss",
+      "sha256": "495d8512f4ce851f652b313b1acce39e750bbf037916e731f6ecf6c6a873113a",
+      "module": "Midnight.mod",
+      "module_sha256": "8a26baca6ec1308cd7a1c8911ebb456bc68019c0c0b36eebd7b959ba44cc69de"
+    },
+    {
+      "path": "references/prophet/69_hench_lib.nss",
+      "sha256": "089ef3822a8bf55bd110fc66f7ac85c32b2ffb4544de3ccb712f83943272c4d1",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014"
+    },
+    {
+      "path": "references/prophet/nw_i0_generic.nss",
+      "sha256": "93db5cef052e344a57906120440b65e9c4b4c5ff5f01cd4ee3e3d1c69a6bca5b",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014"
+    },
+    {
+      "path": "references/prophet/pc_include.nss",
+      "sha256": "aa2132749391e344d64c229f40c90bb0514d15b6dc4c4084bf1772d852034741",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014"
+    },
+    {
+      "path": "references/prophet/x0_i0_anims.nss",
+      "sha256": "3218f0674e868b5d592bb8124e56efd41996474e42e71faad29003f5a0ca1bb3",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014"
+    },
+    {
+      "path": "references/prophet/x0_i0_combat.nss",
+      "sha256": "fa3f78e9c6fe3c5a7570db6ab4c4068f8af5f82d1fec62968a00057b0bc7750f",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014"
+    },
+    {
+      "path": "references/prophet/x0_i0_spawncond.nss",
+      "sha256": "00a8c3ebb8e4a2db9e7c842e8b39a55dda2ae9472de9a589748f99def54a07d7",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014"
+    },
+    {
+      "path": "references/prophet/x0_i0_talent.nss",
+      "sha256": "69c35c15f92b065d82baa84863f183ddf780f862590d420c6bcc040c53e2d9da",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014"
+    },
+    {
+      "path": "references/prophet/x0_i0_walkway.nss",
+      "sha256": "507a17bdb746e1df73fa26b5a078602539f2324e5ec3653667f6899488e926c0",
+      "module": "Prophet - Chapter III - That Which is Destined.mod",
+      "module_sha256": "1ecefac9ac531bde659b0da934cbd441b394b1bdce8586596bf3f3c5906da014"
+    },
+    {
+      "path": "references/torn/ta_inc_henchman.nss",
+      "sha256": "09d26b136ccc7f0da34cd7add46fa83b0c76bc914ca80998f1d1ff77b1f5326d",
+      "module": "Torn Asunder part 1.mod",
+      "module_sha256": "43a84a8b099245dfa87154113d7aa1b628746122ba21baae735c916e6a7cb77d"
+    },
+    {
+      "path": "references/expansion-engine-source.json",
+      "sha256": "5ae235b828bc4c41c115ff15da11d5c8495b6b781696b96de3a3f295c3fffc11"
+    },
+    {
+      "path": "references/speak-one-liner-api.json",
+      "sha256": "6cba3909397632654bf415cbef0a4675d79d0308a74458bc06025d3fe105881d"
+    }
+  ],
+  "sampling": {
+    "cohort": "hash_stratified",
+    "source_required": true,
+    "order": "Module filename, then small/medium/large; within stratum ascending (NCS SHA-256, resource name).",
+    "deduplication": "Skip NCS hashes already in the targeted corpus or selected earlier, across all modules.",
+    "strata": {
+      "small": {
+        "min": 1,
+        "max": 14,
+        "per_module": 4
+      },
+      "medium": {
+        "min": 15,
+        "max": 49,
+        "per_module": 4
+      },
+      "large": {
+        "min": 50,
+        "max": 200,
+        "per_module": 2
+      }
+    },
+    "limitations": "Only the six pinned module archives; scripts without packed NSS, empty scripts and scripts over 200 constants are outside this sampling frame. Labels and extractor output were not used for selection.",
+    "frame": {
+      "A Dance with Rogues Part 1 V1.50.mod": {
+        "nonempty_scripts": 4529,
+        "constant_occurrences": 24319,
+        "with_source_by_stratum": {
+          "small": 4315,
+          "medium": 149,
+          "large": 62
+        },
+        "without_packed_source": 0,
+        "over_200_constants": 3
+      },
+      "Almraiven.mod": {
+        "nonempty_scripts": 5443,
+        "constant_occurrences": 59515,
+        "with_source_by_stratum": {
+          "small": 4986,
+          "medium": 239,
+          "large": 183
+        },
+        "without_packed_source": 0,
+        "over_200_constants": 35
+      },
+      "LES LIONS DIFFAMES_25fev2007.mod": {
+        "nonempty_scripts": 981,
+        "constant_occurrences": 80189,
+        "with_source_by_stratum": {
+          "small": 870,
+          "medium": 22,
+          "large": 22
+        },
+        "without_packed_source": 0,
+        "over_200_constants": 67
+      },
+      "Midnight.mod": {
+        "nonempty_scripts": 1828,
+        "constant_occurrences": 72301,
+        "with_source_by_stratum": {
+          "small": 597,
+          "medium": 1016,
+          "large": 159
+        },
+        "without_packed_source": 0,
+        "over_200_constants": 56
+      },
+      "Prophet - Chapter III - That Which is Destined.mod": {
+        "nonempty_scripts": 1544,
+        "constant_occurrences": 55706,
+        "with_source_by_stratum": {
+          "small": 1270,
+          "medium": 133,
+          "large": 114
+        },
+        "without_packed_source": 0,
+        "over_200_constants": 27
+      },
+      "Torn Asunder part 1.mod": {
+        "nonempty_scripts": 1082,
+        "constant_occurrences": 24906,
+        "with_source_by_stratum": {
+          "small": 913,
+          "medium": 117,
+          "large": 41
+        },
+        "without_packed_source": 0,
+        "over_200_constants": 11
+      }
+    }
+  }
+}

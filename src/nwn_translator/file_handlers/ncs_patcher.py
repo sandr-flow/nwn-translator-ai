@@ -185,7 +185,6 @@ def _apply_instruction_patches(
                 "Jump validation failed for %s — reverting to original",
                 file_path.name,
             )
-            file_path.write_bytes(original_bytes)
             raise NCSPatchError(f"Jump validation failed after patching {file_path.name}")
     except NCSParseError as e:
         logger.error(
@@ -193,7 +192,6 @@ def _apply_instruction_patches(
             file_path.name,
             e,
         )
-        file_path.write_bytes(original_bytes)
         raise NCSPatchError(f"Patched file failed re-parse: {file_path.name}: {e}") from e
 
     file_path.write_bytes(data)
@@ -237,8 +235,12 @@ def patch_ncs_string_replacements(
 
     ncs = parse_ncs(file_path, source_encoding=source_encoding)
     patches: List[Tuple[NCSInstruction, str]] = []
+    seen_offsets = set()
 
     for offset, original_text, translated_text in replacements:
+        if offset in seen_offsets:
+            raise NCSPatchError(f"Duplicate replacement at offset {offset:#x}")
+        seen_offsets.add(offset)
         if translated_text == original_text:
             continue
         instr = _instruction_at_offset(ncs, offset)

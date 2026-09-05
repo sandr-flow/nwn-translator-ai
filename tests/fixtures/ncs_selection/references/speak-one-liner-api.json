@@ -1,0 +1,12 @@
+{
+  "origin": "Neverwinter Nights/ovr/nwscript.nss",
+  "sha256": "c14098d0181f921618622f379ff5cb682b8656d5293f218392531eef7a8478ad",
+  "lines": [
+    8891,
+    8892,
+    8893,
+    8894,
+    8895
+  ],
+  "text": "// Immediately speak a conversation one-liner.\n// - sDialogResRef\n// - oTokenTarget: This must be specified if there are creature-specific tokens\n//   in the string.\nvoid SpeakOneLinerConversation(string sDialogResRef=\"\", object oTokenTarget=OBJECT_TYPE_INVALID);"
+}

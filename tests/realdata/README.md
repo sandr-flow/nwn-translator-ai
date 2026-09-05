@@ -36,8 +36,12 @@ archives.
 | `test_mock_translate.py` | Full pipeline with a deterministic marker provider; output reads back, GFF fields carry the marker, every `.ncs` reparses with a correct `T`. |
 | `test_encoding_diacritics.py` | For modules with a declared non-English language in the manifest (currently the French cp1252 module): extraction with the matching `source_encoding` yields ≥20 diacritic strings and zero Cyrillic mojibake; marker-patching those strings and re-extracting returns them byte-exactly. Skipped for English/undeclared modules. |
 | `test_rebuild_item_id.py` | Almraiven-only: after mock-translate, `rebuild_module` applies GFF edits addressed by `(file, item_id)` (not by original text) and neighbouring strings stay put. |
+| `test_ncs_selection.py` | Reviewed NCS examples with/without matching source: extractor → model-gate stub → translation manager → injector; approved speech changes and all other constants stay intact. This tests routing, not live-model accuracy. |
 
 `test_mock_translate.py` uses `MockTranslateProvider` (`_mock_provider.py`) with
 `use_context=False`, so the only network surface — `translate` — is replaced and
 the world-context / glossary / contextual-dialog subsystems stay out of the loop.
+
+See [NCS translation and validation](../../docs/ncs-translation.md) for the
+production selection contract and how to review live-model decisions.
 

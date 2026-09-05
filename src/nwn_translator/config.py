@@ -140,7 +140,7 @@ class TranslationConfig:
     max_concurrent_requests: int = field(default_factory=max_concurrent_from_environment)
     preserve_tokens: bool = True  # Preserve game tokens like <FirstName>
 
-    #: If True, skip the LLM gate for NCS strings (translate all extractor-approved items).
+    #: Skip model review for bytecode-proven display strings; reject unproven NCS candidates.
     skip_ncs_llm_gate: bool = False
 
     #: Optional OpenRouter ``reasoning.effort`` (``None`` = omit parameter, same as before).

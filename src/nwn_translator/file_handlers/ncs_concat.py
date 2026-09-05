@@ -13,6 +13,7 @@ chains (store via CPDOWNSP, then a later ADD). Those are not merged.
 from __future__ import annotations
 
 import re
+import struct
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -22,6 +23,8 @@ from .ncs_parser import (
     OP_ADD,
     OP_CONST,
     OP_CPTOPSP,
+    OP_CPTOPBP,
+    OP_RSADD,
 )
 
 # ADD type qualifier for string+string (community / Torlack SS).
@@ -128,14 +131,11 @@ def _flatten(node: Union[_Cat, ConcatLit, object]) -> List[Union[ConcatLit, obje
 def find_concat_chains(ncs: NCSFile) -> Dict[int, ConcatChain]:
     """Return concat chains keyed by the byte offset of the first CONSTS literal.
 
-    Symbolic stack:
-    * CONSTS → push Lit
-    * CPTOPSP → push Var
-    * ADD type ``0x23`` → pop 2 (missing operand = Var), push Cat
-    * ACTION → pop ``min(argc, len(stack))``; each Cat popped is a finished chain;
-      push Var for the return value
-    * any other opcode → flush: every Cat on the stack becomes a chain
+    Calls use the same signatures as consumer tracing. Unknown instructions
+    end a chain; stack copies of literals must not become runtime placeholders.
     """
+    from ..extractors.ncs_context import ACTION_SIGNATURES
+
     chains: Dict[int, ConcatChain] = {}
     stack: List[Union[_Cat, ConcatLit, object]] = []
 
@@ -155,8 +155,20 @@ def find_concat_chains(ncs: NCSFile) -> Dict[int, ConcatChain]:
             stack.append(ConcatLit(instr.offset, instr.string_value))
             continue
 
-        if instr.opcode == OP_CPTOPSP:
-            stack.append(_VAR)
+        if instr.opcode in (OP_CPTOPSP, OP_CPTOPBP):
+            offset, size = struct.unpack(">iH", instr.args)
+            if size == 0 or size % 4 or offset % 4:
+                flush()
+                continue
+            if instr.opcode == OP_CPTOPSP:
+                copied = [
+                    stack[pos]
+                    for pos in range(len(stack) + offset // 4, len(stack) + (offset + size) // 4)
+                    if 0 <= pos < len(stack)
+                ]
+                if any(node is not _VAR for node in copied):
+                    flush()
+            stack.extend([_VAR] * (size // 4))
             continue
 
         if instr.opcode == OP_ADD and instr.type_byte == TYPE_ADD_STRING_STRING:
@@ -166,17 +178,24 @@ def find_concat_chains(ncs: NCSFile) -> Dict[int, ConcatChain]:
             continue
 
         if instr.opcode == OP_ACTION:
-            argc = instr.action_arg_count if instr.action_arg_count is not None else 0
-            popped = min(argc, len(stack))
-            for _ in range(popped):
+            signature = ACTION_SIGNATURES.get(instr.action_routine or -1)
+            argc = instr.action_arg_count
+            if signature is None or argc is None or argc > len(signature[1]):
+                flush()
+                continue
+            _, params, return_slots = signature
+            consumed = sum(
+                0 if param == "a" else 3 if param == "v" else 1 for param in params[:argc]
+            )
+            for _ in range(min(consumed, len(stack))):
                 node = stack.pop()
                 if isinstance(node, _Cat):
                     emit(node)
-            stack.append(_VAR)
+            stack.extend([_VAR] * return_slots)
             continue
 
-        if instr.opcode == OP_CONST:
-            flush()
+        if instr.opcode in (OP_CONST, OP_RSADD):
+            stack.append(_VAR)
             continue
 
         flush()

@@ -1,0 +1,14 @@
+//::///////////////////////////////////////////////
+//:: FileName at_pol2_gold
+//:://////////////////////////////////////////////
+//:://////////////////////////////////////////////
+//:: Created By: Script Wizard
+//:: Created On: 3/1/2005 1:36:46 PM
+//:://////////////////////////////////////////////
+void main()
+{
+
+    // Remove some gold from the player
+    TakeGoldFromCreature(700, GetPCSpeaker(), TRUE);
+    SetLocalInt(GetPCSpeaker(), GetTag(OBJECT_SELF) + "_fined", TRUE);
+}

@@ -348,12 +348,9 @@ class TranslationManager:
     def _run_ncs_llm_gate(self, translation_items: List[dict]) -> None:
         """Populate :attr:`_ncs_gate_approval` for all ``ncs_string`` items.
 
-        Routing:
-        1. Hard-veto (see :func:`ncs_hard_veto_reason`) → reject deterministically.
-        2. ``config.skip_ncs_llm_gate`` → auto-approve (escape hatch for offline
-           runs and tests). Every other item — including high-confidence
-           ``SendMessageToPC`` dialogue — goes through the LLM gate so we catch
-           debug concatenations and engine traps the heuristics can miss.
+        Hard vetoes always reject. Normally every candidate needs an explicit
+        boolean approval from the provider. Disabling the model gate permits
+        only bytecode-proven display arguments, never unproven candidates.
         """
         self._ncs_gate_approval.clear()
         pending: List[dict] = []  # items awaiting LLM verdict
@@ -367,6 +364,8 @@ class TranslationManager:
                 item.text,
                 proven_player=bool(meta.get("proven_player")),
                 is_concat=bool(meta.get("concat_parts")),
+                player_candidate=bool(meta.get("player_candidate"))
+                and not self.config.skip_ncs_llm_gate,
             )
             if hard_veto:
                 self._ncs_gate_approval[iid] = False
@@ -377,10 +376,13 @@ class TranslationManager:
                 )
                 continue
             if self.config.skip_ncs_llm_gate:
-                self._ncs_gate_approval[iid] = True
-                with self._stats_lock:
-                    ncs_stats = self._ncs_stats()
-                    ncs_stats["approved"] = int(ncs_stats.get("approved", 0)) + 1
+                approved = meta.get("proven_player") is True
+                self._ncs_gate_approval[iid] = approved
+                self._record_ncs_diagnostic(
+                    item,
+                    reason="gate_bypassed_proven" if approved else "gate_disabled_unproven",
+                    count_field="approved" if approved else "skipped_fail_closed",
+                )
                 continue
             pending.append(itd)
 
@@ -402,7 +404,6 @@ class TranslationManager:
                     "nss_snippet": meta.get("nss_snippet"),
                     "bytecode_context": meta.get("bytecode_context"),
                     "confidence": meta.get("confidence"),
-                    "source_class": meta.get("source_class"),
                 }
             )
 
@@ -449,7 +450,7 @@ class TranslationManager:
             item = itd["item"]
             iid = item.item_id or ""
             cell = verdicts.get(str(i), {"translate": False, "reason": "gate_unavailable"})
-            if cell.get("translate"):
+            if cell.get("translate") is True:
                 self._ncs_gate_approval[iid] = True
                 self._record_ncs_diagnostic(
                     item,

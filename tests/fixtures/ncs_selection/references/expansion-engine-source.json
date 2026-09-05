@@ -1,0 +1,559 @@
+{
+  "origin": "Neverwinter Nights/data/base_scripts.bif",
+  "sha256": "bd4f74a80159fb715ab5978a4c0d6a7ae352fd14463d9bfa3c0dc38b984c8ac4",
+  "excerpts": {
+    "NW_ASSOCIATE_START": {
+      "byte_start": 15563285,
+      "byte_end": 15563887,
+      "sha256": "719268b88f12a8c910d870b62d2667afaa06e4169ed012519498ad81703acb58",
+      "encoding": "cp1252",
+      "text": "//:: Set Associate Start Location\r\n//:: Copyright (c) 2001 Bioware Corp.\r\n//:: Created By: Preston Watmaniuk\r\n//:: Created On: Nov 21, 2001\r\n//:://////////////////////////////////////////////\r\nvoid SetAssociateStartLocation()\r\n{\r\n    SetLocalLocation(OBJECT_SELF, \"NW_ASSOCIATE_START\", GetLocation(OBJECT_SELF));\r\n}\r\n\r\n//::///////////////////////////////////////////////\r\n//:: Get Associate Start Location\r\n//:: Copyright (c) 2001 Bioware Corp.\r\n//:: Created By: Preston Watmaniuk\r\n//:: Created On: Nov 21, 2001\r\n//:://////////////////////////////////////////////\r\nlocation GetAssociateStartLocation()\r"
+    },
+    "NW_ATTACK_MY_TARGET": {
+      "byte_start": 909364,
+      "byte_end": 909878,
+      "sha256": "e6424f69651c437133055f641fc734a591c4ebde8152a90800c5e3f20fbb3875",
+      "encoding": "cp1252",
+      "text": "    if(nClass > 0 && (nAlign == ALIGNMENT_GOOD || nAlign == ALIGNMENT_NEUTRAL))\r\n    {\r\n        object oKiller = GetLastKiller();\r\n        AdjustAlignment(oKiller, ALIGNMENT_EVIL, 5);\r\n    }\r\n\r\n    SpeakString(\"NW_I_AM_DEAD\", TALKVOLUME_SILENT_TALK);\r\n    //Shout Attack my target, only works with the On Spawn In setup\r\n    SpeakString(\"NW_ATTACK_MY_TARGET\", TALKVOLUME_SILENT_TALK);\r\n    if(GetSpawnInCondition(NW_FLAG_DEATH_EVENT))\r\n    {\r\n        SignalEvent(OBJECT_SELF, EventUserDefined(1007));\r\n    }\r\n}\r\n\r\n"
+    },
+    "NW_GENERIC_START_POINT": {
+      "byte_start": 5901237,
+      "byte_end": 5901958,
+      "sha256": "40ad35e8a4d349d0a7d9dabe766aefaf3cecac1d02f9232bd47dbd533a8a86a0",
+      "encoding": "cp1252",
+      "text": "     if(nPlot & NW_FLAG_TELEPORT_RETURN || nPlot & NW_FLAG_TELEPORT_LEAVE)\r\n     {\r\n        effect eVis = EffectVisualEffect(VFX_IMP_UNSUMMON);\r\n        ApplyEffectToObject(DURATION_TYPE_INSTANT, eVis, OBJECT_SELF);\r\n        if(nPlot & NW_FLAG_TELEPORT_RETURN)\r\n        {\r\n            location lLocal = GetLocalLocation(OBJECT_SELF, \"NW_GENERIC_START_POINT\");\r\n            string sTag = GetTag(OBJECT_SELF);\r\n            DelayCommand(6.0, ActionDoCommand(CreateSignPostNPC(sTag, lLocal)));\r\n        }\r\n        ActionDoCommand(DestroyObject(OBJECT_SELF, 0.75));\r\n     }\r\n     else\r\n     {\r\n        if(nPlot & NW_FLAG_ESCAPE_LEAVE)\r\n        {\r\n            object oExitWay = GetWaypointByTag(\"EXIT_\" + GetTag(OBJECT_SELF));\r"
+    },
+    "WP_NUM": {
+      "byte_start": 16156839,
+      "byte_end": 16157511,
+      "sha256": "e88be111cdae073b1c6504871cfe5211a52eff2e7ef44a2f1cc13a4faeae6daa",
+      "encoding": "cp1252",
+      "text": "            oWay = GetNearestObjectByTag(\"POST_\" + GetTag(OBJECT_SELF));\r\n        }\r\n        else\r\n        {\r\n            oWay = GetObjectByTag(\"POST_\" + GetTag(OBJECT_SELF));\r\n        }\r\n        if (GetIsObjectValid(oWay)) {\r\n            // no waypoints but a post\r\n            SetLocalInt(OBJECT_SELF, \"WP_NUM\", 1);\r\n            SetLocalObject(OBJECT_SELF, \"WP_1\", oWay);\r\n        } else {\r\n            // no waypoints or post\r\n            SetLocalInt(OBJECT_SELF, \"WP_NUM\", -1);\r\n        }\r\n    } else {\r\n        // look up and store all the waypoints\r\n        while (GetIsObjectValid(oWay)) {\r\n            SetLocalObject(OBJECT_SELF, \"WP_\" + IntToString(nNth), oWay);\r"
+    },
+    "WN_NUM": {
+      "byte_start": 16157821,
+      "byte_end": 16158433,
+      "sha256": "1bb958c7fcd6b04ed7dcf30a300c8a063dc054d2e2e1fe6d9b4dbd016c0f216f",
+      "encoding": "cp1252",
+      "text": "        SetLocalInt(OBJECT_SELF, \"WP_NUM\", nNth);\r\n    }\r\n\r\n\r\n    //The block of code below deals with night and day\r\n    // cycle for postings and walkway points.\r\n    if( !GetSpawnInCondition(NW_FLAG_DAY_NIGHT_POSTING)) {\r\n        // no night-time waypoints\r\n        SetLocalInt(OBJECT_SELF, \"WN_NUM\", -1);\r\n    } else {\r\n        sTag = \"WN_\" + GetTag(OBJECT_SELF) + \"_\";\r\n        nNth = 1;\r\n\r\n        if (!bCrossAreas)\r\n        {\r\n            oWay = GetNearestObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n        }\r\n        else\r\n        {\r\n            oWay = GetObjectByTag(sTag + GetWaypointSuffix(nNth));\r"
+    },
+    "X2_SWITCH_CROSSAREA_WALKWAYPOINTS": {
+      "byte_start": 16156084,
+      "byte_end": 16156757,
+      "sha256": "7b192d409018c0fab8fa9e19325e226ad1d59c6204cb9801cd253a9b56d3c1ce",
+      "encoding": "cp1252",
+      "text": "//        WN_NUM     : number of night waypoints\r\n//        WP_#, WN_# : the waypoint objects\r\n//        WP_CUR     : the current waypoint number\r\nvoid LookUpWalkWayPoints()\r\n{\r\n    // check if the module enables area transitions for walkwaypoints\r\n    int bCrossAreas = (GetLocalInt(GetModule(),\"X2_SWITCH_CROSSAREA_WALKWAYPOINTS\") == TRUE);\r\n\r\n    SetLocalInt(OBJECT_SELF, \"WP_CUR\", -1);\r\n\r\n    string sTag = \"WP_\" + GetTag(OBJECT_SELF) + \"_\";\r\n\r\n    int nNth=1;\r\n    object oWay;\r\n\r\n    if (!bCrossAreas)\r\n    {\r\n        oWay = GetNearestObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n    }\r\n    else\r\n    {\r\n       oWay = GetObjectByTag(sTag + GetWaypointSuffix(nNth));\r"
+    },
+    "WP_CUR": {
+      "byte_start": 16156179,
+      "byte_end": 16156800,
+      "sha256": "d60e3988f3052fdaa45af29d1fbc02b65c0a63c910799894391bca891adf42ca",
+      "encoding": "cp1252",
+      "text": "//        WP_CUR     : the current waypoint number\r\nvoid LookUpWalkWayPoints()\r\n{\r\n    // check if the module enables area transitions for walkwaypoints\r\n    int bCrossAreas = (GetLocalInt(GetModule(),\"X2_SWITCH_CROSSAREA_WALKWAYPOINTS\") == TRUE);\r\n\r\n    SetLocalInt(OBJECT_SELF, \"WP_CUR\", -1);\r\n\r\n    string sTag = \"WP_\" + GetTag(OBJECT_SELF) + \"_\";\r\n\r\n    int nNth=1;\r\n    object oWay;\r\n\r\n    if (!bCrossAreas)\r\n    {\r\n        oWay = GetNearestObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n    }\r\n    else\r\n    {\r\n       oWay = GetObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n    }\r\n    if (!GetIsObjectValid(oWay)) {\r"
+    },
+    "WP_": {
+      "byte_start": 3602035,
+      "byte_end": 3602739,
+      "sha256": "7c6148e46e59466243c5ada8759e26a0e35c8d804b6cae9c68cebb6e45f45a5f",
+      "encoding": "cp1252",
+      "text": "///////////////////////////////////////////////////////////////////////////////\r\n\r\n\r\nvoid RunCircuit(int nTens, int nNum)\r\n{\r\n    // starting at a given way point, move sequentialy through incrementally\r\n    // increasing points until there are no more valid ones.\r\n    object oTargetPoint = GetWaypointByTag(\"WP_\" + GetTag(OBJECT_SELF) + \"_\" + IntToString(nTens) +IntToString(nNum));\r\n\r\n    while(GetIsObjectValid(oTargetPoint))\r\n    {\r\n        ActionMoveToObject(oTargetPoint);\r\n        nNum++;\r\n        if (nNum > 9)\r\n        {\r\n            nTens++;\r\n            nNum = 0;\r\n        }\r\n        oTargetPoint = GetWaypointByTag(\"WP_\" + GetTag(OBJECT_SELF) + \"_\" + IntToString(nTens) +IntToString(nNum));\r"
+    },
+    "_": {
+      "byte_start": 3602035,
+      "byte_end": 3602739,
+      "sha256": "7c6148e46e59466243c5ada8759e26a0e35c8d804b6cae9c68cebb6e45f45a5f",
+      "encoding": "cp1252",
+      "text": "///////////////////////////////////////////////////////////////////////////////\r\n\r\n\r\nvoid RunCircuit(int nTens, int nNum)\r\n{\r\n    // starting at a given way point, move sequentialy through incrementally\r\n    // increasing points until there are no more valid ones.\r\n    object oTargetPoint = GetWaypointByTag(\"WP_\" + GetTag(OBJECT_SELF) + \"_\" + IntToString(nTens) +IntToString(nNum));\r\n\r\n    while(GetIsObjectValid(oTargetPoint))\r\n    {\r\n        ActionMoveToObject(oTargetPoint);\r\n        nNum++;\r\n        if (nNum > 9)\r\n        {\r\n            nTens++;\r\n            nNum = 0;\r\n        }\r\n        oTargetPoint = GetWaypointByTag(\"WP_\" + GetTag(OBJECT_SELF) + \"_\" + IntToString(nTens) +IntToString(nNum));\r"
+    },
+    "POST_": {
+      "byte_start": 16156600,
+      "byte_end": 16157213,
+      "sha256": "f27bb193b0bd86c31e3557cf2063a396c896a29d52ceae08ee3cfad946f8d664",
+      "encoding": "cp1252",
+      "text": "        oWay = GetNearestObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n    }\r\n    else\r\n    {\r\n       oWay = GetObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n    }\r\n    if (!GetIsObjectValid(oWay)) {\r\n        if (!bCrossAreas)\r\n        {\r\n            oWay = GetNearestObjectByTag(\"POST_\" + GetTag(OBJECT_SELF));\r\n        }\r\n        else\r\n        {\r\n            oWay = GetObjectByTag(\"POST_\" + GetTag(OBJECT_SELF));\r\n        }\r\n        if (GetIsObjectValid(oWay)) {\r\n            // no waypoints but a post\r\n            SetLocalInt(OBJECT_SELF, \"WP_NUM\", 1);\r\n            SetLocalObject(OBJECT_SELF, \"WP_1\", oWay);\r"
+    },
+    "WP_1": {
+      "byte_start": 16156938,
+      "byte_end": 16157511,
+      "sha256": "755de89d86d46585c1c3ce2fb4272675efc6176d35a7421294c442ed36672e57",
+      "encoding": "cp1252",
+      "text": "        {\r\n            oWay = GetObjectByTag(\"POST_\" + GetTag(OBJECT_SELF));\r\n        }\r\n        if (GetIsObjectValid(oWay)) {\r\n            // no waypoints but a post\r\n            SetLocalInt(OBJECT_SELF, \"WP_NUM\", 1);\r\n            SetLocalObject(OBJECT_SELF, \"WP_1\", oWay);\r\n        } else {\r\n            // no waypoints or post\r\n            SetLocalInt(OBJECT_SELF, \"WP_NUM\", -1);\r\n        }\r\n    } else {\r\n        // look up and store all the waypoints\r\n        while (GetIsObjectValid(oWay)) {\r\n            SetLocalObject(OBJECT_SELF, \"WP_\" + IntToString(nNth), oWay);\r"
+    },
+    "WN_": {
+      "byte_start": 16157883,
+      "byte_end": 16158484,
+      "sha256": "69696abe238d77949910a94e83ea79e82da44040989e5b8ed370a1d569f9fd8e",
+      "encoding": "cp1252",
+      "text": "    //The block of code below deals with night and day\r\n    // cycle for postings and walkway points.\r\n    if( !GetSpawnInCondition(NW_FLAG_DAY_NIGHT_POSTING)) {\r\n        // no night-time waypoints\r\n        SetLocalInt(OBJECT_SELF, \"WN_NUM\", -1);\r\n    } else {\r\n        sTag = \"WN_\" + GetTag(OBJECT_SELF) + \"_\";\r\n        nNth = 1;\r\n\r\n        if (!bCrossAreas)\r\n        {\r\n            oWay = GetNearestObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n        }\r\n        else\r\n        {\r\n            oWay = GetObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n        }\r\n        if (!GetIsObjectValid(oWay)) {\r"
+    },
+    "NIGHT_": {
+      "byte_start": 16158255,
+      "byte_end": 16158887,
+      "sha256": "93e3fcbf20a10748996fe617268df176ed9f98facb5ed9238ab3e3da5335029d",
+      "encoding": "cp1252",
+      "text": "            oWay = GetNearestObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n        }\r\n        else\r\n        {\r\n            oWay = GetObjectByTag(sTag + GetWaypointSuffix(nNth));\r\n        }\r\n        if (!GetIsObjectValid(oWay)) {\r\n            if (!bCrossAreas)\r\n            {\r\n                oWay = GetNearestObjectByTag(\"NIGHT_\" + GetTag(OBJECT_SELF));\r\n            }\r\n            else\r\n            {\r\n                oWay = GetObjectByTag(\"NIGHT_\" + GetTag(OBJECT_SELF));\r\n            }\r\n            if (GetIsObjectValid(oWay)) {\r\n                // no waypoints but a post\r\n                SetLocalInt(OBJECT_SELF, \"WN_NUM\", 1);\r"
+    },
+    "WN_1": {
+      "byte_start": 16158658,
+      "byte_end": 16159277,
+      "sha256": "51bc6ccfbecd31d569996ba018d9139ae88a450c3d398a4297de854ed88cc0ef",
+      "encoding": "cp1252",
+      "text": "                oWay = GetObjectByTag(\"NIGHT_\" + GetTag(OBJECT_SELF));\r\n            }\r\n            if (GetIsObjectValid(oWay)) {\r\n                // no waypoints but a post\r\n                SetLocalInt(OBJECT_SELF, \"WN_NUM\", 1);\r\n                SetLocalObject(OBJECT_SELF, \"WN_1\", oWay);\r\n            } else {\r\n                // no waypoints or post\r\n                SetLocalInt(OBJECT_SELF, \"WN_NUM\", -1);\r\n            }\r\n        } else {\r\n            // look up and store all the waypoints\r\n            while (GetIsObjectValid(oWay)) {\r\n                SetLocalObject(OBJECT_SELF, \"WN_\" + IntToString(nNth), oWay);\r"
+    },
+    "0": {
+      "byte_start": 16155666,
+      "byte_end": 16156178,
+      "sha256": "c688f75fbc6ab8b06ca81d5e999142e230c2c75d8a9a3ae78689354549c8dd49",
+      "encoding": "cp1252",
+      "text": "        SetLocalInt(oCreature, sWalkwayVarname, nCurrentCond & ~nCondition);\r\n    }\r\n}\r\n\r\n\r\n// Get a waypoint number suffix, padded if necessary\r\nstring GetWaypointSuffix(int i)\r\n{\r\n    if (i < 10) {\r\n        return \"0\" + IntToString(i);\r\n    }\r\n    return IntToString(i);\r\n}\r\n\r\n// Look up the caller's waypoints and store them on the creature.\r\n// Waypoint variables:\r\n//        WP_NUM     : number of day waypoints\r\n//        WN_NUM     : number of night waypoints\r\n//        WP_#, WN_# : the waypoint objects\r"
+    },
+    "NW_BEHAVIOR_MASTER": {
+      "byte_start": 15566318,
+      "byte_end": 15566977,
+      "sha256": "4ee4408d51e08b4781edc5b984b5efd9a221bc783effb5f7dbdf3eeaf36faacc",
+      "encoding": "cp1252",
+      "text": " * FUNCTION DEFINITIONS\r\n **********************************************************************/\r\n\r\n// Add the specified condition flag to the behavior state of the caller\r\nvoid SetBehaviorState(int nCondition, int bValid = TRUE)\r\n{\r\n    int nPlot = GetLocalInt(OBJECT_SELF, \"NW_BEHAVIOR_MASTER\");\r\n    if(bValid == TRUE)\r\n    {\r\n        nPlot = nPlot | nCondition;\r\n        SetLocalInt(OBJECT_SELF, \"NW_BEHAVIOR_MASTER\", nPlot);\r\n    }\r\n    else if (bValid == FALSE)\r\n    {\r\n        nPlot = nPlot & ~nCondition;\r\n        SetLocalInt(OBJECT_SELF, \"NW_BEHAVIOR_MASTER\", nPlot);\r\n    }\r\n}\r\n\r\n// Returns TRUE if the specified behavior flag is set on the caller\r"
+    },
+    "NW_HOME": {
+      "byte_start": 15503298,
+      "byte_end": 15503962,
+      "sha256": "53021392be5e47de6a95c15f6159eea060a9f3e92689dabb89948ec8986e888b",
+      "encoding": "cp1252",
+      "text": "    if (GetIsObjectValid(oStop) && GetDistanceToObject(oStop) <= fMaxDistance)\r\n        return oStop;\r\n    return OBJECT_INVALID;\r\n}\r\n\r\n// Check for a waypoint marked NW_HOME in the area; if it\r\n// exists, mark it as the caller's home waypoint.\r\nvoid SetCreatureHomeWaypoint()\r\n{\r\n    object oHome = GetNearestObjectByTag(\"NW_HOME\");\r\n    if (GetIsObjectValid(oHome)) {\r\n        SetAnimationCondition(NW_ANIM_FLAG_HAS_HOME);\r\n        SetLocalObject(OBJECT_SELF, \"NW_ANIM_HOME\", oHome);\r\n    }\r\n}\r\n\r\n// Get a creature's home waypoint; returns OBJECT_INVALID if none set.\r\nobject GetCreatureHomeWaypoint()\r\n{\r\n    if (GetAnimationCondition(NW_ANIM_FLAG_HAS_HOME)) {\r"
+    },
+    "NW_ANIM_HOME": {
+      "byte_start": 15503493,
+      "byte_end": 15504147,
+      "sha256": "74ff95fc30e0246602e399f409c0d3fab8706dcc5aa8f33c7b093695aeb93436",
+      "encoding": "cp1252",
+      "text": "// exists, mark it as the caller's home waypoint.\r\nvoid SetCreatureHomeWaypoint()\r\n{\r\n    object oHome = GetNearestObjectByTag(\"NW_HOME\");\r\n    if (GetIsObjectValid(oHome)) {\r\n        SetAnimationCondition(NW_ANIM_FLAG_HAS_HOME);\r\n        SetLocalObject(OBJECT_SELF, \"NW_ANIM_HOME\", oHome);\r\n    }\r\n}\r\n\r\n// Get a creature's home waypoint; returns OBJECT_INVALID if none set.\r\nobject GetCreatureHomeWaypoint()\r\n{\r\n    if (GetAnimationCondition(NW_ANIM_FLAG_HAS_HOME)) {\r\n        return GetLocalObject(OBJECT_SELF, \"NW_ANIM_HOME\");\r\n    }\r\n    return OBJECT_INVALID;\r\n}\r\n\r\n\r\n// Set a specific creature (or OBJECT_INVALID to clear) as the caller's \"friend\"\r"
+    },
+    "NW_SAFE": {
+      "byte_start": 15534514,
+      "byte_end": 15535141,
+      "sha256": "25f3279895a00cd81a32c302fe13cd6e53556832ba6fdee5be5b85d3aeda0b62",
+      "encoding": "cp1252",
+      "text": "    return 0;\r\n}\r\n\r\n// If injured, find the nearest \"NW_SAFE\" object,\r\n// go to it, and rest.\r\n// Returns TRUE on success, FALSE on failure.\r\nint AnimActionRest()\r\n{\r\n    if (GetCurrentHitPoints() < GetMaxHitPoints()) {\r\n        object oSafe = GetNearestObjectByTag(\"NW_SAFE\");\r\n        if (GetAnimationCondition(NW_ANIM_FLAG_IS_MOBILE) && GetIsObjectValid(oSafe)) {\r\n            ClearActions(CLEAR_X0_I0_ANIMS_AnimActionRest1);\r\n            ActionMoveToObject(oSafe);\r\n            //ActionRest();\r\n            return TRUE;\r\n        } else {\r\n            location lStart = GetLocalLocation(OBJECT_SELF, \"ANIM_START_LOCATION\");\r"
+    },
+    "ANIM_START_LOCATION": {
+      "byte_start": 15513981,
+      "byte_end": 15514631,
+      "sha256": "eedd77f919d3c67e743740350014b36d7b6e3356ea071cda9959f57e46b578ef",
+      "encoding": "cp1252",
+      "text": "        // if we are at home, make us mobile in close-range\r\n        if (GetIsObjectValid(GetCreatureHomeWaypoint())) {\r\n            SetAnimationCondition(NW_ANIM_FLAG_IS_MOBILE_CLOSE_RANGE);\r\n        }\r\n\r\n        // also save our starting location\r\n        SetLocalLocation(OBJECT_SELF,\r\n                         \"ANIM_START_LOCATION\",\r\n                         GetLocation(OBJECT_SELF));\r\n    }\r\n\r\n    // Short-circuit everything if we're not active yet\r\n    if (!GetAnimationCondition(NW_ANIM_FLAG_IS_ACTIVE))\r\n        return;\r\n\r\n    //AnimDebug(\"currently active\");\r\n\r\n    // Check if we should turn off\r\n    if (!CheckIsAnimActive(OBJECT_SELF))\r"
+    },
+    "NW_STEALTH": {
+      "byte_start": 15505678,
+      "byte_end": 15506277,
+      "sha256": "af4d6e7d046ea75544e73775002b4c0df851056b3097351377f9520ebe9c8867",
+      "encoding": "cp1252",
+      "text": "    }\r\n}\r\n\r\n// Check to see if we should switch on detect/stealth mode\r\nvoid CheckCurrentModes()\r\n{\r\n    //wSpeakString(\"running check current modes\");\r\n    object oWay = GetNearestObject(OBJECT_TYPE_WAYPOINT);\r\n    string sTag = GetTag(oWay);\r\n    if (sTag == \"NW_STEALTH\")\r\n    {\r\n        if (GetModeActive(NW_MODE_STEALTH))\r\n        {\r\n            // turn off stealth mode\r\n            SetModeActive(NW_MODE_STEALTH, FALSE);\r\n        }\r\n        else\r\n        {\r\n            // turn on stealth mode\r\n            SetModeActive(NW_MODE_STEALTH);\r\n        }\r\n    }\r\n    else if (sTag == \"NW_DETECT\")\r"
+    },
+    "NW_DETECT": {
+      "byte_start": 15505961,
+      "byte_end": 15506625,
+      "sha256": "97faa1d48ec77a7192550878943a1bb649bef1d79e564ffb2583d0f7f029500e",
+      "encoding": "cp1252",
+      "text": "        if (GetModeActive(NW_MODE_STEALTH))\r\n        {\r\n            // turn off stealth mode\r\n            SetModeActive(NW_MODE_STEALTH, FALSE);\r\n        }\r\n        else\r\n        {\r\n            // turn on stealth mode\r\n            SetModeActive(NW_MODE_STEALTH);\r\n        }\r\n    }\r\n    else if (sTag == \"NW_DETECT\")\r\n    {\r\n        if (GetModeActive(NW_MODE_DETECT))\r\n        {\r\n            // turn off detect mode\r\n            SetModeActive(NW_MODE_DETECT);\r\n        }\r\n        else\r\n        {\r\n            // turn on detect mode\r\n            SetModeActive(NW_MODE_DETECT);\r\n        }\r\n    }\r\n}\r\n\r\n\r\n// Check if the creature should be active and turn off if not,\r"
+    },
+    "_CHALLENGED": {
+      "byte_start": 15537125,
+      "byte_end": 15537728,
+      "sha256": "7317eae20809a8929e65f4b077303a67a6ccd9823330f8f162df9b1d980b895d",
+      "encoding": "cp1252",
+      "text": "    object oHome = GetCreatureHomeWaypoint();\r\n    if (GetIsObjectValid(oHome) && GetArea(OBJECT_SELF) == GetArea(oHome)) {\r\n        object oPC = GetNearestCreature(CREATURE_TYPE_PLAYER_CHAR, PLAYER_CHAR_IS_PC);\r\n        if (GetIsObjectValid(oPC) && !GetLocalInt(OBJECT_SELF, GetName(oPC) + \"_CHALLENGED\")) {\r\n            ClearActions(CLEAR_X0_I0_ANIMS_AnimActionChallengeIntruder);\r\n            ActionDoCommand(SetFacingPoint(GetPosition(oPC)));\r\n            ActionDoCommand(SpeakOneLinerConversation(ANIM_CONVERSATION, oPC));\r\n            SetLocalInt(OBJECT_SELF, GetName(oPC) + \"_CHALLENGED\", TRUE);\r"
+    },
+    "NW_ANIM_DOOR_HOME": {
+      "byte_start": 15535627,
+      "byte_end": 15536303,
+      "sha256": "3275de885e60be36e71f48478a2c19f52fcf9242a01412f7eb8c60838880d3ec",
+      "encoding": "cp1252",
+      "text": "    if ( GetIsObjectValid(oHome) && !GetIsDay() && GetArea(OBJECT_SELF) != GetArea(oHome)) {\r\n        ClearActions(CLEAR_X0_I0_ANIMS_GoHome);\r\n        AnimActionGoOutside();\r\n        AnimActionGoThroughDoor(GetLocalObject(OBJECT_SELF,\r\n                                               \"NW_ANIM_DOOR_HOME\"));\r\n        return TRUE;\r\n    }\r\n    return FALSE;\r\n}\r\n\r\n// If it is day, leave our home area, if we have one.\r\n// This is only meaningful for mobile NPCs.\r\n// Returns TRUE on success, FALSE on failure.\r\nint AnimActionLeaveHome()\r\n{\r\n    object oHome = GetCreatureHomeWaypoint();\r\n    if ( GetIsObjectValid(oHome) && GetIsDay() && GetArea(OBJECT_SELF) == GetArea(oHome)) {\r"
+    },
+    "NW_ANIM_DOOR": {
+      "byte_start": 15531980,
+      "byte_end": 15532588,
+      "sha256": "fe2b766157693abb6730d6b7e83ada21c6ad645dce0c7311972690453a6181e6",
+      "encoding": "cp1252",
+      "text": "        oWay = GetNearestObjectByTag(\"NW_SHOP\", oDest);\r\n    if (GetIsObjectValid(oWay)) {\r\n        //AnimDebug(\"Valid waypoint found: \" + GetTag(oWay));\r\n        AnimActionGoThroughDoor(oDoor);\r\n        SetAnimationCondition(NW_ANIM_FLAG_IS_INSIDE);\r\n        SetLocalObject(OBJECT_SELF, \"NW_ANIM_DOOR\", oDest);\r\n        return TRUE;\r\n    }\r\n\r\n    return FALSE;\r\n}\r\n\r\n// Leave area if appropriate.\r\n// This only works for NPCs that entered an area that\r\n// has a waypoint with one of these tags:\r\n//             NW_TAVERN, NW_SHOP\r\n// If the NPC entered through a door, they will exit through\r\n// that door.\r"
+    },
+    "BEING_CLOSED": {
+      "byte_start": 15528112,
+      "byte_end": 15528747,
+      "sha256": "e7543034887681d03057c03923aa0176e5fae48ca146c60bb770d61b771dc770",
+      "encoding": "cp1252",
+      "text": "// Go through a door and close it behind you,\r\n// then walk a short distance away.\r\n// This assumes the door exists, is unlocked, etc.\r\nvoid AnimActionGoThroughDoor(object oDoor)\r\n{\r\n    //AnimDebug(\"going through door \" + GetTag(oDoor));\r\n    SetLocalInt(oDoor, \"BEING_CLOSED\", TRUE);\r\n    object oDest = GetTransitionTarget(oDoor);\r\n    ActionMoveToObject(oDest);\r\n    ActionDoCommand(AssignCommand(oDest, ActionCloseDoor(oDest)));\r\n    ActionDoCommand(AssignCommand(oDoor, ActionCloseDoor(oDoor)));\r\n    ActionDoCommand(SetLocalInt(oDoor, \"BEING_CLOSED\", FALSE));\r\n    DelayCommand(10.0, SetLocalInt(oDoor, \"BEING_CLOSED\", FALSE));\r"
+    },
+    "NW_ANIM_FRIEND": {
+      "byte_start": 15503963,
+      "byte_end": 15504617,
+      "sha256": "ca06da6e6326c1de8218956cb33a70063c665ffcd74b5bd8b9fc9d18713ab84c",
+      "encoding": "cp1252",
+      "text": "        return GetLocalObject(OBJECT_SELF, \"NW_ANIM_HOME\");\r\n    }\r\n    return OBJECT_INVALID;\r\n}\r\n\r\n\r\n// Set a specific creature (or OBJECT_INVALID to clear) as the caller's \"friend\"\r\nvoid SetCurrentFriend(object oFriend)\r\n{\r\n    if (!GetIsObjectValid(oFriend)) {\r\n        DeleteLocalObject(OBJECT_SELF, \"NW_ANIM_FRIEND\");\r\n    } else {\r\n        SetLocalObject(OBJECT_SELF, \"NW_ANIM_FRIEND\", oFriend);\r\n    }\r\n}\r\n\r\n// Get the caller's current friend, if set; OBJECT_INVALID otherwise\r\nobject GetCurrentFriend()\r\n{\r\n    return GetLocalObject(OBJECT_SELF, \"NW_ANIM_FRIEND\");\r\n}\r\n\r\n// Set an object (or OBJECT_INVALID to clear) as the caller's interactive\r"
+    },
+    "NW_TAVERN": {
+      "byte_start": 15531632,
+      "byte_end": 15532292,
+      "sha256": "6450f8615cae63288a9469e6d10e8cff0a473af5aad05f15cf666218be6190ed",
+      "encoding": "cp1252",
+      "text": "    if (!GetIsObjectValid(oDoor) || GetLocked(oDoor)) {\r\n        //AnimDebug(\"Failed to enter door: \" + GetTag(oDoor));\r\n        return FALSE;\r\n    }\r\n\r\n    object oDest = GetTransitionTarget(oDoor);\r\n    //AnimDebug(\"Destination: \" + GetTag(oDest));\r\n    object oWay = GetNearestObjectByTag(\"NW_TAVERN\", oDest);\r\n    if (!GetIsObjectValid(oWay))\r\n        oWay = GetNearestObjectByTag(\"NW_SHOP\", oDest);\r\n    if (GetIsObjectValid(oWay)) {\r\n        //AnimDebug(\"Valid waypoint found: \" + GetTag(oWay));\r\n        AnimActionGoThroughDoor(oDoor);\r\n        SetAnimationCondition(NW_ANIM_FLAG_IS_INSIDE);\r\n        SetLocalObject(OBJECT_SELF, \"NW_ANIM_DOOR\", oDest);\r"
+    },
+    "NW_ALTAR": {
+      "byte_start": 15544210,
+      "byte_end": 15544871,
+      "sha256": "4bc2f8b75456fbfa013df4af7ee753e94d0aafc0ffeaf446e3693bcf571d669b",
+      "encoding": "cp1252",
+      "text": "    object oWay = GetNearestObjectByTag(\"NW_TAVERN\");\r\n    if (GetIsObjectValid(oWay)) {\r\n        bInTavern = TRUE;\r\n    } else {\r\n        oWay = GetNearestObjectByTag(\"NW_HOME\");\r\n        if (GetIsObjectValid(oWay)) {\r\n            bInHome = TRUE;\r\n        } else {\r\n            oWay = GetNearestObjectByTag(\"NW_ALTAR\");\r\n            if (GetIsObjectValid(oWay) && GetDistanceToObject(oWay) < DISTANCE_SHORT) {\r\n                bNearAltar = TRUE;\r\n            }\r\n        }\r\n    }\r\n\r\n    if (bInTavern) {\r\n        nRoll = Random(15);\r\n        switch (nRoll) {\r\n        case 0:\r\n        case 1:\r\n            ActionPlayAnimation(ANIMATION_FIREFORGET_DRINK); break;\r"
+    },
+    "NW_ANIM_TARGET": {
+      "byte_start": 15504479,
+      "byte_end": 15505118,
+      "sha256": "15a825df02748fb7c571fe9236247d4118adbcc770ccb6fcfb9dff11c02804c2",
+      "encoding": "cp1252",
+      "text": "    return GetLocalObject(OBJECT_SELF, \"NW_ANIM_FRIEND\");\r\n}\r\n\r\n// Set an object (or OBJECT_INVALID to clear) as the caller's interactive\r\n// target.\r\nvoid SetCurrentInteractionTarget(object oTarget)\r\n{\r\n    if (!GetIsObjectValid(oTarget)) {\r\n        DeleteLocalObject(OBJECT_SELF, \"NW_ANIM_TARGET\");\r\n    } else {\r\n        SetLocalObject(OBJECT_SELF, \"NW_ANIM_TARGET\", oTarget);\r\n    }\r\n}\r\n\r\n// Get the caller's current interaction target, if set; OBJECT_INVALID otherwise\r\nobject GetCurrentInteractionTarget()\r\n{\r\n    return GetLocalObject(OBJECT_SELF, \"NW_ANIM_TARGET\");\r\n}\r\n\r\n\r\n// Mark the caller as civilized based on its racialtype.\r"
+    },
+    "NW_ANIM_PLACEABLE_ACTIVE": {
+      "byte_start": 15540111,
+      "byte_end": 15540714,
+      "sha256": "c3e23e0e0812d3d6e183e61bcfd30e405f8f1677f77f2910d5d43f3b9a16357a",
+      "encoding": "cp1252",
+      "text": "            AssignCommand(oPlaceable,\r\n                          DelayCommand(ANIM_LOOPING_LENGTH,\r\n                                       ActionPlayAnimation(ANIMATION_PLACEABLE_OPEN)));\r\n        }\r\n    } else {\r\n        int bIsActive = GetLocalInt(oPlaceable, \"NW_ANIM_PLACEABLE_ACTIVE\");\r\n        if (bIsActive) {\r\n            AssignCommand(oPlaceable,\r\n                          DelayCommand(ANIM_LOOPING_LENGTH,\r\n                                       ActionPlayAnimation(ANIMATION_PLACEABLE_DEACTIVATE)));\r\n            SetLocalInt(oPlaceable, \"NW_ANIM_PLACEABLE_ACTIVE\", FALSE);\r\n        } else {\r"
+    },
+    "NW_INTERACTIVE": {
+      "byte_start": 15534084,
+      "byte_end": 15534677,
+      "sha256": "1edd0ae5fb738c9370f71b0a097843c0a48363be3ce8e314e1e7c63159e6e5c9",
+      "encoding": "cp1252",
+      "text": "            return 1;\r\n        }\r\n    }\r\n    return 0;\r\n}\r\n\r\n// Find a placeable within the given distance and interact\r\n// with it.\r\n// Returns TRUE on success, FALSE on failure.\r\nint AnimActionFindPlaceable(float fMaxDistance)\r\n{\r\n    object oPlaceable = GetRandomObjectByTag(\"NW_INTERACTIVE\", DISTANCE_SHORT);\r\n    if (GetIsObjectValid(oPlaceable)) {\r\n        AnimActionStartInteracting(oPlaceable);\r\n        return 1;\r\n    }\r\n    return 0;\r\n}\r\n\r\n// If injured, find the nearest \"NW_SAFE\" object,\r\n// go to it, and rest.\r\n// Returns TRUE on success, FALSE on failure.\r\nint AnimActionRest()\r"
+    },
+    "NW_SHOP": {
+      "byte_start": 15531753,
+      "byte_end": 15532342,
+      "sha256": "ecd9d64b76f3fa35430993b5dbdcc20200c37312da72ae50895e911c0b68d9bf",
+      "encoding": "cp1252",
+      "text": "        return FALSE;\r\n    }\r\n\r\n    object oDest = GetTransitionTarget(oDoor);\r\n    //AnimDebug(\"Destination: \" + GetTag(oDest));\r\n    object oWay = GetNearestObjectByTag(\"NW_TAVERN\", oDest);\r\n    if (!GetIsObjectValid(oWay))\r\n        oWay = GetNearestObjectByTag(\"NW_SHOP\", oDest);\r\n    if (GetIsObjectValid(oWay)) {\r\n        //AnimDebug(\"Valid waypoint found: \" + GetTag(oWay));\r\n        AnimActionGoThroughDoor(oDoor);\r\n        SetAnimationCondition(NW_ANIM_FLAG_IS_INSIDE);\r\n        SetLocalObject(OBJECT_SELF, \"NW_ANIM_DOOR\", oDest);\r\n        return TRUE;\r\n    }\r\n\r\n    return FALSE;\r"
+    },
+    "ANIM_STOPS_INITIALIZED": {
+      "byte_start": 15502082,
+      "byte_end": 15502698,
+      "sha256": "4dc8f80ac984251b5cb1466291d170c270b06c0cc53a1ee26e2e71594283bf46",
+      "encoding": "cp1252",
+      "text": "// if the stop is too far away.\r\n// The first time this is called in a given area, it cycles\r\n// through all the stops in the area and stores them.\r\nobject GetRandomStop(float fMaxDistance)\r\n{\r\n    object oStop;\r\n    object oArea = GetArea(OBJECT_SELF);\r\n    if (! GetLocalInt(oArea, \"ANIM_STOPS_INITIALIZED\") ) {\r\n        //AnimDebug(\"Initializing stops in area \" + GetName(oArea));\r\n        // first time -- look up all the stops in the area and store them\r\n        int nNth = 1;\r\n        oStop = GetNearestObjectByTag(\"NW_STOP\");\r\n        while (GetIsObjectValid(oStop)) {\r\n            //AnimDebug(\"Stop found\");\r"
+    },
+    "NW_STOP": {
+      "byte_start": 15502337,
+      "byte_end": 15502932,
+      "sha256": "b0f531ba7ceea2e79a3a372dab33a71d9110ed74f66f00341b9f71e4dcf30723",
+      "encoding": "cp1252",
+      "text": "    if (! GetLocalInt(oArea, \"ANIM_STOPS_INITIALIZED\") ) {\r\n        //AnimDebug(\"Initializing stops in area \" + GetName(oArea));\r\n        // first time -- look up all the stops in the area and store them\r\n        int nNth = 1;\r\n        oStop = GetNearestObjectByTag(\"NW_STOP\");\r\n        while (GetIsObjectValid(oStop)) {\r\n            //AnimDebug(\"Stop found\");\r\n            SetLocalObject(oArea, \"ANIM_STOP_\" + IntToString(nNth), oStop);\r\n            nNth++;\r\n            oStop = GetNearestObjectByTag(\"NW_STOP\", OBJECT_SELF, nNth);\r\n        }\r\n        SetLocalInt(oArea, \"ANIM_STOPS\", nNth-1);\r"
+    },
+    "ANIM_STOP_": {
+      "byte_start": 15502467,
+      "byte_end": 15503065,
+      "sha256": "b3045ad8d1b114ae1629bac4237d0dd9ab12be981e6bd44192193db3969a5934",
+      "encoding": "cp1252",
+      "text": "        // first time -- look up all the stops in the area and store them\r\n        int nNth = 1;\r\n        oStop = GetNearestObjectByTag(\"NW_STOP\");\r\n        while (GetIsObjectValid(oStop)) {\r\n            //AnimDebug(\"Stop found\");\r\n            SetLocalObject(oArea, \"ANIM_STOP_\" + IntToString(nNth), oStop);\r\n            nNth++;\r\n            oStop = GetNearestObjectByTag(\"NW_STOP\", OBJECT_SELF, nNth);\r\n        }\r\n        SetLocalInt(oArea, \"ANIM_STOPS\", nNth-1);\r\n        SetLocalInt(oArea, \"ANIM_STOPS_INITIALIZED\", TRUE);\r\n    }\r\n\r\n    int nStop = Random(GetLocalInt(oArea, \"ANIM_STOPS\")) + 1;\r"
+    },
+    "ANIM_STOPS": {
+      "byte_start": 15502616,
+      "byte_end": 15503225,
+      "sha256": "f793645d692d767c118bdda4b18d71dfab0fc1efdb14789ae76961bae2ef802b",
+      "encoding": "cp1252",
+      "text": "        while (GetIsObjectValid(oStop)) {\r\n            //AnimDebug(\"Stop found\");\r\n            SetLocalObject(oArea, \"ANIM_STOP_\" + IntToString(nNth), oStop);\r\n            nNth++;\r\n            oStop = GetNearestObjectByTag(\"NW_STOP\", OBJECT_SELF, nNth);\r\n        }\r\n        SetLocalInt(oArea, \"ANIM_STOPS\", nNth-1);\r\n        SetLocalInt(oArea, \"ANIM_STOPS_INITIALIZED\", TRUE);\r\n    }\r\n\r\n    int nStop = Random(GetLocalInt(oArea, \"ANIM_STOPS\")) + 1;\r\n    oStop = GetLocalObject(oArea, \"ANIM_STOP_\" + IntToString(nStop));\r\n    //AnimDebug(\"Stop: \" + IntToString(nStop)\r\n    //            + \": \" + GetTag(oStop)\r"
+    },
+    "Chair": {
+      "byte_start": 15530067,
+      "byte_end": 15530668,
+      "sha256": "05ba9dcdaf2a66f13eacd43b9a5f39f4c612ab73ca6d3ee90cb51035ea7bdbd8",
+      "encoding": "cp1252",
+      "text": "        oDoor = GetNearestObject(OBJECT_TYPE_DOOR, OBJECT_SELF, nNth);\r\n    }\r\n    return FALSE;\r\n}\r\n\r\n// Sit in a random nearby chair if available.\r\n// Looks for items with tag: Chair\r\nint AnimActionSitInChair(float fMaxDistance)\r\n{\r\n    object oChair = GetRandomObjectByTag(\"Chair\", fMaxDistance);\r\n    if (GetIsObjectValid(oChair) && !GetIsObjectValid(GetSittingCreature(oChair))) {\r\n        ActionSit(oChair);\r\n        SetAnimationCondition(NW_ANIM_FLAG_IS_INTERACTING);\r\n        return TRUE;\r\n    }\r\n    return FALSE;\r\n}\r\n\r\n// Get up from a chair if we're sitting\r\nint AnimActionGetUpFromChair()\r"
+    },
+    "X2_SPECIAL_COMBAT_AI_SCRIPT": {
+      "byte_start": 5873691,
+      "byte_end": 5874383,
+      "sha256": "98333fc8ba5d3bbd0c0faa335ccbd096547e576515468a4cb61530c02d0e92d4",
+      "encoding": "cp1252",
+      "text": "    // If a creature has a local string variable named X2_SPECIAL_COMBAT_AI_SCRIPT\r\n    // set, the script name specified in the variable gets run instead\r\n    // see x2_ai_behold for details:\r\n    // ----------------------------------------------------------------------------------------\r\n    string sSpecialAI = GetLocalString(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT\");\r\n    if (sSpecialAI != \"\")\r\n    {\r\n        SetLocalObject(OBJECT_SELF,\"X2_NW_I0_GENERIC_INTRUDER\", oIntruder);\r\n        ExecuteScript(sSpecialAI, OBJECT_SELF);\r\n        if (GetLocalInt(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT_OK\"))\r\n        {\r\n            DeleteLocalInt(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT_OK\");\r"
+    },
+    "X2_NW_I0_GENERIC_INTRUDER": {
+      "byte_start": 5873847,
+      "byte_end": 5874523,
+      "sha256": "554de23d1deb2a8d46749c644240342107d8d6271d0d0be7550c1eef81956ce7",
+      "encoding": "cp1252",
+      "text": "    // see x2_ai_behold for details:\r\n    // ----------------------------------------------------------------------------------------\r\n    string sSpecialAI = GetLocalString(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT\");\r\n    if (sSpecialAI != \"\")\r\n    {\r\n        SetLocalObject(OBJECT_SELF,\"X2_NW_I0_GENERIC_INTRUDER\", oIntruder);\r\n        ExecuteScript(sSpecialAI, OBJECT_SELF);\r\n        if (GetLocalInt(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT_OK\"))\r\n        {\r\n            DeleteLocalInt(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT_OK\");\r\n            return;\r\n        }\r\n    }\r\n\r\n\r\n    // ----------------------------------------------------------------------------------------\r"
+    },
+    "X2_SPECIAL_COMBAT_AI_SCRIPT_OK": {
+      "byte_start": 5873982,
+      "byte_end": 5874662,
+      "sha256": "379cb956e885b54b83a6441247735d13aad17be6bb359afec86a2580f9dfb4a3",
+      "encoding": "cp1252",
+      "text": "    string sSpecialAI = GetLocalString(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT\");\r\n    if (sSpecialAI != \"\")\r\n    {\r\n        SetLocalObject(OBJECT_SELF,\"X2_NW_I0_GENERIC_INTRUDER\", oIntruder);\r\n        ExecuteScript(sSpecialAI, OBJECT_SELF);\r\n        if (GetLocalInt(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT_OK\"))\r\n        {\r\n            DeleteLocalInt(OBJECT_SELF,\"X2_SPECIAL_COMBAT_AI_SCRIPT_OK\");\r\n            return;\r\n        }\r\n    }\r\n\r\n\r\n    // ----------------------------------------------------------------------------------------\r\n    // DetermineCombatRound: EVALUATIONS\r\n    // ----------------------------------------------------------------------------------------\r"
+    },
+    "NW_L_COMBATDIFF": {
+      "byte_start": 5874960,
+      "byte_end": 5875667,
+      "sha256": "7db14180b0da04cb2d376164ff6a837bde8e0bb25958fb1d83def5ba39cb5bdf",
+      "encoding": "cp1252",
+      "text": "    // ----------------------------------------------------------------------------------------\r\n\r\n    if (bkEvaluationSanityCheck(oIntruder, GetFollowDistance()) == TRUE)\r\n        return;\r\n\r\n    // ** Store HOw Difficult the combat is for this round\r\n    int nDiff = GetCombatDifficulty();\r\n    SetLocalInt(OBJECT_SELF, \"NW_L_COMBATDIFF\", nDiff);\r\n\r\n    // MyPrintString(\"COMBAT: \" + IntToString(nDiff));\r\n\r\n    // ----------------------------------------------------------------------------------------\r\n    // If no special target has been passed into the function\r\n    // then choose an appropriate target\r\n    // ----------------------------------------------------------------------------------------\r"
+    },
+    "NW_GENERIC_LAST_ATTACK_TARGET": {
+      "byte_start": 5878312,
+      "byte_end": 5878972,
+      "sha256": "e279131abef1f7c852a64b18332dfd68119358c2e5233642e210cef88c78f0fb",
+      "encoding": "cp1252",
+      "text": "    // This is a call to the function which determines which\r\n    // way point to go back to.\r\n    // ----------------------------------------------------------------------------------------\r\n    ClearActions(CLEAR_NW_I0_GENERIC_658);\r\n    SetLocalObject(OBJECT_SELF,\r\n                   \"NW_GENERIC_LAST_ATTACK_TARGET\",\r\n                   OBJECT_INVALID);\r\n    WalkWayPoints();\r\n}\r\n\r\n\r\n\r\n//::///////////////////////////////////////////////\r\n//:: Respond To Shouts\r\n//:: Copyright (c) 2001 Bioware Corp.\r\n//:://////////////////////////////////////////////\r\n/*\r\n    Allows the listener to react in a manner\r\n    consistant with the given shout but only to one\r"
+    },
+    "NW_GENERIC_DOOR_TO_BASH": {
+      "byte_start": 5910888,
+      "byte_end": 5911526,
+      "sha256": "0753829744696ef1cc18b6f93bfbd647dca2f76a8df7c8b3577626f981f7fee5",
+      "encoding": "cp1252",
+      "text": "//:://////////////////////////////////////////////\r\n\r\nint BashDoorCheck(object oIntruder = OBJECT_INVALID)\r\n{\r\n    int bDoor = FALSE;\r\n    //This code is here to make sure that henchmen keep bashing doors and placables.\r\n    object oDoor = GetLocalObject(OBJECT_SELF, \"NW_GENERIC_DOOR_TO_BASH\");\r\n\r\n    // * MODIFICATION February 7 2003 BK\r\n    // * don't bash trapped doors.\r\n    if (GetIsTrapped(oDoor) ) return FALSE;\r\n\r\n    if(GetIsObjectValid(oDoor))\r\n    {\r\n        int nDoorMax = GetMaxHitPoints(oDoor);\r\n        int nDoorNow = GetCurrentHitPoints(oDoor);\r\n        int nCnt = GetLocalInt(OBJECT_SELF,\"NW_GENERIC_DOOR_TO_BASH_HP\");\r"
+    },
+    "NW_GENERIC_DOOR_TO_BASH_HP": {
+      "byte_start": 5911229,
+      "byte_end": 5911825,
+      "sha256": "13664558f8c720ed35d69f677952168a69c954ecc4854d937f8b16445730631f",
+      "encoding": "cp1252",
+      "text": "    // * don't bash trapped doors.\r\n    if (GetIsTrapped(oDoor) ) return FALSE;\r\n\r\n    if(GetIsObjectValid(oDoor))\r\n    {\r\n        int nDoorMax = GetMaxHitPoints(oDoor);\r\n        int nDoorNow = GetCurrentHitPoints(oDoor);\r\n        int nCnt = GetLocalInt(OBJECT_SELF,\"NW_GENERIC_DOOR_TO_BASH_HP\");\r\n        if(!GetIsObjectValid(GetNearestCreature(CREATURE_TYPE_REPUTATION, REPUTATION_TYPE_ENEMY, OBJECT_SELF, 1, CREATURE_TYPE_PERCEPTION, PERCEPTION_SEEN))\r\n           || (!GetIsObjectValid(oIntruder) && !GetIsObjectValid(GetMaster())))\r\n        {\r\n            if(GetLocked(oDoor))\r\n            {\r"
+    },
+    "X0_L_NOTALLOWEDTOHAVEINVENTORY": {
+      "byte_start": 4257390,
+      "byte_end": 4258107,
+      "sha256": "a77c71e50eb863b05b012a45d1a81a2807784ceb65be0d644d9185d8562cc110",
+      "encoding": "cp1252",
+      "text": "        GetAssociate(ASSOCIATE_TYPE_FAMILIAR, GetMaster()) == OBJECT_SELF  ||\r\n        GetAssociate(ASSOCIATE_TYPE_SUMMONED, GetMaster()) == OBJECT_SELF)\r\n    {\r\n            SetAssociateState(NW_ASC_DISTANCE_4_METERS);\r\n    }\r\n*/\r\n    // * Feb 2003: Set official campaign henchmen to have no inventory\r\n    SetLocalInt(OBJECT_SELF, \"X0_L_NOTALLOWEDTOHAVEINVENTORY\", 10) ;\r\n\r\n    //SetAssociateState(NW_ASC_MODE_DEFEND_MASTER);\r\n    SetAssociateStartLocation();\r\n    // SPECIAL CONVERSATION SETTTINGS\r\n    //SetSpawnInCondition(NW_FLAG_SPECIAL_CONVERSATION);\r\n    //SetSpawnInCondition(NW_FLAG_SPECIAL_COMBAT_CONVERSATION);\r\n            // This causes the creature to say a special greeting in their conversation file\r"
+    },
+    "X0_L_RIGHTHAND": {
+      "byte_start": 13452307,
+      "byte_end": 13452942,
+      "sha256": "9546e80cd695781666d345fa67e67b3f9a71621a07050d8514189a9412e14ef6",
+      "encoding": "cp1252",
+      "text": "                SetActionMode(OBJECT_SELF, ACTION_MODE_STEALTH, TRUE);\r\n            }\r\n    }\r\n\r\n    // * checks to see if a ranged weapon was being used\r\n    // * if so, it equips it back\r\n    if (GetIsInCombat() == FALSE)\r\n    {        //   SpawnScriptDebugger();\r\n        object oRight = GetLocalObject(OBJECT_SELF, \"X0_L_RIGHTHAND\");\r\n        if (GetIsObjectValid(oRight) == TRUE)\r\n        {    // * you always want to blank this value, if it not invalid\r\n            SetLocalObject(OBJECT_SELF, \"X0_L_RIGHTHAND\", OBJECT_INVALID);\r\n            if (GetWeaponRanged(oRight) == TRUE)\r\n            {\r\n                ClearAllActions();\r"
+    },
+    "NW_L_BEHAVIOUR1": {
+      "byte_start": 16172119,
+      "byte_end": 16172731,
+      "sha256": "7cb0fb1480371838cf7ea9a8bf10e0012b993f68ae8214629e354cd590ea0b3b",
+      "encoding": "cp1252",
+      "text": "    int nHatedClass = Random(10);\r\n    nHatedClass = nHatedClass + 1;     // for purposes of using 0 as a\r\n                                       // unitialized value.\r\n                                       // will decrement in bkAcquireTarget\r\n    SetLocalInt(OBJECT_SELF, \"NW_L_BEHAVIOUR1\", nHatedClass);\r\n}\r\n\r\n// Return the combat difficulty.\r\n// This is only used for henchmen and its only function currently\r\n// is to keep henchmen from casting spells in an easy fight.\r\n// This determines the difficulty by counting the number of allies\r\n// and enemies and their respective CRs, then converting the value\r"
+    },
+    "X2_L_MUTEXCOMBATROUND": {
+      "byte_start": 5870688,
+      "byte_end": 5871320,
+      "sha256": "9860764dd0c9369a5dcf8b097050b8daa2866465e88d9dd528f5af852d1ac479",
+      "encoding": "cp1252",
+      "text": "    // * to be reiniated whereas it does break a spell\r\n    int nCurrentAction =  GetCurrentAction(OBJECT_SELF);\r\n    if (nCurrentAction == ACTION_ATTACKOBJECT || nCurrentAction == ACTION_INVALID || nCurrentAction == ACTION_MOVETOPOINT)\r\n    {\r\n        return FALSE;\r\n    }\r\n    if (GetLocalInt(OBJECT_SELF, \"X2_L_MUTEXCOMBATROUND\") == TRUE)\r\n    {\r\n        //SpeakString(\"DEBUG:: In Combat Round, busy.\");\r\n        return TRUE;\r\n    }\r\n    return FALSE;\r\n}\r\n//::///////////////////////////////////////////////\r\n//:: __TurnCombatRoundOn\r\n//:: Copyright (c) 2001 Bioware Corp.\r\n//:://////////////////////////////////////////////\r\n/*\r"
+    },
+    "X2_SPELL_RANDOM": {
+      "byte_start": 16033510,
+      "byte_end": 16034156,
+      "sha256": "01a3e260b817df039164c3bcb23a852445b9cdafb406f63cef341b5d6658a1a6",
+      "encoding": "cp1252",
+      "text": "// * oCreature is the creature checking to see if it has the talent\r\ntalent GetCreatureTalent(int nCategory, int nCRMax, int bRandom=FALSE, object oCreature = OBJECT_SELF)\r\n{\r\n    // * bRandom can be overridden by the variable X2_SPELL_RANDOM = 1\r\n    if (bRandom == FALSE)\r\n    {\r\n        bRandom = GetLocalInt(OBJECT_SELF, \"X2_SPELL_RANDOM\");\r\n    }\r\n\r\n    if (bRandom == FALSE)\r\n    {\r\n        return GetCreatureTalentBest(nCategory, nCRMax, oCreature);\r\n    }\r\n    else\r\n    // * randomize it\r\n    {\r\n        return GetCreatureTalentRandom(nCategory, oCreature);\r\n    }\r\n}\r\n\r\n/*\r\n  ISSUE 1: The check in this function to use a random ability\r"
+    },
+    "NW_L_MEMORY": {
+      "byte_start": 5857993,
+      "byte_end": 5858606,
+      "sha256": "c2aa95e84449ca0224aa0065cf5a35a757bdc87db353589977637f8850da6f79",
+      "encoding": "cp1252",
+      "text": "    //int      MEMORY_DEFENSE_SELF     = 2;\r\n    //int      MEMORY_OFFENSE_SPELL    = 3;\r\n\r\n    // * If defensive last round, try to be offensive this round\r\n    // * this is to prevent wasting time on multiple protections\r\n    int nPreviousMemory = GetLocalInt(OBJECT_SELF, \"NW_L_MEMORY\");\r\n\r\n    int nClass = DetermineClassToUse();\r\n\r\n    //This does not seem to be used, so no point declaring it...\r\n    //int nCrazy  =  0;\r\n\r\n    // * Defaulted high so unspecified classes will not be cowards\r\n    int nOffense = 50;\r\n\r\n    int nCompassion = 25;\r\n\r\n    // * Defaulted this high because non standard creatures\r"
+    },
+    "x0_hen_xan": {
+      "byte_start": 5859975,
+      "byte_end": 5860588,
+      "sha256": "66f5c2b99d1502dd8e3fd08879d62e24060438675beb70aa09a712bd770f82f7",
+      "encoding": "cp1252",
+      "text": "        {\r\n           // SpawnScriptDebugger();\r\n            // * GetHasFeat(...) does not work correctly with no-leveled up\r\n            // * characters. So for now, only Xanos gets to do this.\r\n            string sTag = GetTag(OBJECT_SELF);\r\n            if (sTag == \"x0_hen_xan\" || sTag == \"x2_hen_daelan\")\r\n            {\r\n                if (GetHasFeatEffect(FEAT_BARBARIAN_RAGE) == FALSE)\r\n                {\r\n\r\n                    if (GetHasFeat(FEAT_BARBARIAN_RAGE) == TRUE)\r\n                    {\r\n                        ActionUseFeat(FEAT_BARBARIAN_RAGE, OBJECT_SELF);\r\n                        return 99;\r"
+    },
+    "x2_hen_daelan": {
+      "byte_start": 5859986,
+      "byte_end": 5860588,
+      "sha256": "d0c7f0888fc24eaf9f8921f99f07d851226cfdc47cc1ac718635406bea5fa793",
+      "encoding": "cp1252",
+      "text": "           // SpawnScriptDebugger();\r\n            // * GetHasFeat(...) does not work correctly with no-leveled up\r\n            // * characters. So for now, only Xanos gets to do this.\r\n            string sTag = GetTag(OBJECT_SELF);\r\n            if (sTag == \"x0_hen_xan\" || sTag == \"x2_hen_daelan\")\r\n            {\r\n                if (GetHasFeatEffect(FEAT_BARBARIAN_RAGE) == FALSE)\r\n                {\r\n\r\n                    if (GetHasFeat(FEAT_BARBARIAN_RAGE) == TRUE)\r\n                    {\r\n                        ActionUseFeat(FEAT_BARBARIAN_RAGE, OBJECT_SELF);\r\n                        return 99;\r"
+    },
+    "X2_L_STOPCASTING": {
+      "byte_start": 5864396,
+      "byte_end": 5865021,
+      "sha256": "76922aa46e5599d1685dcc04f418246cf8194da5689314a855c8ba3f36870e19",
+      "encoding": "cp1252",
+      "text": "    // * If has more than 5% chance of spell failure don't try casting\r\n    // 5% chance changed to 15%\r\n    if (GetHasFeatEffect(FEAT_BARBARIAN_RAGE)== TRUE || GetShouldNotCastSpellsBecauseofArmor(OBJECT_SELF, nClass) == TRUE\r\n        || GetLocalInt(OBJECT_SELF, \"X2_L_STOPCASTING\") == 10)\r\n    {\r\n        nMagic = 0;\r\n    }\r\n\r\n\r\n\r\n\r\n    // **************\r\n    // * JULY 12 2003\r\n    // * Overriding \"behavior\" variables.\r\n    // * If a variable has been stored on the creature it overrides the above\r\n    // * class defaults\r\n    // * JULY 28 2003\r\n    // * changed this so that its an additive process, not an overrwrite.\r"
+    },
+    "X2_L_BEH_MAGIC": {
+      "byte_start": 5864820,
+      "byte_end": 5865501,
+      "sha256": "07af3e5a19691ca084b81b083f5d5adb7bd8478e4e83001cdba2377dedf4742a",
+      "encoding": "cp1252",
+      "text": "    // * If a variable has been stored on the creature it overrides the above\r\n    // * class defaults\r\n    // * JULY 28 2003\r\n    // * changed this so that its an additive process, not an overrwrite.\r\n    // * gives more flexiblity.\r\n    // **************\r\n    nMagic = nMagic + AdjustBehaviorVariable(nMagic, \"X2_L_BEH_MAGIC\");\r\n    nOffense = nOffense + AdjustBehaviorVariable(nOffense, \"X2_L_BEH_OFFENSE\");\r\n    nCompassion = nCompassion + AdjustBehaviorVariable(nCompassion, \"X2_L_BEH_COMPASSION\");\r\n\r\n\r\n    // * If invisbile of any sort, become Defensive and\r\n    // * magical to use any buffs you may have\r\n    // * This behavior variable setting should override all others\r"
+    },
+    "X2_L_BEH_OFFENSE": {
+      "byte_start": 5864947,
+      "byte_end": 5865578,
+      "sha256": "4e5094560ebd06da8c2b57e71933d0781b6521ee39a629a8c4469cd16b8e42be",
+      "encoding": "cp1252",
+      "text": "    // * changed this so that its an additive process, not an overrwrite.\r\n    // * gives more flexiblity.\r\n    // **************\r\n    nMagic = nMagic + AdjustBehaviorVariable(nMagic, \"X2_L_BEH_MAGIC\");\r\n    nOffense = nOffense + AdjustBehaviorVariable(nOffense, \"X2_L_BEH_OFFENSE\");\r\n    nCompassion = nCompassion + AdjustBehaviorVariable(nCompassion, \"X2_L_BEH_COMPASSION\");\r\n\r\n\r\n    // * If invisbile of any sort, become Defensive and\r\n    // * magical to use any buffs you may have\r\n    // * This behavior variable setting should override all others\r\n    // * October 22 2003 - Lines 690 and 713 modified to only work if magic\r"
+    },
+    "X2_L_BEH_COMPASSION": {
+      "byte_start": 5865022,
+      "byte_end": 5865653,
+      "sha256": "4c6f213b368f9c6e81286935842b4fa05e7414b4b554368a7c51238f629bffcc",
+      "encoding": "cp1252",
+      "text": "    // * gives more flexiblity.\r\n    // **************\r\n    nMagic = nMagic + AdjustBehaviorVariable(nMagic, \"X2_L_BEH_MAGIC\");\r\n    nOffense = nOffense + AdjustBehaviorVariable(nOffense, \"X2_L_BEH_OFFENSE\");\r\n    nCompassion = nCompassion + AdjustBehaviorVariable(nCompassion, \"X2_L_BEH_COMPASSION\");\r\n\r\n\r\n    // * If invisbile of any sort, become Defensive and\r\n    // * magical to use any buffs you may have\r\n    // * This behavior variable setting should override all others\r\n    // * October 22 2003 - Lines 690 and 713 modified to only work if magic\r\n    // * setting has not been turned off. Nathyrra always going invisible\r"
+    },
+    "X0_TRIED_TO_HIDE": {
+      "byte_start": 15587320,
+      "byte_end": 15587941,
+      "sha256": "0ed7d1b08658633d46c07db3aad7643a2d8ea9d33e1ef189c728880d4faba6ea",
+      "encoding": "cp1252",
+      "text": "// Once hidden, they will then attempt to attack the target using\r\n// standard AI.\r\n// Returns TRUE on success, FALSE on failure.\r\nint SpecialTacticsAmbusher(object oTarget)\r\n{\r\n    int bIsSeen = GetObjectSeen(OBJECT_SELF, oTarget);\r\n    int bTried = GetLocalInt(OBJECT_SELF, \"X0_TRIED_TO_HIDE\");\r\n    if ( bIsSeen && !bTried) {\r\n        ClearActions(CLEAR_X0_I0_COMBAT_SpecialTacticsAmbusher);\r\n\r\n        // get out of sight\r\n        ActionMoveAwayFromObject(oTarget, TRUE, 30.0);\r\n\r\n        // use any hiding talents we have\r\n        if (GetHasSkill(SKILL_HIDE)) {\r\n            ActionUseSkill(SKILL_HIDE, OBJECT_SELF);\r"
+    },
+    "X0_MOVE_AWAY_ATTEMPTS": {
+      "byte_start": 15585071,
+      "byte_end": 15585701,
+      "sha256": "58b3d39c4e64a285ca4ece05caeced3b5c33dbe1222091cfa120efc0b41cbeba",
+      "encoding": "cp1252",
+      "text": "                bFoundBetterTarget = TRUE;\r\n                // MyPrintString(\"Found better target: \" + GetName(oTarget));\r\n            }\r\n        }\r\n\r\n        if (!bFoundBetterTarget) {\r\n            // prevent constant attempts to run away\r\n            int nAttempts = GetLocalInt(OBJECT_SELF, \"X0_MOVE_AWAY_ATTEMPTS\");\r\n            if (nAttempts < 3) {\r\n                // MyPrintString(\"Trying to move away\");\r\n                ClearActions(CLEAR_X0_I0_COMBAT_SpecialTacticsRanged1);\r\n                ActionMoveAwayFromObject(oTarget, TRUE, 10.0);\r\n                SetLocalInt(OBJECT_SELF, \"X0_MOVE_AWAY_ATTEMPTS\", nAttempts++);\r"
+    },
+    "FIGHTER": {
+      "byte_start": 15683955,
+      "byte_end": 15684676,
+      "sha256": "d4cce60849fb60185576650b55e5ae535623073a45184918736a9d0548eecaf6",
+      "encoding": "cp1252",
+      "text": "    //SpeakString(IntToString(nFighter) + \" \" + IntToString(sCount.CLERIC_LEVELS) + \" \" + IntToString(sCount.MAGE_LEVELS) + \" \" + IntToString(sCount.MONTERS_LEVELS));\r\n\r\n    if(nFighter >= sCount.CLERIC_LEVELS)\r\n    {\r\n        if(nFighter >= sCount.MAGE_LEVELS)\r\n        {\r\n            if(nFighter >= sCount.MONTERS_LEVELS)\r\n            {\r\n                sClass = \"FIGHTER\";\r\n            }\r\n            else\r\n            {   sClass = \"MONSTER\";\r\n\r\n            }\r\n        }\r\n        else if(sCount.MAGE_LEVELS >= sCount.MONTERS_LEVELS)\r\n        {\r\n            sClass = \"MAGE\";\r\n        }\r\n        else\r\n        {\r\n            sClass = \"MONSTER\";\r\n        }\r\n    }\r\n    else if(sCount.CLERIC_LEVELS >= sCount.MAGE_LEVELS)\r"
+    },
+    "MONSTER": {
+      "byte_start": 15684125,
+      "byte_end": 15684742,
+      "sha256": "5683142587887baf1039977bfd42b1abda3baf024e9b0b08adf518c4e2657ae0",
+      "encoding": "cp1252",
+      "text": "    if(nFighter >= sCount.CLERIC_LEVELS)\r\n    {\r\n        if(nFighter >= sCount.MAGE_LEVELS)\r\n        {\r\n            if(nFighter >= sCount.MONTERS_LEVELS)\r\n            {\r\n                sClass = \"FIGHTER\";\r\n            }\r\n            else\r\n            {   sClass = \"MONSTER\";\r\n\r\n            }\r\n        }\r\n        else if(sCount.MAGE_LEVELS >= sCount.MONTERS_LEVELS)\r\n        {\r\n            sClass = \"MAGE\";\r\n        }\r\n        else\r\n        {\r\n            sClass = \"MONSTER\";\r\n        }\r\n    }\r\n    else if(sCount.CLERIC_LEVELS >= sCount.MAGE_LEVELS)\r\n    {\r\n        if(sCount.CLERIC_LEVELS >= sCount.MONTERS_LEVELS)\r"
+    },
+    "MAGE": {
+      "byte_start": 15684229,
+      "byte_end": 15684854,
+      "sha256": "04c626a628f5279c20dd7721d58b3b0651698f88aaa4f34a786b309804d63618",
+      "encoding": "cp1252",
+      "text": "            if(nFighter >= sCount.MONTERS_LEVELS)\r\n            {\r\n                sClass = \"FIGHTER\";\r\n            }\r\n            else\r\n            {   sClass = \"MONSTER\";\r\n\r\n            }\r\n        }\r\n        else if(sCount.MAGE_LEVELS >= sCount.MONTERS_LEVELS)\r\n        {\r\n            sClass = \"MAGE\";\r\n        }\r\n        else\r\n        {\r\n            sClass = \"MONSTER\";\r\n        }\r\n    }\r\n    else if(sCount.CLERIC_LEVELS >= sCount.MAGE_LEVELS)\r\n    {\r\n        if(sCount.CLERIC_LEVELS >= sCount.MONTERS_LEVELS)\r\n        {\r\n            sClass = \"CLERIC\";\r\n        }\r\n        else\r\n        {\r\n            sClass = \"MONSTER\";\r"
+    },
+    "CLERIC": {
+      "byte_start": 15684503,
+      "byte_end": 15685098,
+      "sha256": "d38f37388d41712347396c1f295e61be998e1613f478fffa6a25ca3405c1a8af",
+      "encoding": "cp1252",
+      "text": "            sClass = \"MAGE\";\r\n        }\r\n        else\r\n        {\r\n            sClass = \"MONSTER\";\r\n        }\r\n    }\r\n    else if(sCount.CLERIC_LEVELS >= sCount.MAGE_LEVELS)\r\n    {\r\n        if(sCount.CLERIC_LEVELS >= sCount.MONTERS_LEVELS)\r\n        {\r\n            sClass = \"CLERIC\";\r\n        }\r\n        else\r\n        {\r\n            sClass = \"MONSTER\";\r\n        }\r\n    }\r\n    else if(sCount.MAGE_LEVELS >= sCount.MONTERS_LEVELS)\r\n    {\r\n        sClass = \"MAGE\";\r\n    }\r\n    else\r\n    {\r\n        sClass = \"MONSTER\";\r\n    }\r\n    return sClass;\r\n}\r\n\r\n// Returns TRUE if the given opponent is a melee\r"
+    },
+    "NW_GENERIC_LAST_SPELL": {
+      "byte_start": 16187726,
+      "byte_end": 16188346,
+      "sha256": "0854e15b2ac3471517f071b31618d8136f539aec81313bdb1493127db62063ca",
+      "encoding": "cp1252",
+      "text": "    currently selected spell.\r\n*/\r\n//:://////////////////////////////////////////////\r\n//:: Created By: Preston Watamaniuk\r\n//:: Created On: Feb 27, 2002\r\n//:://////////////////////////////////////////////\r\n\r\nint GetLastGenericSpellCast()\r\n{\r\n    return GetLocalInt(OBJECT_SELF, \"NW_GENERIC_LAST_SPELL\");\r\n}\r\n\r\nvoid SetLastGenericSpellCast(int nSpell)\r\n{\r\n    SetLocalInt(OBJECT_SELF, \"NW_GENERIC_LAST_SPELL\", nSpell);\r\n    // February 2003. Needed to add a way for this to reset itself, so that\r\n    // spell might indeed be atempted later.\r\n    DelayCommand(8.0,SetLocalInt(OBJECT_SELF, \"NW_GENERIC_LAST_SPELL\", -1));\r"
+    },
+    "x2_hen_valen": {
+      "byte_start": 13473611,
+      "byte_end": 13474207,
+      "sha256": "e128492c13b334346aa813f64aded75d678636e7c255d7850444b1bc4ab3d5ac",
+      "encoding": "cp1252",
+      "text": "    // * in Chapter 2 (Chapter 3 they'll get this variable set on them\r\n    // * as well, with different numbers)\r\n    // * Basically #1-5 are Chapter 2 only, 26-30 are Chapter 3 only. The rest can show up anywhere\r\n    if (sMyTag == \"x2_hen_nathyra\" || sMyTag == \"x2_hen_valen\")\r\n    {\r\n        // * only fire this in Chapter 2. THey setup differently in the transition from C2 to C3\r\n        if (GetTag(GetModule()) == \"x0_module2\")\r\n        {\r\n            SetNumberOfRandom(\"X2_L_RANDOMONELINERS\", OBJECT_SELF, 25);\r\n            SetNumberOfRandom(\"X2_L_RANDOM_INTERJECTIONS\", OBJECT_SELF, 3);\r"
+    },
+    "X2_WHIRLPERCENT": {
+      "byte_start": 16047948,
+      "byte_end": 16048550,
+      "sha256": "7cba4e58bdc04e3ff06f6252e34ed5c03a35ca225201290b7aa1ff1885058897",
+      "encoding": "cp1252",
+      "text": "// * Returns true if the creature's variable\r\n// * set on it rolled against a d100\r\n// * says it is okay to whirlwind.\r\n// * Added this because it got silly to see creatures\r\n// * constantly whirlwinded\r\nint GetOKToWhirl(object oCreature)\r\n{\r\n    int nWhirl = GetLocalInt(oCreature, \"X2_WHIRLPERCENT\");\r\n\r\n\r\n\r\n    if (nWhirl == 0 || nWhirl == 100)\r\n    {\r\n        return TRUE; // 0 or 100 is 100%\r\n    }\r\n    else\r\n    {\r\n        if (Random(100) + 1 <= nWhirl)\r\n        {\r\n            return TRUE;\r\n        }\r\n\r\n    }\r\n    return FALSE;\r\n}\r\n\r\n\r\nint TalentMeleeAttack(object oIntruder = OBJECT_INVALID)\r"
+    },
+    "NW_GENERIC_DRAGONS_BREATH": {
+      "byte_start": 16074290,
+      "byte_end": 16074880,
+      "sha256": "7c19d16cfb0e326372a9737a5c6943d9dc01d4018fd06d9a38ad29b419f2cac0",
+      "encoding": "cp1252",
+      "text": "            {\r\n                oTarget = GetNearestPerceivedEnemy();\r\n                if(!GetIsObjectValid(oTarget))\r\n                {\r\n                    return FALSE;\r\n                }\r\n            }\r\n        }\r\n    }\r\n    int nCnt = GetLocalInt(OBJECT_SELF, \"NW_GENERIC_DRAGONS_BREATH\");\r\n    talent tUse = GetCreatureTalent(TALENT_CATEGORY_DRAGONS_BREATH, GetCRMax());\r\n    //SpeakString(IntToString(nCnt));\r\n    if(GetIsTalentValid(tUse) && nCnt >= 2)\r\n    {\r\n        //MyPrintString(\"TalentDragonCombat Successful Exit\");\r\n        bkTalentFilter(tUse, oTarget);\r\n        nCnt = 0;\r"
+    },
+    "X2_L_WAYPOINT_SETFACING": {
+      "byte_start": 16164972,
+      "byte_end": 16165610,
+      "sha256": "e9a1afe2eaceab33a967552fc136862da6efb31b0fed0afaf83f1cdf1176378d",
+      "encoding": "cp1252",
+      "text": "        // * in clearing actions unless I actually have waypoints to walk\r\n        ClearActions(CLEAR_X0_I0_WALKWAY_WalkWayPoints);\r\n\r\n        //SpeakString(\"Moving to waypoint: \" + GetTag(oWay));\r\n        ActionMoveToObject(oWay, nRun);\r\n        if(GetLocalInt(oWay,\"X2_L_WAYPOINT_SETFACING\") == 1)\r\n        {\r\n            ActionDoCommand(SetFacing(GetFacing(oWay)));\r\n        }\r\n        ActionWait(fPause);\r\n        ActionDoCommand(WalkWayPoints(nRun,fPause));      // February 14 2003 added else route only happens once\r\n\r\n        // GZ: 2003-09-03\r\n        // Since this wasnt implemented and we we don't have time for this either, I\r"
+    },
+    "X2_S_SLEEP_AT_NIGHT_SCRIPT": {
+      "byte_start": 16165611,
+      "byte_end": 16166249,
+      "sha256": "3b04f9fe74c47de201e00e456cc08442bf95ce7d45e0e3f9968dc808572d4419",
+      "encoding": "cp1252",
+      "text": "        // added this code to allow builders to react to NW_FLAG_SLEEPING_AT_NIGHT.\r\n        if(GetIsNight())\r\n        {\r\n            if(GetSpawnInCondition(NW_FLAG_SLEEPING_AT_NIGHT))\r\n            {\r\n                string sScript = GetLocalString(GetModule(),\"X2_S_SLEEP_AT_NIGHT_SCRIPT\");\r\n                if (sScript != \"\")\r\n                {\r\n                    ExecuteScript(sScript,OBJECT_SELF);\r\n                }\r\n            }\r\n        }\r\n     }\r\n     else // also do stuff if there are no waypoints set\r\n     {\r\n\r\n        // GZ: 2003-09-03\r\n        // Since this wasnt implemented and we we don't have time for this either, I\r"
+    },
+    "NUM": {
+      "byte_start": 16160672,
+      "byte_end": 16161324,
+      "sha256": "10fff548191968b5ddfcd86c1f2757d1ede0131fcb5fac4fbf9398a8840d53d2",
+      "encoding": "cp1252",
+      "text": "            SetLocalInt(oCreature, \"WP_CUR\", nFakeCurrent);\r\n        }\r\n        if (!GetIsDay()) {\r\n            // Change the prefix if necessary\r\n            sPrefix = \"WN_\";\r\n        }\r\n\r\n    }\r\n\r\n    // if we only have one post, just go there\r\n    int nPoints = GetLocalInt(oCreature, sPrefix + \"NUM\");\r\n    if (nPoints == 1) {\r\n        return GetLocalObject(oCreature, sPrefix + \"1\");\r\n    }\r\n\r\n    // Move up to the next waypoint\r\n\r\n    // Get the current waypoint\r\n    int nCurWay = GetLocalInt(oCreature, \"WP_CUR\");\r\n\r\n    // Check to see if this is the first time\r\n    if (nCurWay == -1) {\r\n        nCurWay = GetNearestWalkWayPoint(oCreature);\r"
+    },
+    "1": {
+      "byte_start": 16160819,
+      "byte_end": 16161324,
+      "sha256": "ce09b44f0df3d3e01a30d29a9697855686876573a7a9872219bdaeb8c860ec83",
+      "encoding": "cp1252",
+      "text": "            sPrefix = \"WN_\";\r\n        }\r\n\r\n    }\r\n\r\n    // if we only have one post, just go there\r\n    int nPoints = GetLocalInt(oCreature, sPrefix + \"NUM\");\r\n    if (nPoints == 1) {\r\n        return GetLocalObject(oCreature, sPrefix + \"1\");\r\n    }\r\n\r\n    // Move up to the next waypoint\r\n\r\n    // Get the current waypoint\r\n    int nCurWay = GetLocalInt(oCreature, \"WP_CUR\");\r\n\r\n    // Check to see if this is the first time\r\n    if (nCurWay == -1) {\r\n        nCurWay = GetNearestWalkWayPoint(oCreature);\r"
+    },
+    "Placeable_Drop": {
+      "byte_start": 28635142,
+      "byte_end": 28635770,
+      "sha256": "f7148668cc87c6e1ed746f225ac0eceb2336ac15628e338fcb9d6ad9f23804b9",
+      "encoding": "cp1252",
+      "text": "    // * in the crafting system\r\n    if (GetSkillRank(SKILL_CRAFT_ARMOR, oSlayer) > MIN_SKILL_LEVEL || GetSkillRank(SKILL_CRAFT_WEAPON, oSlayer) > MIN_SKILL_LEVEL)\r\n    {\r\n        object oSelf = OBJECT_SELF;\r\n        int nAppearance = GetAppearanceType(oSelf);\r\n\r\n        string sCol = \"Placeable_Drop\";\r\n        string sNumCol = \"Placeable_Num\";\r\n        int bDoor = FALSE;\r\n        int nNum = 1;\r\n\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_CREATURE)\r\n        {\r\n            sCol = \"Creature_Drop\";\r\n            sNumCol = \"Creature_Num\";\r\n\r\n        }\r\n        else\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_DOOR)\r"
+    },
+    "Placeable_Num": {
+      "byte_start": 28635175,
+      "byte_end": 28635814,
+      "sha256": "5073c6afcbf613ea6c9e1bbdd88905554f11bcbc77544778dad451282ebadd4c",
+      "encoding": "cp1252",
+      "text": "    if (GetSkillRank(SKILL_CRAFT_ARMOR, oSlayer) > MIN_SKILL_LEVEL || GetSkillRank(SKILL_CRAFT_WEAPON, oSlayer) > MIN_SKILL_LEVEL)\r\n    {\r\n        object oSelf = OBJECT_SELF;\r\n        int nAppearance = GetAppearanceType(oSelf);\r\n\r\n        string sCol = \"Placeable_Drop\";\r\n        string sNumCol = \"Placeable_Num\";\r\n        int bDoor = FALSE;\r\n        int nNum = 1;\r\n\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_CREATURE)\r\n        {\r\n            sCol = \"Creature_Drop\";\r\n            sNumCol = \"Creature_Num\";\r\n\r\n        }\r\n        else\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_DOOR)\r\n        {\r\n            sCol = \"Door_Drop\";\r"
+    },
+    "Creature_Drop": {
+      "byte_start": 28635351,
+      "byte_end": 28635952,
+      "sha256": "04cfd49a4f387b15a26473a98b5d8012a3f10f8e5d0febb6c6e77fb2b0ab5970",
+      "encoding": "cp1252",
+      "text": "        int nAppearance = GetAppearanceType(oSelf);\r\n\r\n        string sCol = \"Placeable_Drop\";\r\n        string sNumCol = \"Placeable_Num\";\r\n        int bDoor = FALSE;\r\n        int nNum = 1;\r\n\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_CREATURE)\r\n        {\r\n            sCol = \"Creature_Drop\";\r\n            sNumCol = \"Creature_Num\";\r\n\r\n        }\r\n        else\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_DOOR)\r\n        {\r\n            sCol = \"Door_Drop\";\r\n            bDoor = TRUE;\r\n            sNumCol = \"Door_Num\";\r\n        }\r\n        // * if does not have an inventory then treat as a door\r"
+    },
+    "Creature_Num": {
+      "byte_start": 28635406,
+      "byte_end": 28636004,
+      "sha256": "341c65ad26bfe0ff926a2f87fd11bedc8d35a30c8e8c6413d339c2074437d029",
+      "encoding": "cp1252",
+      "text": "        string sCol = \"Placeable_Drop\";\r\n        string sNumCol = \"Placeable_Num\";\r\n        int bDoor = FALSE;\r\n        int nNum = 1;\r\n\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_CREATURE)\r\n        {\r\n            sCol = \"Creature_Drop\";\r\n            sNumCol = \"Creature_Num\";\r\n\r\n        }\r\n        else\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_DOOR)\r\n        {\r\n            sCol = \"Door_Drop\";\r\n            bDoor = TRUE;\r\n            sNumCol = \"Door_Num\";\r\n        }\r\n        // * if does not have an inventory then treat as a door\r\n        if (GetHasInventory(OBJECT_SELF) == FALSE)\r"
+    },
+    "Door_Drop": {
+      "byte_start": 28635541,
+      "byte_end": 28636168,
+      "sha256": "e4e53a9c71e306b06dedfb6e28c54172e978b85035035f1001e5282a87d3bdf6",
+      "encoding": "cp1252",
+      "text": "\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_CREATURE)\r\n        {\r\n            sCol = \"Creature_Drop\";\r\n            sNumCol = \"Creature_Num\";\r\n\r\n        }\r\n        else\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_DOOR)\r\n        {\r\n            sCol = \"Door_Drop\";\r\n            bDoor = TRUE;\r\n            sNumCol = \"Door_Num\";\r\n        }\r\n        // * if does not have an inventory then treat as a door\r\n        if (GetHasInventory(OBJECT_SELF) == FALSE)\r\n          bDoor = TRUE;\r\n        \r\n        // * appearance type is index into the 2da\r\n        string sResRef = Get2DAString(\"des_crft_drop\", sCol, nAppearance );\r"
+    },
+    "Door_Num": {
+      "byte_start": 28635602,
+      "byte_end": 28636178,
+      "sha256": "318239d6ee982e4316efa42ec002527237d7d07af11af09835480b838522eb99",
+      "encoding": "cp1252",
+      "text": "        {\r\n            sCol = \"Creature_Drop\";\r\n            sNumCol = \"Creature_Num\";\r\n\r\n        }\r\n        else\r\n        if (GetObjectType(oSelf) == OBJECT_TYPE_DOOR)\r\n        {\r\n            sCol = \"Door_Drop\";\r\n            bDoor = TRUE;\r\n            sNumCol = \"Door_Num\";\r\n        }\r\n        // * if does not have an inventory then treat as a door\r\n        if (GetHasInventory(OBJECT_SELF) == FALSE)\r\n          bDoor = TRUE;\r\n        \r\n        // * appearance type is index into the 2da\r\n        string sResRef = Get2DAString(\"des_crft_drop\", sCol, nAppearance );\r\n        \r"
+    },
+    "des_crft_drop": {
+      "byte_start": 28635842,
+      "byte_end": 28636484,
+      "sha256": "0d3312ff7ce3717541ccc8098519691df14eaa42589c8df69bfb5a8b2568756f",
+      "encoding": "cp1252",
+      "text": "            sNumCol = \"Door_Num\";\r\n        }\r\n        // * if does not have an inventory then treat as a door\r\n        if (GetHasInventory(OBJECT_SELF) == FALSE)\r\n          bDoor = TRUE;\r\n        \r\n        // * appearance type is index into the 2da\r\n        string sResRef = Get2DAString(\"des_crft_drop\", sCol, nAppearance );\r\n        \r\n        string sNum = Get2DAString(\"des_crft_drop\", sNumCol, nAppearance);\r\n        if (sNum != \"****\" && sNum != \"\")\r\n         nNum = StringToInt(sNum);\r\n\r\n        \r\n        if (sResRef != \"****\" && sResRef != \"\")\r\n        {\r\n            int i = 1;\r\n            location lLoc = GetLocation(OBJECT_SELF);\r"
+    },
+    "****": {
+      "byte_start": 28636169,
+      "byte_end": 28636653,
+      "sha256": "bfe147d639ba97727d2e6672b2684616edb4087435786a8d36dc9c3c1adcb89c",
+      "encoding": "cp1252",
+      "text": "        \r\n        string sNum = Get2DAString(\"des_crft_drop\", sNumCol, nAppearance);\r\n        if (sNum != \"****\" && sNum != \"\")\r\n         nNum = StringToInt(sNum);\r\n\r\n        \r\n        if (sResRef != \"****\" && sResRef != \"\")\r\n        {\r\n            int i = 1;\r\n            location lLoc = GetLocation(OBJECT_SELF);\r\n\r\n\r\n            // * By default only spawn 1 of each unless otherwise indicated\r\n            for (i=1; i<=nNum; i++)\r\n            {\r\n                if (bDoor == TRUE)\r"
+    }
+  }
+}

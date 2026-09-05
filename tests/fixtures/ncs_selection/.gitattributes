@@ -1,0 +1,5 @@
+# Preserve the exact bytes covered by manifest SHA-256 hashes on every platform.
+*.ncs -text
+*.nss -text -whitespace
+*.asm -text whitespace=cr-at-eol
+*.json -text whitespace=cr-at-eol

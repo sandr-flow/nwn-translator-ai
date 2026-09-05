@@ -261,6 +261,38 @@ class TestTranslateContent:
 class TestNcsFailClosed:
     """NCS fail-closed policy and diagnostics."""
 
+    @pytest.mark.parametrize("approved", [False, True])
+    def test_unproven_natural_word_requires_gate_approval(self, approved):
+        item = _make_ncs_item("Good", needs_llm_gate=True, confidence="low")
+        item.metadata.update(proven_player=False, player_candidate=True)
+        content = ExtractedContent(
+            content_type="ncs_script", items=[item], source_file=Path("script.ncs")
+        )
+        provider = _make_provider({"Good": "Translated word"})
+        provider.classify_ncs_translate_gate_batch_async = AsyncMock(
+            return_value={"0": {"translate": approved, "reason": "checked_source"}}
+        )
+        manager = TranslationManager(_make_config(), provider)
+        result = manager.translate_content(content)
+        provider.classify_ncs_translate_gate_batch_async.assert_called_once()
+        assert result == ({"Good": "Translated word"} if approved else {})
+        if not approved:
+            provider.translate_async.assert_not_called()
+            provider.translate_batch_async.assert_not_called()
+
+    def test_unproven_word_is_not_auto_approved_when_gate_is_disabled(self):
+        item = _make_ncs_item("Good", needs_llm_gate=True, confidence="low")
+        item.metadata.update(proven_player=False, player_candidate=True)
+        content = ExtractedContent(
+            content_type="ncs_script", items=[item], source_file=Path("script.ncs")
+        )
+        provider = _make_provider({"Good": "Translated word"})
+        manager = TranslationManager(_make_config(skip_ncs_llm_gate=True), provider)
+        assert manager.translate_content(content) == {}
+        provider.classify_ncs_translate_gate_batch_async.assert_not_called()
+        provider.translate_async.assert_not_called()
+        provider.translate_batch_async.assert_not_called()
+
     def test_high_confidence_player_facing_ncs_is_translated_by_item_id(self):
         item = _make_ncs_item("Look out, behind you!")
         content = ExtractedContent(

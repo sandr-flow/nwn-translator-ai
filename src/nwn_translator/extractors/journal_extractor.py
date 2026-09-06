@@ -80,6 +80,7 @@ class JournalExtractor(BaseExtractor):
                     location=str(file_path),
                     metadata={
                         "type": "journal_category_name",
+                        "record_offset": category_data.get("_record_offsets", {}).get("Name", 0),
                         "tag": tag,
                         "priority": priority,
                     },
@@ -135,6 +136,7 @@ class JournalExtractor(BaseExtractor):
             location=str(file_path),
             metadata={
                 "type": "journal_entry",
+                "record_offset": entry_data.get("_record_offsets", {}).get("Text", 0),
                 "category": category_index,
                 "entry_id": entry_id,
             },

@@ -953,11 +953,11 @@ class TestNcsInjector:
         result = injector.inject(
             path,
             {},
-            {},
             {
-                "ncs_extracted_items": [item],
-                "ncs_translations_by_item_id": {item.item_id: "Привет, мир!"},
+                (path.name, item_id): text
+                for item_id, text in ({item.item_id: "Привет, мир!"}).items()
             },
+            {"extracted_items": [item]},
         )
         assert result.modified
         assert result.items_updated == 1
@@ -988,11 +988,11 @@ class TestNcsInjector:
             result = injector.inject(
                 path,
                 {},
-                {},
                 {
-                    "ncs_extracted_items": [item],
-                    "ncs_translations_by_item_id": {item.item_id: "Translated text."},
+                    (path.name, item_id): text
+                    for item_id, text in ({item.item_id: "Translated text."}).items()
                 },
+                {"extracted_items": [item]},
             )
 
         assert not result.modified
@@ -1080,11 +1080,8 @@ class TestNCSIntegration:
         result = injector.inject(
             path,
             {},
-            translations,
-            {
-                "ncs_extracted_items": extracted.items,
-                "ncs_translations_by_item_id": by_item_id,
-            },
+            {(path.name, item_id): text for item_id, text in (by_item_id).items()},
+            {"extracted_items": extracted.items},
         )
         assert result.modified
 
@@ -1476,13 +1473,13 @@ class TestNcsConcat:
         result = NcsInjector().inject(
             path,
             {},
-            {},
             {
-                "ncs_extracted_items": extracted.items,
-                "ncs_translations_by_item_id": {
-                    item.item_id: "Поздравляю тебя, <VAR1>. Как ты себя чувствуешь?"
-                },
+                (path.name, item_id): text
+                for item_id, text in (
+                    {item.item_id: "Поздравляю тебя, <VAR1>. Как ты себя чувствуешь?"}
+                ).items()
             },
+            {"extracted_items": extracted.items},
         )
         assert result.modified
         patched = parse_ncs(path)

@@ -4,25 +4,19 @@ This package contains injectors for various NWN file types.
 """
 
 from .base import BaseInjector, InjectedContent
-from .dialog_injector import (
-    DialogInjector,
-    JournalInjector,
-    GenericInjector,
-)
+from .gff_injector import GffInjector
 from .ncs_injector import NcsInjector
 
 __all__ = [
     "BaseInjector",
     "InjectedContent",
-    "DialogInjector",
-    "JournalInjector",
-    "GenericInjector",
+    "GffInjector",
     "NcsInjector",
 ]
 
 # Singleton registry: content_type -> injector instance
 _INJECTOR_MAP: dict = {}
-_INJECTOR_CLASSES: list = [DialogInjector, JournalInjector, GenericInjector, NcsInjector]
+_INJECTOR_CLASSES: list = [GffInjector, NcsInjector]
 for _cls in _INJECTOR_CLASSES:
     _inst = _cls()
     for _ct in getattr(_inst, "SUPPORTED_TYPES", []):

@@ -6,6 +6,7 @@ This module defines the abstract interface that all injectors must implement.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
+from ..extractors.base import Translations
 from typing import Any, Dict, List, Optional
 
 
@@ -51,7 +52,7 @@ class BaseInjector(ABC):
         self,
         file_path: Path,
         parsed_data: Dict[str, Any],
-        translations: Dict[str, str],
+        translations: Translations,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> InjectedContent:
         """Inject translated content back into GFF data.
@@ -59,7 +60,7 @@ class BaseInjector(ABC):
         Args:
             file_path: Path to the file
             parsed_data: Original GFF data dictionary
-            translations: Dictionary mapping original text to translated text
+            translations: Dictionary mapping (resource, item_id) to translated text
             metadata: Additional metadata about the translation
 
         Returns:

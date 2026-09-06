@@ -114,15 +114,10 @@ def test_glossary_and_translations_roundtrip(tmp_path: Path) -> None:
     artifacts.dump_glossary(gpath, glossary)
     assert artifacts.load_glossary(gpath).entries == glossary.entries
 
-    translations = {"Hello": "Привет", "Bye": "Пока"}
+    translations = {("a.dlg", "a:entry:0"): "Привет", ("b.ncs", "b:c0"): "Пока"}
     tpath = tmp_path / "translations.json"
     artifacts.dump_translations(tpath, translations)
     assert artifacts.load_translations(tpath) == translations
-
-    ncs = {"id_1": "Привет", "id_2": "Пока"}
-    npath = tmp_path / "ncs.json"
-    artifacts.dump_ncs_by_item_id(npath, ncs)
-    assert artifacts.load_ncs_by_item_id(npath) == ncs
 
 
 # ── isolated deterministic stages ───────────────────────────────────────
@@ -152,7 +147,7 @@ def test_extract_then_inject_stage_isolated(tmp_path: Path) -> None:
     extracted_map = stage_extract(state, files)
     assert len(extracted_map) == 1
 
-    translations = {"Hello world!": "Hi there all!"}
+    translations = {("s.ncs", "s:c0"): "Hi there all!"}
     # Translations seam roundtrips through disk before injection.
     tpath = tmp_path / "translations.json"
     artifacts.dump_translations(tpath, translations)

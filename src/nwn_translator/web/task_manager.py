@@ -384,7 +384,9 @@ class TaskManager:
         temp_dir.mkdir(parents=True, exist_ok=True)
         output_file = create_output_path(input_path, target_lang, output_dir=base)
 
-        log_writer = SqliteTranslationLogWriter(task.task_id)
+        log_writer = SqliteTranslationLogWriter(
+            task.task_id, trace_path=base / "translation_trace.jsonl"
+        )
 
         progress_cb = self._make_progress_callback(task)
         task.input_path = input_path

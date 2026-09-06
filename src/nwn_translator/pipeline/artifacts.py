@@ -21,7 +21,7 @@ from ..context.entity_candidates import (
     EntityEvidence,
 )
 from ..context.world_context import NPCInfo, WorldContext
-from ..extractors.base import ExtractedContent, TranslatableItem
+from ..extractors.base import ExtractedContent, TranslatableItem, Translations
 from ..glossary import Glossary
 
 
@@ -200,32 +200,47 @@ def load_candidates(path: Path) -> EntityCandidateRegistry:
 def dump_glossary(path: Path, glossary: Optional[Glossary]) -> None:
     """Write ``glossary.json`` (canonical English -> translated entries)."""
     entries = glossary.entries if glossary is not None else {}
-    _write_json(Path(path), entries, sort_keys=True)
+    _write_json(
+        Path(path),
+        {"version": 2, "entries": entries, "aliases": glossary.aliases if glossary else {}},
+        sort_keys=True,
+    )
 
 
 def load_glossary(path: Path) -> Glossary:
     """Read ``glossary.json`` back into a :class:`Glossary`."""
-    return Glossary(entries=_read_json(path))
+    data = _read_json(path)
+    if data.get("version") == 2:
+        return Glossary(entries=data["entries"], aliases=data["aliases"])
+    return Glossary(entries=data)
 
 
 # ── translations ────────────────────────────────────────────────────────
 
 
-def dump_translations(path: Path, translations: Dict[str, str]) -> None:
-    """Write the original-text -> translated-text map."""
-    _write_json(Path(path), translations, sort_keys=True)
+def dump_translations(path: Path, translations: Translations) -> None:
+    """Persist occurrence-addressed results without a parallel NCS artifact."""
+    _write_json(
+        path,
+        {
+            "version": 2,
+            "items": [
+                {"file": resource, "item_id": item_id, "translated": text}
+                for (resource, item_id), text in sorted(translations.items())
+            ],
+        },
+    )
 
 
-def load_translations(path: Path) -> Dict[str, str]:
-    """Read the original-text -> translated-text map."""
-    return dict(_read_json(path))
-
-
-def dump_ncs_by_item_id(path: Path, ncs_translations_by_item_id: Dict[str, str]) -> None:
-    """Write per-``item_id`` NCS translations (needed for NCS injection)."""
-    _write_json(Path(path), ncs_translations_by_item_id, sort_keys=True)
-
-
-def load_ncs_by_item_id(path: Path) -> Dict[str, str]:
-    """Read per-``item_id`` NCS translations."""
-    return dict(_read_json(path))
+def load_translations(path: Path) -> Translations:
+    """Read addressed results; old text-only maps cannot identify occurrences."""
+    data = _read_json(path)
+    if data.get("version") != 2:
+        raise ValueError("Text-only translation artifacts are ambiguous; rerun the translate stage")
+    result: Translations = {}
+    for row in data["items"]:
+        key = (row["file"], row["item_id"])
+        if key in result:
+            raise ValueError(f"Duplicate translation occurrence: {key}")
+        result[key] = row["translated"]
+    return result

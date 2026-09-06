@@ -97,17 +97,15 @@ def test_ncs_selection_and_patch(corpus_module, tmp_path, with_sources):
                 TranslationConfig(api_key="mock", input_file=path, target_lang="english"),
                 provider,
             )
-            manager.translate_content(result)
+            approved = manager.translate_content(result)
             assert wanted <= provider.seen, "Reviewed speech must reach the production gate"
-            approved = manager.ncs_translations_by_item_id
-            assert {item.text for item in result.items if item.item_id in approved} == wanted
+            assert {item.text for item in result.items if item.key in approved} == wanted
             injection = NcsInjector().inject(
                 path,
                 {},
-                {},
+                approved,
                 {
-                    "ncs_extracted_items": result.items,
-                    "ncs_translations_by_item_id": approved,
+                    "extracted_items": result.items,
                     "module_text_encoding": "cp1252",
                     "module_source_encoding": "cp1252",
                 },
@@ -119,7 +117,7 @@ def test_ncs_selection_and_patch(corpus_module, tmp_path, with_sources):
             expected = {
                 item.metadata["offset"]: MARKER + item.text
                 for item in result.items
-                if item.item_id in approved
+                if item.key in approved
             }
             for before, after in zip(original.string_constants, patched.string_constants):
                 assert after.string_value == expected.get(before.offset, before.string_value)

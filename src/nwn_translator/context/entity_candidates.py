@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import logging
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,8 +104,6 @@ class EntityCandidate:
     def eligible_for_glossary(self) -> bool:
         """Whether this candidate may seed the run-wide glossary."""
         if self.curation_decision in {"drop", "local_only"}:
-            return False
-        if self.alias_of:
             return False
         filter_result = classify_entity_candidate(
             self.name,
@@ -207,7 +206,6 @@ class EntityCandidateRegistry:
         reason: str = "",
         priority: Optional[int] = None,
         alias_of: Optional[str] = None,
-        canonical_name: Optional[str] = None,
     ) -> None:
         """Apply a curator decision to an existing candidate."""
         key = normalize_entity_name(name)
@@ -219,8 +217,6 @@ class EntityCandidateRegistry:
         if priority is not None:
             candidate.priority = max(candidate.priority, int(priority))
         candidate.alias_of = alias_of or None
-        if canonical_name and decision != "alias_of":
-            candidate.name = canonical_name
 
     def glossary_pairs(self) -> List[Tuple[str, str]]:
         """Return ``(name, category)`` pairs eligible for run-wide glossary."""
@@ -229,6 +225,28 @@ class EntityCandidateRegistry:
             if candidate.eligible_for_glossary:
                 out.append((candidate.name, candidate.category or "unknown"))
         return out
+
+    def resolved_aliases(self) -> Dict[str, str]:
+        """Resolve evidenced aliases; reject missing targets, cycles, and dropped roots."""
+        result: Dict[str, str] = {}
+        for candidate in self.values():
+            if not candidate.alias_of or not candidate.eligible_for_glossary:
+                continue
+            current = candidate
+            visited = {candidate.normalized_name}
+            while current.alias_of:
+                key = normalize_entity_name(current.alias_of)
+                target = self._items.get(key)
+                if key in visited or target is None or not target.eligible_for_glossary:
+                    logging.getLogger(__name__).warning(
+                        "Unresolved glossary alias %r -> %r", candidate.name, current.alias_of
+                    )
+                    break
+                visited.add(key)
+                current = target
+            else:
+                result[candidate.name] = current.name
+        return result
 
     @classmethod
     def from_extracted_content(

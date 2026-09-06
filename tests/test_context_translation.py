@@ -89,6 +89,21 @@ class _FakeOpenRouter:
         return None
 
 
+def _expected_dialog(files, answers):
+    expected = {}
+
+    def visit(path, nodes):
+        for node in nodes:
+            if node.text in answers:
+                kind = "entry" if node.is_entry else "reply"
+                expected[(path.name, f"{path.stem}:{kind}:{node.node_id}")] = answers[node.text]
+            visit(path, node.replies)
+
+    for path, data, _budget in files:
+        visit(path, data["tree"])
+    return expected
+
+
 class _FakeDialogExtractor:
     def __init__(self, tree):
         self._tree = tree
@@ -123,7 +138,9 @@ def test_initial_invalid_json_truncation_retries_original_prompt_first(monkeypat
     caplog.set_level(logging.WARNING)
     result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
 
-    assert result == {"Hello there": "Привет"}
+    assert result == _expected_dialog(
+        [(Path("test.dlg"), {"tree": tree}, 0)], {"Hello there": "Привет"}
+    )
     assert len(provider.calls) == 2
     assert provider.calls[0]["max_tokens"] == TRANSLATION_MAX_TOKENS
     assert provider.calls[1]["max_tokens"] == _DIALOG_TRUNCATION_MAX_TOKENS
@@ -150,7 +167,9 @@ def test_initial_invalid_json_non_truncation_uses_repair_prompt(monkeypatch, cap
     caplog.set_level(logging.WARNING)
     result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
 
-    assert result == {"Hello there": "Привет"}
+    assert result == _expected_dialog(
+        [(Path("test.dlg"), {"tree": tree}, 0)], {"Hello there": "Привет"}
+    )
     assert len(provider.calls) == 2
     assert provider.calls[0]["max_tokens"] == TRANSLATION_MAX_TOKENS
     assert provider.calls[1]["max_tokens"] == TRANSLATION_MAX_TOKENS
@@ -188,10 +207,13 @@ def test_pending_keys_truncation_retries_same_retry_prompt_with_higher_tokens(mo
     caplog.set_level(logging.WARNING)
     result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
 
-    assert result == {
-        "Hello there": "Привет",
-        "Who are you?": "Кто ты?",
-    }
+    assert result == _expected_dialog(
+        [(Path("test.dlg"), {"tree": tree}, 0)],
+        {
+            "Hello there": "Привет",
+            "Who are you?": "Кто ты?",
+        },
+    )
     assert len(provider.calls) == 3
     assert provider.calls[1]["max_tokens"] == TRANSLATION_MAX_TOKENS
     assert provider.calls[2]["max_tokens"] == _DIALOG_TRUNCATION_MAX_TOKENS
@@ -231,11 +253,14 @@ def test_large_dialog_is_translated_in_chunks(monkeypatch):
 
     result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
 
-    assert result == {
-        "Hello there, traveler.": "Привет, путник.",
-        "Who are you?": "Кто ты?",
-        "Goodbye.": "Прощай.",
-    }
+    assert result == _expected_dialog(
+        [(Path("test.dlg"), {"tree": tree}, 0)],
+        {
+            "Hello there, traveler.": "Привет, путник.",
+            "Who are you?": "Кто ты?",
+            "Goodbye.": "Прощай.",
+        },
+    )
     assert len(provider.calls) == 3
     assert "[E1]" in provider.calls[0]["user_prompt"]
     assert "[R2]" not in provider.calls[0]["user_prompt"]
@@ -270,10 +295,13 @@ def test_chunked_dialog_retries_missing_keys_after_merge(monkeypatch):
 
     result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
 
-    assert result == {
-        "Hello there": "Привет",
-        "Who are you?": "Кто ты?",
-    }
+    assert result == _expected_dialog(
+        [(Path("test.dlg"), {"tree": tree}, 0)],
+        {
+            "Hello there": "Привет",
+            "Who are you?": "Кто ты?",
+        },
+    )
     assert len(provider.calls) == 3
     assert "[E1]" in provider.calls[0]["user_prompt"]
     assert "[R2]" in provider.calls[1]["user_prompt"]
@@ -339,7 +367,7 @@ def test_generic_api_error_still_degrades_to_partial_result(monkeypatch, caplog)
     caplog.set_level(logging.ERROR)
     result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
 
-    assert result == {}
+    assert result == _expected_dialog([(Path("test.dlg"), {"tree": tree}, 0)], {})
     assert "Contextual translation failed" in caplog.text
 
 
@@ -426,7 +454,9 @@ class TestTranslateDialogs:
         translations, errors = manager.translate_dialogs(files)
 
         assert errors == []
-        assert translations == {"Hello": "Привет", "Goodbye": "Прощай", "Thanks": "Спасибо"}
+        assert translations == _expected_dialog(
+            files, {"Hello": "Привет", "Goodbye": "Прощай", "Thanks": "Спасибо"}
+        )
         assert len(provider.calls) == 3
 
     def test_file_error_is_isolated(self, monkeypatch):
@@ -459,7 +489,7 @@ class TestTranslateDialogs:
 
         translations, errors = manager.translate_dialogs(files)
 
-        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert translations == _expected_dialog(files, {"Hello": "Привет", "Goodbye": "Прощай"})
         assert [(path.name, exc) for path, exc in errors] == [("bad.dlg", boom)]
 
     def test_cancellation_aborts_pool_and_skips_queued_files(self, monkeypatch):
@@ -565,8 +595,6 @@ class TestDialogGrouping:
             sanitized_by_key={},
             handlers={},
             speakers_block="",
-            translations={},
-            keys_for_api=[],
             all_keys=[],
         )
         return _SmallDialog(Path(name), {}, 1, prepared, script)
@@ -581,7 +609,9 @@ class TestDialogGrouping:
             self._small("c.dlg", "x" * 4000),
         ]
 
-        groups, loners = ContextualTranslationManager._pack_dialog_groups(entries)
+        groups, loners = ContextualTranslationManager(
+            _make_config(), _FakeOpenRouter([]), WorldContext()
+        )._pack_dialog_groups(entries)
 
         assert [[e.file_path.name for e in g] for g in groups] == [["a.dlg", "b.dlg"]]
         assert [e.file_path.name for e in loners] == ["c.dlg"]
@@ -590,7 +620,9 @@ class TestDialogGrouping:
         monkeypatch.setattr(context_module, "_DIALOG_GROUP_MAX_FILES", 2)
         entries = [self._small(f"{n}.dlg", "x" * 10) for n in ("a", "b", "c")]
 
-        groups, loners = ContextualTranslationManager._pack_dialog_groups(entries)
+        groups, loners = ContextualTranslationManager(
+            _make_config(), _FakeOpenRouter([]), WorldContext()
+        )._pack_dialog_groups(entries)
 
         assert [[e.file_path.name for e in g] for g in groups] == [["a.dlg", "b.dlg"]]
         assert [e.file_path.name for e in loners] == ["c.dlg"]
@@ -598,13 +630,17 @@ class TestDialogGrouping:
     def test_packer_single_file_becomes_loner(self):
         entries = [self._small("a.dlg", "x" * 10)]
 
-        groups, loners = ContextualTranslationManager._pack_dialog_groups(entries)
+        groups, loners = ContextualTranslationManager(
+            _make_config(), _FakeOpenRouter([]), WorldContext()
+        )._pack_dialog_groups(entries)
 
         assert groups == []
         assert [e.file_path.name for e in loners] == ["a.dlg"]
 
     def test_packer_empty_input(self):
-        assert ContextualTranslationManager._pack_dialog_groups([]) == ([], [])
+        assert ContextualTranslationManager(
+            _make_config(), _FakeOpenRouter([]), WorldContext()
+        )._pack_dialog_groups([]) == ([], [])
 
     # ── 2.2 group prompt ────────────────────────────────────────────────
 
@@ -634,7 +670,7 @@ class TestDialogGrouping:
         translations, errors = manager.translate_dialogs(files)
 
         assert errors == []
-        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert translations == _expected_dialog(files, {"Hello": "Привет", "Goodbye": "Прощай"})
         assert len(provider.calls) == 1
         user_prompt = provider.calls[0]["user_prompt"]
         assert "=== FILE: severina.dlg ===" in user_prompt
@@ -671,7 +707,7 @@ class TestDialogGrouping:
         translations, errors = manager.translate_dialogs(files, item_progress=progress)
 
         assert errors == []
-        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert translations == _expected_dialog(files, {"Hello": "Привет", "Goodbye": "Прощай"})
         assert progress.total == 2
 
     def test_group_partial_answer_falls_back_single_file(self, monkeypatch):
@@ -688,11 +724,44 @@ class TestDialogGrouping:
         translations, errors = manager.translate_dialogs(files)
 
         assert errors == []
-        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert translations == _expected_dialog(files, {"Hello": "Привет", "Goodbye": "Прощай"})
         assert len(provider.calls) == 2
         assert "=== FILE:" in provider.calls[0]["user_prompt"]
         assert "=== FILE:" not in provider.calls[1]["user_prompt"]
         assert "b.dlg" in provider.calls[1]["user_prompt"]
+
+    def test_equal_nodes_and_partial_group_keep_their_addresses(self, monkeypatch):
+        self._patch_env(monkeypatch)
+        provider = _FakeOpenRouter(
+            [
+                '{"a.dlg": {"E1": "Первый"}, "b.dlg": {"E1": "Третий"}}',
+                '{"E2": "Второй"}',
+            ]
+        )
+        manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+        files = [
+            (
+                Path("a.dlg"),
+                {
+                    "tree": [
+                        DialogNode(node_id=1, text="Same", is_entry=True),
+                        DialogNode(node_id=2, text="Same", is_entry=True),
+                    ]
+                },
+                2,
+            ),
+            self._file("b.dlg", 1, "Same"),
+        ]
+        translations, errors = manager.translate_dialogs(files)
+        assert not errors
+        assert translations == {
+            ("a.dlg", "a:entry:1"): "Первый",
+            ("a.dlg", "a:entry:2"): "Второй",
+            ("b.dlg", "b:entry:1"): "Третий",
+        }
+        retry = provider.calls[1]["user_prompt"]
+        assert "[E2]" in retry
+        assert "[E1]" not in retry
 
     def test_group_total_failure_falls_back_per_file(self, monkeypatch, caplog):
         self._patch_env(monkeypatch)
@@ -711,7 +780,7 @@ class TestDialogGrouping:
         translations, errors = manager.translate_dialogs(files)
 
         assert errors == []
-        assert translations == {"Hello": "Привет", "Goodbye": "Прощай"}
+        assert translations == _expected_dialog(files, {"Hello": "Привет", "Goodbye": "Прощай"})
         assert len(provider.calls) == 4
         assert "falling back to single-file translation" in caplog.text
 
@@ -737,7 +806,7 @@ class TestDialogGrouping:
 
         manager.translate_dialogs(files)
 
-        by_file = {e["file"]: e for e in writer.entries}
+        by_file = {e["file"]: e for e in writer.entries if not e.get("event")}
         assert by_file["a.dlg"]["original"] == "Hello"
         assert by_file["a.dlg"]["translated"] == "Привет"
         assert by_file["b.dlg"]["original"] == "Goodbye"
@@ -764,11 +833,14 @@ class TestDialogGrouping:
         translations, errors = manager.translate_dialogs(files)
 
         assert errors == []
-        assert translations == {
-            "Hello": "Привет",
-            "Goodbye": "Прощай",
-            big_text: "Длинная строка",
-        }
+        assert translations == _expected_dialog(
+            files,
+            {
+                "Hello": "Привет",
+                "Goodbye": "Прощай",
+                big_text: "Длинная строка",
+            },
+        )
         assert len(provider.calls) == 2
         group_calls = [c for c in provider.calls if "=== FILE:" in c["user_prompt"]]
         assert len(group_calls) == 1
@@ -846,7 +918,9 @@ class TestSpeakersBlock:
 
         result = manager.translate_dialog(Path("severina.dlg"), parsed_data={})
 
-        assert result == {"Hello there": "Привет"}
+        assert result == _expected_dialog(
+            [(Path("severina.dlg"), {"tree": tree}, 0)], {"Hello there": "Привет"}
+        )
         system_prompt = provider.calls[0]["system_prompt"]
         assert "DIALOG SPEAKERS:" in system_prompt
         assert "Severina (Dwarf, Female)" in system_prompt
@@ -890,8 +964,8 @@ def test_empty_player_reply_retries_then_recovers(monkeypatch):
 
     result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
 
-    assert result["Hello there"] == "Привет"
-    assert result["END DIALOG"] == "Закончить разговор."
+    assert result[("test.dlg", "test:entry:1")] == "Привет"
+    assert result[("test.dlg", "test:reply:3")] == "Закончить разговор."
     assert len(provider.calls) == 2
 
 
@@ -950,10 +1024,10 @@ def test_empty_player_reply_keeps_original_after_retries(monkeypatch):
 
     result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
 
-    assert result.get("Hello there") == "Привет"
-    assert "END DIALOG" not in result
-    assert "END DIALOG" in manager.failed_originals
-    assert "Hello there" not in manager.failed_originals
+    assert result.get(("test.dlg", "test:entry:1")) == "Привет"
+    assert ("test.dlg", "test:reply:3") not in result
+    assert ("test.dlg", "test:reply:3") in manager.failed_items
+    assert ("test.dlg", "test:entry:1") not in manager.failed_items
     assert not any(
         entry.get("original") == "END DIALOG" and not str(entry.get("translated") or "").strip()
         for entry in writer.entries

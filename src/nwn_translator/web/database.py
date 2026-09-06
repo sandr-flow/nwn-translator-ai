@@ -430,10 +430,16 @@ def get_translation_map_by_task(task_id: str) -> Dict[str, str]:
 class SqliteTranslationLogWriter:
     """Write translation log entries to SQLite instead of JSONL files."""
 
-    def __init__(self, task_id: str) -> None:
+    def __init__(self, task_id: str, trace_path: Optional[Path] = None) -> None:
+        from ..translation_logging import translation_log_writer_for_config
+
         self.task_id = task_id
+        self._trace_writer = translation_log_writer_for_config(trace_path)
 
     def write(self, entry: Dict[str, Any]) -> None:
+        if entry.get("event"):
+            self._trace_writer.write(entry)
+            return
         original = entry.get("original", "")
         translated = entry.get("translated", "")
         if not original:

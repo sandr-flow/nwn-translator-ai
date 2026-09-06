@@ -82,7 +82,6 @@ class PlaceableExtractor(SimpleLocalizedExtractor):
             "item_suffix": "desc_identified",
             "item_type": "placeable_desc_identified",
             "context": lambda tag: f"Placeable identified description: {tag}",
-            "skip_if_same_as": "description",
         },
     )
 

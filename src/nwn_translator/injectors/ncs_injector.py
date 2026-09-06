@@ -5,6 +5,7 @@ Delegates the actual binary patching to :mod:`~nwn_translator.file_handlers.ncs_
 
 import logging
 from pathlib import Path
+from ..extractors.base import Translations
 from typing import Any, Dict, Optional
 
 from .base import BaseInjector, InjectedContent
@@ -23,7 +24,7 @@ class NcsInjector(BaseInjector):
         self,
         file_path: Path,
         parsed_data: Dict[str, Any],
-        translations: Dict[str, str],
+        translations: Translations,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> InjectedContent:
         """Inject translated strings into an NCS bytecode file.
@@ -32,16 +33,15 @@ class NcsInjector(BaseInjector):
             file_path: Path to the ``.ncs`` file.
             parsed_data: Dict with ``_ncs_file`` key (not used for injection,
                       the patcher re-reads the file).
-            translations: Mapping of original text to translated text.
+            translations: Mapping of (resource, item_id) to translated text.
             metadata: Optional metadata (unused).
 
         Returns:
             InjectedContent with results.
         """
-        ncs_by_item_id = (metadata or {}).get("ncs_translations_by_item_id") or {}
-        ncs_items = (metadata or {}).get("ncs_extracted_items")
+        ncs_items = (metadata or {}).get("extracted_items")
 
-        if not ncs_by_item_id and not translations:
+        if not translations:
             return InjectedContent(
                 source_file=file_path,
                 modified=False,
@@ -65,9 +65,9 @@ class NcsInjector(BaseInjector):
         concat_split_failed: list[str] = []
         for item in ncs_items:
             tid = item.item_id
-            if not tid or tid not in ncs_by_item_id:
+            if item.key not in translations:
                 continue
-            translated = ncs_by_item_id[tid]
+            translated = translations[item.key]
             if translated == item.text:
                 continue
             concat_parts = (item.metadata or {}).get("concat_parts")

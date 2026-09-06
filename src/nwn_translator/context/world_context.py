@@ -147,13 +147,14 @@ class WorldContext:
         needle = " ".join(str(name or "").split()).strip().casefold()
         if not needle:
             return None
+        genders = set()
         for npc in self.npcs.values():
             first = (npc.first_name or "").strip().casefold()
             full = npc.display_name.casefold()
             if needle == first or needle == full:
                 gender = (npc.gender or "").strip()
-                return gender or None
-        return None
+                genders.add(gender)
+        return next(iter(genders)) if len(genders) == 1 else None
 
     def get_all_names(self) -> List[Tuple[str, str]]:
         """Collect (name, category) pairs for glossary pre-translation.

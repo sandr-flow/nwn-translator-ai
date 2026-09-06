@@ -144,8 +144,8 @@ class TestGlossaryPartialFailure:
 
         assert result == {"Kit": "\u041d\u0430\u0431\u043e\u0440"}
 
-    def test_echoback_detection_retries_untranslated(self):
-        """Echo-backs (value == key) must be excluded and retried."""
+    def test_unchanged_glossary_form_is_a_valid_answer(self):
+        """An unchanged name or abbreviation does not imply a failed response."""
         import json
         from src.nwn_translator.glossary import GlossaryBuilder
 
@@ -183,8 +183,8 @@ class TestGlossaryPartialFailure:
             )
 
         result = run_async(run_test(), timeout=10.0)
-        assert result == {"Perin": "Перин", "Dark Forest": "Тёмный Лес"}
-        assert call_count == 2  # Must have retried for the echo-back
+        assert result == {"Perin": "Перин", "Dark Forest": "Dark Forest"}
+        assert call_count == 1
 
     def test_partial_results_merged_across_attempts(self):
         """Partial results from multiple attempts must be merged."""
@@ -336,16 +336,16 @@ class TestTranslationManagerTimeouts:
 
         result = manager.translate_content(content)
 
-        assert result == {item.text: f"TR:{item.text}" for item in items}
+        assert result == {item.key: f"TR:{item.text}" for item in items}
 
 
 class TestGlossaryEchoBackAcceptance:
     """Names the model insists on keeping unchanged must survive into the glossary."""
 
-    def test_full_echoback_accepted_after_retries(self):
-        """All names echoed on every attempt -> accepted as-is, retries still spent."""
+    def test_unchanged_names_accepted_without_retries(self):
+        """Valid unchanged names do not spend retries."""
         import json
-        from src.nwn_translator.glossary import GlossaryBuilder, _MAX_RETRIES
+        from src.nwn_translator.glossary import GlossaryBuilder
 
         builder = GlossaryBuilder()
         batch_seen = {"Almraiven": "location", "Perin": "character"}
@@ -377,7 +377,7 @@ class TestGlossaryEchoBackAcceptance:
 
         result = run_async(run_test(), timeout=10.0)
         assert result == {"Almraiven": "Almraiven", "Perin": "Perin"}
-        assert call_count == _MAX_RETRIES + 1  # nudge retries still happen
+        assert call_count == 1  # Identity translations are valid decisions.
 
     def test_build_degrades_to_empty_glossary_on_garbage(self, caplog):
         """Unusable responses everywhere -> empty glossary + warning, no exception."""
@@ -385,6 +385,7 @@ class TestGlossaryEchoBackAcceptance:
         from src.nwn_translator.glossary import GlossaryBuilder
 
         world_context = Mock()
+        world_context.candidates = None
         world_context.get_glossary_names = Mock(return_value=[("Perin", "character")])
 
         mock_provider = Mock()

@@ -1,6 +1,6 @@
-"""GIT injector for NWN area instance files.
+"""GIT field definitions and extraction filters for NWN area instances.
 
-This module patches CExoLocString fields inside .git (Game Instance Data) files.
+This module identifies visible CExoLocString fields in .git (Game Instance Data).
 .git files contain placed object instances (creatures, doors, placeables, etc.)
 whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
 """
@@ -9,11 +9,10 @@ import logging
 from collections import OrderedDict
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set
 
 from ..context.string_filters import should_skip_entity_source_text
 from ..file_handlers.gff_handler import read_gff
-from ..file_handlers.gff_patcher import GFFPatcher, GFFPatchError
 
 logger = logging.getLogger(__name__)
 
@@ -211,32 +210,6 @@ def _collect_strings_from_store_tree(
             _collect_strings_from_store_tree(child, found, existing, known_names)
 
 
-def _collect_patches_from_store_tree(
-    store_node: Dict[str, Any],
-    translations: Dict[str, str],
-    git_basename: str,
-    patches: List[Tuple[int, str]],
-) -> int:
-    """Patch ItemList rows under *store_node* and recurse into nested StoreList."""
-    total = 0
-    for inv_item in _iter_nested_item_entries(store_node, "ItemList"):
-        total += _collect_locale_patches_on_struct(
-            inv_item,
-            "StoreList.ItemList",
-            ITEM_INVENTORY_FIELDS,
-            translations,
-            git_basename,
-            patches,
-        )
-    children = store_node.get("StoreList", [])
-    if not isinstance(children, list):
-        return total
-    for child in children:
-        if isinstance(child, dict):
-            total += _collect_patches_from_store_tree(child, translations, git_basename, patches)
-    return total
-
-
 def _iter_nested_item_entries(instance: Dict[str, Any], nested_key: str) -> List[Dict[str, Any]]:
     """Return dict entries from a nested item list field of an instance struct.
 
@@ -297,7 +270,7 @@ def collect_git_strings_missing_from_translations(
 ) -> Set[str]:
     """Gather unique locstring texts from a parsed .git that need translation.
 
-    Walks the same structure as :func:`patch_git_file` (instance lists + nested
+    Walks the extracted GIT structure (instance lists + nested
     ``ItemList``). Strings that already appear as keys in *existing_translations*
     are skipped. Pass the same *known_names* oracle the extractor used so both
     sides stay symmetric.
@@ -354,195 +327,3 @@ def _iter_area_item_entries(parsed_data: Dict[str, Any]) -> List[Dict[str, Any]]
     if not isinstance(raw, list):
         return []
     return [e for e in raw if isinstance(e, dict)]
-
-
-def _collect_locale_patches_on_struct(
-    struct: Dict[str, Any],
-    list_key: str,
-    field_names: List[str],
-    translations: Dict[str, str],
-    git_basename: str,
-    patches: List[Tuple[int, str]],
-) -> int:
-    """Append CExoLocString patches for one GFF struct (instance or inventory row).
-
-    Args:
-        struct: Parsed GFF struct with ``_record_offsets`` metadata.
-        list_key: Instance list name (for logging, e.g. ``"Creature List"``).
-        field_names: CExoLocString field names to check for translations.
-        translations: Mapping of original text to translated text.
-        git_basename: Filename of the .git file (for log messages).
-        patches: Mutable list to which ``(record_offset, translated_text)`` tuples
-            are appended.
-
-    Returns:
-        Number of patches appended.
-    """
-    items_patched = 0
-    record_offsets = struct.get("_record_offsets", {})
-
-    for field_name in field_names:
-        field_obj = struct.get(field_name)
-        if not isinstance(field_obj, dict):
-            continue
-
-        original_text = field_obj.get("Value", "")
-        if not original_text or original_text not in translations:
-            continue
-
-        translated_text = translations[original_text]
-        if translated_text == original_text:
-            continue
-
-        rec_offset = record_offsets.get(field_name, 0)
-        if rec_offset <= 0:
-            logger.debug(
-                "No record offset for %s.%s in %s, skipping",
-                list_key,
-                field_name,
-                git_basename,
-            )
-            continue
-
-        patches.append((rec_offset, translated_text))
-        items_patched += 1
-        logger.debug(
-            "Queued patch %s.%s in %s: '%s' -> '%s'",
-            list_key,
-            field_name,
-            git_basename,
-            original_text[:30],
-            translated_text[:30],
-        )
-
-    return items_patched
-
-
-def _collect_inventory_item_patches(
-    instance: Dict[str, Any],
-    parent_list_key: str,
-    translations: Dict[str, str],
-    git_basename: str,
-    patches: List[Tuple[int, str]],
-) -> int:
-    """Collect patches for nested item lists under a creature, placeable, or store.
-
-    Handles both ``ItemList`` (loose inventory) and ``Equip_ItemList``
-    (equipped gear on creatures).
-
-    Args:
-        instance: Parsed GFF struct for a creature, placeable, or store.
-        parent_list_key: Parent list name (e.g. ``"Creature List"``).
-        translations: Mapping of original text to translated text.
-        git_basename: Filename of the .git file (for log messages).
-        patches: Mutable list to which patch tuples are appended.
-
-    Returns:
-        Number of patches appended for inventory/equipped items.
-    """
-    total = 0
-    for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(parent_list_key, []):
-        for inv_item in _iter_nested_item_entries(instance, nested_key):
-            total += _collect_locale_patches_on_struct(
-                inv_item,
-                f"{parent_list_key}.{nested_key}",
-                ITEM_INVENTORY_FIELDS,
-                translations,
-                git_basename,
-                patches,
-            )
-    return total
-
-
-def patch_git_file(
-    git_path: Path,
-    translations: Dict[str, str],
-    parsed_data: Optional[Dict[str, Any]] = None,
-    text_encoding: str = "cp1251",
-) -> int:
-    """Patch translatable strings inside a .git area instance file.
-
-    Iterates over every instance list (creatures, placeables, doors, …)
-    and patches CExoLocString fields whose original Value is found in
-    *translations*.
-
-    Args:
-        git_path: Path to the extracted .git file on disk.
-        translations: Mapping of original text -> translated text.
-        parsed_data: If provided, skip reading *git_path* (must match on-disk state).
-        text_encoding: Windows code page for CExoLocString bytes (e.g. ``cp1252``).
-
-    Returns:
-        Number of individual fields that were patched.
-    """
-    if not translations:
-        return 0
-
-    if parsed_data is None:
-        parsed_data = read_gff(git_path)
-
-    try:
-        patcher = GFFPatcher(git_path, text_encoding=text_encoding)
-    except Exception as e:
-        logger.error("Failed to initialize GFFPatcher for %s: %s", git_path, e)
-        return 0
-
-    items_patched = 0
-    patches: List[Tuple[int, str]] = []
-
-    for list_key, field_names in INSTANCE_LISTS.items():
-        instances = parsed_data.get(list_key, [])
-        if not isinstance(instances, list):
-            continue
-
-        for instance in instances:
-            if not isinstance(instance, dict):
-                continue
-
-            items_patched += _collect_locale_patches_on_struct(
-                instance,
-                list_key,
-                field_names,
-                translations,
-                git_path.name,
-                patches,
-            )
-
-            if list_key in INSTANCE_NESTED_ITEM_LISTS:
-                if list_key == "StoreList":
-                    items_patched += _collect_patches_from_store_tree(
-                        instance,
-                        translations,
-                        git_path.name,
-                        patches,
-                    )
-                else:
-                    items_patched += _collect_inventory_item_patches(
-                        instance,
-                        list_key,
-                        translations,
-                        git_path.name,
-                        patches,
-                    )
-
-    for area_item in _iter_area_item_entries(parsed_data):
-        items_patched += _collect_locale_patches_on_struct(
-            area_item,
-            AREA_ITEM_LIST_KEY,
-            AREA_ITEM_FIELDS,
-            translations,
-            git_path.name,
-            patches,
-        )
-
-    if patches:
-        try:
-            patcher.patch_multiple(patches)
-        except GFFPatchError as e:
-            logger.error("Failed to batch-patch %s: %s", git_path.name, e)
-            return 0
-
-    if items_patched:
-        logger.info("Patched %d instance fields in %s", items_patched, git_path.name)
-
-    return items_patched

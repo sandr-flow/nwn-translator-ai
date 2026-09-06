@@ -62,9 +62,12 @@ class TestGlossaryFilterByBatch:
         assert g.to_prompt_block(texts=[]) == ""
         assert g.to_prompt_block(texts=["", None]) == ""
 
-    def test_filter_matches_prefix(self):
-        """Prefix-match (>=4 chars) catches inflected/possessive forms."""
-        g = Glossary(entries={"Merrick Winters": "Меррик Винтерс"})
+    def test_filter_matches_possessive_explicit_alias(self):
+        """A possessive suffix preserves the complete explicit source alias."""
+        g = Glossary(
+            entries={"Merrick Winters": "Меррик Винтерс", "Winter": "Винтер"},
+            aliases={"Winter": "Merrick Winters"},
+        )
         block = g.to_prompt_block(texts=["Mr. Winter's house was empty."])
         assert '"Merrick Winters"' in block
 
@@ -86,22 +89,20 @@ class TestGlossaryFilterByBatch:
         block = g.to_prompt_block(texts=["The Ravenloft Vampire blocks the road."])
         assert '"Ravenloft Vampire"' in block
 
-    def test_filter_matches_levenshtein_one(self):
-        """Damerau-Levenshtein <=1 catches typos in long tokens."""
-        g = Glossary(entries={"Merrick": "Меррик"})
+    def test_filter_matches_explicit_spelling_variant(self):
+        """Spelling variants require an explicit alias relation."""
+        g = Glossary(
+            entries={"Merrick": "Меррик", "Merric": "Меррик"}, aliases={"Merric": "Merrick"}
+        )
         block = g.to_prompt_block(texts=["I met Merric in the hall."])
         assert '"Merrick"' in block
 
-    def test_filter_no_fuzzy_on_short_tokens(self):
+    def test_filter_does_not_match_word_prefixes(self):
         """Short entity tokens must not pull random near-matches."""
         g = Glossary(entries={"Iris": "Ирис"})
-        # "Irish" shares prefix len 4 with "Iris" — both are 4/5 chars; prefix-match
-        # does fire (both >=4). This is acceptable: keeping prefix symmetric is
-        # simpler than a one-sided rule. Use a clearly disjoint token instead:
-        block = g.to_prompt_block(texts=["The brave warrior approached."])
-        assert block == "" or '"Iris"' not in block
+        assert g.to_prompt_block(texts=["The Irish warrior approached."]) == ""
 
-    def test_filter_dedups_same_translation(self):
+    def test_filter_does_not_strip_numbered_suffixes(self):
         g = Glossary(
             entries={
                 "Inmate": "Заключённый",
@@ -136,23 +137,3 @@ class TestGlossaryFilterByBatch:
         m_pos = block.find('"Morin"')
         z_pos = block.find('"Zephyr"')
         assert 0 < a_pos < m_pos < z_pos
-
-
-class TestSeedCacheExcludedFromPrefix:
-    """Glossary seeds must be exact-match only, never prefix-match bases (H8)."""
-
-    def test_seed_entry_exact_match_but_not_prefix(self):
-        from src.nwn_translator.translators.prefix_translation_cache import (
-            PrefixAwareTranslationCache,
-        )
-        from src.nwn_translator.translators.translation_manager import _MIN_PREFIX_LEN
-
-        term = "Crimson Brotherhood of Bane"  # >= _MIN_PREFIX_LEN
-        g = Glossary(entries={term: "Багровое братство Бейна"})
-        cache = PrefixAwareTranslationCache()
-        g.seed_cache(cache, preserve_tokens=True)
-
-        # Exact lookup of the seeded term still works.
-        assert cache[term] == "Багровое братство Бейна"
-        # But the seed never starts a prefix match for a longer sentence.
-        assert cache.longest_prefix_match(term + ", an ancient cult", _MIN_PREFIX_LEN) is None

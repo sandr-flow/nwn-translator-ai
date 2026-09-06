@@ -485,7 +485,7 @@ class OpenRouterProvider(BaseAIProvider):
         try:
             gb = glossary_block or ""
             race_block = match_race_terms(text, target_lang)
-            if race_block:
+            if race_block and not gb:
                 gb = gb + "\n\n" + race_block if gb else race_block
             stable, variable = self._create_system_prompt_parts(
                 target_lang,
@@ -566,7 +566,7 @@ class OpenRouterProvider(BaseAIProvider):
         try:
             gb = glossary_block or ""
             race_block = match_race_terms(text, target_lang)
-            if race_block:
+            if race_block and not gb:
                 gb = gb + "\n\n" + race_block if gb else race_block
             stable, variable = self._create_system_prompt_parts(
                 target_lang,
@@ -795,7 +795,7 @@ class OpenRouterProvider(BaseAIProvider):
         gb = glossary_block or ""
         combined_text = " ".join(item.original for item in items if item.original)
         race_block = match_race_terms(combined_text, target_lang)
-        if race_block:
+        if race_block and not gb:
             gb = gb + "\n\n" + race_block if gb else race_block
         stable, variable = self._create_system_prompt_parts(
             target_lang,
@@ -813,6 +813,8 @@ class OpenRouterProvider(BaseAIProvider):
             "whether to translate the meaning or transliterate. "
             "The optional context describes where the string appears in the "
             "game — use it to choose tone and grammatical forms. "
+            "Items may come from different resources; use each item's own context. "
+            "Their order in this batch does not imply a shared conversation. "
             "Return a JSON object with the EXACT SAME numeric keys, where each "
             "value is the translated string (NOT an object). "
             "Do NOT rename, add, or remove keys. "

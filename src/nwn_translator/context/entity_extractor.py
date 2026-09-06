@@ -57,6 +57,7 @@ _VALID_CATEGORIES: Set[str] = {
     "organization",
     "item",
     "nickname",
+    "term",
     "unknown",
 }
 

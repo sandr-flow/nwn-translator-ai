@@ -284,8 +284,10 @@ def classify_string(text: object) -> StringClassification:
 def is_valid_entity_name(name: object, category: Optional[str] = None) -> bool:
     """Return True if a model-extracted entity is safe to add to the glossary."""
     cls = classify_string(name)
-    if cls.blocked:
+    if classify_entity_candidate(name, category).decision == "drop":
         return False
+    if cls.acronym_or_brand:
+        return True
 
     cat = (category or "").strip().lower()
     words = _words(cls.text)
@@ -366,6 +368,10 @@ def classify_entity_candidate(
     cls = classify_string(name)
     if cls.empty:
         return CandidateFilterResult("drop", "empty", 100, frozenset({"empty"}))
+    # Acronyms in visible text need curation, not automatic removal from terminology.
+    blocking = cls.reasons & _BLOCKING_REASONS
+    if cls.acronym_or_brand and blocking <= {"acronym_or_brand", "code_like_identifier"}:
+        return CandidateFilterResult("keep", "needs_acronym_curation", 0, cls.reasons)
     if cls.blocked:
         return CandidateFilterResult(
             "drop",

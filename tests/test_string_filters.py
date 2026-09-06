@@ -12,7 +12,7 @@ from src.nwn_translator.context.string_filters import (
     should_skip_entity_source_text,
 )
 from src.nwn_translator.extractors import ncs_extractor
-from src.nwn_translator.injectors import git_injector
+from src.nwn_translator.extractors import git_fields
 
 
 @pytest.mark.parametrize(
@@ -211,7 +211,7 @@ def test_engine_prefixes_are_not_duplicated_per_module():
     """The NCS extractor must reuse the shared list, not keep a parallel copy."""
     assert set(ENGINE_TAG_PREFIXES) <= set(ncs_extractor._SKIP_PREFIXES)
     assert ENGINE_PLACEHOLDER_TAGS == {"yourtaghere"}
-    assert not hasattr(git_injector, "is_internal_tag")
+    assert not hasattr(git_fields, "is_internal_tag")
 
 
 @pytest.mark.parametrize(

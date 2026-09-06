@@ -3,10 +3,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.nwn_translator.injectors.git_injector import (
+from src.nwn_translator.extractors.git_fields import (
     INSTANCE_LISTS,
     collect_git_strings_missing_from_translations,
-    patch_git_file,
 )
 
 
@@ -199,11 +198,24 @@ class TestCollectGitStrings:
         assert "A sturdy blade." in found
 
 
+from src.nwn_translator.extractors.git_extractor import GitExtractor
+from src.nwn_translator.injectors.gff_injector import GffInjector
+
+
+def _inject_fixture(path, data, answers):
+    content = GitExtractor().extract(path, data)
+    translations = {item.key: answers[item.text] for item in content.items if item.text in answers}
+    return (
+        GffInjector()
+        .inject(path, data, translations, {"extracted_items": content.items})
+        .items_updated
+    )
+
+
 class TestPatchGitInventory:
-    @patch("src.nwn_translator.injectors.git_injector.GFFPatcher")
-    @patch("src.nwn_translator.injectors.git_injector.read_gff")
-    def test_patches_waypoint_map_note_labels(self, mock_read_gff, mock_patcher_cls):
-        mock_read_gff.return_value = {
+    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    def test_patches_waypoint_map_note_labels(self, mock_patcher_cls):
+        data = {
             "WaypointList": [
                 {
                     "LocalizedName": {"StrRef": -1, "Value": "WP_CityGate"},
@@ -216,15 +228,14 @@ class TestPatchGitInventory:
         mock_patcher_cls.return_value = patcher
         path = Path(__file__).parent / "_fake_waypoint.git"
         translations = {"City Gate": "Городские ворота"}
-        count = patch_git_file(path, translations)
+        count = _inject_fixture(path, data, translations)
         assert count == 1
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(222, "Городские ворота")}
 
-    @patch("src.nwn_translator.injectors.git_injector.GFFPatcher")
-    @patch("src.nwn_translator.injectors.git_injector.read_gff")
-    def test_patches_item_list_fields(self, mock_read_gff, mock_patcher_cls):
-        mock_read_gff.return_value = {
+    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    def test_patches_item_list_fields(self, mock_patcher_cls):
+        data = {
             "Placeable List": [
                 {
                     "LocName": {"StrRef": -1, "Value": "Chest"},
@@ -246,17 +257,16 @@ class TestPatchGitInventory:
 
         path = Path(__file__).parent / "_fake.git"
         translations = {"Chest": "Сундук", "Scroll Case": "Футляр"}
-        count = patch_git_file(path, translations)
+        count = _inject_fixture(path, data, translations)
 
         assert count == 2
         patcher.patch_multiple.assert_called_once()
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(100, "Сундук"), (200, "Футляр")}
 
-    @patch("src.nwn_translator.injectors.git_injector.GFFPatcher")
-    @patch("src.nwn_translator.injectors.git_injector.read_gff")
-    def test_patches_store_list_item_list_fields(self, mock_read_gff, mock_patcher_cls):
-        mock_read_gff.return_value = {
+    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    def test_patches_store_list_item_list_fields(self, mock_patcher_cls):
+        data = {
             "StoreList": [
                 {
                     "LocalizedName": {"StrRef": -1, "Value": "Arms Dealer"},
@@ -281,17 +291,16 @@ class TestPatchGitInventory:
             "Arms Dealer": "Оружейник",
             "Iron Longsword": "Железный длинный меч",
         }
-        count = patch_git_file(path, translations)
+        count = _inject_fixture(path, data, translations)
 
         assert count == 2
         patcher.patch_multiple.assert_called_once()
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(300, "Оружейник"), (400, "Железный длинный меч")}
 
-    @patch("src.nwn_translator.injectors.git_injector.GFFPatcher")
-    @patch("src.nwn_translator.injectors.git_injector.read_gff")
-    def test_patches_store_list_loc_name_fields(self, mock_read_gff, mock_patcher_cls):
-        mock_read_gff.return_value = {
+    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    def test_patches_store_list_loc_name_fields(self, mock_patcher_cls):
+        data = {
             "StoreList": [
                 {
                     "LocName": {"StrRef": -1, "Value": "Coffee Merchant"},
@@ -305,15 +314,14 @@ class TestPatchGitInventory:
 
         path = Path(__file__).parent / "_fake_store_locname.git"
         translations = {"Coffee Merchant": "Кофейня"}
-        count = patch_git_file(path, translations)
+        count = _inject_fixture(path, data, translations)
         assert count == 1
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(310, "Кофейня")}
 
-    @patch("src.nwn_translator.injectors.git_injector.GFFPatcher")
-    @patch("src.nwn_translator.injectors.git_injector.read_gff")
-    def test_patches_nested_store_list_itemlist(self, mock_read_gff, mock_patcher_cls):
-        mock_read_gff.return_value = {
+    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    def test_patches_nested_store_list_itemlist(self, mock_patcher_cls):
+        data = {
             "StoreList": [
                 {
                     "LocName": {"StrRef": -1, "Value": "Bar"},
@@ -340,15 +348,14 @@ class TestPatchGitInventory:
         mock_patcher_cls.return_value = patcher
         path = Path(__file__).parent / "_fake_nested_store.git"
         translations = {"Bar": "Бар", "Coffee": "Кофе"}
-        count = patch_git_file(path, translations)
+        count = _inject_fixture(path, data, translations)
         assert count == 2
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(50, "Бар"), (900, "Кофе")}
 
-    @patch("src.nwn_translator.injectors.git_injector.GFFPatcher")
-    @patch("src.nwn_translator.injectors.git_injector.read_gff")
-    def test_patches_equip_item_list_fields(self, mock_read_gff, mock_patcher_cls):
-        mock_read_gff.return_value = {
+    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    def test_patches_equip_item_list_fields(self, mock_patcher_cls):
+        data = {
             "Creature List": [
                 {
                     "FirstName": {"StrRef": -1, "Value": "Grandma"},
@@ -389,7 +396,7 @@ class TestPatchGitInventory:
             "Worn by Grandma.": "Носит бабушка.",
             "The Skullsplitter": "Раскалыватель черепов",
         }
-        count = patch_git_file(path, translations)
+        count = _inject_fixture(path, data, translations)
 
         assert count == 4
         patcher.patch_multiple.assert_called_once()

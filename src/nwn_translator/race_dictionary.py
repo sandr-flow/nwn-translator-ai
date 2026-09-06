@@ -22,6 +22,11 @@ from typing import Dict, List, Tuple
 RACE_TERMS: Dict[str, Dict[str, str]] = {
     # ── Russian ────────────────────────────────────────────────────────
     "russian": {
+        "sword spider": "мечепряд",
+        "sword spiders": "мечепряды",
+        "hook horror": "крюкастый ужас",
+        "hook horrors": "крюкастые ужасы",
+        "lizardfolk": "ящеролюды",
         "dwarf": "дварф",
         "dwarves": "дварфы",
         "dwarven": "дварфийский",

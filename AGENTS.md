@@ -103,10 +103,10 @@ docker compose -f docker/docker-compose.yml up --build   # http://127.0.0.1:8080
 4. **Entities** — `context/entity_extractor.py`
 5. **Glossary** — `glossary_curator.py`, then `glossary.py` / `race_dictionary.py`
 6. **Translate** — `translators/translation_manager.py` (batches) and `context_translator.py` (dialogs). `token_handler.py` protects NWN tokens and inline tags.
-7. **Inject** — `injectors/` + `gff_patcher.py` / `ncs_patcher.py` / `git_injector.py` (byte-patch, not a full GFF rewrite)
+7. **Inject** — `injectors/` + `gff_patcher.py` / `ncs_patcher.py` (byte-patch, not a full GFF rewrite)
 8. **Repack** — `file_handlers/erf_writer.py`
 
-Extractors must keep `_record_offsets`; injectors must patch the same field names. Mismatches silently drop translations.
+Extractors copy each selected field record offset into item metadata. GFF injection patches these extracted occurrences by `(resource, item_id)`; rebuild re-extracts offsets from the current file.
 
 CExoLocString: parser takes the first non-empty substring; patcher writes one substring with LanguageID 0 (community standard for languages with no official NWN id). Extra gender/language variants are collapsed, with a warning.
 
@@ -115,8 +115,8 @@ CExoLocString: parser takes the first non-empty substring; patcher writes one su
 ## Extractor / Injector contract
 
 - New file type: extractor class (`SUPPORTED_TYPES` → `ExtractedContent`), register in `extractors/__init__.py`, add to `TRANSLATABLE_TYPES` in `config.py`.
-- Simple GFF resources: `GenericInjector` (`FIELD_MAP`). Dialogs, journals, `.git`, `.ncs` have their own injectors.
-- `.git`: keep `GitExtractor` and `git_injector.patch_git_file` in sync via `INSTANCE_LISTS` and `INSTANCE_NESTED_ITEM_LISTS`.
+- All GFF resources use `GffInjector` with extracted items and their `record_offset`. NCS retains its specialized bytecode patcher.
+- `.git`: `extractors/git_fields.py` defines `INSTANCE_LISTS` and `INSTANCE_NESTED_ITEM_LISTS`; `GitExtractor` supplies concrete field records to the shared injector.
 - Engine tags (`WP_`, `DST_`, `NW_`, `POST_`, `ARCH_`, `YOURTAGHERE`, spaceless identifiers) are not translated. Source of truth: `context/string_filters.py` (`ENGINE_TAG_PREFIXES`, `should_skip_entity_source_text`).
 - `.git` instances bake into a save on first area visit; later re-translation affects only unvisited areas.
 

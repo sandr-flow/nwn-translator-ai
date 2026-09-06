@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
+from ..extractors.base import Occurrence, Translations, occurrence_key
 from ..ai_providers import BaseAIProvider
 from ..ai_providers.base import RateLimitError
 from ..ai_providers.openrouter_provider import OpenRouterProvider
@@ -24,7 +25,8 @@ from ..context.world_context import NPCInfo, WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode
 from ..json_utils import json_extract_first_object, strip_json_markdown_fences
 from ..telemetry import llm_phase
-from ..translation_logging import translation_log_writer_for_config
+from ..glossary import GLOSSARY_MAX_CHARS, terminology_block
+from ..translation_logging import logged_model_call, translation_log_writer_for_config
 from .token_handler import TokenHandler, sanitize_text
 
 if TYPE_CHECKING:
@@ -54,7 +56,7 @@ _DIALOG_GROUP_MAX_FILES = 12
 
 @dataclass
 class _PreparedDialog:
-    """Parsed dialog state shared by the cache pass and the API pass."""
+    """Parsed dialog state for request formatting and result validation."""
 
     tree: List[DialogNode]
     node_map: Dict[str, DialogNode]
@@ -62,9 +64,6 @@ class _PreparedDialog:
     sanitized_by_key: Dict[str, str]
     handlers: Dict[str, TokenHandler]
     speakers_block: str
-    #: original_text -> final translation, served from the shared translation cache
-    translations: Dict[str, str]
-    keys_for_api: List[str]
     all_keys: List[str]
 
 
@@ -89,34 +88,38 @@ class ContextualTranslationManager:
         config: TranslationConfig,
         provider: BaseAIProvider,
         world_context: WorldContext,
-        translation_cache: Any = None,
         glossary: Optional["Glossary"] = None,
     ):
         self.config = config
         self.provider = provider
         self.world_context = world_context
         self.glossary = glossary
-        #: Shared sanitized_text -> model_output (same as TranslationManager.translation_cache)
-        self.translation_cache = translation_cache
         self._log_writer = translation_log_writer_for_config(
             config.translation_log,
             config.translation_log_writer,
         )
         self.formatter = DialogFormatter()
         #: Originals sent to the model whose output was never accepted.
-        self.failed_originals: Set[str] = set()
+        self.failed_items: Set[Occurrence] = set()
+
+    @staticmethod
+    def _node_address(file_path: Path, key: str) -> Occurrence:
+        kind = "entry" if key.startswith("E") else "reply"
+        return occurrence_key(file_path, f"{file_path.stem}:{kind}:{key[1:]}")
 
     def _mark_untranslated_api_keys(
         self,
         keys_for_api: List[str],
         original_text_map: Dict[str, str],
-        translations: Dict[str, str],
+        translations: Translations,
+        file_path: Path,
     ) -> None:
         """Record dialog originals that were sent to the model but never accepted."""
         for key in keys_for_api:
             original = original_text_map.get(key)
-            if original and original not in translations:
-                self.failed_originals.add(original)
+            address = self._node_address(file_path, key)
+            if original and address not in translations:
+                self.failed_items.add(address)
 
     def _raise_if_cancelled(self) -> None:
         """Raise :class:`TranslationCancelled` when the config's cancel check fires."""
@@ -130,7 +133,9 @@ class ContextualTranslationManager:
         parsed_data: Dict[str, Any],
         item_progress: Optional[Any] = None,
         item_budget: Optional[int] = None,
-    ) -> Dict[str, str]:
+        *,
+        accepted: Optional[Translations] = None,
+    ) -> Translations:
         """Translate a complete dialog tree."""
         budget = int(item_budget) if item_budget else 0
         bumped = 0
@@ -171,16 +176,24 @@ class ContextualTranslationManager:
         original_text_map = prepared.original_text_map
         sanitized_by_key = prepared.sanitized_by_key
         handlers = prepared.handlers
-        translations = prepared.translations
-        keys_for_api = prepared.keys_for_api
+        translations = {
+            address: text
+            for address, text in (accepted or {}).items()
+            if address[0] == file_path.name
+        }
+        keys_for_api = [
+            key
+            for key in prepared.all_keys
+            if self._node_address(file_path, key) not in translations
+        ]
         all_keys = prepared.all_keys
 
-        cached_served = len(all_keys) - len(keys_for_api)
-        if cached_served > 0:
-            _bump(cached_served)
+        accepted_count = len(all_keys) - len(keys_for_api)
+        if accepted_count > 0:
+            _bump(accepted_count)
         if not keys_for_api:
             logger.debug(
-                "All %d dialog lines for %s served from translation cache",
+                "All %d dialog lines for %s already accepted for this dialog",
                 len(all_keys),
                 file_path.name,
             )
@@ -193,9 +206,12 @@ class ContextualTranslationManager:
                 sp: str, up: str, *, max_tokens: int = TRANSLATION_MAX_TOKENS
             ) -> str:
                 with llm_phase("dialog"):
-                    return await provider.complete_json_chat_async(
-                        sp,
-                        up,
+                    return await logged_model_call(
+                        self._log_writer,
+                        provider.complete_json_chat_async,
+                        trace_context={"file": file_path.name},
+                        system_prompt=sp,
+                        user_prompt=up,
                         max_tokens=max_tokens,
                         temperature=TRANSLATION_TEMPERATURE,
                     )
@@ -211,7 +227,9 @@ class ContextualTranslationManager:
                 sanitized_by_key,
             )
             if not dialog_chunks:
-                self._mark_untranslated_api_keys(keys_for_api, original_text_map, translations)
+                self._mark_untranslated_api_keys(
+                    keys_for_api, original_text_map, translations, file_path
+                )
                 _finish()
                 return translations
 
@@ -316,7 +334,6 @@ class ContextualTranslationManager:
                         handlers,
                         file_path,
                         sanitized_by_key=sanitized_by_key,
-                        session_cache=self.translation_cache,
                         allow_cleanup=False,
                     )
                     translations.update(retry_translations)
@@ -358,7 +375,10 @@ class ContextualTranslationManager:
                         )
 
                         async def run_single_retry() -> Any:
-                            return await provider.translate_async(
+                            return await logged_model_call(
+                                self._log_writer,
+                                provider.translate_async,
+                                trace_context={"occurrence": self._node_address(file_path, key)},
                                 text=sanitized_by_key[key],
                                 source_lang=self.config.source_lang,
                                 target_lang=self.config.target_lang,
@@ -387,7 +407,6 @@ class ContextualTranslationManager:
                                 handlers,
                                 file_path,
                                 sanitized_by_key=sanitized_by_key,
-                                session_cache=self.translation_cache,
                                 allow_cleanup=False,
                             )
                             if single_translations:
@@ -413,14 +432,15 @@ class ContextualTranslationManager:
                             handlers,
                             file_path,
                             sanitized_by_key=sanitized_by_key,
-                            session_cache=self.translation_cache,
                             allow_cleanup=True,
                         )
                         if cleaned_translations:
                             translations.update(cleaned_translations)
                             _bump(len(cleaned_translations))
 
-            self._mark_untranslated_api_keys(keys_for_api, original_text_map, translations)
+            self._mark_untranslated_api_keys(
+                keys_for_api, original_text_map, translations, file_path
+            )
             _finish()
             return translations
 
@@ -428,7 +448,9 @@ class ContextualTranslationManager:
             raise
         except Exception as exc:
             logger.error("Contextual translation failed for %s: %s", file_path.name, exc)
-            self._mark_untranslated_api_keys(keys_for_api, original_text_map, translations)
+            self._mark_untranslated_api_keys(
+                keys_for_api, original_text_map, translations, file_path
+            )
             _finish()
             return translations
 
@@ -436,25 +458,22 @@ class ContextualTranslationManager:
         self,
         dialog_files: List[tuple[Path, Dict[str, Any], int]],
         item_progress: Optional[Any] = None,
-    ) -> tuple[Dict[str, str], List[tuple[Path, Exception]]]:
+    ) -> tuple[Translations, List[tuple[Path, Exception]]]:
         """Translate multiple dialog files concurrently on a thread pool.
 
         Each *dialog_files* entry is ``(file_path, parsed_data, item_budget)``.
         Small dialog scripts (:data:`_SMALL_DIALOG_CHARS`) are packed into
         grouped multi-file requests; a file whose grouped answer is missing or
         invalid falls back to the single-file path, where lines already
-        accepted from the group are served from the translation cache.
+        accepted from the group are passed explicitly by node address.
         Failures are isolated per work unit (file or group) and returned
         alongside the aggregated translations; :class:`TranslationCancelled`
         aborts the whole pool.
 
-        The shared ``translation_cache`` dict is read and written from worker
-        threads without a lock: single dict operations are atomic under the
-        GIL, and a lost race only costs one duplicate API request.
         """
         from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 
-        all_translations: Dict[str, str] = {}
+        all_translations: Translations = {}
         errors: List[tuple[Path, Exception]] = []
         if not dialog_files:
             return all_translations, errors
@@ -481,8 +500,7 @@ class ContextualTranslationManager:
             if prepared is None:
                 bump_full(file_path, item_budget)
                 continue
-            if not prepared.keys_for_api:
-                all_translations.update(prepared.translations)
+            if not prepared.all_keys:
                 bump_full(file_path, item_budget)
                 continue
             script = self._format_prepared_script(prepared)
@@ -506,7 +524,7 @@ class ContextualTranslationManager:
 
         def translate_one(
             file_path: Path, parsed_data: Dict[str, Any], item_budget: int
-        ) -> Dict[str, str]:
+        ) -> Translations:
             self._raise_if_cancelled()
             return self.translate_dialog(
                 file_path,
@@ -556,7 +574,7 @@ class ContextualTranslationManager:
         file_path: Path,
         parsed_data: Dict[str, Any],
     ) -> Optional[_PreparedDialog]:
-        """Parse the dialog tree, sanitize node texts, and serve cache hits.
+        """Parse the dialog tree and sanitize node texts.
 
         Returns ``None`` when the dialog has no tree at all.
         """
@@ -596,20 +614,6 @@ class ContextualTranslationManager:
             handlers[key] = handler
             sanitized_by_key[key] = sanitized
 
-        translations: Dict[str, str] = {}
-        keys_for_api: List[str] = []
-
-        for key, original_text in original_text_map.items():
-            san = sanitized_by_key[key]
-            if self.translation_cache is not None and san in self.translation_cache:
-                outcome = handlers[key].finalize_translation(
-                    self.translation_cache[san],
-                    allow_cleanup=True,
-                )
-                translations[original_text] = outcome.final_text
-            else:
-                keys_for_api.append(key)
-
         return _PreparedDialog(
             tree=tree,
             node_map=node_map,
@@ -617,27 +621,18 @@ class ContextualTranslationManager:
             sanitized_by_key=sanitized_by_key,
             handlers=handlers,
             speakers_block=speakers_block,
-            translations=translations,
-            keys_for_api=keys_for_api,
             all_keys=list(original_text_map.keys()),
         )
 
     def _format_prepared_script(self, prepared: _PreparedDialog) -> str:
-        """Format the to-translate script for *prepared* (full tree or node subset)."""
-        if set(prepared.keys_for_api) == set(prepared.all_keys):
-            return self.formatter.format_dialog_tree(
-                prepared.tree,
-                text_overrides=prepared.sanitized_by_key,
-            )
-        return self.formatter.format_nodes(
-            prepared.keys_for_api,
-            prepared.node_map,
-            prepared.original_text_map,
+        """Format a prepared dialog without changing its node identities."""
+        return self.formatter.format_dialog_tree(
+            prepared.tree,
             text_overrides=prepared.sanitized_by_key,
         )
 
-    @staticmethod
     def _pack_dialog_groups(
+        self,
         small: List[_SmallDialog],
     ) -> tuple[List[List[_SmallDialog]], List[_SmallDialog]]:
         """Greedily pack small dialogs by char/file limits; singletons become loners."""
@@ -659,6 +654,13 @@ class ContextualTranslationManager:
             if current and (
                 current_chars + len(entry.script) > _DIALOG_GROUP_TARGET_CHARS
                 or len(current) >= _DIALOG_GROUP_MAX_FILES
+                or len(
+                    self._glossary_block_for_texts(
+                        [dialog.script for dialog in current] + [entry.script]
+                    )
+                    or ""
+                )
+                > GLOSSARY_MAX_CHARS
             ):
                 flush()
             current.append(entry)
@@ -670,14 +672,14 @@ class ContextualTranslationManager:
         self,
         group: List[_SmallDialog],
         item_progress: Optional[Any] = None,
-    ) -> tuple[Dict[str, str], List[tuple[Path, Exception]]]:
+    ) -> tuple[Translations, List[tuple[Path, Exception]]]:
         """Translate one packed group and demux the answer per file.
 
         A file whose sub-object is missing, incomplete, or token-invalid is
         retried through the regular single-file path; its lines already
-        accepted here were cached, so only the gaps are re-requested.
+        accepted here are passed explicitly, so only the gaps are re-requested.
         """
-        translations: Dict[str, str] = {}
+        translations: Translations = {}
         errors: List[tuple[Path, Exception]] = []
         self._raise_if_cancelled()
         label = f"{group[0].file_path.name}+{len(group) - 1}"
@@ -696,9 +698,10 @@ class ContextualTranslationManager:
             for entry in group:
                 errors.append((entry.file_path, exc))
                 self._mark_untranslated_api_keys(
-                    entry.prepared.keys_for_api,
+                    entry.prepared.all_keys,
                     entry.prepared.original_text_map,
-                    entry.prepared.translations,
+                    {},
+                    entry.file_path,
                 )
                 if item_progress is not None and entry.item_budget > 0:
                     item_progress.bump(by=entry.item_budget, filename=entry.file_path.name)
@@ -717,6 +720,7 @@ class ContextualTranslationManager:
                 sub = self._resolve_group_file(parsed_group, entry.file_path)
             else:
                 sub = None
+            applied: Translations = {}
             if isinstance(sub, dict):
                 applied, invalid = self._apply_translations(
                     sub,
@@ -724,13 +728,11 @@ class ContextualTranslationManager:
                     entry.prepared.handlers,
                     entry.file_path,
                     sanitized_by_key=entry.prepared.sanitized_by_key,
-                    session_cache=self.translation_cache,
                     allow_cleanup=False,
                 )
-                missing = [key for key in entry.prepared.keys_for_api if key not in sub]
+                missing = [key for key in entry.prepared.all_keys if key not in sub]
                 pending = sorted(set(missing) | set(invalid))
                 if not pending:
-                    translations.update(entry.prepared.translations)
                     translations.update(applied)
                     if item_progress is not None and entry.item_budget > 0:
                         item_progress.bump(by=entry.item_budget, filename=entry.file_path.name)
@@ -741,11 +743,13 @@ class ContextualTranslationManager:
                 entry.file_path.name,
             )
             try:
+                translations.update(applied)
                 single = self.translate_dialog(
                     entry.file_path,
                     entry.parsed_data,
                     item_progress=item_progress,
                     item_budget=entry.item_budget,
+                    accepted=applied,
                 )
                 translations.update(single)
             except TranslationCancelled:
@@ -783,9 +787,12 @@ class ContextualTranslationManager:
 
         async def call_api(sp: str, up: str, *, max_tokens: int = TRANSLATION_MAX_TOKENS) -> str:
             with llm_phase("dialog"):
-                return await provider.complete_json_chat_async(
-                    sp,
-                    up,
+                return await logged_model_call(
+                    self._log_writer,
+                    provider.complete_json_chat_async,
+                    trace_context={"files": names},
+                    system_prompt=sp,
+                    user_prompt=up,
                     max_tokens=max_tokens,
                     temperature=TRANSLATION_TEMPERATURE,
                 )
@@ -911,6 +918,7 @@ class ContextualTranslationManager:
         if (
             len(full_script) <= _DIALOG_CHUNK_TARGET_CHARS
             and len(keys_for_api) <= _DIALOG_CHUNK_MAX_KEYS
+            and len(self._glossary_block_for_texts([full_script]) or "") <= GLOSSARY_MAX_CHARS
         ):
             return [(list(keys_for_api), full_script)]
 
@@ -932,7 +940,17 @@ class ContextualTranslationManager:
                 current_keys and current_chars + len(node_script) > _DIALOG_CHUNK_TARGET_CHARS
             )
             would_exceed_keys = current_keys and len(current_keys) >= _DIALOG_CHUNK_MAX_KEYS
-            if would_exceed_chars or would_exceed_keys:
+            would_exceed_terms = (
+                current_keys
+                and len(
+                    self._glossary_block_for_texts(
+                        [original_text_map[k] for k in current_keys + [key]]
+                    )
+                    or ""
+                )
+                > GLOSSARY_MAX_CHARS
+            )
+            if would_exceed_chars or would_exceed_keys or would_exceed_terms:
                 script = self.formatter.format_nodes(
                     current_keys,
                     node_map,
@@ -974,7 +992,7 @@ class ContextualTranslationManager:
         chunk_index: int,
         total_chunks: int,
         speakers_block: str = "",
-    ) -> tuple[Dict[str, str], List[str], Dict[str, Dict[str, Any]]]:
+    ) -> tuple[Translations, List[str], Dict[str, Dict[str, Any]]]:
         """Translate one dialog script chunk and return accepted plus pending keys."""
         system_prompt = self._build_system_prompt(
             source_text=script,
@@ -1077,7 +1095,6 @@ class ContextualTranslationManager:
             handlers,
             file_path,
             sanitized_by_key=sanitized_by_key,
-            session_cache=self.translation_cache,
             allow_cleanup=False,
         )
         missing_keys = [key for key in keys_for_api if key not in parsed_json]
@@ -1177,12 +1194,11 @@ class ContextualTranslationManager:
         handlers: Dict[str, Any],
         file_path: Path,
         sanitized_by_key: Optional[Dict[str, str]] = None,
-        session_cache: Optional[Dict[str, str]] = None,
         *,
         allow_cleanup: bool = False,
-    ) -> tuple[Dict[str, str], Dict[str, Dict[str, Any]]]:
+    ) -> tuple[Translations, Dict[str, Dict[str, Any]]]:
         """Restore, validate, and return accepted plus invalid dialog nodes."""
-        translations: Dict[str, str] = {}
+        translations: Translations = {}
         invalid: Dict[str, Dict[str, Any]] = {}
         for key, translated_sanitized in parsed_json.items():
             if key not in original_text_map:
@@ -1225,12 +1241,7 @@ class ContextualTranslationManager:
                 continue
 
             final_translated = outcome.final_text
-            translations[original_text] = final_translated
-
-            if outcome.exact_valid and session_cache is not None and sanitized_by_key is not None:
-                san = sanitized_by_key.get(key)
-                if san:
-                    session_cache[san] = translated_sanitized
+            translations[self._node_address(file_path, key)] = final_translated
 
             if outcome.used_cleanup:
                 logger.warning(
@@ -1337,7 +1348,6 @@ class ContextualTranslationManager:
     ) -> Any:
         """Build the system ``content`` payload for a dialog translation call."""
         from ..prompts import build_dialog_system_prompt_parts
-        from ..race_dictionary import match_race_terms
 
         corpus = [text for text in (source_text, filename_stem) if text]
 
@@ -1355,18 +1365,7 @@ class ContextualTranslationManager:
         else:
             world_block = ""
 
-        if self.glossary and getattr(self.glossary, "entries", None):
-            glossary_block = (
-                self.glossary.to_prompt_block(texts=corpus)
-                if corpus
-                else self.glossary.to_prompt_block()
-            )
-        else:
-            glossary_block = ""
-
-        race_block = match_race_terms(source_text, self.config.target_lang)
-        if race_block:
-            glossary_block = glossary_block + "\n\n" + race_block if glossary_block else race_block
+        glossary_block = terminology_block(corpus, self.config.target_lang, self.glossary)
 
         if speakers_block:
             world_block = f"{speakers_block}\n\n{world_block}" if world_block else speakers_block
@@ -1390,7 +1389,4 @@ class ContextualTranslationManager:
 
     def _glossary_block_for_texts(self, texts: List[str]) -> Optional[str]:
         """Return a glossary block narrowed to entries present in *texts*."""
-        if not self.glossary or not getattr(self.glossary, "entries", None):
-            return None
-        block = self.glossary.to_prompt_block(texts=texts)
-        return block or None
+        return terminology_block(texts, self.config.target_lang, self.glossary) or None

@@ -258,7 +258,9 @@ def _build_script_message_profile_rules(target_lang: str, gender: str) -> str:
     return (
         "RULES:\n"
         "1. Translate player-visible script messages naturally. Preserve meaning, tone, "
-        "formatting, line breaks, punctuation, and special characters.\n"
+        "narrative person, formatting, line breaks, punctuation, and special characters. "
+        "Use the supplied script context to understand connected speech or verse; "
+        "translate only the requested string.\n"
         f"2. {_token_preservation_rule()}"
         "3. Translate only natural-language text shown to the player. Never translate, "
         "rename, or rewrite identifiers, tags, resrefs, variables, script names, debug "

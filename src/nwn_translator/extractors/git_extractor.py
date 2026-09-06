@@ -1,15 +1,16 @@
 """Extractor for area instance (.git) files.
 
-Walks the same structure as :mod:`~nwn_translator.injectors.git_injector` so
+Walks the same structure as :mod:`~nwn_translator.extractors.git_fields` so
 strings are translated in Phase A/B and patched in :func:`patch_git_file`.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Any, Dict, FrozenSet, List, Optional
 
-from ..injectors.git_injector import (
+from .git_fields import (
     AREA_ITEM_FIELDS,
     AREA_ITEM_LIST_KEY,
     INSTANCE_LISTS,
@@ -275,6 +276,7 @@ class GitExtractor(BaseExtractor):
         item_id: str,
         items: List[TranslatableItem],
         known_names: Optional[FrozenSet[str]] = None,
+        name_group: Optional[str] = None,
     ) -> None:
         field_obj = struct.get(field_name)
         if not isinstance(field_obj, dict):
@@ -282,13 +284,31 @@ class GitExtractor(BaseExtractor):
         text = self._extract_text_from_local_string(field_obj)
         if text is None or not should_translate_git_string(text, meta_type, known_names):
             return
+        name_metadata = {}
+        if meta_type in {"creature_first_name", "creature_last_name"}:
+            fields = {
+                field: extract_local_string(struct.get(field, {})) or ""
+                for field in ("FirstName", "LastName")
+            }
+            context += " NPC name fields: " + json.dumps(fields, ensure_ascii=False)
+            name_metadata = {
+                "name_fields": fields,
+                "name_field": field_name,
+                "name_group": name_group,
+                "gender": gender_label(struct.get("Gender", -1)),
+            }
         items.append(
             TranslatableItem(
                 text=text,
                 context=context,
                 item_id=item_id,
                 location=str(file_path),
-                metadata={"type": meta_type, "git_field": field_name},
+                metadata={
+                    "type": meta_type,
+                    "git_field": field_name,
+                    **name_metadata,
+                    "record_offset": struct.get("_record_offsets", {}).get(field_name, 0),
+                },
             )
         )
 
@@ -321,6 +341,7 @@ class GitExtractor(BaseExtractor):
                         file_path,
                         meta_type=meta_type,
                         context=ctx_label,
+                        name_group=f"{list_key}[{inst_idx}]",
                         item_id=f"{stem}_{list_key}_{inst_idx}_{field_name}",
                         items=items,
                         known_names=known_names,

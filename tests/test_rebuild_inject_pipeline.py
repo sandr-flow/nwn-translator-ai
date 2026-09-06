@@ -34,8 +34,7 @@ def test_load_and_inject_ncs_from_text_translation_map(tmp_path: Path) -> None:
         path,
         parsed,
         extracted,
-        {"Hello world!": "Hi there all!"},
-        ncs_translations_by_item_id=None,
+        {extracted.items[0].key: "Hi there all!"},
     )
     ncs2 = parse_ncs(path)
     assert any((i.string_value or "") == "Hi there all!" for i in ncs2.string_constants)
@@ -52,8 +51,7 @@ def test_load_and_inject_ncs_prefers_explicit_item_id_map(tmp_path: Path) -> Non
         path,
         parsed,
         extracted,
-        {},
-        ncs_translations_by_item_id={item_id: "ZZ"},
+        {(path.name, item_id): text for item_id, text in ({item_id: "ZZ"}).items()},
     )
     ncs2 = parse_ncs(path)
     assert any(i.string_value == "ZZ" for i in ncs2.string_constants)
@@ -100,7 +98,7 @@ def test_log_per_file_emits_failed_originals(tmp_path: Path) -> None:
     from nwn_translator.translators.translation_manager import TranslationManager
 
     manager = TranslationManager(config, Mock())
-    manager.failed_originals.add("Boom")
+    manager.failed_items.add(("a.uti", "x:0"))
     src = tmp_path / "a.uti"
     extracted = ExtractedContent(
         content_type="item",
@@ -163,9 +161,13 @@ def test_ncs_item_id_stable_after_length_changing_patch(tmp_path: Path) -> None:
         path,
         parsed,
         extracted,
-        {},
-        ncs_translations_by_item_id={
-            "scene:c1": "Alpha line is now much longer than before!",
+        {
+            (path.name, item_id): text
+            for item_id, text in (
+                {
+                    "scene:c1": "Alpha line is now much longer than before!",
+                }
+            ).items()
         },
     )
 
@@ -182,8 +184,7 @@ def test_ncs_item_id_stable_after_length_changing_patch(tmp_path: Path) -> None:
         path,
         parsed2,
         extracted2,
-        {},
-        ncs_translations_by_item_id={"scene:c3": "Gamma-EDITED"},
+        {(path.name, item_id): text for item_id, text in ({"scene:c3": "Gamma-EDITED"}).items()},
     )
     values = [instr.string_value for instr in parse_ncs(path).string_constants]
     assert values[0] == "NW_TAG"

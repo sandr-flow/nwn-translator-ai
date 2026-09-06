@@ -32,9 +32,9 @@ from ..extractors import get_extractor_for_file
 from ..injectors import get_injector_for_content
 from ..injectors.base import InjectedContent
 from ..extractors.base import ExtractedContent, TranslatableItem
-from ..injectors.git_injector import patch_git_file
 from ..ai_providers.openrouter_provider import OpenRouterProvider
 from ..translators.translation_manager import TranslationManager
+from ..extractors.base import Translations
 from ..translators.context_translator import ContextualTranslationManager
 from ..context.world_context import WorldScanner, WorldContext
 from ..context.entity_extractor import EntityExtractor
@@ -42,7 +42,7 @@ from ..context.entity_candidates import EntityCandidateRegistry
 from ..glossary import Glossary, GlossaryBuilder
 from ..glossary_curator import GlossaryCurator
 from ..telemetry import RunMetricsRecorder
-from ..translation_logging import translation_log_writer_for_config
+from ..translation_logging import translation_log_writer_for_config, write_trace
 
 logger = logging.getLogger(__name__)
 
@@ -138,9 +138,8 @@ def inject_translations_into_file(
     file_path: Path,
     parsed_data: Dict[str, Any],
     extracted: ExtractedContent,
-    translations: Dict[str, str],
+    translations: Translations,
     *,
-    ncs_translations_by_item_id: Optional[Dict[str, str]] = None,
     log_updates: bool = False,
     target_lang: Optional[str] = None,
     source_encoding: Optional[str] = None,
@@ -157,20 +156,7 @@ def inject_translations_into_file(
     inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
     inject_metadata["module_text_encoding"] = module_string_encoding_for_target_lang(target_lang)
     inject_metadata["module_source_encoding"] = source_encoding
-    if extracted.content_type == "ncs_script":
-        by_id: Dict[str, str] = {}
-        if ncs_translations_by_item_id is not None:
-            by_id.update(ncs_translations_by_item_id)
-        for item in extracted.items:
-            tid = item.item_id or ""
-            if not tid or tid in by_id:
-                continue
-            new_t = translations.get(item.text)
-            if new_t is None or new_t == item.text:
-                continue
-            by_id[tid] = new_t
-        inject_metadata["ncs_translations_by_item_id"] = by_id
-        inject_metadata["ncs_extracted_items"] = extracted.items
+    inject_metadata["extracted_items"] = extracted.items
     result: InjectedContent = injector.inject(file_path, parsed_data, translations, inject_metadata)
     if log_updates and result.modified:
         logger.info("Updated %s: %s items", file_path.name, result.items_updated)
@@ -194,8 +180,6 @@ class PipelineState:
     glossary: Optional[Glossary] = None
     #: Per-run GFF parse cache: resolved_path -> dict
     _gff_cache: Dict[Path, Dict[str, Any]] = field(default_factory=dict)
-    #: Latest NCS per-``item_id`` translations from :class:`TranslationManager` (Phase B).
-    _ncs_translations_by_item_id: Dict[str, str] = field(default_factory=dict)
     stats: Dict[str, Any] = field(default_factory=_new_stats)
     _stats_lock: threading.Lock = field(default_factory=threading.Lock)
     #: Delta-tracking cursors for cumulative manager stats.
@@ -274,7 +258,7 @@ class PipelineState:
         file_path: Path,
         parsed_data: Dict[str, Any],
         extracted: ExtractedContent,
-        all_translations: Dict[str, str],
+        all_translations: Translations,
     ) -> Optional[InjectedContent]:
         """Inject translations into a single file (Phase C)."""
         return inject_translations_into_file(
@@ -282,7 +266,6 @@ class PipelineState:
             parsed_data,
             extracted,
             all_translations,
-            ncs_translations_by_item_id=self._ncs_translations_by_item_id,
             log_updates=True,
             target_lang=self.config.target_lang,
             source_encoding=self._source_encoding(),
@@ -292,7 +275,7 @@ class PipelineState:
     def _log_per_file_translations(
         self,
         extracted_map: ExtractedMap,
-        all_translations: Dict[str, str],
+        all_translations: Translations,
         manager: "TranslationManager",
     ) -> None:
         """Write per-(file, item_id) translation rows for the web editor.
@@ -308,10 +291,8 @@ class PipelineState:
             for item in extracted.items:
                 if not item.has_text() or not item.item_id:
                     continue
-                translated = all_translations.get(item.text)
-                if translated is None and (item.metadata or {}).get("type") == "ncs_string":
-                    translated = manager.ncs_translations_by_item_id.get(item.item_id)
-                failed = item.text in manager.failed_originals
+                translated = all_translations.get(item.key)
+                failed = item.key in manager.failed_items
                 if translated is None and not failed:
                     continue
                 if translated is None:
@@ -328,39 +309,6 @@ class PipelineState:
                     item_id=item.item_id,
                     success=not failed,
                 )
-
-    def _patch_git_files(
-        self,
-        extract_dir: Path,
-        translations: Dict[str, str],
-    ) -> None:
-        """Patch .git area instance files with accumulated translations."""
-        git_files = list(extract_dir.glob("*.git"))
-        if not git_files:
-            logger.debug("No .git files found in extraction directory")
-            return
-
-        logger.info(f"Patching {len(git_files)} area instance (.git) files...")
-        total_patched = 0
-        for git_path in git_files:
-            try:
-                gff_cached = read_gff(
-                    git_path, cache=self._gff_cache, source_encoding=self._source_encoding()
-                )
-                patched = patch_git_file(
-                    git_path,
-                    translations,
-                    parsed_data=gff_cached,
-                    text_encoding=module_string_encoding_for_target_lang(self.config.target_lang),
-                )
-                total_patched += patched
-            except Exception as e:
-                logger.error(f"Failed to patch {git_path.name}: {e}")
-
-        if total_patched:
-            logger.info(
-                f"Patched {total_patched} instance fields across {len(git_files)} .git files"
-            )
 
     def _record_ncs_patch_failure(self, file_path: Path, error: str) -> None:
         sample = {
@@ -620,15 +568,33 @@ def stage_build_glossary(state: PipelineState) -> None:
     except RuntimeError as e:
         logger.warning("Glossary build failed, continuing without it: %s", e)
         state.glossary = Glossary()
+    write_trace(
+        translation_log_writer_for_config(
+            state.config.translation_log, state.config.translation_log_writer
+        ),
+        {
+            "event": "terminology_resolved",
+            "entries": state.glossary.entries,
+            "aliases": state.glossary.aliases,
+            "candidates": [
+                {
+                    "name": candidate.name,
+                    "decision": candidate.curation_decision,
+                    "reason": candidate.curation_reason,
+                    "alias_of": candidate.alias_of,
+                }
+                for candidate in state.world_context.candidates.values()
+            ],
+        },
+    )
     if state.config.progress_callback:
         state.config.progress_callback("scanning", 1, 1, "done")
 
 
-def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[str, str]:
+def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Translations:
     """Stage E (Phase B): translate non-dialog batch + contextual dialogs.
 
-    Returns the original-text -> translated-text map.  NCS per-``item_id``
-    translations are stored on ``state._ncs_translations_by_item_id``.
+    Returns one resource/item-addressed map for GFF and NCS occurrences.
     """
     assert state.extract_dir is not None
     extract_dir = state.extract_dir
@@ -658,14 +624,13 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
             state.config,
             state.provider,
             state.world_context,
-            translation_cache=manager.translation_cache,
             glossary=state.glossary,
         )
     else:
         context_manager = None
 
     logger.info("Phase B: translating content...")
-    all_translations: Dict[str, str] = {}
+    all_translations: Translations = {}
 
     dialog_item_total = sum(len(extracted_map[fp][1].items) for fp in dialog_files)
     total_items_b = len(non_dialog_items) + dialog_item_total
@@ -688,7 +653,6 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
         non_dialog_translations = manager.translate_content(combined, item_progress=item_progress)
         if non_dialog_translations:
             all_translations.update(non_dialog_translations)
-        state._ncs_translations_by_item_id = manager.ncs_translations_by_item_id
         state._sync_manager_stats(manager)
 
     # B-2: Translate dialog files (contextual, concurrent across files)
@@ -709,7 +673,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
             with state._stats_lock:
                 state.stats["errors"].append(error_msg)
             logger.error(error_msg)
-        manager.failed_originals.update(context_manager.failed_originals)
+        manager.failed_items.update(context_manager.failed_items)
 
     logger.info("Phase B complete: %d translations collected", len(all_translations))
 
@@ -722,16 +686,18 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Dict[s
 def stage_inject(
     state: PipelineState,
     extracted_map: ExtractedMap,
-    all_translations: Dict[str, str],
+    all_translations: Translations,
 ) -> None:
     """Stage F (Phase C): byte-patch translations into files and .git areas."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     assert state.extract_dir is not None
-    extract_dir = state.extract_dir
     max_workers = max(1, getattr(state.config, "max_concurrent_requests", 4))
 
     logger.info("Phase C: injecting translations...")
+    trace_writer = translation_log_writer_for_config(
+        state.config.translation_log, state.config.translation_log_writer
+    )
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_file = {
             executor.submit(
@@ -753,6 +719,21 @@ def stage_inject(
                 )
             try:
                 inject_result = future.result()
+                write_trace(
+                    trace_writer,
+                    {
+                        "event": "injection_result",
+                        "file": file_path.name,
+                        "submitted": [
+                            {"item_id": item.item_id, "translated": all_translations[item.key]}
+                            for item in extracted_map[file_path][1].items
+                            if item.key in all_translations
+                        ],
+                        "modified": inject_result.modified if inject_result else False,
+                        "items_updated": inject_result.items_updated if inject_result else 0,
+                        "metadata": inject_result.metadata if inject_result else {},
+                    },
+                )
                 if inject_result is not None and (inject_result.metadata or {}).get(
                     "ncs_patch_failed"
                 ):
@@ -764,15 +745,13 @@ def stage_inject(
                     state.stats["files_processed"] += 1
             except Exception as e:
                 error_msg = f"Error injecting {file_path.name}: {e}"
+                write_trace(
+                    trace_writer,
+                    {"event": "injection_result", "file": file_path.name, "error": str(e)},
+                )
                 with state._stats_lock:
                     state.stats["errors"].append(error_msg)
                 logger.error(error_msg)
-
-    # Patch .git area instance files (strings come from Phase A GitExtractor)
-    if state.config.progress_callback:
-        state.config.progress_callback("building", 0, 2, "Patching area files...")
-    if all_translations:
-        state._patch_git_files(extract_dir, all_translations)
 
 
 def stage_repack(state: PipelineState) -> Path:

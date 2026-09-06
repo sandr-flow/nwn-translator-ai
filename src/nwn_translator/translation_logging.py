@@ -3,8 +3,10 @@
 import json
 import logging
 import threading
+from dataclasses import asdict, is_dataclass
+from uuid import uuid4
 from pathlib import Path
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Awaitable, Callable, Dict, Optional, Protocol, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -64,3 +66,60 @@ def translation_log_writer_for_config(
     if translation_log is not None:
         return FileTranslationLogWriter(translation_log)
     return NullTranslationLogWriter()
+
+
+_Result = TypeVar("_Result")
+
+
+def write_trace(writer: TranslationLogWriter, entry: Dict[str, Any]) -> None:
+    """A diagnostic writer failure must not change a translation or patch result."""
+    try:
+        writer.write(entry)
+    except Exception as exc:
+        logger.debug("Failed to write translation trace: %s", exc)
+
+
+def _trace_value(value: Any) -> Any:
+    if is_dataclass(value) and not isinstance(value, type):
+        return _trace_value(asdict(value))
+    if isinstance(value, dict):
+        return {str(key): _trace_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_trace_value(item) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+async def logged_model_call(
+    writer: TranslationLogWriter,
+    method: Callable[..., Awaitable[_Result]],
+    *,
+    trace_context: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> _Result:
+    """Trace a logical provider call and response, without provider credentials."""
+    request_id = uuid4().hex
+    write_trace(
+        writer,
+        {
+            "event": "model_request",
+            "request_id": request_id,
+            "method": getattr(method, "__name__", type(method).__name__),
+            "context": _trace_value(trace_context or {}),
+            "arguments": _trace_value(kwargs),
+        },
+    )
+    try:
+        result = await method(**kwargs)
+    except BaseException as exc:
+        write_trace(
+            writer,
+            {"event": "model_response", "request_id": request_id, "error": type(exc).__name__},
+        )
+        raise
+    write_trace(
+        writer,
+        {"event": "model_response", "request_id": request_id, "result": _trace_value(result)},
+    )
+    return result

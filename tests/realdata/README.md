@@ -21,8 +21,10 @@ archives.
 - Default location: `test_corpus/` (gitignored). Override with `NWN_TEST_CORPUS`.
 - If the corpus is absent, each test is collected as a single **skipped** case,
   so `pytest -m realdata` is green on a machine without the corpus.
-- Current corpus: 6 modules (Almraiven, A Dance with Rogues, LES LIONS DIFFAMES
-  [French/cp1252], Midnight, Prophet III, Torn Asunder part 1). StrRef-only
+- The corpus includes Almraiven, A Dance with Rogues, LES LIONS DIFFAMES
+  [French/cp1252], Midnight, Prophet III, Torn Asunder part 1, and Sandy Valley
+  Days v2. Sandy Valley covers repeated gendered names, game-title aliases,
+  and creature terminology across GFF and NCS resources. StrRef-only
   fields are left untouched (the engine resolves them from the player's
   `dialog.tlk`).
 
@@ -32,7 +34,7 @@ archives.
 |---|---|
 | `test_parse_all.py` | Every GFF/NCS resource parses without raising; NCS preamble `T` matches file size. |
 | `test_identity_roundtrip.py` | `extract → repack` (no translation) is byte-identical: same resources, type IDs, bytes. A second case repacks with overrides disabled, so type IDs come from the canonical table alone. |
-| `test_noop_patch.py` | Injecting `{original: original}` changes no bytes. |
+| `test_noop_patch.py` | Injecting `{(resource, item_id): original}` changes no bytes. |
 | `test_mock_translate.py` | Full pipeline with a deterministic marker provider; output reads back, GFF fields carry the marker, every `.ncs` reparses with a correct `T`. |
 | `test_encoding_diacritics.py` | For modules with a declared non-English language in the manifest (currently the French cp1252 module): extraction with the matching `source_encoding` yields ≥20 diacritic strings and zero Cyrillic mojibake; marker-patching those strings and re-extracting returns them byte-exactly. Skipped for English/undeclared modules. |
 | `test_rebuild_item_id.py` | Almraiven-only: after mock-translate, `rebuild_module` applies GFF edits addressed by `(file, item_id)` (not by original text) and neighbouring strings stay put. |
@@ -41,6 +43,9 @@ archives.
 `test_mock_translate.py` uses `MockTranslateProvider` (`_mock_provider.py`) with
 `use_context=False`, so the only network surface — `translate` — is replaced and
 the world-context / glossary / contextual-dialog subsystems stay out of the loop.
+A Sandy Valley case additionally uses `use_context=True` with every model method
+replaced. It checks provider context and distinct Commoner/Jade/Shadow results
+at their exact addresses in the rebuilt archive.
 
 See [NCS translation and validation](../../docs/ncs-translation.md) for the
 production selection contract and how to review live-model decisions.

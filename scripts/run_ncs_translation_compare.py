@@ -283,6 +283,7 @@ def _run_mode(
     status = "completed"
     error: Optional[str] = None
     pending_exc: Optional[BaseException] = None
+    translations = {}
     result_path = output_dir / f"{mode}_results.jsonl"
 
     try:
@@ -292,7 +293,7 @@ def _run_mode(
             len(content.items),
             (content.metadata or {}).get("files", 0),
         )
-        manager.translate_content(content)
+        translations = manager.translate_content(content)
     except BaseException as exc:
         status = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
         error = repr(exc)
@@ -309,8 +310,8 @@ def _run_mode(
                     "item_id": item_id,
                     "offset": meta.get("offset"),
                     "original": item.text,
-                    "translated": manager.ncs_translations_by_item_id.get(item_id),
-                    "translated_by_item_id": item_id in manager.ncs_translations_by_item_id,
+                    "translated": translations.get(item.key),
+                    "translated_by_item_id": item.key in translations,
                     "ncs_hint": meta.get("ncs_hint"),
                     "confidence": meta.get("confidence"),
                 }

@@ -4,6 +4,7 @@ This module handles extraction of creature names and descriptions from .utc GFF 
 """
 
 from pathlib import Path
+import json
 from typing import Any, Dict, List
 
 from ..nwn_constants import race_label, gender_label
@@ -34,6 +35,11 @@ class CreatureExtractor(BaseExtractor):
         race = race_label(parsed_data.get("Race", -1))
         gender = gender_label(parsed_data.get("Gender", -1))
         traits = ", ".join(filter(None, [race, gender]))
+        name_fields = {
+            field: self._extract_text_from_local_string(parsed_data.get(field, {})) or ""
+            for field in ("FirstName", "LastName")
+        }
+        name_context = " NPC name fields: " + json.dumps(name_fields, ensure_ascii=False)
 
         # Extract first name as separate item
         name_obj = parsed_data.get("FirstName", {})
@@ -47,11 +53,16 @@ class CreatureExtractor(BaseExtractor):
             items.append(
                 TranslatableItem(
                     text=first_name,
-                    context=name_ctx,
+                    context=name_ctx + name_context,
                     item_id=f"{tag}_first_name",
                     location=str(file_path),
                     metadata={
                         "type": "creature_first_name",
+                        "name_fields": name_fields,
+                        "name_field": "FirstName",
+                        "name_group": "root",
+                        "gender": gender,
+                        "record_offset": parsed_data.get("_record_offsets", {}).get("FirstName", 0),
                         "tag": tag,
                     },
                 )
@@ -69,11 +80,16 @@ class CreatureExtractor(BaseExtractor):
             items.append(
                 TranslatableItem(
                     text=last_name,
-                    context=ln_ctx,
+                    context=ln_ctx + name_context,
                     item_id=f"{tag}_last_name",
                     location=str(file_path),
                     metadata={
                         "type": "creature_last_name",
+                        "name_fields": name_fields,
+                        "name_field": "LastName",
+                        "name_group": "root",
+                        "gender": gender,
+                        "record_offset": parsed_data.get("_record_offsets", {}).get("LastName", 0),
                         "tag": tag,
                     },
                 )
@@ -98,6 +114,9 @@ class CreatureExtractor(BaseExtractor):
                     location=str(file_path),
                     metadata={
                         "type": "creature_description",
+                        "record_offset": parsed_data.get("_record_offsets", {}).get(
+                            "Description", 0
+                        ),
                         "tag": tag,
                     },
                 )

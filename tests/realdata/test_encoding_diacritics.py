@@ -96,13 +96,13 @@ def test_patch_round_trip_preserves_diacritics(corpus_module: Path, tmp_path: Pa
     expected_total = 0
     for path, parsed, extracted in _extract_all_items(extract_dir, encoding):
         diacritic_items = [
-            item.text
+            item
             for item in extracted.items
             if item.text and any(ch in _LATIN1_DIACRITICS for ch in item.text)
         ]
         if not diacritic_items:
             continue
-        translations = {text: text + marker for text in diacritic_items}
+        translations = {item.key: item.text + marker for item in diacritic_items}
         result = inject_translations_into_file(
             path,
             parsed,
@@ -113,7 +113,7 @@ def test_patch_round_trip_preserves_diacritics(corpus_module: Path, tmp_path: Pa
         )
         if result is None or not result.modified:
             continue
-        patched_expectations[path] = {text + marker for text in diacritic_items}
+        patched_expectations[path] = {item.text + marker for item in diacritic_items}
         expected_total += len(patched_expectations[path])
         if expected_total >= _MIN_DIACRITIC_SAMPLES:
             break

@@ -34,7 +34,7 @@ def test_noop_patch(corpus_module: Path, tmp_path: Path) -> None:
             continue
         parsed_data, extracted = loaded
 
-        identity = {item.text: item.text for item in extracted.items if item.text}
+        identity = {item.key: item.text for item in extracted.items if item.text}
         if not identity:
             continue
 

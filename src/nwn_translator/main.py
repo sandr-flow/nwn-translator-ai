@@ -15,6 +15,7 @@ rebuild path.
 
 import logging
 from pathlib import Path
+from .extractors.base import occurrence_key
 from typing import Any, Dict, Optional, Tuple
 
 from tqdm import tqdm  # noqa: F401  (kept: pre-existing import)
@@ -130,12 +131,8 @@ def rebuild_module(
     """Re-inject translations and reassemble a .mod without LLM calls.
 
     Translations are addressed by ``item_id``, not by original text: the
-    extracted files on disk already hold the first-pass translation, so a
-    text-keyed map would never match. For each file we re-extract its items
-    (each carries a stable ``item_id`` and its current on-disk text) and build a
-    ``{current_text: desired_text}`` map from *translations_by_item_id*, which
-    the existing text-based injectors then apply. Unedited items map to
-    themselves, so rebuild is idempotent.
+    extracted files on disk already hold the first-pass translation. Re-extraction
+    supplies the current field offsets; only explicitly addressed edits are patched.
 
     Args:
         extract_dir: Directory with previously extracted files.
@@ -153,20 +150,11 @@ def rebuild_module(
     # re-extraction and injector-side re-reads decode with the target code page.
     read_enc = text_enc
 
-    # NCS item_ids are globally unique (file stem + CONSTS index), so the per-file
-    # maps can be flattened for the bytecode injector's by-item_id channel.
-    ncs_by_item_id: Dict[str, str] = {}
-    for fname, per_file in translations_by_item_id.items():
-        if fname.lower().endswith(".ncs"):
-            ncs_by_item_id.update(per_file)
-
-    def _text_map(extracted: ExtractedContent, per_file: Dict[str, str]) -> Dict[str, str]:
-        """Map each item's current on-disk text to its desired translation."""
-        text_map: Dict[str, str] = {}
-        for item in extracted.items:
-            if item.item_id and item.item_id in per_file:
-                text_map[item.text] = per_file[item.item_id]
-        return text_map
+    translations = {
+        occurrence_key(filename, item_id): text
+        for filename, per_file in translations_by_item_id.items()
+        for item_id, text in per_file.items()
+    }
 
     # Inject translations into each translatable file
     for file_path in extract_dir.rglob("*"):
@@ -184,38 +172,15 @@ def rebuild_module(
         if loaded is None:
             continue
         parsed_data, extracted = loaded
-        per_file = translations_by_item_id.get(file_path.name, {})
         inject_translations_into_file(
             file_path,
             parsed_data,
             extracted,
-            _text_map(extracted, per_file),
-            ncs_translations_by_item_id=ncs_by_item_id,
+            translations,
             log_updates=False,
             target_lang=target_lang,
             source_encoding=read_enc,
         )
-
-    # Patch .git area instance files (separate injector, also text-addressed)
-    from .injectors.git_injector import patch_git_file
-
-    for git_path in extract_dir.glob("*.git"):
-        try:
-            loaded = load_parsed_and_extracted(
-                git_path, ".git", gff_cache, source_encoding=read_enc
-            )
-            if loaded is None:
-                continue
-            parsed_data, extracted = loaded
-            per_file = translations_by_item_id.get(git_path.name, {})
-            patch_git_file(
-                git_path,
-                _text_map(extracted, per_file),
-                parsed_data=parsed_data,
-                text_encoding=text_enc,
-            )
-        except Exception as e:
-            logger.warning("Failed to patch %s during rebuild: %s", git_path.name, e)
 
     # Reassemble .mod
     create_mod_from_directory(extract_dir, output_path, original_mod_path)

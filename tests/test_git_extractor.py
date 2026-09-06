@@ -175,9 +175,9 @@ def test_git_extractor_translates_non_trap_triggers():
     assert "tr_vico" not in texts
 
 
-def test_git_injector_collects_non_trap_trigger_strings():
+def test_git_fields_collects_non_trap_trigger_strings():
     """Injector string collector must mirror the extractor for non-trap triggers."""
-    from src.nwn_translator.injectors.git_injector import (
+    from src.nwn_translator.extractors.git_fields import (
         collect_git_strings_missing_from_translations,
     )
 
@@ -236,9 +236,9 @@ def test_git_extractor_collects_area_floor_items():
     assert "" not in by_text
 
 
-def test_git_injector_collects_area_floor_item_strings():
+def test_git_fields_collects_area_floor_item_strings():
     """Injector string collector must mirror the extractor for area floor items."""
-    from src.nwn_translator.injectors.git_injector import (
+    from src.nwn_translator.extractors.git_fields import (
         collect_git_strings_missing_from_translations,
     )
 
@@ -278,7 +278,7 @@ def test_git_extractor_collects_encounter_instance_names():
 
 def test_git_filter_skips_code_like_trigger_route_labels_in_extractor_and_collector():
     """Extractor and injector fallback must reject toolset route labels equally."""
-    from src.nwn_translator.injectors.git_injector import (
+    from src.nwn_translator.extractors.git_fields import (
         collect_git_strings_missing_from_translations,
     )
 
@@ -312,7 +312,7 @@ def test_git_filter_skips_code_like_trigger_route_labels_in_extractor_and_collec
 
 def test_git_filter_skips_code_like_item_names_in_extractor_and_collector():
     """Inventory and area-floor item labels that look like resrefs stay untranslated."""
-    from src.nwn_translator.injectors.git_injector import (
+    from src.nwn_translator.extractors.git_fields import (
         collect_git_strings_missing_from_translations,
     )
 
@@ -356,7 +356,7 @@ def test_git_filter_skips_code_like_item_names_in_extractor_and_collector():
 
 def test_git_filter_keeps_player_visible_trigger_and_item_strings():
     """Natural-language .git labels stay eligible for translation."""
-    from src.nwn_translator.injectors.git_injector import (
+    from src.nwn_translator.extractors.git_fields import (
         collect_git_strings_missing_from_translations,
     )
 
@@ -461,12 +461,12 @@ def test_git_extractor_extracts_emote_trigger_texts():
 
 def test_git_extractor_rescues_blueprint_creature_names(tmp_path, monkeypatch):
     """A camel-cased .git creature name matching a .utc blueprint name is kept."""
-    from src.nwn_translator.injectors import git_injector
+    from src.nwn_translator.extractors import git_fields
 
-    git_injector.clear_creature_name_cache()
+    git_fields.clear_creature_name_cache()
     (tmp_path / "npc_mcgee.utc").write_bytes(b"")
     monkeypatch.setattr(
-        git_injector,
+        git_fields,
         "read_gff",
         lambda path, **kwargs: {
             "FirstName": {"StrRef": -1, "Value": "McGee"},
@@ -488,7 +488,7 @@ def test_git_extractor_rescues_blueprint_creature_names(tmp_path, monkeypatch):
     }
     result = extractor.extract(tmp_path / "area.git", gff)
     texts = {item.text for item in result.items}
-    git_injector.clear_creature_name_cache()
+    git_fields.clear_creature_name_cache()
     assert "McGee" in texts
     assert "DeVir" in texts
     assert "WorkBench" not in texts
@@ -496,13 +496,13 @@ def test_git_extractor_rescues_blueprint_creature_names(tmp_path, monkeypatch):
 
 def test_git_extractor_blocks_camel_names_without_blueprints(tmp_path):
     """Without a matching .utc blueprint the camel-case rule still applies."""
-    from src.nwn_translator.injectors import git_injector
+    from src.nwn_translator.extractors import git_fields
 
-    git_injector.clear_creature_name_cache()
+    git_fields.clear_creature_name_cache()
     extractor = GitExtractor()
     gff = {"Creature List": [{"FirstName": {"StrRef": -1, "Value": "McGee"}}]}
     result = extractor.extract(tmp_path / "area.git", gff)
-    git_injector.clear_creature_name_cache()
+    git_fields.clear_creature_name_cache()
     assert {item.text for item in result.items} == set()
 
 
@@ -512,29 +512,29 @@ def test_creature_name_oracle_survives_blueprint_patching(tmp_path, monkeypatch)
     By injection time the .utc files on disk may already carry translated
     names; rebuilding the oracle then would break original-text matching.
     """
-    from src.nwn_translator.injectors import git_injector
+    from src.nwn_translator.extractors import git_fields
 
-    git_injector.clear_creature_name_cache()
+    git_fields.clear_creature_name_cache()
     (tmp_path / "npc.utc").write_bytes(b"")
     monkeypatch.setattr(
-        git_injector,
+        git_fields,
         "read_gff",
         lambda path, **kwargs: {"FirstName": {"StrRef": -1, "Value": "McGee"}},
     )
-    assert "mcgee" in git_injector.get_module_creature_names(tmp_path)
+    assert "mcgee" in git_fields.get_module_creature_names(tmp_path)
 
     monkeypatch.setattr(
-        git_injector,
+        git_fields,
         "read_gff",
         lambda path, **kwargs: {"FirstName": {"StrRef": -1, "Value": "МакГи"}},
     )
-    assert "mcgee" in git_injector.get_module_creature_names(tmp_path)
-    git_injector.clear_creature_name_cache()
+    assert "mcgee" in git_fields.get_module_creature_names(tmp_path)
+    git_fields.clear_creature_name_cache()
 
 
 def test_git_collector_rescues_blueprint_names_symmetrically():
     """The fallback string collector honors the same oracle as the extractor."""
-    from src.nwn_translator.injectors.git_injector import (
+    from src.nwn_translator.extractors.git_fields import (
         collect_git_strings_missing_from_translations,
     )
 

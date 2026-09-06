@@ -27,6 +27,8 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
+import pytest
+
 from nwn_translator.config import TRANSLATABLE_TYPES, TranslationConfig
 from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
 from nwn_translator.pipeline.stages import (
@@ -38,7 +40,7 @@ from nwn_translator.translators.token_handler import TokenHandler
 from nwn_translator.translators.translation_manager import _is_empty_after_sanitize
 
 from ._corpus import extract_module
-from ._mock_provider import MARKER, MockTranslateProvider
+from ._mock_provider import MARKER, MockContextProvider, MockTranslateProvider
 
 _NCS_EE_SIZE_OPCODE = 0x42
 
@@ -50,17 +52,28 @@ def _declared_ncs_size(raw: bytes) -> int | None:
 
 
 def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
+    _mock_roundtrip(corpus_module, tmp_path, use_context=False)
+
+
+def test_sandy_context_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
+    if corpus_module.name != "Sandy Valley Days v2.mod":
+        pytest.skip("Sandy Valley context regression")
+    _mock_roundtrip(corpus_module, tmp_path, use_context=True)
+
+
+def _mock_roundtrip(corpus_module: Path, tmp_path: Path, *, use_context: bool) -> None:
     out_path = tmp_path / "translated.mod"
     config = TranslationConfig(
         api_key="mock-key",
         input_file=corpus_module,
         output_file=out_path,
         target_lang="english",  # cp1252: lossless for english + french corpus
-        use_context=False,
+        use_context=use_context,
         temp_dir=tmp_path,
         quiet=True,
     )
-    state = PipelineState(config=config, provider=MockTranslateProvider())
+    provider = MockContextProvider() if use_context else MockTranslateProvider()
+    state = PipelineState(config=config, provider=provider)
 
     result_path = run_pipeline(state)
     assert result_path.exists(), f"{corpus_module.name}: no output produced"
@@ -125,3 +138,45 @@ def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
         )
 
     assert not problems, f"{corpus_module.name}: mock-translate round-trip:\n" + "\n".join(problems)
+
+    if use_context:
+        original_dir = extract_module(corpus_module, tmp_path / "original")
+        verified = set()
+        for source in sorted(original_dir.glob("*")):
+            if source.suffix not in {".utc", ".git"}:
+                continue
+            loaded = load_parsed_and_extracted(source, source.suffix, None)
+            if loaded is None:
+                continue
+            relevant = [
+                item
+                for item in loaded[1].items
+                if item.text in {"Commoner", "Jade", "Shadow", "Shadow Lord"}
+            ]
+            if not relevant:
+                continue
+            output = reextract_dir / source.name
+            after = load_parsed_and_extracted(output, output.suffix, None)
+            actual = {item.key: item.text for item in after[1].items}
+            for item in relevant:
+                context = item.context or ""
+                if item.text == "Commoner":
+                    kind = "female title" if "Female" in context else "male title"
+                elif item.text == "Jade" and "Female" in context:
+                    kind = "female Jade"
+                elif item.text in {"Shadow", "Shadow Lord"}:
+                    kind = {"Shadow": "shade", "Shadow Lord": "lord"}[item.text]
+                else:
+                    continue
+                assert actual[item.key] == MARKER + kind, item.key
+                verified.add(kind)
+        assert verified == {"female title", "male title", "female Jade", "shade", "lord"}
+        assert any(
+            "constant order, not proven execution order" in (request["context"] or "")
+            for request in provider.requests
+        ), "Approved NCS speech needs local context"
+        assert any(
+            "FirstName" in (request["context"] or "") and "LastName" in request["context"]
+            for request in provider.requests
+            if request["text"] == "Jade"
+        )

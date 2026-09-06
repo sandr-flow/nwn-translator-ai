@@ -13,7 +13,7 @@ import pytest
 
 from src.nwn_translator.extractors.base import extract_local_string
 from src.nwn_translator.file_handlers.gff_handler import read_gff
-from src.nwn_translator.injectors.git_injector import (
+from src.nwn_translator.extractors.git_fields import (
     INSTANCE_LISTS,
     INSTANCE_NESTED_ITEM_LISTS,
     ITEM_INVENTORY_FIELDS,

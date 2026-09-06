@@ -139,12 +139,15 @@ def test_glossary_drops_compound_entries_without_significant_match():
     assert "Rosetyl Street" not in block
 
 
-def test_glossary_keeps_compound_entry_when_significant_component_matches():
+def test_glossary_keeps_compound_entry_through_explicit_alias():
     entries = {
         "Almraiven - Dock Ward - Rosetyl Street": "Алмрайвен — Док — Розетил",
         "Almraiven - Emerald Ward - Loom Avenue": "Алмрайвен — Изумруд — Ткацкая",
     }
-    glossary = Glossary(entries=entries)
+    entries["Rosetyl Street"] = "улица Розетил"
+    glossary = Glossary(
+        entries=entries, aliases={"Rosetyl Street": "Almraiven - Dock Ward - Rosetyl Street"}
+    )
 
     block = glossary.to_prompt_block(
         texts=["The Rosetyl Street merchants gathered at the Dock Ward gates."]

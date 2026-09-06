@@ -185,11 +185,11 @@ class TestGlossaryPersonalPolicy:
         assert "Female" in line or "female" in line.lower()
         assert "FirstName" in line
 
-    def test_seed_character_name_parts(self) -> None:
-        entries = {"Dawn Ioza": "Доун Иоза"}
-        GlossaryBuilder._seed_character_name_parts(entries, {"Dawn Ioza": "character"})
-        assert entries["Dawn"] == "Доун"
-        assert entries["Ioza"] == "Иоза"
+    def test_name_fields_are_context_not_inferred_translation_parts(self) -> None:
+        ctx = WorldContext()
+        ctx.npcs["jade"] = NPCInfo("jade", "Jade", "Falcon", "", "Elf", "Female", "dlg")
+        line = GlossaryBuilder._format_glossary_name_line("Jade Falcon", "character", ctx)
+        assert "Jade" in line and "Falcon" in line and "Female" in line
 
     def test_nickname_line_asks_for_meaning(self) -> None:
         line = GlossaryBuilder._format_glossary_name_line("sword-one", "nickname")

@@ -1,7 +1,7 @@
 """Glossary of canonical translations for proper names (NPCs, locations, items, quests).
 
 Built once per translation run from :class:`~nwn_translator.context.world_context.WorldContext`
-and injected into prompts plus the session translation cache for consistency.
+and included in translation prompts as canonical forms with explicit aliases.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from .config import (
     ProgressCallback,
 )
 from .telemetry import llm_phase
-from .translators.token_handler import sanitize_text
 
 if TYPE_CHECKING:
     from .ai_providers.openrouter_provider import OpenRouterProvider
@@ -33,7 +32,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-GLOSSARY_MAX_ENTRIES = 40
 GLOSSARY_MAX_CHARS = 6000
 
 # Max names per single LLM request to stay within context/token limits.
@@ -56,138 +54,52 @@ class Glossary:
 
     entries: Dict[str, str] = field(default_factory=dict)
 
-    def to_prompt_block(self, texts: Optional[Iterable[str]] = None) -> str:
-        """Format glossary for system prompt injection.
+    aliases: Dict[str, str] = field(default_factory=dict)
 
-        When *texts* is provided, only entries whose English name has at
-        least one token matching the source corpus (exact / prefix>=4 /
-        Damerau-Levenshtein<=1 on tokens>=6 chars) are included; entries
-        sharing the same translated value are deduplicated to one. Pass
-        ``texts=None`` for the full unfiltered block.
-        """
-        if not self.entries:
+    def matching_entries(self, texts: Iterable[str]) -> Dict[str, str]:
+        """Match complete source forms; only explicit aliases share an entity."""
+        corpus = "\n".join(str(text) for text in texts if text)
+        matches = {
+            key
+            for key in self.entries
+            if re.search(r"(?<!\w)" + re.escape(key) + r"(?!\w)", corpus, re.IGNORECASE)
+        }
+        roots = {self.aliases.get(key, key) for key in matches}
+        return {
+            key: value
+            for key, value in self.entries.items()
+            if key in matches or self.aliases.get(key, key) in roots
+        }
+
+    def to_prompt_block(self, texts: Optional[Iterable[str]] = None) -> str:
+        """Render canonical forms without silently dropping aliases or terms."""
+        entries = self.entries if texts is None else self.matching_entries(texts)
+        if not entries:
             return ""
-        if texts is None:
-            entries = dict(self.entries)
-            text_list = None
-        else:
-            text_list = [str(text) for text in texts if text]
-            entries = self._filter_entries_by_texts(text_list)
-            if not entries:
-                return ""
         lines = [
-            "GLOSSARY (canonical proper names — use these consistently in every line; "
-            "decline or conjugate as required by grammar in the target language, "
-            "but only if the name is declinable; each entry is a DISTINCT entity — "
-            "never substitute one name for another):",
+            "GLOSSARY (distinct entities; use these canonical forms consistently. "
+            "Inflect as required by the current context. An alias may have its own "
+            "abbreviated or deliberately distorted form; do not expand it automatically):"
         ]
-        seen_translations: Set[str] = set()
-        for en in self._ordered_budgeted_keys(entries, text_list):
-            tr = entries[en]
-            tr_key = (tr or "").strip().casefold()
-            if tr_key and tr_key in seen_translations:
-                continue
-            if tr_key:
-                seen_translations.add(tr_key)
-            lines.append(f'  * "{en}" → {tr}')
+        for source, target in sorted(entries.items()):
+            alias = self.aliases.get(source)
+            relation = f" (alias of {alias})" if alias else ""
+            lines.append(f'  * "{source}" → {target}{relation}')
         return "\n".join(lines)
 
-    def _ordered_budgeted_keys(
-        self,
-        entries: Dict[str, str],
-        texts: Optional[Iterable[str]],
-    ) -> List[str]:
-        """Return deterministic keys ordered by relevance and prompt budget."""
-        if texts is None:
-            return sorted(entries.keys(), key=str.lower)
-        corpus = "\n".join(str(t) for t in texts or [] if t).casefold()
 
-        def score(key: str) -> tuple[int, str]:
-            key_folded = key.casefold()
-            exact = 1 if key_folded and key_folded in corpus else 0
-            token_count = len(key.split())
-            return (exact * 1000 + token_count, key.lower())
+def terminology_block(texts: Iterable[str], target_lang: str, glossary: Optional[Glossary]) -> str:
+    """Resolve project terminology once, before rendering any translation prompt."""
+    from .race_dictionary import RACE_TERMS
 
-        ordered = sorted(entries.keys(), key=lambda key: (-score(key)[0], key.lower()))
-        selected: List[str] = []
-        used_chars = 0
-        for key in ordered:
-            line_chars = len(key) + len(entries.get(key, "")) + 10
-            if selected and len(selected) >= GLOSSARY_MAX_ENTRIES:
-                break
-            if selected and used_chars + line_chars > GLOSSARY_MAX_CHARS:
-                break
-            selected.append(key)
-            used_chars += line_chars
-        return selected
-
-    def _filter_entries_by_texts(self, texts: Iterable[str]) -> Dict[str, str]:
-        """Return glossary entries whose keys are relevant to *texts*."""
-        from .context.relevance import (
-            SourceTokenIndex,
-            hierarchical_entry_passes,
-            is_relevant,
-            tokenize_corpus,
-        )
-
-        source_tokens = tokenize_corpus(texts)
-        if not source_tokens:
-            return {}
-        source_index = SourceTokenIndex(source_tokens)
-        source_joined = "\n".join(str(t) for t in texts if t).casefold()
-        common, generic_keys = self._entry_invariants()
-
-        out: Dict[str, str] = {}
-        for en, tr in self.entries.items():
-            key = (en or "").strip()
-            if not key:
-                continue
-            if en in generic_keys:
-                if key.casefold() not in source_joined:
-                    continue
-            elif not is_relevant(key, source_index):
-                continue
-            if not hierarchical_entry_passes(key, source_joined, source_tokens, common):
-                continue
-            out[en] = tr
-        return out
-
-    def _entry_invariants(self) -> tuple:
-        """Cached per-entry facts that only depend on the entry keys.
-
-        ``to_prompt_block`` runs once per translation batch/item; recomputing
-        hierarchy components and generic-label classification for every entry
-        on every call dominated CPU time on large modules.
-        """
-        from .context.relevance import common_hierarchy_components
-        from .context.string_filters import is_generic_entity_label
-
-        keys = tuple(self.entries.keys())
-        cached = self.__dict__.get("_entry_invariants_cache")
-        if cached is not None and cached[0] == keys:
-            return cached[1], cached[2]
-        common = common_hierarchy_components(keys)
-        generic_keys = {
-            en for en in keys if (en or "").strip() and is_generic_entity_label((en or "").strip())
-        }
-        self.__dict__["_entry_invariants_cache"] = (keys, common, generic_keys)
-        return common, generic_keys
-
-    def seed_cache(self, cache: Any, *, preserve_tokens: bool) -> None:
-        """Populate session translation cache so exact-match strings skip the API.
-
-        Keys must match :func:`~nwn_translator.translators.token_handler.sanitize_text`
-        output, same as :class:`~nwn_translator.translators.translation_manager.TranslationManager`.
-        """
-        for original_en, translated in self.entries.items():
-            if not original_en or not str(original_en).strip():
-                continue
-            sanitized, _ = sanitize_text(
-                str(original_en).strip(),
-                preserve_tokens=preserve_tokens,
-            )
-            # Seed as exact-match only: glossary terms must not seed prefix matches.
-            cache.set_exact(sanitized, translated)
+    static = RACE_TERMS.get(target_lang.lower(), {})
+    entries = {
+        key: value
+        for key, value in (glossary.entries if glossary else {}).items()
+        if key.casefold() not in static
+    }
+    entries.update(static)
+    return Glossary(entries, glossary.aliases if glossary else {}).to_prompt_block(texts)
 
 
 class GlossaryBuilder:
@@ -232,12 +144,21 @@ class GlossaryBuilder:
         if not seen:
             return Glossary()
 
-        sorted_names = sorted(seen.keys(), key=str.lower)
-
-        # Split into batches
+        registry = getattr(world_context, "candidates", None)
+        aliases = registry.resolved_aliases() if registry else {}
+        if registry:
+            for candidate in registry.values():
+                if candidate.alias_of and candidate.name not in aliases:
+                    seen.pop(candidate.name, None)
+        sorted_names = sorted(seen, key=str.lower)
+        groups: Dict[str, List[str]] = {}
+        for name in sorted_names:
+            groups.setdefault(aliases.get(name, name), []).append(name)
         batches: List[List[str]] = []
-        for i in range(0, len(sorted_names), _BATCH_SIZE):
-            batches.append(sorted_names[i : i + _BATCH_SIZE])
+        for group in groups.values():
+            if not batches or len(batches[-1]) + len(group) > _BATCH_SIZE:
+                batches.append([])
+            batches[-1].extend(group)
 
         logger.info(
             "Building glossary: %d names in %d batch(es)…",
@@ -291,8 +212,6 @@ class GlossaryBuilder:
             )
             return Glossary()
 
-        GlossaryBuilder._seed_character_name_parts(all_entries, seen)
-
         missing = len(sorted_names) - len(all_entries)
         if missing > 0:
             logger.warning(
@@ -305,7 +224,7 @@ class GlossaryBuilder:
         else:
             logger.info("Glossary built with %d entries", len(all_entries))
 
-        return Glossary(entries=all_entries)
+        return Glossary(entries=all_entries, aliases=aliases)
 
     async def _build_all_batches_async(
         self,
@@ -363,7 +282,6 @@ class GlossaryBuilder:
 
         all_batch_entries: Dict[str, str] = {}
         remaining_keys: Set[str] = set(seen.keys())
-        echoed_values: Dict[str, str] = {}
         last_raw = ""
 
         logger.info(
@@ -404,6 +322,10 @@ class GlossaryBuilder:
                 "Keys in your JSON must be the English name only, "
                 "without the parenthesized category hint:\n\n" + "\n".join(names_lines)
             )
+            if all_batch_entries:
+                user_prompt += "\n\nAlready accepted forms in this family/batch: " + json.dumps(
+                    all_batch_entries, ensure_ascii=False
+                )
             keys_for_schema = sorted(attempt_seen.keys(), key=str.lower)
 
             t0 = time.monotonic()
@@ -439,23 +361,6 @@ class GlossaryBuilder:
 
             entries = self._parse_glossary_json(raw, remaining_keys)
             if entries:
-                # Detect echo-backs: model returned the English name unchanged.
-                # Retry them as likely-untranslated, but remember the values:
-                # a name that only ever comes back unchanged is accepted as-is
-                # after the attempts run out (legitimate for proper nouns and
-                # the norm for Latin-script target languages).
-                echobacks = {k for k, v in entries.items() if v == k}
-                if echobacks:
-                    logger.warning(
-                        "Glossary %s attempt %d: %d echo-back(s) (value == key), will retry: %s",
-                        batch_label,
-                        attempt,
-                        len(echobacks),
-                        ", ".join(sorted(echobacks)[:10]),
-                    )
-                    for k in echobacks:
-                        echoed_values[k] = entries.pop(k)
-
                 all_batch_entries.update(entries)
                 remaining_keys -= set(entries.keys())
                 coverage = len(all_batch_entries) / len(seen) * 100
@@ -491,17 +396,6 @@ class GlossaryBuilder:
                         f"Glossary {batch_label}: attempt {attempt} failed, retrying…",
                     )
 
-        rescued = {k: v for k, v in echoed_values.items() if k in remaining_keys}
-        if rescued:
-            all_batch_entries.update(rescued)
-            remaining_keys -= set(rescued)
-            logger.info(
-                "Glossary %s: accepting %d name(s) the model kept unchanged after retries: %s",
-                batch_label,
-                len(rescued),
-                ", ".join(sorted(rescued)[:10]),
-            )
-
         if remaining_keys:
             logger.warning(
                 "Glossary %s: %d/%d keys still missing after all attempts: %s",
@@ -532,63 +426,21 @@ class GlossaryBuilder:
         cat = (category or "").strip().lower()
         if cat == "nickname":
             hints.append("vocative epithet; translate meaning, not a name")
-        gender = None
-        if world_context is not None and hasattr(world_context, "gender_for_character_name"):
-            gender = world_context.gender_for_character_name(name)
-        if gender and cat in {"character", "nickname"}:
-            gender_l = gender.strip().lower()
-            words = name.split()
-            if len(words) == 1:
-                hints.append(f"{gender_l} given name")
-            else:
-                hints.append(gender_l)
-            first_only = False
-            full_match = False
+        if world_context is not None:
+            registry = getattr(world_context, "candidates", None)
+            for candidate in registry.values() if registry else []:
+                if candidate.name == name:
+                    if candidate.alias_of:
+                        hints.append(
+                            f"alias of {candidate.alias_of}; preserve abbreviation or wordplay"
+                        )
+                    hints.extend(candidate.contexts)
             for npc in getattr(world_context, "npcs", {}).values():
-                first = (getattr(npc, "first_name", "") or "").strip().casefold()
-                display = getattr(npc, "display_name", "") or ""
-                needle = name.strip().casefold()
-                if needle and needle == first:
-                    first_only = True
-                if needle and needle == display.casefold():
-                    full_match = True
-            if first_only and not full_match:
-                hints.append("FirstName")
-            elif full_match:
-                hints.append("FirstName/LastName")
+                if name in {npc.first_name, npc.last_name, npc.display_name}:
+                    hints.append(
+                        f"NPC fields: FirstName={npc.first_name!r}, LastName={npc.last_name!r}, gender={npc.gender}"
+                    )
         return f"- {name} ({', '.join(hints)})"
-
-    @staticmethod
-    def _seed_character_name_parts(
-        entries: Dict[str, str],
-        categories: Dict[str, str],
-    ) -> None:
-        """Add FirstName/LastName exact keys from multi-word character entries.
-
-        UTC FirstName fields are translated separately; without these seeds a
-        glossary hit on ``Dawn Ioza`` would not cover bare ``Dawn``.
-        """
-        extras: Dict[str, str] = {}
-        for name, translated in list(entries.items()):
-            cat = (categories.get(name) or "").strip().lower()
-            if cat not in {"character", "nickname"}:
-                continue
-            en_parts = str(name).split()
-            tr_parts = str(translated).split()
-            if len(en_parts) < 2 or len(en_parts) != len(tr_parts):
-                continue
-            for en_part, tr_part in zip(en_parts, tr_parts):
-                if not en_part or not tr_part:
-                    continue
-                if en_part in entries or en_part in extras:
-                    continue
-                extras[en_part] = tr_part
-        if extras:
-            logger.info(
-                "Glossary: seeded %d name-part exact entries from multi-word characters",
-                len(extras),
-            )
-            entries.update(extras)
 
     @staticmethod
     async def _call_llm_async(

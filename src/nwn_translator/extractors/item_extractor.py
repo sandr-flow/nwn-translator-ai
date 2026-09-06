@@ -58,6 +58,9 @@ class ItemExtractor(BaseExtractor):
                     location=str(file_path),
                     metadata={
                         "type": "item_name",
+                        "record_offset": parsed_data.get("_record_offsets", {}).get(
+                            "LocalizedName", 0
+                        ),
                         "tag": tag,
                     },
                 )
@@ -79,13 +82,16 @@ class ItemExtractor(BaseExtractor):
                     location=str(file_path),
                     metadata={
                         "type": "item_description",
+                        "record_offset": parsed_data.get("_record_offsets", {}).get(
+                            "Description", 0
+                        ),
                         "tag": tag,
                     },
                 )
             )
 
         # Create item for identified description
-        if identified_description and identified_description != description:
+        if identified_description:
             if base_item and name:
                 idesc_ctx = f"Identified description of {base_item} '{name}'"
             elif name:
@@ -100,6 +106,9 @@ class ItemExtractor(BaseExtractor):
                     location=str(file_path),
                     metadata={
                         "type": "item_identified_description",
+                        "record_offset": parsed_data.get("_record_offsets", {}).get(
+                            "DescIdentified", 0
+                        ),
                         "tag": tag,
                     },
                 )

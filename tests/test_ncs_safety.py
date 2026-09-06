@@ -60,16 +60,12 @@ def test_complete_path_patches_only_approved_occurrence(tmp_path, verdict):
 
     provider.classify_ncs_translate_gate_batch_async.side_effect = gate
     manager = TranslationManager(_make_config(target_lang="english"), provider)
-    manager.translate_content(content)
+    translations = manager.translate_content(content)
     result = NcsInjector().inject(
         path,
         {},
-        {},
-        {
-            "ncs_extracted_items": content.items,
-            "ncs_translations_by_item_id": manager.ncs_translations_by_item_id,
-            "module_text_encoding": "cp1252",
-        },
+        translations,
+        {"extracted_items": content.items, "module_text_encoding": "cp1252"},
     )
     assert result.modified is (verdict is True)
     values = [i.string_value for i in parse_ncs_bytes(path.read_bytes()).string_constants]
@@ -87,8 +83,8 @@ def test_disabled_gate_rejects_unresolved_sentence(tmp_path):
     )
     provider = _make_provider({text: "Must not be used."})
     manager = TranslationManager(_make_config(skip_ncs_llm_gate=True), provider)
-    manager.translate_content(content)
-    assert manager.ncs_translations_by_item_id == {}
+    translations = manager.translate_content(content)
+    assert translations == {}
     provider.translate_async.assert_not_called()
     provider.translate_batch_async.assert_not_called()
 

@@ -18,6 +18,18 @@ from src.nwn_translator.translators.translation_manager import (
 )
 
 
+def _expected(content, answers):
+    return {item.key: answers[item.text] for item in content.items if item.text in answers}
+
+
+def _expected_ids(content, answers):
+    return {item.key: answers[item.item_id] for item in content.items if item.item_id in answers}
+
+
+def _key(content, text):
+    return next(item.key for item in content.items if item.text == text)
+
+
 class TestEmptyAfterSanitize:
     """The passthrough gate must not swallow real words between placeholders."""
 
@@ -200,9 +212,9 @@ class TestTranslateContent:
         result = manager.translate_content(content)
 
         assert len(result) == 3
-        assert result["Hello!"] == "Привет!"
-        assert result["Who are you?"] == "Кто ты?"
-        assert result["Just passing."] == "Просто мимо."
+        assert result[_key(content, "Hello!")] == "Привет!"
+        assert result[_key(content, "Who are you?")] == "Кто ты?"
+        assert result[_key(content, "Just passing.")] == "Просто мимо."
         # Untyped short strings ride the medium batch tier in one call.
         assert provider.translate_batch_async.call_count == 1
         provider.translate_async.assert_not_called()
@@ -231,7 +243,7 @@ class TestTranslateContent:
         provider = _make_provider({})
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
-        assert result == {}
+        assert result == _expected(content, {})
         provider.translate.assert_not_called()
         provider.translate_async.assert_not_called()
 
@@ -255,7 +267,7 @@ class TestTranslateContent:
         result = manager.translate_content(content)
 
         assert len(result) == 2
-        assert result["Sword of Fire"] == "Огненный меч"
+        assert result[_key(content, "Sword of Fire")] == "Огненный меч"
 
 
 class TestNcsFailClosed:
@@ -275,7 +287,7 @@ class TestNcsFailClosed:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
         provider.classify_ncs_translate_gate_batch_async.assert_called_once()
-        assert result == ({"Good": "Translated word"} if approved else {})
+        assert result == (_expected(content, {"Good": "Translated word"} if approved else {}))
         if not approved:
             provider.translate_async.assert_not_called()
             provider.translate_batch_async.assert_not_called()
@@ -305,8 +317,8 @@ class TestNcsFailClosed:
 
         result = manager.translate_content(content)
 
-        assert result == {"Look out, behind you!": "RU: Look out, behind you!"}
-        assert manager.ncs_translations_by_item_id == {item.item_id: "RU: Look out, behind you!"}
+        assert result == _expected(content, {"Look out, behind you!": "RU: Look out, behind you!"})
+        assert result == _expected_ids(content, {item.item_id: "RU: Look out, behind you!"})
         stats = manager.get_statistics()["ncs_diagnostics"]
         assert stats["approved"] == 1
         assert stats["translated"] == 1
@@ -338,9 +350,9 @@ class TestNcsFailClosed:
 
         result = manager.translate_content(content)
 
-        assert result == {}
+        assert result == _expected(content, {})
         provider.translate_async.assert_not_called()
-        assert manager.ncs_translations_by_item_id == {}
+        assert result == _expected(content, {})
         stats = manager.get_statistics()["ncs_diagnostics"]
         assert stats["total"] == 1
         assert stats["extracted"] == 1
@@ -377,9 +389,11 @@ class TestNcsFailClosed:
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_reject)
         manager = TranslationManager(_make_config(translation_log=log_path), provider)
 
-        manager.translate_content(content)
+        result = manager.translate_content(content)
 
         records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+        assert records[0]["request_id"] == records[1]["request_id"]
+        records = [record for record in records if record.get("event") == "ncs_diagnostic"]
         assert records == [
             {
                 "event": "ncs_diagnostic",
@@ -411,7 +425,7 @@ class TestNcsFailClosed:
 
         result = manager.translate_content(content)
 
-        assert result == {}
+        assert result == _expected(content, {})
         provider.translate_async.assert_not_called()
         stats = manager.get_statistics()["ncs_diagnostics"]
         assert stats["skipped_hard_veto"] == 1
@@ -419,7 +433,7 @@ class TestNcsFailClosed:
         assert stats["samples"][0]["reason"] == "code_identifier"
 
     def test_timeout_on_approved_ncs_item_gets_one_minimal_retry(self):
-        text = "The seal is breaking beyond the old ward stones and the eastern gate! " * 2
+        text = "The seal is breaking beyond the old ward stones and the eastern gate! " * 20
         item = _make_ncs_item(text)
         content = ExtractedContent(
             content_type="ncs_script",
@@ -464,18 +478,18 @@ class TestNcsFailClosed:
 
         result = manager.translate_content(content)
 
-        assert result == {text: "RU: The seal is breaking!"}
+        assert result == _expected(content, {text: "RU: The seal is breaking!"})
         assert provider.translate_async.call_count == 2
         assert "NCS timeout fallback" in calls[1]["context"]
         assert calls[1]["glossary_block"] is None
-        assert manager.ncs_translations_by_item_id == {item.item_id: "RU: The seal is breaking!"}
+        assert result == _expected_ids(content, {item.item_id: "RU: The seal is breaking!"})
         stats = manager.get_statistics()["ncs_diagnostics"]
         assert stats["timeout"] == 1
         assert stats["retry_recovered"] == 1
         assert stats["translated"] == 1
 
     def test_failed_ncs_timeout_retry_records_diagnostics_without_patchable_item(self):
-        text = "The portal resists you while the tower wards grind against the seal! " * 2
+        text = "The portal resists you while the tower wards grind against the seal! " * 20
         item = _make_ncs_item(text)
         content = ExtractedContent(
             content_type="ncs_script",
@@ -510,8 +524,8 @@ class TestNcsFailClosed:
 
         result = manager.translate_content(content)
 
-        assert result == {}
-        assert manager.ncs_translations_by_item_id == {}
+        assert result == _expected(content, {})
+        assert result == _expected(content, {})
         assert provider.translate_async.call_count == 2
         stats = manager.get_statistics()["ncs_diagnostics"]
         assert stats["timeout"] == 1
@@ -556,14 +570,15 @@ class TestNcsBatchTranslation:
 
         result = manager.translate_content(content)
 
-        assert result == {"The gate opens.": "Ворота открываются."}
-        assert manager.ncs_translations_by_item_id == {"script:off_10": "Ворота открываются."}
+        assert result == _expected(content, {"The gate opens.": "Ворота открываются."})
+        assert result == _expected_ids(content, {"script:off_10": "Ворота открываются."})
         provider.translate_batch_async.assert_called_once()
         provider.translate_async.assert_not_called()
         sent_items = provider.translate_batch_async.call_args.kwargs["items"]
         assert [item.original for item in sent_items] == ["The gate opens."]
 
-    def test_ncs_dynamic_batch_sizes_and_single_fallback_by_length(self):
+    def test_ncs_dynamic_batch_sizes_and_single_fallback_by_length(self, monkeypatch):
+        monkeypatch.setattr(TranslationManager, "_NCS_BATCH_CHAR_BUDGET", 100000)
         short_items = [
             _make_ncs_item(f"Short player line {i}.", item_id=f"script:short_{i}", offset=i)
             for i in range(21)
@@ -577,7 +592,7 @@ class TestNcsBatchTranslation:
             for i in range(11)
         ]
         long_text = (
-            "This player-facing script message is long enough to stay outside NCS batch mode. " * 2
+            "This player-facing script message is long enough to stay outside NCS batch mode. " * 20
         )
         multiline_text = "First player line.\nSecond player line."
         long_item = _make_ncs_item(long_text, item_id="script:long", offset=300)
@@ -628,18 +643,60 @@ class TestNcsBatchTranslation:
 
         result = manager.translate_content(content)
 
-        assert result[short_items[0].text] == f"TR:{short_items[0].text}"
-        assert result[long_text] == f"TR:{long_text}"
+        assert result[_key(content, short_items[0].text)] == f"TR:{short_items[0].text}"
+        assert result[_key(content, long_text)] == f"TR:{long_text}"
         batch_sizes = [
             len(call.kwargs["items"]) for call in provider.translate_batch_async.call_args_list
         ]
-        # 21 short (<50) fit one batch of 30; 11 medium (50-99) fit one of 15.
-        assert batch_sizes == [21, 11]
-        assert provider.translate_async.call_count == 2
+        assert batch_sizes == [21, 12]
+        assert result[_key(content, multiline_text)] == f"TR:{multiline_text}"
+        assert provider.translate_async.call_count == 1
         assert {call.kwargs["text"] for call in provider.translate_async.call_args_list} == {
             long_text,
-            multiline_text,
         }
+
+    @pytest.mark.parametrize("length,count,expected_sizes", [(30, 65, [30, 30, 5]), (1000, 8, [8])])
+    def test_ncs_batches_across_single_message_scripts(self, length, count, expected_sizes):
+        items = []
+        for index in range(count):
+            text = f"Player message {index}: ".ljust(length, ".")
+            item = _make_ncs_item(text, item_id="line:0", offset=0)
+            item.location = f"script_{index}.ncs"
+            items.append(item)
+        content = ExtractedContent("combined", items, Path("module"))
+        provider = _make_provider({item.text: f"TR:{item.text}" for item in items})
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(content)
+
+        assert result == {item.key: f"TR:{item.text}" for item in items}
+        assert [
+            len(call.kwargs["items"]) for call in provider.translate_batch_async.call_args_list
+        ] == expected_sizes
+        provider.translate_async.assert_not_called()
+
+    def test_ncs_batch_budget_counts_context(self, monkeypatch):
+        monkeypatch.setattr(TranslationManager, "_NCS_BATCH_CHAR_BUDGET", 1000)
+        items = []
+        for index in range(5):
+            item = _make_ncs_item(f"Player line {index}.", item_id="line:0", offset=0)
+            item.location = f"script_{index}.ncs"
+            item.context = "Script context. " * 25
+            items.append(item)
+        content = ExtractedContent("combined", items, Path("module"))
+        provider = _make_provider({item.text: f"TR:{item.text}" for item in items})
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(content)
+
+        assert len(result) == 5
+        calls = provider.translate_batch_async.call_args_list
+        assert [len(call.kwargs["items"]) for call in calls] == [2, 2, 1]
+        for call in calls:
+            assert (
+                sum(len(item.original) + len(item.context) for item in call.kwargs["items"]) <= 1000
+            )
+        provider.translate_async.assert_not_called()
 
     def test_ncs_batch_dedups_by_sanitized_text_and_hint(self):
         items = [
@@ -670,7 +727,7 @@ class TestNcsBatchTranslation:
         provider = _make_provider({"The lever moves.": "Рычаг движется."})
         manager = TranslationManager(_make_config(), provider)
 
-        manager.translate_content(content)
+        result = manager.translate_content(content)
 
         provider.translate_batch_async.assert_called_once()
         sent_items = provider.translate_batch_async.call_args.kwargs["items"]
@@ -682,11 +739,14 @@ class TestNcsBatchTranslation:
             "SpeakString",
             "SetCustomToken",
         ]
-        assert manager.ncs_translations_by_item_id == {
-            "script:off_10": "Рычаг движется.",
-            "script:off_20": "Рычаг движется.",
-            "script:off_30": "Рычаг движется.",
-        }
+        assert result == _expected_ids(
+            content,
+            {
+                "script:off_10": "Рычаг движется.",
+                "script:off_20": "Рычаг движется.",
+                "script:off_30": "Рычаг движется.",
+            },
+        )
 
     def test_ncs_batch_failure_splits_then_minimal_single_fallback_recovers(self):
         items = [
@@ -741,10 +801,13 @@ class TestNcsBatchTranslation:
 
         result = manager.translate_content(content)
 
-        assert result == {
-            "The first ward fails.": "TR:The first ward fails.",
-            "The second ward fails.": "TR:The second ward fails.",
-        }
+        assert result == _expected(
+            content,
+            {
+                "The first ward fails.": "TR:The first ward fails.",
+                "The second ward fails.": "TR:The second ward fails.",
+            },
+        )
         assert [
             len(call.kwargs["items"]) for call in provider.translate_batch_async.call_args_list
         ] == [
@@ -801,7 +864,7 @@ class TestNcsBatchTranslation:
 
         result = manager.translate_content(content)
 
-        assert result == {"The ward flickers.": "Мерцает оберег."}
+        assert result == _expected(content, {"The ward flickers.": "Мерцает оберег."})
         stats = manager.get_statistics()["ncs_diagnostics"]
         assert stats["timeout"] == 1
         assert stats["retry_recovered"] == 1
@@ -821,7 +884,7 @@ class TestTranslationCache:
         )
         provider = _make_provider({"Hello": "Привет"})
         manager = TranslationManager(_make_config(), provider)
-        manager.translate_content(content)
+        result = manager.translate_content(content)
 
         stats = manager.get_statistics()
         assert stats["items_translated"] == 1
@@ -843,10 +906,10 @@ class TestTranslationCache:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
-        assert result == {}
+        assert result == _expected(content, {})
         stats = manager.get_statistics()
         assert stats["total_errors"] == 1
-        assert "Boom" in manager.failed_originals
+        assert _key(content, "Boom") in manager.failed_items
 
     def test_empty_translation_after_retries_marks_failed_original(self):
         """A successful API call that yields an empty line is recorded as a failure."""
@@ -866,8 +929,8 @@ class TestTranslationCache:
 
         result = manager.translate_content(content)
 
-        assert result == {}
-        assert text in manager.failed_originals
+        assert result == _expected(content, {})
+        assert _key(content, text) in manager.failed_items
         assert manager.get_statistics()["total_errors"] >= 1
 
 
@@ -886,7 +949,7 @@ class TestPassthroughEmptyAfterSanitize:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
-        assert result["<FirstName>"] == "<FirstName>"
+        assert result[_key(content, "<FirstName>")] == "<FirstName>"
         provider.translate_async.assert_not_called()
 
     def test_punctuation_only_item_bypasses_provider(self):
@@ -901,7 +964,7 @@ class TestPassthroughEmptyAfterSanitize:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
-        assert result["... - !"] == "... - !"
+        assert result[_key(content, "... - !")] == "... - !"
         provider.translate_async.assert_not_called()
 
     def test_real_text_still_goes_to_provider(self):
@@ -914,7 +977,7 @@ class TestPassthroughEmptyAfterSanitize:
         )
         provider = _make_provider({})
         manager = TranslationManager(_make_config(), provider)
-        manager.translate_content(content)
+        result = manager.translate_content(content)
 
         # Untyped short string rides the medium batch tier, not passthrough.
         assert provider.translate_batch_async.call_count == 1
@@ -981,10 +1044,10 @@ class TestMediumBatchTier:
 
         result = manager.translate_content(content)
 
-        assert result["Guard"] == "Страж"
-        assert result["Sword of the Ancient Flames"] == "Меч Древнего Пламени"
-        assert result[medium_text] == "Диван выглядит уютным."
-        assert result[long_text] == "Длинное описание."
+        assert result[_key(content, "Guard")] == "Страж"
+        assert result[_key(content, "Sword of the Ancient Flames")] == "Меч Древнего Пламени"
+        assert result[_key(content, medium_text)] == "Диван выглядит уютным."
+        assert result[_key(content, long_text)] == "Длинное описание."
         assert provider.translate_async.call_count == 1  # only the long item
         assert provider.translate_batch_async.call_count == 3  # one batch per tier
         batch_items = [
@@ -1029,7 +1092,7 @@ class TestMediumBatchTier:
 
         result = manager.translate_content(content)
 
-        assert result[medium_text] == "Диван выглядит уютным."
+        assert result[_key(content, medium_text)] == "Диван выглядит уютным."
         assert provider.translate_batch_async.call_count == 1
         assert provider.translate_async.call_count == 1  # individual fallback
 
@@ -1056,7 +1119,7 @@ class TestMediumBatchTier:
         result = manager.translate_content(content)
 
         for i, t in enumerate(texts):
-            assert result[t] == f"Перевод {i}"
+            assert result[_key(content, t)] == f"Перевод {i}"
         # ~131 chars per item with a 300-char budget → two items per batch.
         batch_sizes = [
             len(call.kwargs["items"]) for call in provider.translate_batch_async.call_args_list
@@ -1092,9 +1155,10 @@ class TestGenericTimeoutRetry:
         provider.translate_async = AsyncMock(side_effect=slow_then_fast)
         manager = TranslationManager(_make_config(), provider)
 
-        result = manager.translate_content(self._long_item(long_text))
+        content = self._long_item(long_text)
+        result = manager.translate_content(content)
 
-        assert result[long_text] == "Длинное описание."
+        assert result[_key(content, long_text)] == "Длинное описание."
         assert calls["n"] == 2
         assert manager.stats["errors"] == []
 
@@ -1110,7 +1174,8 @@ class TestGenericTimeoutRetry:
         provider.translate_async = AsyncMock(side_effect=always_slow)
         manager = TranslationManager(_make_config(), provider)
 
-        result = manager.translate_content(self._long_item(long_text))
+        content = self._long_item(long_text)
+        result = manager.translate_content(content)
 
         assert long_text not in result
         assert len(manager.stats["errors"]) == 1
@@ -1142,14 +1207,14 @@ class TestForeignScriptRetry:
 
         result = manager.translate_content(content)
 
-        assert result[long_text] == "Общество здесь не приветствуют!"
+        assert result[_key(content, long_text)] == "Общество здесь не приветствуют!"
         assert provider.translate_async.call_count == 2
         retry_context = provider.translate_async.call_args_list[1].kwargs["context"]
         assert "foreign script" in retry_context
 
 
 class TestBatchDedupBySanitized:
-    """The batch payload must not include duplicate sanitized texts."""
+    """Equivalent requests share one provider answer and fan out to all addresses."""
 
     def test_duplicate_short_names_dedup_in_batch_payload(self):
         items = [
@@ -1222,7 +1287,7 @@ class TestBatchDedupBySanitized:
             )
 
         translations: dict = {}
-        manager._translate_uncached_concurrent(uncached, translations)
+        translations = manager.translate_content(content)
 
         assert provider.translate_batch_async.call_count == 1
         call = provider.translate_batch_async.call_args
@@ -1230,8 +1295,8 @@ class TestBatchDedupBySanitized:
         originals = [batch_item.original for batch_item in batch_items]
         assert originals.count("Guard") == 1
         assert originals.count("Captain") == 1
-        assert translations["Guard"] == "TR:Guard"
-        assert translations["Captain"] == "TR:Captain"
+        assert translations[_key(content, "Guard")] == "TR:Guard"
+        assert translations[_key(content, "Captain")] == "TR:Captain"
 
     def test_color_marker_only_string_skips_api(self):
         text = (
@@ -1248,7 +1313,7 @@ class TestBatchDedupBySanitized:
 
         result = manager.translate_content(content)
 
-        assert result == {text: text}
+        assert result == _expected(content, {text: text})
         provider.translate_async.assert_not_called()
         provider.translate_batch_async.assert_not_called()
 
@@ -1294,7 +1359,7 @@ class TestTokenMismatchRecovery:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
-        assert result[text] == "<StartHighlight>[Вздрогнуть.]</Start>"
+        assert result[_key(content, text)] == "<StartHighlight>[Вздрогнуть.]</Start>"
         assert provider.translate_async.call_count == 2
         assert len(list(manager.translation_cache.items())) == 1
 
@@ -1320,7 +1385,7 @@ class TestTokenMismatchRecovery:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
-        assert result[text] == "[Вздрогнуть.]"
+        assert result[_key(content, text)] == "[Вздрогнуть.]"
         # Initial call + 1 retry reproducing the identical mismatch short-circuits
         # the remaining retry and goes straight to cleanup.
         assert provider.translate_async.call_count == 2

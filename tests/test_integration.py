@@ -9,7 +9,7 @@ import pytest
 from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
-from src.nwn_translator.injectors.dialog_injector import DialogInjector
+from src.nwn_translator.injectors.gff_injector import GffInjector
 from src.nwn_translator.translators.token_handler import TokenHandler
 
 
@@ -36,7 +36,7 @@ class TestTokenPreservationWorkflow:
 class TestDialogExtractionAndInjection:
     """Tests for dialog extraction and injection workflow."""
 
-    @patch("src.nwn_translator.injectors.dialog_injector.GFFPatcher")
+    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
     def test_extract_and_inject_dialog(self, mock_patcher_cls):
         """Test extracting and re-injecting dialog content (binary patch via GFFPatcher)."""
         mock_patcher = MagicMock()
@@ -76,8 +76,13 @@ class TestDialogExtractionAndInjection:
             "Hello, innkeeper.": "Hola, posadero.",
         }
 
-        injector = DialogInjector()
-        result = injector.inject(file_path, original_gff, translations)
+        injector = GffInjector()
+        result = injector.inject(
+            file_path,
+            original_gff,
+            {item.key: translations[item.text] for item in extracted.items},
+            {"extracted_items": extracted.items},
+        )
 
         assert result.modified
         assert result.items_updated == 2

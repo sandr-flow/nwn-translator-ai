@@ -99,7 +99,6 @@ class GlossaryCurator:
                     reason=str(decision.get("reason", "")),
                     priority=_optional_int(decision.get("priority")),
                     alias_of=_optional_str(decision.get("alias_of")),
-                    canonical_name=_optional_str(decision.get("canonical_name")),
                 )
 
         return registry
@@ -164,9 +163,13 @@ def _build_system_prompt(target_lang: str) -> str:
         f"Target language: {target_lang}. Decide whether each candidate should be a "
         "run-wide glossary entity. Return only JSON. Valid decisions are keep, "
         "local_only, drop, alias_of. Use drop for technical labels, numbered generic "
-        "placeables, route labels, and generic creature/person labels. Use local_only "
+        "placeables and route labels. Keep recurring distinctive creature types and "
+        "in-world product or organization names, including their abbreviations. Use local_only "
         "for labels useful only near their resource. Use alias_of for shorter/variant "
-        "names of another candidate."
+        "names of another candidate only when the evidence identifies the same entity. "
+        "The alias target must be an existing candidate name, not a new spelling. "
+        "A shared word alone is not evidence: a creature type and its stronger variant "
+        "remain distinct. Gendered generic titles are contextual labels, not proper names."
     )
 
 
@@ -175,7 +178,7 @@ def _build_user_prompt(candidates: List[EntityCandidate]) -> str:
     return (
         "Curate these candidates. Return a JSON object keyed by candidate name. "
         "Each value must contain decision, reason, priority, and optionally alias_of "
-        "or canonical_name.\n\n" + json.dumps(data, ensure_ascii=False, indent=2)
+        "(an existing source form).\n\n" + json.dumps(data, ensure_ascii=False, indent=2)
     )
 
 
@@ -204,7 +207,6 @@ def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str
             "reason": str(raw_value.get("reason", "")),
             "priority": _optional_int(raw_value.get("priority")) or 0,
             "alias_of": _optional_str(raw_value.get("alias_of")),
-            "canonical_name": _optional_str(raw_value.get("canonical_name")),
         }
     return out
 

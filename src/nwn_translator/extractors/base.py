@@ -8,6 +8,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
+Occurrence = tuple[str, str]
+Translations = Dict[Occurrence, str]
+
+
+def occurrence_key(resource: Union[str, Path], item_id: str) -> Occurrence:
+    """Address an archive resource occurrence, independently of its text or Tag."""
+    return Path(resource).name, item_id
+
 
 @dataclass
 class ExtractedContent:
@@ -24,6 +32,11 @@ class ExtractedContent:
     items: List["TranslatableItem"]
     source_file: Path
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for item in self.items:
+            if not item.location:
+                item.location = str(self.source_file)
 
     def __len__(self) -> int:
         """Return number of items extracted."""
@@ -59,6 +72,13 @@ class TranslatableItem:
     def has_text(self) -> bool:
         """Check if item has translatable text."""
         return bool(self.text and isinstance(self.text, str) and self.text.strip())
+
+    @property
+    def key(self) -> Occurrence:
+        """Stable address used for results, failures, persistence, and injection."""
+        if not self.location or not self.item_id:
+            raise ValueError("Translation occurrences require a resource and item_id")
+        return occurrence_key(self.location, self.item_id)
 
 
 @dataclass
@@ -204,7 +224,11 @@ class BaseExtractor(ABC):
             context=f"{context_prefix} name in game (tag: {tag}). Translate naturally.",
             item_id=f"{tag}_name",
             location=str(file_path),
-            metadata={"type": item_type, "tag": tag},
+            metadata={
+                "type": item_type,
+                "tag": tag,
+                "record_offset": parsed_data.get("_record_offsets", {}).get(name_field, 0),
+            },
         )
 
     def _first_localized_text(
@@ -238,7 +262,6 @@ class SimpleLocalizedExtractor(BaseExtractor):
         """Extract items described by :attr:`FIELD_SPECS`."""
         tag = parsed_data.get(self.TAG_FIELD, file_path.stem)
         items: List[TranslatableItem] = []
-        extracted_by_key: Dict[str, str] = {}
 
         if not self._should_extract(parsed_data):
             return ExtractedContent(
@@ -249,15 +272,16 @@ class SimpleLocalizedExtractor(BaseExtractor):
             )
 
         for spec in self.FIELD_SPECS:
-            key = str(spec.get("key") or spec["item_suffix"])
             fields_raw = spec.get("fields", ())
             fields = (fields_raw,) if isinstance(fields_raw, str) else tuple(fields_raw)
-            text = self._first_localized_text(parsed_data, fields)
-            if not text:
+            field_name = next(
+                (f for f in fields if self._extract_text_from_local_string(parsed_data.get(f, {}))),
+                None,
+            )
+            if field_name is None:
                 continue
-
-            skip_if_same_as = spec.get("skip_if_same_as")
-            if skip_if_same_as and text == extracted_by_key.get(str(skip_if_same_as)):
+            text = self._extract_text_from_local_string(parsed_data.get(field_name, {}))
+            if not text:
                 continue
 
             items.append(
@@ -269,10 +293,10 @@ class SimpleLocalizedExtractor(BaseExtractor):
                     metadata={
                         "type": spec["item_type"],
                         "tag": tag,
+                        "record_offset": parsed_data.get("_record_offsets", {}).get(field_name, 0),
                     },
                 )
             )
-            extracted_by_key[key] = text
 
         return ExtractedContent(
             content_type=self.CONTENT_TYPE,

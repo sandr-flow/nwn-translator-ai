@@ -236,23 +236,16 @@ def cmd_translate(
     extracted_map = _build_extracted_map(args, state)
     translations = stage_translate(state, extracted_map)
     artifacts.dump_translations(art_out / "translations.json", translations)
-    artifacts.dump_ncs_by_item_id(
-        art_out / "ncs_translations_by_item_id.json", state._ncs_translations_by_item_id
-    )
     logger.info(
-        "Wrote %s (%d translations, %d ncs)",
+        "Wrote %s (%d translations)",
         art_out / "translations.json",
         len(translations),
-        len(state._ncs_translations_by_item_id),
     )
 
 
 def cmd_inject(args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path) -> None:
     _resolve_extract_dir(args, state, do_extract=False)
     translations = artifacts.load_translations(art_in / "translations.json")
-    ncs_path = art_in / "ncs_translations_by_item_id.json"
-    if ncs_path.exists():
-        state._ncs_translations_by_item_id = artifacts.load_ncs_by_item_id(ncs_path)
     extracted_map = _build_extracted_map(args, state)
     stage_inject(state, extracted_map, translations)
     logger.info("Injected %d translations into %s", len(translations), state.extract_dir)
@@ -280,9 +273,6 @@ def cmd_all(args: argparse.Namespace, state: PipelineState, art_in: Path, art_ou
     artifacts.dump_glossary(art_out / "glossary.json", state.glossary)
     translations = stage_translate(state, extracted_map)
     artifacts.dump_translations(art_out / "translations.json", translations)
-    artifacts.dump_ncs_by_item_id(
-        art_out / "ncs_translations_by_item_id.json", state._ncs_translations_by_item_id
-    )
     stage_inject(state, extracted_map, translations)
     output_path = stage_repack(state)
     logger.info("Full run complete -> %s (extract_dir=%s)", output_path, extract_dir)

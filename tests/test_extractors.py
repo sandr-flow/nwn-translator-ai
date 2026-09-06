@@ -346,7 +346,7 @@ class TestPlaceableExtractorDescriptions:
         assert "A weathered wooden chest." in texts
         assert "Contains quest items." in texts
 
-    def test_extract_placeable_desc_identified_same_as_description_not_duplicated(self):
+    def test_extract_placeable_equal_descriptions_keep_both_addresses(self):
         extractor = PlaceableExtractor()
         file_path = Path("box.utp")
         same = "Same text"
@@ -357,7 +357,7 @@ class TestPlaceableExtractorDescriptions:
             "DescIdentified": {"StrRef": -1, "Value": same},
         }
         result = extractor.extract(file_path, parsed_data)
-        assert sum(1 for item in result.items if item.text == same) == 1
+        assert sum(1 for item in result.items if item.text == same) == 2
 
 
 class TestDoorExtractorDescriptions:

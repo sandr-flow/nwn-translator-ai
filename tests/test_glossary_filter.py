@@ -137,3 +137,54 @@ class TestGlossaryFilterByBatch:
         m_pos = block.find('"Morin"')
         z_pos = block.find('"Zephyr"')
         assert 0 < a_pos < m_pos < z_pos
+
+
+class TestMemoizedMatching:
+    """Per-text memoized matching is equivalent to scanning the joined corpus."""
+
+    ENTRIES = {
+        "Aloro": "Алоро",
+        "Aloro Harmony": "Гармония Алоро",
+        "Nas": "Нас",
+        "R. Freely": "Р. Фрили",
+        '"Thesis Paper Room"': "«Зал диссертаций»",
+    }
+
+    @staticmethod
+    def _reference(glossary, texts):
+        import re
+
+        corpus = "\n".join(str(text) for text in texts if text)
+        return {
+            key
+            for key in glossary.entries
+            if re.search(r"(?<!\w)" + re.escape(key) + r"(?!\w)", corpus, re.IGNORECASE)
+        }
+
+    def test_union_of_texts_equals_corpus_scan(self):
+        g = Glossary(entries=dict(self.ENTRIES), aliases={"Aloro Harmony": "Aloro"})
+        batches = [
+            ["Sing Aloro Harmony now.", "nasher stood there"],
+            ["ALORO!", 'Enter "Thesis Paper Room".'],
+            ["Contact R. Freely.", "", None],
+            ["Nas.", "Aloro Harmony"],
+        ]
+        for texts in batches:
+            expected = self._reference(g, texts)
+            roots = {g.aliases.get(k, k) for k in expected}
+            assert set(g.matching_entries(texts)) == {
+                k for k in g.entries if k in expected or g.aliases.get(k, k) in roots
+            }
+        # Repeated calls hit the memo and return the same result.
+        assert g.matching_entries(batches[0]) == g.matching_entries(batches[0])
+
+    def test_terminology_block_reuses_merged_glossary(self):
+        from src.nwn_translator.glossary import terminology_block
+
+        g = Glossary(entries={"Perin": "Перин"})
+        first = terminology_block(["Perin met a dwarf."], "russian", g)
+        second = terminology_block(["Perin met a dwarf."], "Russian", g)
+        assert first == second
+        assert '"Perin"' in first and '"dwarf"' in first
+        assert list(g._with_terms) == ["russian"]
+        assert terminology_block(["a dwarf"], "russian", None).count("dwarf") == 1

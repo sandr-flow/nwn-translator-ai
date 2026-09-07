@@ -13,7 +13,7 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, Iterable, List, Optional, Set
 
 from .config import (
     GLOSSARY_LLM_TIMEOUT,
@@ -48,22 +48,61 @@ _MAX_OVERALL_TIMEOUT = 900.0
 _QUOTE_CHARS = '"“”«»'
 
 
+class _TermMatcher:
+    """Word-bounded, case-insensitive search for complete source forms, memoized per text.
+
+    A form matches a batch iff it matches one of the batch's texts, so callers
+    take the union of per-text results instead of rescanning a joined corpus.
+    The ``str.lower`` substring prefilter skips the regex for absent forms; the
+    exotic equivalences of ``re.IGNORECASE`` (long s, Kelvin sign) are not
+    matched, which is acceptable for game text.
+    """
+
+    def __init__(self, keys: Iterable[str]) -> None:
+        self._patterns = {
+            key: (key.lower(), re.compile(r"(?<!\w)" + re.escape(key) + r"(?!\w)", re.IGNORECASE))
+            for key in keys
+        }
+        self._memo: Dict[str, FrozenSet[str]] = {}
+
+    def keys_in(self, text: str) -> FrozenSet[str]:
+        found = self._memo.get(text)
+        if found is None:
+            lowered = text.lower()
+            found = frozenset(
+                key
+                for key, (needle, pattern) in self._patterns.items()
+                if needle in lowered and pattern.search(text)
+            )
+            self._memo[text] = found
+        return found
+
+
 @dataclass
 class Glossary:
-    """Canonical English -> target-language mappings for world proper names."""
+    """Canonical English -> target-language mappings for world proper names.
+
+    ``entries`` and ``aliases`` are not modified after matching starts: the
+    matcher and the per-language merged glossaries below are derived from them.
+    """
 
     entries: Dict[str, str] = field(default_factory=dict)
 
     aliases: Dict[str, str] = field(default_factory=dict)
 
+    _matcher: Optional[_TermMatcher] = field(default=None, init=False, repr=False, compare=False)
+    _with_terms: Dict[str, "Glossary"] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
     def matching_entries(self, texts: Iterable[str]) -> Dict[str, str]:
         """Match complete source forms; only explicit aliases share an entity."""
-        corpus = "\n".join(str(text) for text in texts if text)
-        matches = {
-            key
-            for key in self.entries
-            if re.search(r"(?<!\w)" + re.escape(key) + r"(?!\w)", corpus, re.IGNORECASE)
-        }
+        if self._matcher is None:
+            self._matcher = _TermMatcher(self.entries)
+        matches: Set[str] = set()
+        for text in texts:
+            if text:
+                matches |= self._matcher.keys_in(str(text))
         roots = {self.aliases.get(key, key) for key in matches}
         return {
             key: value
@@ -88,18 +127,28 @@ class Glossary:
         return "\n".join(lines)
 
 
+_NO_GLOSSARY = Glossary()
+
+
 def terminology_block(texts: Iterable[str], target_lang: str, glossary: Optional[Glossary]) -> str:
-    """Resolve project terminology once, before rendering any translation prompt."""
+    """Resolve project terminology once, before rendering any translation prompt.
+
+    The glossary merged with the project terms of *target_lang* is built once
+    per glossary and language, so its match memo serves every later prompt.
+    """
     from .race_dictionary import RACE_TERMS
 
-    static = RACE_TERMS.get(target_lang.lower(), {})
-    entries = {
-        key: value
-        for key, value in (glossary.entries if glossary else {}).items()
-        if key.casefold() not in static
-    }
-    entries.update(static)
-    return Glossary(entries, glossary.aliases if glossary else {}).to_prompt_block(texts)
+    source = glossary if glossary is not None else _NO_GLOSSARY
+    lang = target_lang.lower()
+    merged = source._with_terms.get(lang)
+    if merged is None:
+        static = RACE_TERMS.get(lang, {})
+        entries = {
+            key: value for key, value in source.entries.items() if key.casefold() not in static
+        }
+        entries.update(static)
+        merged = source._with_terms[lang] = Glossary(entries, source.aliases)
+    return merged.to_prompt_block(texts)
 
 
 class GlossaryBuilder:

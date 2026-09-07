@@ -117,11 +117,16 @@ def snippet_for_text(text: str, nss_content: str) -> Optional[str]:
     literal is player-facing or a technical identifier. Returns ``None`` when
     the literal is not found verbatim in ``nss_content``.
     """
+    return snippet_with_position(text, nss_content)[0]
+
+
+def snippet_with_position(text: str, nss_content: str) -> tuple[Optional[str], Optional[int]]:
+    """Return the source excerpt and its normalized character offset."""
     nss_content = nss_content.replace("\r\n", "\n").replace("\r", "\n")
     needle = f'"{text}"'
     idx = nss_content.find(needle)
     if idx == -1:
-        return None
+        return None, None
 
     lines = nss_content.splitlines()
     running = 0
@@ -136,6 +141,7 @@ def snippet_for_text(text: str, nss_content: str) -> Optional[str]:
     start = max(0, hit_line - _NSS_SNIPPET_LINES)
     end = min(len(lines), hit_line + _NSS_SNIPPET_LINES + 1)
     snippet = "\n".join(lines[start:end])
+    position = sum(len(line) + 1 for line in lines[:start])
     if len(snippet) > _NSS_SNIPPET_CHAR_CAP:
         # Keep the window centred on the hit line when trimming.
         hit_local = hit_line - start
@@ -144,7 +150,8 @@ def snippet_for_text(text: str, nss_content: str) -> Optional[str]:
         cut_start = max(0, hit_offset - half)
         cut_end = min(len(snippet), cut_start + _NSS_SNIPPET_CHAR_CAP)
         snippet = snippet[cut_start:cut_end]
-    return snippet
+        position += cut_start
+    return snippet, position
 
 
 def read_script_source(file_path: Path, encoding: str) -> str:

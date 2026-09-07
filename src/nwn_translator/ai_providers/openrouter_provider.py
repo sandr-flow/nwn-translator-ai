@@ -42,6 +42,7 @@ from .base import (
     ProviderError,
     RateLimitError,
 )
+from .batch_payload import build_batch_payload, source_windows
 from .openrouter_models import resolve_reasoning_effort
 from ..config import (
     TRANSLATION_TEMPERATURE,
@@ -801,12 +802,14 @@ class OpenRouterProvider(BaseAIProvider):
             target_lang,
             glossary_block=gb,
             content_profile=content_profile,
+            batch_mode=True,
         )
         # BATCH MODE instructions are identical for every batch call — keep
         # them inside the cached stable half so the prompt prefix is stable.
         batch_mode_suffix = (
-            "\nBATCH MODE: You will receive a JSON object mapping numeric IDs "
-            "to items. Each item is either a plain string or an object "
+            "\nBATCH MODE: Input items have numeric IDs. Input is either the item map "
+            "itself or an object with items and shared groups maps. Each item is "
+            "either a plain string or an object "
             '{"text": "...", "hint": "...", "context": "..."}. '
             'The hint (e.g. "item_name", "creature_first_name", "store_name") '
             "tells you what kind of game entity this is — use it to decide "
@@ -815,6 +818,16 @@ class OpenRouterProvider(BaseAIProvider):
             "game — use it to choose tone and grammatical forms. "
             "Items may come from different resources; use each item's own context. "
             "Their order in this batch does not imply a shared conversation. "
+            "Grouped input has groups and items maps. Translate ONLY the numeric keys "
+            "of items. Each item references its group and optional field context_ref "
+            "and source_window indices. Groups describe one structural object, quest "
+            "category, or script; different groups are independent. Shared source and "
+            "approved speech are context only, never additional outputs. Script constant "
+            "order is NOT proven execution order. Keep each field separate. "
+            "For creature_first_name return ONLY the first name; for creature_last_name "
+            "return ONLY the surname or title. Never add the other name field. "
+            "Translate item names naturally; item_description is the unidentified "
+            "description and item_identified_description is the identified description. "
             "Return a JSON object with the EXACT SAME numeric keys, where each "
             "value is the translated string (NOT an object). "
             "Do NOT rename, add, or remove keys. "
@@ -824,25 +837,12 @@ class OpenRouterProvider(BaseAIProvider):
             stable, variable, stable_suffix=batch_mode_suffix
         )
 
-        # Build the batch payload with optional type hints and per-item context
-        batch_input: dict = {}
-        for i, item in enumerate(items):
-            meta = item.metadata or {}
-            hint = meta.get("hint") or meta.get("ncs_hint") or meta.get("type", "")
-            context = (item.context or "").strip()
-            if hint or context:
-                entry: Dict[str, str] = {"text": item.original}
-                if hint:
-                    entry["hint"] = hint
-                if context:
-                    entry["context"] = context
-                batch_input[str(i)] = entry
-            else:
-                batch_input[str(i)] = item.original
+        batch_input = build_batch_payload(items)
 
-        user_prompt = f"Translate each value from {source_lang}.\n\n" + json.dumps(
-            batch_input, ensure_ascii=False
-        )
+        user_prompt = (
+            f"Translate the items from {source_lang}. Return only a flat object of numeric "
+            "item IDs and translated strings. Shared groups are context only.\n\n"
+        ) + json.dumps(batch_input, ensure_ascii=False, separators=(",", ":"))
 
         try:
             raw = await self._chat_completion_json_async(
@@ -867,6 +867,14 @@ class OpenRouterProvider(BaseAIProvider):
             if idx == -1:
                 raise json.JSONDecodeError("No JSON object found", cleaned, 0)
             parsed, _ = decoder.raw_decode(cleaned, idx)
+            if (
+                isinstance(parsed, dict)
+                and set(parsed) == {"translation"}
+                and isinstance(parsed["translation"], dict)
+            ):
+                # Some models retain the single-item wrapper around a valid ID map.
+                # Never infer positions from lists, group IDs or a combined string.
+                parsed = parsed["translation"]
 
             results = []
             for i, item in enumerate(items):
@@ -1024,6 +1032,30 @@ class OpenRouterProvider(BaseAIProvider):
             if e.get("confidence"):
                 cell["confidence"] = e["confidence"]
             user_payload[str(e["key"])] = cell
+        sources = {}
+        by_file: Dict[str, List[dict]] = {}
+        for entry in entries:
+            if entry.get("nss_snippet") and isinstance(entry.get("nss_start"), int):
+                by_file.setdefault(str(entry.get("file", "")), []).append(entry)
+        for filename, file_entries in by_file.items():
+            windows, refs = source_windows(file_entries)
+            sources[filename] = windows
+            for entry, ref in zip(file_entries, refs):
+                cell = user_payload[str(entry["key"])]
+                cell.pop("nss_snippet", None)
+                cell["source_window"] = ref
+        if sources:
+            return (
+                f"Source language label: {source_lang}. Classify each numeric key in entries. "
+                "sources maps each matching file to shared source windows; source_window is "
+                "an index into that file's windows. These are context only and can be stale; "
+                "per-entry bytecode evidence retains priority. Return only entry keys.\n\n"
+                + json.dumps(
+                    {"sources": sources, "entries": user_payload},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
         return f"Source language label: {source_lang}. Classify each entry.\n\n" + json.dumps(
             user_payload, ensure_ascii=False
         )

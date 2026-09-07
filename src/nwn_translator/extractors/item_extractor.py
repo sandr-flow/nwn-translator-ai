@@ -114,6 +114,11 @@ class ItemExtractor(BaseExtractor):
                 )
             )
 
+        for item in items:
+            item.metadata["translation_group"] = "root"
+            item.metadata["shared_context"] = f"Game item (name: {name or ''}, type: {base_item})."
+            item.metadata["batch_context"] = ""
+
         return ExtractedContent(
             content_type="item",
             items=items,

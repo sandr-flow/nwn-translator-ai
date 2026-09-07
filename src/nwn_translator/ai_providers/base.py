@@ -244,6 +244,8 @@ class BaseAIProvider(ABC):
         target_lang: str,
         glossary_block: str = "",
         content_profile: Optional[str] = None,
+        *,
+        batch_mode: bool = False,
     ) -> Tuple[str, str]:
         """Return the stable/variable halves of the line-by-line translation prompt."""
         from ..prompts import build_translation_system_prompt_parts
@@ -254,6 +256,7 @@ class BaseAIProvider(ABC):
             self.player_gender,
             glossary_block,
             content_profile=content_profile or CONTENT_PROFILE_DEFAULT,
+            batch_mode=batch_mode,
         )
 
     @staticmethod

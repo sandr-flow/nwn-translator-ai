@@ -263,9 +263,11 @@ def test_large_dialog_is_translated_in_chunks(monkeypatch):
     )
     assert len(provider.calls) == 3
     assert "[E1]" in provider.calls[0]["user_prompt"]
-    assert "[R2]" not in provider.calls[0]["user_prompt"]
+    assert "[R2] [Player]:" not in provider.calls[0]["user_prompt"]
+    assert "-> Player Reply [R2]" in provider.calls[0]["user_prompt"]
+    assert "Context R2 (Player): Who are you?" in provider.calls[0]["user_prompt"]
     assert "[R2]" in provider.calls[1]["user_prompt"]
-    assert "[R3]" not in provider.calls[1]["user_prompt"]
+    assert "[R3] [Player]:" not in provider.calls[1]["user_prompt"]
     assert "[R3]" in provider.calls[2]["user_prompt"]
 
 

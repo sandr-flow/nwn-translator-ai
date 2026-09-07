@@ -17,6 +17,12 @@ Translation runs as a pipeline of sequential stages:
 5. **Inject** — byte-level patching of strings back into GFF/NCS without fully rewriting binary resources.
 6. **Repack** the new archive.
 
+Fields of one NPC or item and entries of one journal category form translation
+groups with shared context. Small groups share requests with explicit boundaries;
+large groups split according to text, context and glossary budgets. Dialog chunks
+retain transitions and adjacent-node context. NCS strings are grouped by script
+after safety review; constant order is not treated as execution order.
+
 ## Features
 
 - Translation of NWN `.mod`, `.erf`, and `.hak` archives.

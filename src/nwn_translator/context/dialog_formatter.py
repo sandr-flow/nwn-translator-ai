@@ -90,7 +90,7 @@ class DialogFormatter:
         text_map: Dict[str, str],
         text_overrides: Optional[Dict[str, str]] = None,
     ) -> str:
-        """Format a specific subset of nodes for a retry request.
+        """Format selected targets with graph edges and bounded adjacent context.
 
         Args:
             keys: Node IDs (e.g. ["E5", "R12"]) to include.
@@ -100,10 +100,12 @@ class DialogFormatter:
                 used instead of ``node.text``.
 
         Returns:
-            Formatted script string containing only the requested nodes.
+            Script with target blocks and explicitly non-target adjacent nodes.
         """
         overrides = text_overrides or {}
         lines = []
+        selected = set(keys)
+        boundary: Dict[str, DialogNode] = {}
         for key in keys:
             node = node_map.get(key)
             if node is None:
@@ -112,5 +114,27 @@ class DialogFormatter:
             node_text = overrides.get(key, node.text or "")
             lines.append(f"[{key}] [{speaker}]:")
             lines.append(f"<<<{node_text}>>>")
+            if not node.replies:
+                lines.append("   -> [END DIALOGUE]")
+            for reply in node.replies:
+                reply_key = f"{'E' if reply.is_entry else 'R'}{reply.node_id}"
+                lines.append(
+                    f"   -> {'NPC Response' if reply.is_entry else 'Player Reply'} [{reply_key}]"
+                )
+                if reply_key not in selected:
+                    boundary[reply_key] = node_map.get(reply_key, reply)
             lines.append("")
+        for key, node in node_map.items():
+            if key not in selected and any(
+                f"{'E' if child.is_entry else 'R'}{child.node_id}" in selected
+                for child in node.replies
+            ):
+                boundary[key] = node
+        if boundary:
+            lines.append("Adjacent nodes (context only; do not return translations for these IDs):")
+            for key, node in boundary.items():
+                speaker = node.speaker or ("NPC" if node.is_entry else "Player")
+                text = overrides.get(key, node.text or "")
+                preview = text[:600] + ("…" if len(text) > 600 else "")
+                lines.append(f"Context {key} ({speaker}): {preview}")
         return "\n".join(lines).strip()

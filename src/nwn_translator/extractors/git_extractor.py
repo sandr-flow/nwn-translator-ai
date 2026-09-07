@@ -247,6 +247,7 @@ class GitExtractor(BaseExtractor):
                     meta_type=meta_type,
                     context=ctx_label,
                     item_id=(f"{stem}_StoreList_{inst_idx}_{path_suffix}_il{j}_{inv_field}"),
+                    name_group=f"StoreList[{inst_idx}]{path_suffix}.ItemList[{j}]",
                     items=items,
                     known_names=known_names,
                 )
@@ -296,6 +297,12 @@ class GitExtractor(BaseExtractor):
                 "name_field": field_name,
                 "name_group": name_group,
                 "gender": gender_label(struct.get("Gender", -1)),
+                "shared_context": (
+                    f"NPC area instance ({race_label(struct.get('Race', -1))}, "
+                    f"{gender_label(struct.get('Gender', -1))}). Name fields: "
+                    + json.dumps(fields, ensure_ascii=False)
+                ),
+                "batch_context": "",
             }
         items.append(
             TranslatableItem(
@@ -306,6 +313,7 @@ class GitExtractor(BaseExtractor):
                 metadata={
                     "type": meta_type,
                     "git_field": field_name,
+                    "translation_group": name_group,
                     **name_metadata,
                     "record_offset": struct.get("_record_offsets", {}).get(field_name, 0),
                 },
@@ -365,6 +373,7 @@ class GitExtractor(BaseExtractor):
                                     file_path,
                                     meta_type=meta_type,
                                     context=ctx_label,
+                                    name_group=f"{list_key}[{inst_idx}].{nested_key}[{j}]",
                                     item_id=(
                                         f"{stem}_{list_key}_{inst_idx}_{nested_key}_"
                                         f"{j}_{inv_field}"
@@ -384,6 +393,7 @@ class GitExtractor(BaseExtractor):
                     meta_type=meta_type,
                     context=ctx_label,
                     item_id=(f"{stem}_{AREA_ITEM_LIST_KEY}_{area_idx}_{area_field}"),
+                    name_group=f"{AREA_ITEM_LIST_KEY}[{area_idx}]",
                     items=items,
                     known_names=known_names,
                 )

@@ -38,6 +38,15 @@ can occur more than once. Source text never promotes a deterministic candidate.
 Other scripts' matching literals are not consulted.
 There is no module-wide source classifier or source cache.
 
+Approved occurrences are packed by script, with explicit boundaries between
+scripts sharing a request. Matching NSS excerpts are merged only at verified
+overlapping source positions; each occurrence retains its source-window reference
+and consumer context. The gate uses the same shared windows while retaining
+per-occurrence bytecode evidence. A script group does not imply a conversation
+or proven execution order. Input JSON, target-text length and relevant terminology
+bound each translation batch. Oversized groups split, and failed translations
+retain their individual context for recovery.
+
 `TranslationConfig.skip_ncs_llm_gate=True` bypasses semantic model review only
 for bytecode-proven display arguments. It rejects unresolved candidates and
 still applies technical-text vetoes. This is not equivalent to production model

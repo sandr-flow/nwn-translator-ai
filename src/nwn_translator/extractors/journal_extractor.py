@@ -35,10 +35,20 @@ class JournalExtractor(BaseExtractor):
 
             # Entries are nested inside each category as "EntryList"
             entries = self._get_list_value(category, "EntryList")
+            quest_name = self._extract_text_from_local_string(category.get("Name", {})) or ""
             for j, entry in enumerate(entries):
                 item = self._extract_entry(entry, i, j, file_path, category)
                 if item and item.has_text():
                     items.append(item)
+                    category_items.append(item)
+            for item in category_items:
+                item.metadata["shared_context"] = f"Journal quest: {quest_name}."
+                item.metadata["batch_context"] = (
+                    "Quest title."
+                    if item.metadata["type"] == "journal_category_name"
+                    else f"Journal entry, state ID {item.metadata['entry_id']}. "
+                    "The quest title is context only; do not substitute it into the entry."
+                )
 
         return ExtractedContent(
             content_type="journal",
@@ -80,6 +90,7 @@ class JournalExtractor(BaseExtractor):
                     location=str(file_path),
                     metadata={
                         "type": "journal_category_name",
+                        "translation_group": f"category[{index}]",
                         "record_offset": category_data.get("_record_offsets", {}).get("Name", 0),
                         "tag": tag,
                         "priority": priority,
@@ -119,17 +130,21 @@ class JournalExtractor(BaseExtractor):
         # Get entry ID
         entry_id = entry_data.get("ID", 0)
 
-        # Get category tag for context
-        cat_tag = category_data.get("Tag", "") if category_data else ""
+        # The visible quest title is context; the engine tag is not a title.
+        cat_name = (
+            self._extract_text_from_local_string(category_data.get("Name", {}))
+            if category_data
+            else ""
+        )
 
         return TranslatableItem(
             text=text,
             context=(
                 (
-                    f"Journal entry (quest title: '{cat_tag}'). "
+                    f"Journal entry (quest title: '{cat_name}'). "
                     f"The quest title is context only — do not substitute it into the entry text."
                 )
-                if cat_tag
+                if cat_name
                 else f"Journal entry in category {category_index}"
             ),
             item_id=f"entry_{category_index}_{entry_index}",
@@ -138,6 +153,7 @@ class JournalExtractor(BaseExtractor):
                 "type": "journal_entry",
                 "record_offset": entry_data.get("_record_offsets", {}).get("Text", 0),
                 "category": category_index,
+                "translation_group": f"category[{category_index}]",
                 "entry_id": entry_id,
             },
         )

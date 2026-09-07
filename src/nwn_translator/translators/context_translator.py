@@ -924,11 +924,10 @@ class ContextualTranslationManager:
 
         chunks: List[tuple[List[str], str]] = []
         current_keys: List[str] = []
-        current_chars = 0
 
         for key in keys_for_api:
             node_script = self.formatter.format_nodes(
-                [key],
+                current_keys + [key],
                 node_map,
                 original_text_map,
                 text_overrides=sanitized_by_key,
@@ -936,19 +935,11 @@ class ContextualTranslationManager:
             if not node_script:
                 continue
 
-            would_exceed_chars = (
-                current_keys and current_chars + len(node_script) > _DIALOG_CHUNK_TARGET_CHARS
-            )
+            would_exceed_chars = current_keys and len(node_script) > _DIALOG_CHUNK_TARGET_CHARS
             would_exceed_keys = current_keys and len(current_keys) >= _DIALOG_CHUNK_MAX_KEYS
             would_exceed_terms = (
                 current_keys
-                and len(
-                    self._glossary_block_for_texts(
-                        [original_text_map[k] for k in current_keys + [key]]
-                    )
-                    or ""
-                )
-                > GLOSSARY_MAX_CHARS
+                and len(self._glossary_block_for_texts([node_script]) or "") > GLOSSARY_MAX_CHARS
             )
             if would_exceed_chars or would_exceed_keys or would_exceed_terms:
                 script = self.formatter.format_nodes(
@@ -960,10 +951,8 @@ class ContextualTranslationManager:
                 if script:
                     chunks.append((list(current_keys), script))
                 current_keys = []
-                current_chars = 0
 
             current_keys.append(key)
-            current_chars += len(node_script)
 
         if current_keys:
             script = self.formatter.format_nodes(

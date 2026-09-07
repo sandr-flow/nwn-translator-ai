@@ -648,15 +648,15 @@ class TestNcsBatchTranslation:
         batch_sizes = [
             len(call.kwargs["items"]) for call in provider.translate_batch_async.call_args_list
         ]
-        assert batch_sizes == [21, 12]
+        assert batch_sizes == [33]
         assert result[_key(content, multiline_text)] == f"TR:{multiline_text}"
         assert provider.translate_async.call_count == 1
         assert {call.kwargs["text"] for call in provider.translate_async.call_args_list} == {
             long_text,
         }
 
-    @pytest.mark.parametrize("length,count,expected_sizes", [(30, 65, [30, 30, 5]), (1000, 8, [8])])
-    def test_ncs_batches_across_single_message_scripts(self, length, count, expected_sizes):
+    @pytest.mark.parametrize("length,count", [(30, 65), (1000, 8)])
+    def test_ncs_batches_across_single_message_scripts(self, length, count):
         items = []
         for index in range(count):
             text = f"Player message {index}: ".ljust(length, ".")
@@ -670,9 +670,15 @@ class TestNcsBatchTranslation:
         result = manager.translate_content(content)
 
         assert result == {item.key: f"TR:{item.text}" for item in items}
-        assert [
-            len(call.kwargs["items"]) for call in provider.translate_batch_async.call_args_list
-        ] == expected_sizes
+        from nwn_translator.ai_providers.batch_payload import batch_payload_chars
+
+        calls = provider.translate_batch_async.call_args_list
+        assert len(calls) == 2
+        for call in calls:
+            batch = call.kwargs["items"]
+            assert len(batch) <= manager._BATCH_SIZE_VERY_SHORT
+            assert sum(len(i.original) for i in batch) <= manager._BATCH_MEDIUM_CHAR_BUDGET
+            assert batch_payload_chars(batch) <= manager._NCS_BATCH_CHAR_BUDGET
         provider.translate_async.assert_not_called()
 
     def test_ncs_batch_budget_counts_context(self, monkeypatch):
@@ -691,11 +697,11 @@ class TestNcsBatchTranslation:
 
         assert len(result) == 5
         calls = provider.translate_batch_async.call_args_list
-        assert [len(call.kwargs["items"]) for call in calls] == [2, 2, 1]
+        from nwn_translator.ai_providers.batch_payload import batch_payload_chars
+
+        assert [len(call.kwargs["items"]) for call in calls] == [1, 1, 1, 1, 1]
         for call in calls:
-            assert (
-                sum(len(item.original) + len(item.context) for item in call.kwargs["items"]) <= 1000
-            )
+            assert batch_payload_chars(call.kwargs["items"]) <= 1000
         provider.translate_async.assert_not_called()
 
     def test_ncs_batch_dedups_by_sanitized_text_and_hint(self):

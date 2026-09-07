@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from .base import BaseExtractor, ExtractedContent, TranslatableItem
 from .ncs_context import trace_string_consumer
-from .nss_index import read_script_source, snippet_for_text
+from .nss_index import read_script_source, snippet_with_position
 from ..context.string_filters import ENGINE_TAG_PREFIXES
 from ..file_handlers.ncs_parser import NCSFile
 from ..file_handlers.ncs_concat import find_concat_chains, merged_text
@@ -286,7 +286,7 @@ class NcsExtractor(BaseExtractor):
                 continue
 
             bytecode_is_player = action_class == "player"
-            nss_snippet = snippet_for_text(lookup_text, source)
+            nss_snippet, nss_start = snippet_with_position(lookup_text, source)
             player_candidate = (
                 bytecode_ctx["player_action_nearby"] or bytecode_ctx["player_use_seen"]
             )
@@ -323,6 +323,7 @@ class NcsExtractor(BaseExtractor):
                         "needs_llm_gate": True,
                         "ncs_hint": ncs_hint,
                         "nss_snippet": nss_snippet,
+                        "nss_start": nss_start,
                         "bytecode_context": bytecode_ctx,
                         **extra_meta,
                     },

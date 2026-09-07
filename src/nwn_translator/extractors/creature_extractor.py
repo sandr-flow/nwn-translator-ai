@@ -122,6 +122,11 @@ class CreatureExtractor(BaseExtractor):
                 )
             )
 
+        for item in items:
+            item.metadata["translation_group"] = "root"
+            item.metadata["shared_context"] = f"NPC ({traits})." + name_context
+            item.metadata["batch_context"] = ""
+
         return ExtractedContent(
             content_type="creature",
             items=items,

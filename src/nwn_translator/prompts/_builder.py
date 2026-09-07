@@ -282,6 +282,7 @@ def build_translation_system_prompt_parts(
     glossary_block: str = "",
     *,
     content_profile: str = CONTENT_PROFILE_DEFAULT,
+    batch_mode: bool = False,
 ) -> Tuple[str, str]:
     """Return ``(stable, variable)`` halves of the line-by-line / batch system prompt.
 
@@ -311,15 +312,22 @@ def build_translation_system_prompt_parts(
     else:
         rules_body = _build_default_profile_rules(target_lang, gender)
 
+    output_shape = (
+        "Return a flat JSON object mapping each input item ID to its translated string. "
+        'Example: {"0":"translated first item","1":"translated second item"}. '
+        "Use only the requested item IDs; do not wrap the mapping in another object.\n"
+        if batch_mode
+        else "The JSON object must contain exactly ONE key:\n"
+        '- "translation": The final translated text ONLY, perfectly formatted '
+        "and ready to use in the game.\n"
+    )
     stable = (
         f"You are an elite translator for the game Neverwinter Nights. "
         f"Your task is to translate the text to {target_lang} according to "
         "Nora Gal's Golden School of Translation.\n\n"
         f"{rules_body}"
         "\nYour output MUST be strictly valid JSON. Do not use markdown code blocks.\n"
-        "The JSON object must contain exactly ONE key:\n"
-        '- "translation": The final translated text ONLY, perfectly formatted '
-        "and ready to use in the game.\n"
+        f"{output_shape}"
         "Inside JSON strings escape line breaks as \\n.\n"
         "Never return an empty translation for non-empty input.\n\n"
         "Do not include any other keys, your thought process, explanations, or any "

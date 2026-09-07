@@ -135,6 +135,24 @@ Bundler: Vite 5.
 Styles: Tailwind CSS 3 (PostCSS, `frontend/src/style.css`).
 State in `composables/`; i18n in `locales.js`.
 
+## Versioning
+
+Semantic versioning, `MAJOR.MINOR.PATCH`. The version lives in three places
+that must match: `pyproject.toml`, `frontend/package.json` and
+`frontend/src/version.js` (shown in the UI footer). The release channel label
+is a separate locale string.
+
+- **PATCH** — bug fixes and internal changes with no visible change in
+  translation behaviour or the API.
+- **MINOR** — new features, and any change to what the pipeline sends to the
+  model or writes into the module (batching, prompts, extractors, glossary).
+- **MAJOR** — `1.0.0` when the product leaves beta; afterwards, incompatible
+  changes to the API, artifacts or the library interface.
+
+Bump the version in the last commit of a change set, before merging into
+`main`. Older releases used a closed-beta scheme `0.1xxx` (`0.1004` reads as
+`0.10.4`).
+
 ## Test expectations
 
 - pytest `addopts` deselects `realdata` (`pyproject.toml`). Unit tests build GFF dicts by hand.

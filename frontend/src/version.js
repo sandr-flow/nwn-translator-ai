@@ -1,5 +1,5 @@
 /**
- * Closed-beta numbering: 0.1xxx. Bump the last digits for each user-facing
- * drop (0.1001, 0.1002, …). Later: 0.2xxx open beta, 1.0.0 stable.
+ * Semantic version shown in the UI. Keep in sync with pyproject.toml and
+ * package.json; the policy lives in AGENTS.md ("Versioning").
  */
-export const RELEASE_VERSION = "0.1004";
+export const RELEASE_VERSION = "0.11.0";

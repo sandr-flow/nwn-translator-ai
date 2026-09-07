@@ -233,12 +233,11 @@ class TestContentProfilePropagatedToProvider:
 # ---------------------------------------------------------------------------
 
 
-class TestAdaptiveBatchSize:
-    """Very-short items group into larger batches than regular-short items."""
+class TestBatchItemCap:
+    """Label batches fill up to the item cap regardless of string length."""
 
     def test_very_short_items_use_larger_batch(self):
-        # 61 one-word items (sanitized length <=20) → should be one batch of
-        # 60 + one of 1 (total 2 batches), not 3 batches of 30+30+1.
+        # 61 one-word items → one batch at the cap plus one of 1.
         items = [
             TranslatableItem(
                 text=f"Guard{i}",  # <=7 chars
@@ -268,7 +267,6 @@ class TestAdaptiveBatchSize:
         manager = TranslationManager(_make_config(), provider)
         manager.translate_content(content)
 
-        # 61 items → one batch of 60 (very-short) + one batch of 1.
         assert provider.translate_batch_async.call_count == 2
         sizes = [
             len(call.kwargs.get("items") or call.args[0])
@@ -276,49 +274,9 @@ class TestAdaptiveBatchSize:
         ]
         assert sorted(sizes) == [1, 60]
 
-    def test_regular_short_items_keep_batch_size_30(self):
-        # 31 items whose sanitized length is 21+ chars → two batches of 30+1.
-        # Build names that are intentionally >20 chars.
-        items = [
-            TranslatableItem(
-                text=f"Long Guardsman Name #{i:02d}",  # 23+ chars
-                item_id=f"g:{i}",
-                metadata={"type": "creature_first_name"},
-            )
-            for i in range(31)
-        ]
-        content = ExtractedContent(
-            content_type="creature",
-            items=items,
-            source_file=Path("guards.utc"),
-        )
-        provider = Mock()
-
-        async def translate_batch_async(
-            items, source_lang, target_lang, glossary_block=None, content_profile=None
-        ):
-            return [_Result(translated=f"TR:{it.original}", original=it.original) for it in items]
-
-        provider.translate_batch_async = AsyncMock(side_effect=translate_batch_async)
-        provider.translate_async = AsyncMock(
-            side_effect=lambda **kw: _Result(translated=f"TR:{kw['text']}", original=kw["text"])
-        )
-        provider.close_async_client = AsyncMock(return_value=None)
-
-        manager = TranslationManager(_make_config(), provider)
-        manager.translate_content(content)
-
-        assert provider.translate_batch_async.call_count == 2
-        sizes = sorted(
-            len(call.kwargs.get("items") or call.args[0])
-            for call in provider.translate_batch_async.call_args_list
-        )
-        assert sizes == [1, 30]
-
-    def test_mixed_short_items_split_into_two_batch_groups(self):
-        """Short items with mixed lengths are partitioned before batching."""
+    def test_mixed_length_labels_share_one_batch(self):
+        """Label strings of different lengths are packed together."""
         items = []
-        # 21 very-short items
         for i in range(21):
             items.append(
                 TranslatableItem(
@@ -327,7 +285,6 @@ class TestAdaptiveBatchSize:
                     metadata={"type": "creature_first_name"},
                 )
             )
-        # 16 regular-short items
         for i in range(16):
             items.append(
                 TranslatableItem(
@@ -357,11 +314,9 @@ class TestAdaptiveBatchSize:
         manager = TranslationManager(_make_config(), provider)
         result = manager.translate_content(content)
 
-        # Very-short: 21 → one batch of 60 (unfilled), regular-short: 16 → one of 30 (unfilled).
         sizes = sorted(
             len(call.kwargs.get("items") or call.args[0])
             for call in provider.translate_batch_async.call_args_list
         )
-        assert sizes == [16, 21]
-        # Every item got translated, despite being split across two groups.
+        assert sizes == [37]
         assert len(result) == len(items)

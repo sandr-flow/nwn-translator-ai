@@ -177,7 +177,7 @@ def test_split_large_group_keeps_name_pair_and_every_occurrence():
         },
     )
     manager = TranslationManager(TranslationConfig(api_key="test", quiet=True), Mock())
-    manager._BATCH_MEDIUM_CHAR_BUDGET = 100
+    manager._BATCH_TEXT_BUDGET = 100
     groups = [[{"item": i, "sanitized": i.text} for i in creature.items]]
     batches = manager._pack_structural_groups(groups)
     assert [[d["item"].metadata["type"] for d in b] for b in batches] == [
@@ -218,7 +218,7 @@ def test_partial_group_response_does_not_shift_next_group_results():
         )
     )
     manager = TranslationManager(TranslationConfig(api_key="test", quiet=True), provider)
-    manager._BATCH_SIZE_VERY_SHORT = 2
+    manager._BATCH_MAX_ITEMS = 2
     result = manager.translate_content(ExtractedContent("combined", items, Path("module")))
     assert result == {items[0].key: "TR:First", items[2].key: "TR:Second"}
     assert items[1].key in manager.failed_items

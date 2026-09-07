@@ -267,20 +267,6 @@ class TranslationManager:
             self._glossary_block_for_texts([item.text, item.context]),
         )
 
-    def _split_terminology_batch(self, batch: List[dict]) -> List[List[dict]]:
-        """Split requests, never their required terminology or a single name pair."""
-        texts = [text for data in batch for text in (data["item"].text, data["item"].context)]
-        if (
-            len(batch) <= 1
-            or all(data["item"].metadata.get("name_fields") for data in batch)
-            or len(self._glossary_block_for_texts(texts) or "") <= GLOSSARY_MAX_CHARS
-        ):
-            return [batch]
-        middle = len(batch) // 2
-        return self._split_terminology_batch(batch[:middle]) + self._split_terminology_batch(
-            batch[middle:]
-        )
-
     def _ncs_item_passes_gate(self, item) -> bool:
         if not self._is_ncs_item(item):
             return True
@@ -599,26 +585,13 @@ class TranslationManager:
                     )
                 item.context = "\n".join(context)
 
-    # Maximum characters for a string to be considered "short" (eligible for batching)
-    _BATCH_SHORT_THRESHOLD = 50
-    # Items at or below this length use the larger batch size (Phase 3.5).
-    _BATCH_VERY_SHORT_THRESHOLD = 20
-    # Maximum items per batch API call (regular short items, 20 < len <= 50).
-    _BATCH_SIZE = 30
-    # Larger batch size for very short items (<= 20 chars) — mostly tag names
-    # and one-word labels where per-item prompt overhead dominates cost.
-    _BATCH_SIZE_VERY_SHORT = 60
-    # Medium tier: non-NCS strings up to this length (descriptions, journal
-    # lines, names over the short threshold) are batched too; only longer
-    # strings keep the individual translation path. Medium batches are packed
-    # by a character budget as well as the item cap so response sizes stay
-    # bounded when items approach the threshold.
-    _BATCH_MEDIUM_THRESHOLD = 1000
-    _BATCH_SIZE_MEDIUM = 16
-    _BATCH_MEDIUM_CHAR_BUDGET = 6000
-    # NCS batches retain per-item script context, including across resources.
+    # Batch budgets. Character limits are conservative proxies for input and output
+    # size, not token counts; response recovery still narrows short answers.
+    _BATCH_MAX_ITEMS = 60
+    _BATCH_TEXT_BUDGET = 6000
+    _BATCH_PAYLOAD_BUDGET = 12000
+    # Approved NCS strings above this length keep the individual path with full context.
     _NCS_BATCH_MAX_LENGTH = 1000
-    _NCS_BATCH_CHAR_BUDGET = 12000
 
     # Timeout (seconds) for a single async translation call.
     _ITEM_TIMEOUT: float = 120.0
@@ -649,32 +622,14 @@ class TranslationManager:
     )
 
     @staticmethod
-    def _is_short_item(item_data: dict) -> bool:
-        """Check if an item is short and batchable (names/labels only)."""
-        sanitized = item_data["sanitized"]
-        item = item_data["item"]
-        if "\n" in sanitized or len(sanitized) > TranslationManager._BATCH_SHORT_THRESHOLD:
-            return False
-        item_type = (item.metadata or {}).get("type", "")
-        return item_type in TranslationManager._BATCHABLE_TYPES
-
-    @staticmethod
-    def _is_medium_item(item_data: dict) -> bool:
-        """Non-NCS items up to the medium threshold that missed the short tier."""
-        if TranslationManager._is_short_item(item_data):
-            return False
-        if TranslationManager._is_ncs_item(item_data["item"]):
-            return False
-        return len(item_data["sanitized"]) <= TranslationManager._BATCH_MEDIUM_THRESHOLD
-
-    @staticmethod
-    def _is_ncs_batchable(item_data: dict) -> bool:
-        """Return whether an approved NCS item can use the NCS batch path."""
-        item = item_data["item"]
-        if not TranslationManager._is_ncs_item(item):
-            return False
-        sanitized = item_data["sanitized"]
-        return len(sanitized) <= TranslationManager._NCS_BATCH_MAX_LENGTH
+    def _is_batchable(item_data: dict) -> bool:
+        """Strings within the batch text budget share requests; longer ones go individually."""
+        limit = (
+            TranslationManager._NCS_BATCH_MAX_LENGTH
+            if TranslationManager._is_ncs_item(item_data["item"])
+            else TranslationManager._BATCH_TEXT_BUDGET
+        )
+        return len(item_data["sanitized"]) <= limit
 
     @staticmethod
     def _content_profile_for_item(item_data: dict) -> str:
@@ -1131,9 +1086,9 @@ class TranslationManager:
     ) -> None:
         """Translate items without cache hits (concurrent async API calls).
 
-        Structural groups share context and stay together within request budgets.
-        Other items use length tiers; oversized strings retain individual context.
-
+        Structural groups (or single fields) are packed per content profile and
+        share requests within the batch budgets; oversized strings go individually
+        with their full context. All requests run in one concurrent pass.
         """
         # Passthrough: strings reduced to tokens/punctuation/whitespace only
         # need no API call — the sanitized form IS the "translation".
@@ -1154,90 +1109,30 @@ class TranslationManager:
             for d in passthrough_items:
                 self._apply_passthrough(d, translations)
 
-        ncs_batch_items = [d for d in real_items if self._is_ncs_batchable(d)]
-        regular_items = [d for d in real_items if not self._is_ncs_batchable(d)]
-        structural_groups: Dict[tuple, List[dict]] = {}
-        ungrouped = []
-        for data in regular_items:
-            item = data["item"]
-            group = item.metadata.get("translation_group")
-            if (
-                group is not None
-                and not self._is_ncs_item(item)
-                and len(data["sanitized"]) <= self._BATCH_MEDIUM_CHAR_BUDGET
-            ):
-                structural_groups.setdefault((item.key[0], group), []).append(data)
-            else:
-                ungrouped.append(data)
-        regular_items = ungrouped
-        name_groups: Dict[tuple, List[dict]] = {}
-        for data in regular_items:
-            item = data["item"]
-            if item.metadata.get("name_fields"):
-                key = (item.key[0], item.metadata["name_group"])
-                name_groups.setdefault(key, []).append(data)
-        regular_items = [d for d in regular_items if not d["item"].metadata.get("name_fields")]
-        short_items = [d for d in regular_items if self._is_short_item(d)]
-        medium_items = [d for d in regular_items if self._is_medium_item(d)]
-        long_items = [
-            d for d in regular_items if not self._is_short_item(d) and not self._is_medium_item(d)
+        long_items = [d for d in real_items if not self._is_batchable(d)]
+        groups: Dict[tuple, List[dict]] = {}
+        for d in real_items:
+            if self._is_batchable(d):
+                item = d["item"]
+                group = item.metadata.get("translation_group")
+                key = (item.key[0], "group", group) if group is not None else ("item", item.key)
+                groups.setdefault(key, []).append(d)
+        # Batches stay homogeneous per content profile so each family keeps its prompt.
+        by_profile: Dict[str, List[List[dict]]] = {}
+        for group in groups.values():
+            if self._is_ncs_item(group[0]["item"]):
+                group.sort(key=lambda d: d["item"].metadata.get("offset", 0))
+            by_profile.setdefault(self._content_profile_for_batch(group), []).append(group)
+        batches = [
+            batch
+            for family in by_profile.values()
+            for batch in self._pack_structural_groups(family)
         ]
-
-        # Phase 3.5 — adaptive batch size: very short (<=20 chars) items carry
-        # so little payload that per-batch prompt overhead dominates; group
-        # them into larger batches to raise payload/overhead ratio.
-        very_short_items: List[dict] = []
-        regular_short_items: List[dict] = []
-        for d in short_items:
-            if len(d["sanitized"]) <= self._BATCH_VERY_SHORT_THRESHOLD:
-                very_short_items.append(d)
-            else:
-                regular_short_items.append(d)
-
-        batches: List[List[dict]] = []
-        for i in range(0, len(very_short_items), self._BATCH_SIZE_VERY_SHORT):
-            batches.append(very_short_items[i : i + self._BATCH_SIZE_VERY_SHORT])
-        for i in range(0, len(regular_short_items), self._BATCH_SIZE):
-            batches.append(regular_short_items[i : i + self._BATCH_SIZE])
-        medium_batch: List[dict] = []
-        medium_chars = 0
-        for d in medium_items:
-            item_chars = len(d["sanitized"])
-            if medium_batch and (
-                len(medium_batch) >= self._BATCH_SIZE_MEDIUM
-                or medium_chars + item_chars > self._BATCH_MEDIUM_CHAR_BUDGET
-            ):
-                batches.append(medium_batch)
-                medium_batch = []
-                medium_chars = 0
-            medium_batch.append(d)
-            medium_chars += item_chars
-        if medium_batch:
-            batches.append(medium_batch)
-        name_batch: List[dict] = []
-        for group in name_groups.values():
-            combined = name_batch + group
-            terms = self._glossary_block_for_texts(
-                [text for data in combined for text in (data["item"].text, data["item"].context)]
-            )
-            if name_batch and (
-                len(combined) > self._BATCH_SIZE_VERY_SHORT or len(terms or "") > GLOSSARY_MAX_CHARS
-            ):
-                batches.append(name_batch)
-                name_batch = []
-            name_batch.extend(group)
-        if name_batch:
-            batches.append(name_batch)
-        batches = [part for batch in batches for part in self._split_terminology_batch(batch)]
-        batches.extend(self._pack_structural_groups(list(structural_groups.values())))
 
         async def run_all() -> tuple:
             limit = max(1, int(self.config.max_concurrent_requests))
             sem = asyncio.Semaphore(limit)
 
-            long_coros = [self._translate_one_async(sem, d) for d in long_items]
-
-            # --- Batch translation for short items ---
             async def batch_one(batch: List[dict], *, bump: bool = True) -> List[TranslationResult]:
                 batch_items = [
                     TranslationItem(
@@ -1308,57 +1203,17 @@ class TranslationManager:
                     batch, unique_results, lambda part: batch_one(part, bump=False)
                 )
                 # Per-item progress bump — one per batch member, regardless
-                # of success; retry path below must not re-bump.
+                # of success; retry paths below must not re-bump.
                 if bump:
                     for d in batch:
                         self._async_bump(d)
                 return unique_results
 
-            batch_coros = [batch_one(b) for b in batches]
-
-            try:
-                long_results = await asyncio.gather(*long_coros) if long_coros else []
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Overall gather timeout (%.0fs) for %d long items",
-                    self._GATHER_TIMEOUT,
-                    len(long_coros),
-                )
-                long_results = [
-                    TranslationResult(
-                        translated="",
-                        original=d["sanitized"],
-                        success=False,
-                        error="Gather timeout",
-                    )
-                    for d in long_items
-                ]
-
-            try:
-                batch_results_nested = await asyncio.gather(*batch_coros) if batch_coros else []
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Overall gather timeout (%.0fs) for %d batch coros",
-                    self._GATHER_TIMEOUT,
-                    len(batch_coros),
-                )
-                batch_results_nested = [
-                    [
-                        TranslationResult(
-                            translated="",
-                            original=d["sanitized"],
-                            success=False,
-                            error="Gather timeout",
-                        )
-                        for d in batch
-                    ]
-                    for batch in batches
-                ]
-
-            # Flatten batch results
-            batch_results = [r for group in batch_results_nested for r in group]
-
-            return long_results, batch_results
+            long_results, batch_results_nested = await asyncio.gather(
+                asyncio.gather(*[self._translate_one_async(sem, d) for d in long_items]),
+                asyncio.gather(*[batch_one(b) for b in batches]),
+            )
+            return long_results, [r for group in batch_results_nested for r in group]
 
         from ..async_utils import run_async
 
@@ -1370,11 +1225,9 @@ class TranslationManager:
             )
             + 60.0
         )
-        run_timeout = max(self._RUN_ASYNC_TIMEOUT, queue_timeout)
-
         long_results, batch_results = run_async(
             run_all(),
-            timeout=run_timeout,
+            timeout=max(self._RUN_ASYNC_TIMEOUT, queue_timeout),
         )
 
         if batches:
@@ -1385,41 +1238,38 @@ class TranslationManager:
                 len(long_items),
             )
 
-        if ncs_batch_items:
-            self._translate_ncs_batches(
-                ncs_batch_items,
-                translations,
-                source_filename=source_filename,
-            )
-
-        # Reorder the item list to match the flattened batch_results ordering
-        # (very-short batches first, then regular-short, then medium).
-        ordered_batch_items = [data for batch in batches for data in batch]
-
-        # Process long results
         for item_data, result in zip(long_items, long_results):
             self._process_translation_result(
                 item_data, result, translations, source_filename=source_filename
             )
 
         # Remaining failures have been narrowed recursively to individual items.
-        retry_items: List[dict] = []
-        for item_data, result in zip(ordered_batch_items, batch_results):
+        failed_generic: List[dict] = []
+        failed_ncs: List[dict] = []
+        failed_ncs_results: List[TranslationResult] = []
+        for item_data, result in zip([d for batch in batches for d in batch], batch_results):
             if result.success:
                 self._process_translation_result(
                     item_data, result, translations, source_filename=source_filename
                 )
+            elif self._is_ncs_item(item_data["item"]):
+                failed_ncs.append(item_data)
+                failed_ncs_results.append(result)
             else:
-                retry_items.append(item_data)
+                failed_generic.append(item_data)
 
-        # Fallback: retry failed batch items individually
-        if retry_items:
-            logger.info(
-                "Retrying %d failed batch items individually",
-                len(retry_items),
-            )
+        if failed_ncs:
+            for item_data, result in zip(
+                failed_ncs,
+                self._translate_ncs_batch_failures_single(failed_ncs, failed_ncs_results),
+            ):
+                self._process_translation_result(
+                    item_data, result, translations, source_filename=source_filename
+                )
+        if failed_generic:
+            logger.info("Retrying %d failed batch items individually", len(failed_generic))
             self._translate_individual_fallback(
-                retry_items, translations, source_filename=source_filename
+                failed_generic, translations, source_filename=source_filename
             )
 
     @staticmethod
@@ -1439,97 +1289,6 @@ class TranslationManager:
             for i, result in zip(indices, recovered):
                 results[i] = result
         return results
-
-    async def _translate_ncs_batch_with_recovery(
-        self,
-        sem: asyncio.Semaphore,
-        batch: List[dict],
-    ) -> List[TranslationResult]:
-        """Translate approved NCS items with shared recursive batch recovery."""
-        if not batch:
-            return []
-
-        batch_items = []
-        for d in batch:
-            item = d["item"]
-            meta = item.metadata or {}
-            ncs_hint = str(meta.get("ncs_hint") or "")
-            batch_items.append(
-                TranslationItem(
-                    original=d["sanitized"],
-                    context=item.context,
-                    metadata={
-                        **meta,
-                        "type": "ncs_string",
-                        "hint": ncs_hint,
-                        "ncs_hint": ncs_hint,
-                    },
-                )
-            )
-
-        glossary_block = self._glossary_block_for_texts(
-            text for d in batch for text in (d["sanitized"], d["item"].context)
-        )
-
-        async with sem:
-            self._raise_if_cancelled()
-            try:
-                unique_results = await asyncio.wait_for(
-                    logged_model_call(
-                        self._log_writer,
-                        self.provider.translate_batch_async,
-                        trace_context={"occurrences": [d["item"].key for d in batch]},
-                        items=batch_items,
-                        source_lang=self.config.source_lang,
-                        target_lang=self.config.target_lang,
-                        glossary_block=glossary_block,
-                        content_profile=CONTENT_PROFILE_SCRIPT_MESSAGE,
-                    ),
-                    timeout=self._BATCH_CALL_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                unique_results = [
-                    TranslationResult(
-                        translated="",
-                        original=bi.original,
-                        success=False,
-                        error=f"NCS batch timeout after {self._BATCH_CALL_TIMEOUT}s",
-                        metadata={},
-                    )
-                    for bi in batch_items
-                ]
-            except Exception as exc:
-                unique_results = [
-                    TranslationResult(
-                        translated="",
-                        original=bi.original,
-                        success=False,
-                        error=str(exc),
-                        metadata={},
-                    )
-                    for bi in batch_items
-                ]
-
-        if len(unique_results) < len(batch):
-            unique_results = [
-                *unique_results,
-                *[
-                    TranslationResult(
-                        translated="",
-                        original=batch_items[i].original,
-                        success=False,
-                        error="Missing translation result in NCS batch response",
-                        metadata={},
-                    )
-                    for i in range(len(unique_results), len(batch))
-                ],
-            ]
-        elif len(unique_results) > len(batch):
-            unique_results = unique_results[: len(batch)]
-
-        return await self._recover_batch_halves(
-            batch, unique_results, lambda part: self._translate_ncs_batch_with_recovery(sem, part)
-        )
 
     async def _translate_ncs_single_async(
         self,
@@ -1574,10 +1333,10 @@ class TranslationManager:
                 )
 
     def _pack_structural_groups(self, groups: List[List[dict]]) -> List[List[dict]]:
-        """Keep structural groups whole when input, output and glossary budgets allow.
+        """Pack groups into batches, keeping a group whole when the budgets allow.
 
-        Oversized groups split at field boundaries, with NPC name pairs atomic.
-        Character budgets are conservative proxies; response recovery still applies.
+        Oversized groups split at field boundaries, with NPC name pairs atomic. A
+        unit that exceeds a budget on its own still gets a request of its own.
         """
         batches: List[List[dict]] = []
         current: List[dict] = []
@@ -1588,9 +1347,9 @@ class TranslationManager:
                 for d in batch
             ]
             return (
-                len(batch) <= self._BATCH_SIZE_VERY_SHORT
-                and sum(len(d["sanitized"]) for d in batch) <= self._BATCH_MEDIUM_CHAR_BUDGET
-                and batch_payload_chars(payload) <= self._NCS_BATCH_CHAR_BUDGET
+                len(batch) <= self._BATCH_MAX_ITEMS
+                and sum(len(d["sanitized"]) for d in batch) <= self._BATCH_TEXT_BUDGET
+                and batch_payload_chars(payload) <= self._BATCH_PAYLOAD_BUDGET
                 and len(
                     self._glossary_block_for_texts(
                         text for d in batch for text in (d["sanitized"], d["item"].context)
@@ -1622,79 +1381,6 @@ class TranslationManager:
         if current:
             batches.append(current)
         return batches
-
-    def _translate_ncs_batches(
-        self,
-        items: List[dict],
-        translations: Translations,
-        source_filename: Optional[str] = None,
-    ) -> None:
-        """Pack approved NCS strings across scripts with bounded text and context."""
-        scripts: Dict[str, List[dict]] = {}
-        for data in items:
-            scripts.setdefault(data["item"].key[0], []).append(data)
-        for script_items in scripts.values():
-            script_items.sort(key=lambda data: data["item"].metadata.get("offset", 0))
-        batches = self._pack_structural_groups(list(scripts.values()))
-
-        async def run_batches() -> List[TranslationResult]:
-            limit = max(1, int(self.config.max_concurrent_requests))
-            sem = asyncio.Semaphore(limit)
-            nested = await asyncio.gather(
-                *[self._translate_ncs_batch_with_recovery(sem, batch) for batch in batches]
-            )
-            return [result for group in nested for result in group]
-
-        from ..async_utils import run_async
-
-        limit = max(1, int(self.config.max_concurrent_requests))
-        run_timeout = max(
-            self._RUN_ASYNC_TIMEOUT,
-            self._queued_call_timeout(
-                sum(2 * len(batch) - 1 for batch in batches), self._BATCH_CALL_TIMEOUT, limit
-            )
-            + 60.0,
-        )
-        batch_results = run_async(
-            run_batches(),
-            timeout=run_timeout,
-        )
-
-        ordered_items = [data for batch in batches for data in batch]
-        failed_items: List[dict] = []
-        failed_results: List[TranslationResult] = []
-        for item_data, result in zip(ordered_items, batch_results):
-            if result.success:
-                self._process_translation_result(
-                    item_data,
-                    result,
-                    translations,
-                    source_filename=source_filename,
-                )
-                self._async_bump(item_data)
-                continue
-            failed_items.append(item_data)
-            failed_results.append(result)
-
-        if failed_items:
-            fallback_results = self._translate_ncs_batch_failures_single(
-                failed_items,
-                failed_results,
-            )
-            for item_data, result in zip(failed_items, fallback_results):
-                self._process_translation_result(
-                    item_data,
-                    result,
-                    translations,
-                    source_filename=source_filename,
-                )
-                self._async_bump(item_data)
-
-        logger.info(
-            "Batch-translated %d NCS items in %d batch(es)",
-            len(items),
-            len(batches),
-        )
 
     def _translate_ncs_batch_failures_single(
         self,

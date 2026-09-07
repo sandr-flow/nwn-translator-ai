@@ -124,8 +124,10 @@ class SingleNcsTranslationManager(TranslationManager):
     """Legacy-style manager: approved NCS strings always use single-call translation."""
 
     @staticmethod
-    def _is_ncs_batchable(item_data: dict) -> bool:
-        return False
+    def _is_batchable(item_data: dict) -> bool:
+        if TranslationManager._is_ncs_item(item_data["item"]):
+            return False
+        return TranslationManager._is_batchable(item_data)
 
 
 def _load_env_file(path: Optional[Path]) -> None:

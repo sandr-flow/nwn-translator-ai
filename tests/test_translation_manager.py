@@ -578,7 +578,7 @@ class TestNcsBatchTranslation:
         assert [item.original for item in sent_items] == ["The gate opens."]
 
     def test_ncs_dynamic_batch_sizes_and_single_fallback_by_length(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_NCS_BATCH_CHAR_BUDGET", 100000)
+        monkeypatch.setattr(TranslationManager, "_BATCH_PAYLOAD_BUDGET", 100000)
         short_items = [
             _make_ncs_item(f"Short player line {i}.", item_id=f"script:short_{i}", offset=i)
             for i in range(21)
@@ -676,13 +676,13 @@ class TestNcsBatchTranslation:
         assert len(calls) == 2
         for call in calls:
             batch = call.kwargs["items"]
-            assert len(batch) <= manager._BATCH_SIZE_VERY_SHORT
-            assert sum(len(i.original) for i in batch) <= manager._BATCH_MEDIUM_CHAR_BUDGET
-            assert batch_payload_chars(batch) <= manager._NCS_BATCH_CHAR_BUDGET
+            assert len(batch) <= manager._BATCH_MAX_ITEMS
+            assert sum(len(i.original) for i in batch) <= manager._BATCH_TEXT_BUDGET
+            assert batch_payload_chars(batch) <= manager._BATCH_PAYLOAD_BUDGET
         provider.translate_async.assert_not_called()
 
     def test_ncs_batch_budget_counts_context(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_NCS_BATCH_CHAR_BUDGET", 1000)
+        monkeypatch.setattr(TranslationManager, "_BATCH_PAYLOAD_BUDGET", 1000)
         items = []
         for index in range(5):
             item = _make_ncs_item(f"Player line {index}.", item_id="line:0", offset=0)
@@ -741,7 +741,7 @@ class TestNcsBatchTranslation:
             "The lever moves.",
             "The lever moves.",
         ]
-        assert [item.metadata["hint"] for item in sent_items] == [
+        assert [item.metadata["ncs_hint"] for item in sent_items] == [
             "SpeakString",
             "SetCustomToken",
         ]
@@ -990,30 +990,31 @@ class TestPassthroughEmptyAfterSanitize:
         provider.translate_async.assert_not_called()
 
 
-class TestMediumBatchTier:
-    """Medium-length strings (up to 1000 chars) ride the batch path."""
+class TestBatchEligibility:
+    """Strings within the text budget share requests; longer ones go individually."""
 
     @staticmethod
     def _item_data(sanitized: str, item: TranslatableItem) -> dict:
         return {"sanitized": sanitized, "item": item}
 
-    def test_medium_classification_boundaries(self):
+    def test_batch_eligibility_boundaries(self):
         desc = TranslatableItem(text="x", metadata={"type": "placeable_description"})
-        assert TranslationManager._is_medium_item(self._item_data("x" * 1000, desc))
-        assert not TranslationManager._is_medium_item(self._item_data("x" * 1001, desc))
-
-        short_name = TranslatableItem(text="Sword", metadata={"type": "item_name"})
-        # Whitelisted short names stay in the short tier.
-        assert not TranslationManager._is_medium_item(self._item_data("Sword", short_name))
+        budget = TranslationManager._BATCH_TEXT_BUDGET
+        assert TranslationManager._is_batchable(self._item_data("x" * budget, desc))
+        assert not TranslationManager._is_batchable(self._item_data("x" * (budget + 1), desc))
 
         untyped = TranslatableItem(text="Sword")
-        # Short but non-whitelisted strings now batch via the medium tier.
-        assert TranslationManager._is_medium_item(self._item_data("Sword", untyped))
+        assert TranslationManager._is_batchable(self._item_data("Sword", untyped))
 
-        ncs = _make_ncs_item("x" * 120)
-        assert not TranslationManager._is_medium_item(self._item_data("x" * 120, ncs))
+        ncs_limit = TranslationManager._NCS_BATCH_MAX_LENGTH
+        assert TranslationManager._is_batchable(
+            self._item_data("x" * ncs_limit, _make_ncs_item("x"))
+        )
+        assert not TranslationManager._is_batchable(
+            self._item_data("x" * (ncs_limit + 1), _make_ncs_item("x"))
+        )
 
-    def test_three_tiers_and_long_route_correctly(self):
+    def test_profiles_pack_separately_and_oversized_goes_individually(self):
         very_short = TranslatableItem(
             text="Guard", metadata={"type": "creature_first_name"}, item_id="vs"
         )
@@ -1034,17 +1035,22 @@ class TestMediumBatchTier:
         long_item = TranslatableItem(
             text=long_text, metadata={"type": "placeable_description"}, item_id="l"
         )
+        oversized_text = "An oversized description that exceeds the batch text budget. " * 120
+        oversized = TranslatableItem(
+            text=oversized_text, metadata={"type": "placeable_description"}, item_id="o"
+        )
         translations = {
             "Guard": "Страж",
             "Sword of the Ancient Flames": "Меч Древнего Пламени",
             medium_text: "Диван выглядит уютным.",
             long_text: "Длинное описание.",
+            oversized_text: "Огромное описание.",
         }
         provider = _make_provider(translations)
         manager = TranslationManager(_make_config(), provider)
         content = ExtractedContent(
             content_type="mixed",
-            items=[very_short, short, medium, long_item],
+            items=[very_short, short, medium, long_item, oversized],
             source_file=Path("x.git"),
         )
 
@@ -1054,8 +1060,16 @@ class TestMediumBatchTier:
         assert result[_key(content, "Sword of the Ancient Flames")] == "Меч Древнего Пламени"
         assert result[_key(content, medium_text)] == "Диван выглядит уютным."
         assert result[_key(content, long_text)] == "Длинное описание."
-        assert provider.translate_async.call_count == 1  # only the long item
-        assert provider.translate_batch_async.call_count == 3  # one batch per tier
+        assert result[_key(content, oversized_text)] == "Огромное описание."
+        assert provider.translate_async.call_count == 1  # only the oversized item
+        sent = {
+            call.kwargs["content_profile"]: [item.original for item in call.kwargs["items"]]
+            for call in provider.translate_batch_async.call_args_list
+        }
+        assert sent == {
+            "short_label": ["Guard", "Sword of the Ancient Flames"],
+            "default": [medium_text, long_text],
+        }
         batch_items = [
             item
             for call in provider.translate_batch_async.call_args_list
@@ -1103,7 +1117,7 @@ class TestMediumBatchTier:
         assert provider.translate_async.call_count == 1  # individual fallback
 
     def test_medium_batches_respect_char_budget(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_BATCH_MEDIUM_CHAR_BUDGET", 300)
+        monkeypatch.setattr(TranslationManager, "_BATCH_TEXT_BUDGET", 300)
         texts = [
             f"A fairly long unique description number {i} that easily clears the "
             "short threshold and lands in the medium tier of the batch splitter."

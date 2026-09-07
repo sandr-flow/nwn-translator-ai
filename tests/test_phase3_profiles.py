@@ -237,14 +237,15 @@ class TestBatchItemCap:
     """Label batches fill up to the item cap regardless of string length."""
 
     def test_very_short_items_use_larger_batch(self):
-        # 61 one-word items → one batch at the cap plus one of 1.
+        # One item over the cap → one batch at the cap plus one of 1.
+        cap = TranslationManager._BATCH_MAX_ITEMS
         items = [
             TranslatableItem(
-                text=f"Guard{i}",  # <=7 chars
+                text=f"Guard{i}",
                 item_id=f"g:{i}",
                 metadata={"type": "creature_first_name"},
             )
-            for i in range(61)
+            for i in range(cap + 1)
         ]
         content = ExtractedContent(
             content_type="creature",
@@ -272,7 +273,7 @@ class TestBatchItemCap:
             len(call.kwargs.get("items") or call.args[0])
             for call in provider.translate_batch_async.call_args_list
         ]
-        assert sorted(sizes) == [1, 60]
+        assert sorted(sizes) == [1, cap]
 
     def test_mixed_length_labels_share_one_batch(self):
         """Label strings of different lengths are packed together."""

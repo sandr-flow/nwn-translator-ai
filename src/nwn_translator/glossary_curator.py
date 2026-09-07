@@ -169,7 +169,10 @@ def _build_system_prompt(target_lang: str) -> str:
         "names of another candidate only when the evidence identifies the same entity. "
         "The alias target must be an existing candidate name, not a new spelling. "
         "A shared word alone is not evidence: a creature type and its stronger variant "
-        "remain distinct. Gendered generic titles are contextual labels, not proper names."
+        "remain distinct. Gendered generic titles are contextual labels, not proper names. "
+        "reason is a short snake_case tag under 30 characters (for example "
+        "technical_label, recurring_creature, product_name, variant_of_target, "
+        "generic_title, local_label), never a sentence."
     )
 
 
@@ -177,8 +180,8 @@ def _build_user_prompt(candidates: List[EntityCandidate]) -> str:
     data = {candidate.name: candidate.to_curator_record() for candidate in candidates}
     return (
         "Curate these candidates. Return a JSON object keyed by candidate name. "
-        "Each value must contain decision, reason, priority, and optionally alias_of "
-        "(an existing source form).\n\n" + json.dumps(data, ensure_ascii=False, indent=2)
+        "Each value must contain decision, reason (short tag), priority, and optionally "
+        "alias_of (an existing source form).\n\n" + json.dumps(data, ensure_ascii=False, indent=2)
     )
 
 

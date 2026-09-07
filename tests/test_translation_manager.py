@@ -655,8 +655,8 @@ class TestNcsBatchTranslation:
             long_text,
         }
 
-    @pytest.mark.parametrize("length,count", [(30, 65), (1000, 8)])
-    def test_ncs_batches_across_single_message_scripts(self, length, count):
+    @pytest.mark.parametrize("length,count,expected_calls", [(30, 65, 2), (1000, 8, 2)])
+    def test_ncs_batches_across_single_message_scripts(self, length, count, expected_calls):
         items = []
         for index in range(count):
             text = f"Player message {index}: ".ljust(length, ".")
@@ -673,7 +673,7 @@ class TestNcsBatchTranslation:
         from nwn_translator.ai_providers.batch_payload import batch_payload_chars
 
         calls = provider.translate_batch_async.call_args_list
-        assert len(calls) == 2
+        assert len(calls) == expected_calls
         for call in calls:
             batch = call.kwargs["items"]
             assert len(batch) <= manager._BATCH_MAX_ITEMS

@@ -25,6 +25,15 @@ logger = logging.getLogger(__name__)
 WORLD_CONTEXT_MAX_ENTRIES = 30
 WORLD_CONTEXT_MAX_CHARS = 12000
 
+#: Area instance lists (.git) whose objects can own or speak in a dialog.
+_GIT_DIALOG_ACTOR_LISTS: Tuple[Tuple[str, str], ...] = (
+    ("Creature List", "creature"),
+    ("Placeable List", "placeable"),
+    ("Door List", "door"),
+)
+#: Blueprints of non-creature objects that can own a dialog.
+_DIALOG_OBJECT_KINDS: Dict[str, str] = {".utp": "placeable", ".utd": "door"}
+
 #: Creature blueprint event-script ResRef fields (Aurora UTC). SpeakString in
 #: those scripts runs as OBJECT_SELF — the creature that owns the assignment.
 UTC_SCRIPT_FIELDS: Tuple[str, ...] = (
@@ -46,7 +55,7 @@ UTC_SCRIPT_FIELDS: Tuple[str, ...] = (
 
 @dataclass
 class NPCInfo:
-    """Information about a specific NPC."""
+    """Information about a specific NPC, or another object that can speak in a dialog."""
 
     tag: str
     first_name: str
@@ -55,6 +64,9 @@ class NPCInfo:
     race: str
     gender: str
     conversation: str
+    #: ``creature``, or ``placeable`` / ``door`` for dialog actors that are not
+    #: creatures (their name is in ``first_name``, race and gender are empty).
+    kind: str = "creature"
 
     @property
     def display_name(self) -> str:
@@ -78,6 +90,32 @@ class WorldContext:
     candidates: EntityCandidateRegistry = field(default_factory=EntityCandidateRegistry)
     #: Script ResRef (casefolded) → creatures that assign that script on an event.
     script_owners: Dict[str, List[NPCInfo]] = field(default_factory=dict)
+    #: Objects that can speak in dialogs besides the creature blueprints in
+    #: ``npcs``: creatures, placeables and doors placed in areas (.git) and
+    #: placeable/door blueprints. Keyed by casefolded Conversation ResRef and by
+    #: tag. Only dialog speaker resolution reads them.
+    dialog_actors_by_conversation: Dict[str, List[NPCInfo]] = field(default_factory=dict)
+    dialog_actors_by_tag: Dict[str, List[NPCInfo]] = field(default_factory=dict)
+
+    def register_dialog_actor(self, actor: NPCInfo) -> bool:
+        """Index *actor* by its Conversation and its tag for dialog speaker lookup.
+
+        Identical placements of one blueprint are indexed once. Returns ``True``
+        when the actor was new.
+        """
+        added = False
+        conversation = str(actor.conversation or "").strip().casefold()
+        for index, key in (
+            (self.dialog_actors_by_conversation, conversation),
+            (self.dialog_actors_by_tag, actor.tag),
+        ):
+            if not key:
+                continue
+            actors = index.setdefault(key, [])
+            if actor not in actors:
+                actors.append(actor)
+                added = True
+        return added
 
     def register_script_owner(self, resref: object, npc: NPCInfo) -> None:
         """Record that *npc* runs *resref* as an event script (OBJECT_SELF)."""
@@ -430,9 +468,10 @@ class WorldScanner:
         count_areas = 0
         count_quests = 0
         count_items = 0
+        count_dialog_actors = 0
 
         # Collect scannable files first for progress reporting
-        scannable_exts = {".utc", ".are", ".jrl", ".uti"}
+        scannable_exts = {".utc", ".are", ".jrl", ".uti", ".git", *_DIALOG_OBJECT_KINDS}
         scan_files = [
             f for f in extract_dir.rglob("*") if f.is_file() and f.suffix.lower() in scannable_exts
         ]
@@ -460,15 +499,25 @@ class WorldScanner:
                 elif ext == ".uti":
                     if self._process_uti(file_path, context, gff_cache):
                         count_items += 1
+                elif ext == ".git":
+                    count_dialog_actors += self._process_git(file_path, context, gff_cache)
+                elif ext in _DIALOG_OBJECT_KINDS:
+                    data = read_gff(
+                        file_path, cache=gff_cache, source_encoding=self._source_encoding
+                    )
+                    if self._register_dialog_actor(data, _DIALOG_OBJECT_KINDS[ext], context):
+                        count_dialog_actors += 1
             except Exception as e:
                 logger.debug("Failed to scan context from %s: %s", file_path.name, e)
 
         logger.info(
-            "World context built: %d NPCs, %d locations, %d quests, %d items",
+            "World context built: %d NPCs, %d locations, %d quests, %d items, "
+            "%d other dialog actors",
             count_npcs,
             count_areas,
             count_quests,
             count_items,
+            count_dialog_actors,
         )
         return context
 
@@ -659,3 +708,64 @@ class WorldScanner:
             )
             return True
         return False
+
+    def _process_git(
+        self,
+        file_path: Path,
+        context: WorldContext,
+        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
+    ) -> int:
+        """Register the creatures, placeables and doors placed in an area (.git).
+
+        A placed instance can rename its blueprint or give it another
+        Conversation, so dialog owners are looked up among the placements too.
+
+        Returns:
+            Number of dialog actors added to the context.
+        """
+        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
+        added = 0
+        for list_key, kind in _GIT_DIALOG_ACTOR_LISTS:
+            instances = data.get(list_key)
+            if not isinstance(instances, list):
+                continue
+            for instance in instances:
+                if isinstance(instance, dict) and self._register_dialog_actor(
+                    instance, kind, context
+                ):
+                    added += 1
+        return added
+
+    def _register_dialog_actor(
+        self, data: Dict[str, Any], kind: str, context: WorldContext
+    ) -> bool:
+        """Register one creature, placeable or door struct as a dialog actor.
+
+        Returns:
+            ``True`` if the actor was new to the context.
+        """
+        tag = str(data.get("Tag") or "")
+        conversation = str(data.get("Conversation") or "")
+        if kind == "creature":
+            first_name = self._get_local_string(data, "FirstName")
+            last_name = self._get_local_string(data, "LastName")
+            race = race_label(data.get("Race", -1)) or "Creature"
+            gender = gender_label(data.get("Gender", -1))
+        else:
+            first_name = self._get_local_string(data, "LocName") or self._get_local_string(
+                data, "LocalizedName"
+            )
+            last_name = race = gender = ""
+        if not tag and not first_name.strip() and not last_name.strip():
+            return False
+        actor = NPCInfo(
+            tag=tag,
+            first_name=first_name,
+            last_name=last_name,
+            description="",
+            race=race,
+            gender=gender,
+            conversation=conversation,
+            kind=kind,
+        )
+        return context.register_dialog_actor(actor)

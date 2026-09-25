@@ -11,7 +11,7 @@ A hosted instance is in closed beta. If you'd like to help test it, email [sandr
 Translation runs as a pipeline of sequential stages:
 
 1. **Unpack** the `.mod`/`.erf`/`.hak` archive and find translatable resources (GFF and compiled NCS scripts).
-2. **World context** — scan NPCs, areas, quests, and proper nouns for consistent translation.
+2. **World context** — scan NPCs, areas, quests, and proper nouns for consistent translation; creatures, placeables, and doors placed in areas tell who speaks each dialog line.
 3. **Glossary** — collect and curate terminology that is then injected into prompts.
 4. **Translate** — dialogs are translated contextually (aware of branching), other strings in batches; NWN tokens and inline tags (`<FirstName>`, `<CustomToken:123>`, `<StartAction>`) are protected with placeholders.
 5. **Inject** — byte-level patching of strings back into GFF/NCS without fully rewriting binary resources.
@@ -29,6 +29,7 @@ after safety review; constant order is not treated as execution order.
 - FastAPI backend and Vue 3 + Vite + Tailwind web UI.
 - Resource types: `.dlg`, `.jrl`, `.uti`, `.utc`, `.are`, `.utt`, `.utp`, `.utd`, `.ute`, `.utm`, `.ifo`, `.git`, `.ncs`.
 - Rebuild after manual translation edits in the web editor.
+- The web editor shows who speaks each dialog line: an NPC or object (name and tag), the player, or the dialog owner.
 - SQLite-backed web tasks so long-running translations survive reconnects.
 - Docker setup for production deployment.
 

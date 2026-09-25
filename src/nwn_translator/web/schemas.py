@@ -1,6 +1,6 @@
 """Pydantic schemas for the web API."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -94,6 +94,18 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class DialogSpeaker(BaseModel):
+    """Who speaks a dialog line."""
+
+    #: ``npc`` (a creature, placeable or door), ``player`` (a reply) or
+    #: ``owner_unknown`` (the dialog owner, when no scanned object uses this dialog).
+    kind: Literal["npc", "player", "owner_unknown"]
+    #: Object name; several are joined with " / " (up to three, then "+N").
+    name: str = ""
+    #: Object tag, joined like ``name``.
+    tag: str = ""
+
+
 class TranslationItem(BaseModel):
     """A single original/translated pair."""
 
@@ -107,6 +119,8 @@ class TranslationItem(BaseModel):
         default_factory=list,
         description="Other filenames containing the same original text",
     )
+    #: Speaker of a ``.dlg`` line; ``None`` for other files.
+    speaker: Optional[DialogSpeaker] = None
 
 
 class TranslationFileGroup(BaseModel):

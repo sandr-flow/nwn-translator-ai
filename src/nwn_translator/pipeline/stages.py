@@ -36,6 +36,7 @@ from ..ai_providers.openrouter_provider import OpenRouterProvider
 from ..translators.translation_manager import TranslationManager
 from ..extractors.base import Translations
 from ..translators.context_translator import ContextualTranslationManager
+from ..context.dialog_speakers import dialog_line_speaker
 from ..context.world_context import WorldScanner, WorldContext
 from ..context.entity_extractor import EntityExtractor
 from ..context.entity_candidates import EntityCandidateRegistry
@@ -283,7 +284,8 @@ class PipelineState:
         The TranslationManager logs only unique items (one entry per
         deduplicated text); this method adds an entry for every (file, item_id)
         pair — including dialogs — so the editor groups by source file and each
-        item is independently addressable at rebuild time.
+        item is independently addressable at rebuild time. Dialog rows also
+        carry the line's speaker for the editor.
         """
         already_logged: Set[Tuple[str, str]] = set()
 
@@ -301,6 +303,16 @@ class PipelineState:
                 if log_key in already_logged:
                     continue
                 already_logged.add(log_key)
+                speaker = (
+                    dialog_line_speaker(
+                        self.world_context,
+                        file_path.stem,
+                        is_entry=item.metadata.get("type") == "entry",
+                        speaker_tag=str(item.metadata.get("speaker") or ""),
+                    )
+                    if file_ext == ".dlg"
+                    else None
+                )
                 manager.log_per_file_item(
                     original=item.text,
                     translated=translated,
@@ -308,6 +320,7 @@ class PipelineState:
                     source_filename=file_path.name,
                     item_id=item.item_id,
                     success=not failed,
+                    speaker=speaker,
                 )
 
     def _record_ncs_patch_failure(self, file_path: Path, error: str) -> None:

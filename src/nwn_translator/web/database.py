@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS translations (
     file       TEXT,
     item_id    TEXT,
     success    INTEGER NOT NULL DEFAULT 1,
+    speaker    TEXT,
 
     UNIQUE(task_id, file, item_id)
 );
@@ -94,6 +95,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     tr_cols = {row[1] for row in cur_tr.fetchall()}
     if "success" not in tr_cols:
         conn.execute("ALTER TABLE translations ADD COLUMN success INTEGER NOT NULL DEFAULT 1")
+    if "speaker" not in tr_cols:
+        conn.execute("ALTER TABLE translations ADD COLUMN speaker TEXT")
 
 
 def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
@@ -336,14 +339,27 @@ def insert_translation(
     file: Optional[str] = None,
     item_id: Optional[str] = None,
     success: bool = True,
+    speaker: Optional[Dict[str, str]] = None,
 ) -> None:
+    """Insert or replace one row; *speaker* (dialog lines only) is stored as JSON."""
+    speaker_json = json.dumps(speaker, ensure_ascii=False) if speaker else None
     db = get_db()
     with _lock:
         db.execute(
             "INSERT OR REPLACE INTO translations "
-            "(task_id, original, translated, context, model, file, item_id, success) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (task_id, original, translated, context, model, file, item_id, 1 if success else 0),
+            "(task_id, original, translated, context, model, file, item_id, success, speaker) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                task_id,
+                original,
+                translated,
+                context,
+                model,
+                file,
+                item_id,
+                1 if success else 0,
+                speaker_json,
+            ),
         )
         db.commit()
 
@@ -364,16 +380,20 @@ def update_translation_text(task_id: str, file: str, item_id: str, translated: s
 
 
 def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
+    """Return the task's rows; ``speaker`` is decoded (``None`` when absent)."""
     db = get_db()
     with _lock:
         cur = db.execute(
-            "SELECT original, translated, context, model, file, item_id, success "
+            "SELECT original, translated, context, model, file, item_id, success, speaker "
             "FROM translations WHERE task_id = ?",
             (task_id,),
         )
         cur.row_factory = sqlite3.Row
         rows = cur.fetchall()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    for row in result:
+        row["speaker"] = json.loads(row["speaker"]) if row["speaker"] else None
+    return result
 
 
 def get_ncs_translation_map_by_task(task_id: str) -> Dict[str, str]:
@@ -455,6 +475,7 @@ class SqliteTranslationLogWriter:
                 file=entry.get("file"),
                 item_id=entry.get("item_id"),
                 success=success_raw not in (False, 0, "0"),
+                speaker=entry.get("speaker"),
             )
         except Exception as e:
             logger.debug("Failed to write translation to SQLite: %s", e)

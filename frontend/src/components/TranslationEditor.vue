@@ -105,15 +105,14 @@ function isGroupCollapsed(label) {
 const collapsedGroups = ref({});
 const syncShared = ref(true);
 
-// Build a lookup: original text -> list of {fileIdx, itemIdx} across all files
+// Build a lookup: original text -> list of {fileIdx, itemIdx} across all files.
+// Identical dialog lines are separate rows, so peers can share one file.
 const sharedItemIndex = computed(() => {
   const index = {};
   editableFiles.value.forEach((file, fi) => {
     file.items.forEach((item, ii) => {
-      if (item.shared_with && item.shared_with.length) {
-        if (!index[item.original]) index[item.original] = [];
-        index[item.original].push({ fi, ii });
-      }
+      if (!index[item.original]) index[item.original] = [];
+      index[item.original].push({ fi, ii });
     });
   });
   return index;
@@ -122,15 +121,40 @@ const sharedItemIndex = computed(() => {
 function onTranslationInput(event, item) {
   autoResize(event);
   item.translated = event.target.value;
-  if (syncShared.value && item.shared_with && item.shared_with.length) {
-    const peers = sharedItemIndex.value[item.original];
-    if (peers) {
-      for (const { fi, ii } of peers) {
-        editableFiles.value[fi].items[ii].translated = item.translated;
-      }
-    }
+  if (!syncShared.value) return;
+  let peerOnScreen = false;
+  for (const { fi, ii } of sharedItemIndex.value[item.original] ?? []) {
+    const peer = editableFiles.value[fi].items[ii];
+    if (peer === item) continue;
+    peer.translated = item.translated;
+    if (fi === selectedFileIdx.value) peerOnScreen = true;
   }
+  if (peerOnScreen) resizeAllTextareas();
 }
+
+function speakerLabel(speaker) {
+  if (speaker.kind === "player") return i("editor.speakerPlayer");
+  if (speaker.kind === "owner_unknown") return i("editor.speakerOwner");
+  return speaker.name || speaker.tag;
+}
+
+// The tag goes next to the name unless the name already is the tag.
+function speakerTag(speaker) {
+  return speaker.kind === "npc" && speaker.name && speaker.tag !== speaker.name
+    ? speaker.tag
+    : "";
+}
+
+function speakerTitle(speaker) {
+  const tag = speakerTag(speaker);
+  return `${i("editor.speaker")}: ${speakerLabel(speaker)}${tag ? ` (${tag})` : ""}`;
+}
+
+const SPEAKER_CLASSES = {
+  npc: "bg-nwn-accent/10 text-nwn-accent",
+  player: "bg-sky-400/10 text-sky-300",
+  owner_unknown: "bg-nwn-muted/10 text-nwn-muted",
+};
 
 function navigateToFile(filename) {
   const idx = editableFiles.value.findIndex((f) => f.filename === filename);
@@ -345,7 +369,18 @@ function goBack() {
             >
               <div class="grid grid-cols-2 gap-3 p-3">
                 <div>
-                  <p class="text-xs text-nwn-muted mb-1">{{ i("editor.original") }}</p>
+                  <div class="flex items-center gap-2 mb-1">
+                    <p class="text-xs text-nwn-muted shrink-0">{{ i("editor.original") }}</p>
+                    <span
+                      v-if="item.speaker"
+                      class="text-xs px-1.5 rounded truncate"
+                      :class="SPEAKER_CLASSES[item.speaker.kind]"
+                      :title="speakerTitle(item.speaker)"
+                    >{{ speakerLabel(item.speaker) }}<span
+                        v-if="speakerTag(item.speaker)"
+                        class="font-mono text-nwn-muted ml-1.5"
+                      >{{ speakerTag(item.speaker) }}</span></span>
+                  </div>
                   <p class="text-sm text-gray-300 whitespace-pre-wrap break-words">{{ item.original }}</p>
                 </div>
                 <div>

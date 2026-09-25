@@ -49,6 +49,7 @@ from .schemas import (
     ConfigResponse,
     DetectProviderRequest,
     DetectProviderResponse,
+    DialogSpeaker,
     ModelLookupResponse,
     ModelReasoningInfo,
     ModelsResponse,
@@ -400,11 +401,38 @@ async def download_log(
     )
 
 
+#: Context the dialog extractor gives a line with an explicit ``Speaker`` tag.
+_TAGGED_DIALOG_LINE_RE = re.compile(r"\(speaker: (.+)\)$")
+
+
+def _dialog_speaker(row: Dict[str, Any]) -> Optional[DialogSpeaker]:
+    """Speaker label of a dialog row.
+
+    Rows stored before speakers were recorded have only the extractor's context
+    string, which still tells player replies, tagged lines and owner lines apart.
+    """
+    if row.get("speaker"):
+        return DialogSpeaker.model_validate(row["speaker"])
+    context = row.get("context") or ""
+    if context.startswith("Player reply in "):
+        return DialogSpeaker(kind="player")
+    tagged = _TAGGED_DIALOG_LINE_RE.search(context)
+    if tagged:
+        return DialogSpeaker(kind="npc", tag=tagged.group(1))
+    if context.startswith("NPC dialog line in "):
+        return DialogSpeaker(kind="owner_unknown")
+    return None
+
+
 @router.get("/tasks/{task_id}/translations", response_model=TranslationsResponse)
 async def get_translations(
     task: TranslationTask = Depends(require_task_owner),
 ) -> TranslationsResponse:
-    """Return structured translation data grouped by source file for the editor."""
+    """Return structured translation data grouped by source file for the editor.
+
+    Identical originals share one row per file, except in dialogs: each dialog
+    line keeps its own row, because the same text can have different speakers.
+    """
     rows = get_translations_by_task(task.task_id)
     if not rows:
         return TranslationsResponse(files=[])
@@ -422,19 +450,23 @@ async def get_translations(
         if filename not in groups:
             groups[filename] = []
             seen[filename] = set()
-        if original not in seen[filename]:
-            seen[filename].add(original)
+        item_id = entry.get("item_id") or ""
+        is_dialog = filename.lower().endswith(".dlg")
+        row_key = item_id if is_dialog and item_id else original
+        if row_key not in seen[filename]:
+            seen[filename].add(row_key)
             groups[filename].append(
                 TranslationItem(
                     original=original,
                     translated=translated,
-                    item_id=entry.get("item_id") or "",
+                    item_id=item_id,
                     failed=entry.get("success", 1) in (0, False, "0"),
+                    speaker=_dialog_speaker(entry) if is_dialog else None,
                 )
             )
-            if original not in text_to_files:
-                text_to_files[original] = []
-            text_to_files[original].append(filename)
+            files_with_text = text_to_files.setdefault(original, [])
+            if filename not in files_with_text:
+                files_with_text.append(filename)
 
     for filename, items in groups.items():
         for item in items:

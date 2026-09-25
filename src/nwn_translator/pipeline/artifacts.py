@@ -106,12 +106,23 @@ def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, An
     """Serialize the world context registry (candidates are dumped separately)."""
     if world_context is None:
         return {}
+    # An actor is indexed by Conversation and by tag; store each once.
+    actors = {
+        tuple(asdict(actor).values()): asdict(actor)
+        for index in (
+            world_context.dialog_actors_by_conversation,
+            world_context.dialog_actors_by_tag,
+        )
+        for registered in index.values()
+        for actor in registered
+    }
     return {
         "npcs": {tag: asdict(npc) for tag, npc in sorted(world_context.npcs.items())},
         "areas": dict(sorted(world_context.areas.items())),
         "quests": dict(sorted(world_context.quests.items())),
         "items": dict(sorted(world_context.items.items())),
         "extracted_names": list(world_context.extracted_names),
+        "dialog_actors": [actors[key] for key in sorted(actors)],
     }
 
 
@@ -134,6 +145,8 @@ def load_world_context(path: Path) -> WorldContext:
     wc.quests = dict(data.get("quests", {}))
     wc.items = dict(data.get("items", {}))
     wc.extracted_names = [tuple(pair) for pair in data.get("extracted_names", [])]
+    for actor in data.get("dialog_actors", []):
+        wc.register_dialog_actor(NPCInfo(**actor))
     return wc
 
 

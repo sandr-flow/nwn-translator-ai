@@ -21,7 +21,8 @@ from ..config import (
     TRANSLATION_TEMPERATURE,
 )
 from ..context.dialog_formatter import DialogFormatter
-from ..context.world_context import NPCInfo, WorldContext
+from ..context.dialog_speakers import dialog_owners, speaker_description, tagged_speakers
+from ..context.world_context import WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode
 from ..json_utils import json_extract_first_object, strip_json_markdown_fences
 from ..telemetry import llm_phase
@@ -1269,26 +1270,13 @@ class ContextualTranslationManager:
         With *file_label* set, each line is scoped to that file so lines from
         several dialogs can share one grouped speakers block.
         """
-        if self.world_context is None or not self.world_context.npcs:
+        if self.world_context is None:
             return []
-
-        def describe(npc: NPCInfo) -> str:
-            name = " ".join(
-                str(p).strip() for p in (npc.first_name, npc.last_name) if p and str(p).strip()
-            )
-            name = name or npc.tag
-            traits = ", ".join(t for t in (npc.race, npc.gender) if t)
-            return f"{name} ({traits})" if traits else name
 
         scope = f"In {file_label}, lines" if file_label else "Lines"
         lines: List[str] = []
-        stem_key = file_stem.casefold()
         owner_descs = sorted(
-            {
-                describe(npc)
-                for npc in self.world_context.npcs.values()
-                if str(npc.conversation).casefold() == stem_key
-            }
+            {speaker_description(npc) for npc in dialog_owners(self.world_context, file_stem)}
         )
         if owner_descs:
             lines.append(f"- {scope} marked [NPC]: spoken by " + "; or ".join(owner_descs))
@@ -1297,9 +1285,11 @@ class ContextualTranslationManager:
             {node.speaker for node in node_map.values() if node.is_entry and node.speaker}
         )
         for tag in tags:
-            npc = self.world_context.npcs.get(tag)
-            if npc is not None:
-                lines.append(f"- {scope} marked [{tag}]: spoken by {describe(npc)}")
+            descs = sorted(
+                {speaker_description(npc) for npc in tagged_speakers(self.world_context, tag)}
+            )
+            if descs:
+                lines.append(f"- {scope} marked [{tag}]: spoken by " + "; or ".join(descs))
         return lines
 
     @staticmethod

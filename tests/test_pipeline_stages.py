@@ -78,6 +78,36 @@ def test_world_context_roundtrip(tmp_path: Path) -> None:
     assert loaded.extracted_names == wc.extracted_names
 
 
+def test_world_context_roundtrip_keeps_dialog_actors(tmp_path: Path) -> None:
+    """Placed creatures, placeables and doors still resolve dialog speakers after reload."""
+    wc = WorldContext()
+    for actor in [
+        NPCInfo("MARTA", "Marta", "", "", "Human", "Female", "marta_talk"),
+        NPCInfo("SMITH", "Borin", "", "", "Dwarf", "Male", ""),
+        NPCInfo("", "Notice Board", "", "", "", "", "sign_talk", kind="placeable"),
+        NPCInfo("CELL", "Cell Door", "", "", "", "", "cell_talk", kind="door"),
+    ]:
+        wc.register_dialog_actor(actor)
+
+    path = tmp_path / "world_context.json"
+    artifacts.dump_world_context(path, wc)
+    loaded = artifacts.load_world_context(path)
+
+    assert loaded.dialog_actors_by_conversation == wc.dialog_actors_by_conversation
+    assert loaded.dialog_actors_by_tag == wc.dialog_actors_by_tag
+
+
+def test_world_context_without_dialog_actors_still_loads(tmp_path: Path) -> None:
+    """Artifacts written before dialog actors were saved load with empty registries."""
+    path = tmp_path / "world_context.json"
+    path.write_text('{"npcs": {}, "areas": {}}', encoding="utf-8")
+
+    loaded = artifacts.load_world_context(path)
+
+    assert loaded.dialog_actors_by_conversation == {}
+    assert loaded.dialog_actors_by_tag == {}
+
+
 def test_candidates_roundtrip_preserves_curation(tmp_path: Path) -> None:
     registry = EntityCandidateRegistry()
     registry.add(

@@ -36,6 +36,7 @@ from ..translation_logging import logged_model_call, translation_log_writer_for_
 from ..extractors.ncs_extractor import ncs_hard_veto_reason
 
 if TYPE_CHECKING:
+    from ..context.dialog_speakers import DialogSpeaker
     from ..glossary import Glossary
 from ..extractors import ExtractedContent
 from ..ai_providers import BaseAIProvider, TranslationItem, TranslationResult
@@ -227,20 +228,25 @@ class TranslationManager:
         source_filename: str,
         item_id: Optional[str] = None,
         success: bool = True,
+        speaker: Optional["DialogSpeaker"] = None,
     ) -> None:
-        """Write one translation log row for web per-file grouping (non-dialog paths)."""
+        """Write one translation log row for web per-file grouping.
+
+        *speaker* labels a dialog line for the editor; other rows carry no field.
+        """
+        entry: Dict[str, Any] = {
+            "original": original,
+            "translated": translated,
+            "context": context,
+            "model": self.config.model,
+            "file": source_filename,
+            "item_id": item_id,
+            "success": success,
+        }
+        if speaker is not None:
+            entry["speaker"] = speaker
         try:
-            self._log_writer.write(
-                {
-                    "original": original,
-                    "translated": translated,
-                    "context": context,
-                    "model": self.config.model,
-                    "file": source_filename,
-                    "item_id": item_id,
-                    "success": success,
-                }
-            )
+            self._log_writer.write(entry)
         except Exception:
             pass
 

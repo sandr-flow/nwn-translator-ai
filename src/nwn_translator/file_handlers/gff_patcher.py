@@ -9,7 +9,7 @@ the DataOffset pointers always stay within the valid FieldDataByteSize range.
 import logging
 import struct
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class GFFPatcher:
             if len(header) < 56:
                 raise GFFPatchError("File too small to be a valid GFF header")
 
-    def _read_header(self, data: bytes) -> dict:
+    def _read_header(self, data: Union[bytes, bytearray]) -> dict:
         """Parse key GFF header fields from file bytes."""
 
         def dword(off: int) -> int:
@@ -203,7 +203,7 @@ class GFFPatcher:
 
         return new_data
 
-    def _substring_count_at(self, data: bytes, record_offset: int) -> int:
+    def _substring_count_at(self, data: Union[bytes, bytearray], record_offset: int) -> int:
         """Return the SubStringCount of the CExoLocString field at *record_offset*.
 
         Reads the current DataOffset from the 12-byte field record and the

@@ -15,8 +15,6 @@ import asyncio
 import time
 from typing import Any, Dict, List, NoReturn, Optional, Union, cast
 
-import httpx
-
 logger = logging.getLogger(__name__)
 
 from openai import (
@@ -26,6 +24,7 @@ from openai import (
     BadRequestError,
     InternalServerError,
     OpenAI,
+    Timeout,
 )
 from tenacity import (
     retry,
@@ -196,7 +195,8 @@ class OpenRouterProvider(BaseAIProvider):
         #: Set after the first "reasoning not supported" 400 so the rest of the
         #: session skips the doomed reasoning request instead of retrying each call.
         self._reasoning_unsupported = False
-        _timeout = httpx.Timeout(connect=10, read=180, write=10, pool=10)
+        # The client's own Timeout type: openai 3 builds on httpx2, not httpx.
+        _timeout = Timeout(connect=10, read=180, write=10, pool=10)
         self._headers = self._build_default_headers()
         self._timeout = _timeout
         self.client = OpenAI(

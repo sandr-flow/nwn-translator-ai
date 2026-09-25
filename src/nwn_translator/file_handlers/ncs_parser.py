@@ -17,7 +17,7 @@ Binary format reference:
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from .gff_parser import decode_module_text
 
@@ -197,7 +197,7 @@ _NCS_EE_SCRIPT_SIZE_PREFIX_LEN = 5  # opcode + 4-byte BE length
 
 
 def _parse_instruction(
-    data: bytes, offset: int, source_encoding: Optional[str] = None
+    data: Union[bytes, bytearray], offset: int, source_encoding: Optional[str] = None
 ) -> NCSInstruction:
     """Parse a single instruction starting at *offset* in *data*.
 
@@ -267,7 +267,7 @@ def _parse_instruction(
     # Populate convenience fields
     if opcode == OP_CONST and type_byte == TYPE_STRING:
         str_len = struct.unpack_from(">H", data, offset + 2)[0]
-        raw_str = data[offset + 4 : offset + 4 + str_len]
+        raw_str = bytes(data[offset + 4 : offset + 4 + str_len])
         instr.string_value = decode_module_text(raw_str, source_encoding)
 
     if opcode in JUMP_OPCODES:

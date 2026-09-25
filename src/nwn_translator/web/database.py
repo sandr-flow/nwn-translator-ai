@@ -369,11 +369,13 @@ def update_translation_text(task_id: str, file: str, item_id: str, translated: s
 
     The row already exists (the editor loads originals from this table), so this is
     an in-place update that preserves the original text and keeps row identity stable.
+    An edited line counts as translated: the user has reviewed it.
     """
     db = get_db()
     with _lock:
         db.execute(
-            "UPDATE translations SET translated = ? WHERE task_id = ? AND file = ? AND item_id = ?",
+            "UPDATE translations SET translated = ?, success = 1 "
+            "WHERE task_id = ? AND file = ? AND item_id = ?",
             (translated, task_id, file, item_id),
         )
         db.commit()

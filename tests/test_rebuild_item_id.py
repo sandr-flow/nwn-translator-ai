@@ -390,3 +390,291 @@ def test_get_translations_marks_failed_rows(rebuild_client) -> None:
     assert items["hello"]["translated"] == "Hello"
     assert items["bye"]["failed"] is False
     assert items["bye"]["translated"] == "Пока"
+
+
+# ---------------------------------------------------------------------------
+# Identical lines inside one file
+# ---------------------------------------------------------------------------
+
+
+def _completed_task_with_rows(
+    tmp_path: Path, extract_dir: Path, filename: str, rows: list[tuple[str, str, str, bool]]
+) -> str:
+    """Completed task whose *filename* has ``(item_id, original, translated, success)`` rows."""
+    task_id = str(uuid.uuid4())
+    db.create_task_row(
+        task_id=task_id,
+        client_token="tok",
+        client_ip="1.1.1.1",
+        created_at=1.0,
+        input_filename="in.mod",
+        target_lang="russian",
+    )
+    db.update_task_row(
+        task_id,
+        status="completed",
+        extract_dir=str(extract_dir),
+        result_path=str(tmp_path / "out.mod"),
+        input_path=str(tmp_path / "missing.mod"),
+    )
+    for item_id, original, translated, success in rows:
+        db.insert_translation(
+            task_id=task_id,
+            original=original,
+            translated=translated,
+            file=filename,
+            item_id=item_id,
+            success=success,
+        )
+    return task_id
+
+
+def _creature_ids(stem: str, count: int) -> list[str]:
+    """Item ids the .git extractor gives the FirstName of placed creatures."""
+    return [f"{stem}_Creature List_{i}_FirstName" for i in range(count)]
+
+
+def test_edit_of_a_shared_row_reaches_every_identical_line(rebuild_client) -> None:
+    """Three guards placed in one area are one editor row; its edit patches all three."""
+    client, tmp_path = rebuild_client
+    extract_dir = tmp_path / "ex"
+    extract_dir.mkdir()
+    names = ["Guard", "Guard", "Captain", "Guard"]
+    write_gff(
+        extract_dir / "area.git",
+        {
+            "StructType": "GIT",
+            "Creature List": [
+                {"Tag": f"NPC{i}", "FirstName": {"StrRef": -1, "Value": name}}
+                for i, name in enumerate(names)
+            ],
+        },
+        file_type="GIT",
+    )
+    ids = _creature_ids("area", len(names))
+    task_id = _completed_task_with_rows(
+        tmp_path,
+        extract_dir,
+        "area.git",
+        [
+            (item_id, name, "Капитан" if name == "Captain" else "Стражник", True)
+            for item_id, name in zip(ids, names)
+        ],
+    )
+
+    items = client.get(f"/api/tasks/{task_id}/translations").json()["files"][0]["items"]
+    assert [(it["original"], it["item_id"], it["duplicate_item_ids"]) for it in items] == [
+        ("Guard", ids[0], [ids[1], ids[3]]),
+        ("Captain", ids[2], []),
+    ]
+
+    # The editor sends one edit per changed row, addressed by the row's item_id.
+    edits = [{"file": "area.git", "item_id": items[0]["item_id"], "translated": "Часовой"}]
+    resp = client.post(
+        f"/api/tasks/{task_id}/rebuild", json={"edits": edits, "target_lang": "russian"}
+    )
+    assert resp.status_code == 200, resp.text
+
+    creatures = read_gff(extract_dir / "area.git", source_encoding="cp1251")["Creature List"]
+    assert [c["FirstName"]["Value"] for c in creatures] == [
+        "Часовой",
+        "Часовой",
+        "Капитан",
+        "Часовой",
+    ]
+    items = client.get(f"/api/tasks/{task_id}/translations").json()["files"][0]["items"]
+    assert [(it["translated"], it["duplicate_item_ids"]) for it in items] == [
+        ("Часовой", [ids[1], ids[3]]),
+        ("Капитан", []),
+    ]
+
+
+def test_identical_lines_with_different_translations_stay_separate(rebuild_client) -> None:
+    """A row never hides a line whose translation differs from the one it shows."""
+    client, tmp_path = rebuild_client
+    ids = _creature_ids("area", 3)
+    task_id = _completed_task_with_rows(
+        tmp_path,
+        tmp_path,
+        "area.git",
+        [
+            (ids[0], "Rubble", "Обломки", True),
+            (ids[1], "Rubble", "Щебень", True),
+            (ids[2], "Rubble", "Обломки", True),
+        ],
+    )
+
+    items = client.get(f"/api/tasks/{task_id}/translations").json()["files"][0]["items"]
+    assert [(it["translated"], it["item_id"], it["duplicate_item_ids"]) for it in items] == [
+        ("Обломки", ids[0], [ids[2]]),
+        ("Щебень", ids[1], []),
+    ]
+
+
+def _rebuild(client: TestClient, task_id: str, edits: list[tuple[str, str, str]]) -> None:
+    resp = client.post(
+        f"/api/tasks/{task_id}/rebuild",
+        json={
+            "edits": [
+                {"file": filename, "item_id": item_id, "translated": translated}
+                for filename, item_id, translated in edits
+            ],
+            "target_lang": "russian",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def _editor_rows(client: TestClient, task_id: str, filename: str) -> list[dict]:
+    files = client.get(f"/api/tasks/{task_id}/translations").json()["files"]
+    return next(f["items"] for f in files if f["filename"] == filename)
+
+
+def _area_with_guards(extract_dir: Path, count: int) -> None:
+    write_gff(
+        extract_dir / "area.git",
+        {
+            "StructType": "GIT",
+            "Creature List": [
+                {"Tag": f"NPC{i}", "FirstName": {"StrRef": -1, "Value": "Guard"}}
+                for i in range(count)
+            ],
+        },
+        file_type="GIT",
+    )
+
+
+def test_edit_skips_identical_lines_with_another_translation(rebuild_client) -> None:
+    client, tmp_path = rebuild_client
+    extract_dir = tmp_path / "ex"
+    extract_dir.mkdir()
+    _area_with_guards(extract_dir, 3)
+    ids = _creature_ids("area", 3)
+    task_id = _completed_task_with_rows(
+        tmp_path,
+        extract_dir,
+        "area.git",
+        [
+            (ids[0], "Guard", "Стражник", True),
+            (ids[1], "Guard", "Страж", True),
+            (ids[2], "Guard", "Стражник", True),
+        ],
+    )
+
+    _rebuild(client, task_id, [("area.git", ids[0], "Часовой")])
+
+    assert [
+        (it["translated"], it["item_id"]) for it in _editor_rows(client, task_id, "area.git")
+    ] == [
+        ("Часовой", ids[0]),
+        ("Страж", ids[1]),
+    ]
+
+
+def test_fixed_failed_line_is_no_longer_failed(rebuild_client) -> None:
+    """Fixing the failed occurrence to the good translation merges it into a clean row."""
+    client, tmp_path = rebuild_client
+    extract_dir = tmp_path / "ex"
+    extract_dir.mkdir()
+    _area_with_guards(extract_dir, 3)
+    ids = _creature_ids("area", 3)
+    task_id = _completed_task_with_rows(
+        tmp_path,
+        extract_dir,
+        "area.git",
+        [
+            (ids[0], "Guard", "Стражник", True),
+            (ids[1], "Guard", "Стражник", True),
+            (ids[2], "Guard", "Guard", False),
+        ],
+    )
+
+    _rebuild(client, task_id, [("area.git", ids[2], "Стражник")])
+
+    rows = _editor_rows(client, task_id, "area.git")
+    assert [(it["item_id"], it["duplicate_item_ids"], it["failed"]) for it in rows] == [
+        (ids[0], [ids[1], ids[2]], False)
+    ]
+
+
+def test_edit_of_a_dialog_line_does_not_reach_identical_lines(rebuild_client) -> None:
+    client, tmp_path = rebuild_client
+    extract_dir = tmp_path / "ex"
+    extract_dir.mkdir()
+    write_gff(
+        extract_dir / "a.dlg",
+        {
+            "StructType": "DLG",
+            "EntryList": [
+                {"Text": {"StrRef": -1, "Value": "Hi."}, "Speaker": ""} for _ in range(2)
+            ],
+            "ReplyList": [],
+        },
+        file_type="DLG",
+    )
+    task_id = _completed_task_with_rows(
+        tmp_path,
+        extract_dir,
+        "a.dlg",
+        [("a:entry:0", "Hi.", "Привет.", True), ("a:entry:1", "Hi.", "Привет.", True)],
+    )
+
+    _rebuild(client, task_id, [("a.dlg", "a:entry:1", "Здорово.")])
+
+    entries = read_gff(extract_dir / "a.dlg", source_encoding="cp1251")["EntryList"]
+    assert [entry["Text"]["Value"] for entry in entries] == ["Привет.", "Здорово."]
+    assert [it["translated"] for it in _editor_rows(client, task_id, "a.dlg")] == [
+        "Привет.",
+        "Здорово.",
+    ]
+
+
+def test_legacy_dialog_rows_without_item_id_are_not_merged(rebuild_client) -> None:
+    """Rows stored before item ids group like other files: by original and translation."""
+    client, tmp_path = rebuild_client
+    task_id = _completed_task_with_rows(tmp_path, tmp_path, "OLD.DLG", [])
+    for original, translated in [("Hi.", "Привет."), ("Bye.", "Пока."), ("Hi.", "Привет.")]:
+        db.get_db().execute(
+            "INSERT INTO translations (task_id, original, translated, file, item_id) "
+            "VALUES (?, ?, ?, ?, NULL)",
+            (task_id, original, translated, "OLD.DLG"),
+        )
+    db.get_db().commit()
+
+    rows = _editor_rows(client, task_id, "OLD.DLG")
+    assert [(it["original"], it["item_id"], it["duplicate_item_ids"]) for it in rows] == [
+        ("Hi.", "", []),
+        ("Bye.", "", []),
+    ]
+
+
+def test_upper_case_dialog_extension_keeps_one_row_per_node(rebuild_client) -> None:
+    client, tmp_path = rebuild_client
+    task_id = _completed_task_with_rows(
+        tmp_path,
+        tmp_path,
+        "A.DLG",
+        [("a:entry:0", "Hi.", "Привет.", True), ("a:reply:0", "Hi.", "Привет.", True)],
+    )
+
+    rows = _editor_rows(client, task_id, "A.DLG")
+    assert [(it["item_id"], it["duplicate_item_ids"]) for it in rows] == [
+        ("a:entry:0", []),
+        ("a:reply:0", []),
+    ]
+
+
+def test_shared_row_is_failed_when_any_of_its_lines_failed(rebuild_client) -> None:
+    client, tmp_path = rebuild_client
+    ids = _creature_ids("area", 2)
+    task_id = _completed_task_with_rows(
+        tmp_path,
+        tmp_path,
+        "area.git",
+        [(ids[0], "Guard", "Guard", True), (ids[1], "Guard", "Guard", False)],
+    )
+
+    items = client.get(f"/api/tasks/{task_id}/translations").json()["files"][0]["items"]
+    assert [(it["item_id"], it["duplicate_item_ids"], it["failed"]) for it in items] == [
+        (ids[0], [ids[1]], True)
+    ]

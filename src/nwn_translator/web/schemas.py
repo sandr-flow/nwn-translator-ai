@@ -113,6 +113,11 @@ class TranslationItem(BaseModel):
     translated: str
     #: Stable per-file identifier used to address this item on rebuild.
     item_id: str = ""
+    duplicate_item_ids: List[str] = Field(
+        default_factory=list,
+        description="Other items of this file with the same original and translation; "
+        "an edit of this row applies to them too",
+    )
     #: True when the model was asked to translate this line and the result was rejected.
     failed: bool = False
     shared_with: List[str] = Field(

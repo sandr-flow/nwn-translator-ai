@@ -380,6 +380,11 @@ function goBack() {
                         v-if="speakerTag(item.speaker)"
                         class="font-mono text-nwn-muted ml-1.5"
                       >{{ speakerTag(item.speaker) }}</span></span>
+                    <span
+                      v-if="item.duplicate_item_ids?.length"
+                      class="text-xs text-nwn-muted"
+                      :title="i('editor.occurrences')"
+                    >&times;{{ item.duplicate_item_ids.length + 1 }}</span>
                   </div>
                   <p class="text-sm text-gray-300 whitespace-pre-wrap break-words">{{ item.original }}</p>
                 </div>

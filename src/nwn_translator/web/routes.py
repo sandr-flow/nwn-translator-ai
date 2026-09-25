@@ -8,7 +8,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
@@ -54,6 +54,7 @@ from .schemas import (
     ModelReasoningInfo,
     ModelsResponse,
     ModelListItem,
+    RebuildEdit,
     RebuildRequest,
     RebuildResponse,
     TaskHistoryItem,
@@ -424,21 +425,56 @@ def _dialog_speaker(row: Dict[str, Any]) -> Optional[DialogSpeaker]:
     return None
 
 
+def _editor_row_key(filename: str, entry: Dict[str, Any]) -> Tuple[str, ...]:
+    """Editor row of a translation: one per dialog node, otherwise one per distinct text.
+
+    Dialog lines keep their own rows because the same text can have different
+    speakers; elsewhere identical lines of a file share a row unless they got
+    different translations.
+    """
+    item_id = entry.get("item_id") or ""
+    if filename.lower().endswith(".dlg") and item_id:
+        return ("node", item_id)
+    return ("text", entry["original"], entry["translated"])
+
+
+def _expand_edits_to_rows(task_id: str, edits: List[RebuildEdit]) -> Dict[Tuple[str, str], str]:
+    """Map each edit to every ``(file, item_id)`` its editor row stands for."""
+    row_items: Dict[Tuple[str, Tuple[str, ...]], List[str]] = {}
+    row_of_item: Dict[Tuple[str, str], Tuple[str, Tuple[str, ...]]] = {}
+    for entry in get_translations_by_task(task_id):
+        filename = entry.get("file") or "unknown"
+        item_id = entry.get("item_id") or ""
+        if not entry["original"] or not item_id:
+            continue
+        row = (filename, _editor_row_key(filename, entry))
+        row_items.setdefault(row, []).append(item_id)
+        row_of_item[(filename, item_id)] = row
+
+    expanded: Dict[Tuple[str, str], str] = {}
+    for edit in edits:
+        edited_row = row_of_item.get((edit.file, edit.item_id))
+        for item_id in row_items[edited_row] if edited_row is not None else [edit.item_id]:
+            expanded[(edit.file, item_id)] = edit.translated
+    return expanded
+
+
 @router.get("/tasks/{task_id}/translations", response_model=TranslationsResponse)
 async def get_translations(
     task: TranslationTask = Depends(require_task_owner),
 ) -> TranslationsResponse:
     """Return structured translation data grouped by source file for the editor.
 
-    Identical originals share one row per file, except in dialogs: each dialog
-    line keeps its own row, because the same text can have different speakers.
+    Rows follow :func:`_editor_row_key`. A row that stands for several identical
+    lines lists the other ``item_id`` values in ``duplicate_item_ids``; the
+    rebuild applies an edit of the row to all of them.
     """
     rows = get_translations_by_task(task.task_id)
     if not rows:
         return TranslationsResponse(files=[])
 
     groups: dict[str, list[TranslationItem]] = {}
-    seen: dict[str, set[str]] = {}
+    rows_by_key: dict[str, dict[tuple[str, ...], TranslationItem]] = {}
     text_to_files: dict[str, list[str]] = {}
 
     for entry in rows:
@@ -449,24 +485,29 @@ async def get_translations(
             continue
         if filename not in groups:
             groups[filename] = []
-            seen[filename] = set()
+            rows_by_key[filename] = {}
         item_id = entry.get("item_id") or ""
+        failed = entry.get("success", 1) in (0, False, "0")
         is_dialog = filename.lower().endswith(".dlg")
-        row_key = item_id if is_dialog and item_id else original
-        if row_key not in seen[filename]:
-            seen[filename].add(row_key)
-            groups[filename].append(
-                TranslationItem(
-                    original=original,
-                    translated=translated,
-                    item_id=item_id,
-                    failed=entry.get("success", 1) in (0, False, "0"),
-                    speaker=_dialog_speaker(entry) if is_dialog else None,
-                )
-            )
-            files_with_text = text_to_files.setdefault(original, [])
-            if filename not in files_with_text:
-                files_with_text.append(filename)
+        row_key = _editor_row_key(filename, entry)
+        row = rows_by_key[filename].get(row_key)
+        if row is not None:
+            if item_id and item_id != row.item_id and item_id not in row.duplicate_item_ids:
+                row.duplicate_item_ids.append(item_id)
+            row.failed = row.failed or failed
+            continue
+        row = TranslationItem(
+            original=original,
+            translated=translated,
+            item_id=item_id,
+            failed=failed,
+            speaker=_dialog_speaker(entry) if is_dialog else None,
+        )
+        rows_by_key[filename][row_key] = row
+        groups[filename].append(row)
+        files_with_text = text_to_files.setdefault(original, [])
+        if filename not in files_with_text:
+            files_with_text.append(filename)
 
     for filename, items in groups.items():
         for item in items:
@@ -494,10 +535,12 @@ async def rebuild_task(
         )
 
     # Build the per-(file, item_id) translation map from SQLite, then apply the
-    # user's edits on top — each edit targets exactly one (file, item_id).
+    # user's edits on top. An edit addresses one (file, item_id) and reaches every
+    # identical line its editor row stands for.
     translations_by_item_id = get_item_translation_map_by_task(task_id)
-    for edit in body.edits:
-        translations_by_item_id.setdefault(edit.file, {})[edit.item_id] = edit.translated
+    edited = _expand_edits_to_rows(task_id, body.edits)
+    for (filename, item_id), translated in edited.items():
+        translations_by_item_id.setdefault(filename, {})[item_id] = translated
 
     extract_dir = Path(task.extract_dir)
     output_path = task.result_path
@@ -526,8 +569,8 @@ async def rebuild_task(
 
     # Persist the edits so a later editor session reads the current values and a
     # subsequent no-edit rebuild does not revert them with a stale snapshot.
-    for edit in body.edits:
-        update_translation_text(task_id, edit.file, edit.item_id, edit.translated)
+    for (filename, item_id), translated in edited.items():
+        update_translation_text(task_id, filename, item_id, translated)
 
     import time
 

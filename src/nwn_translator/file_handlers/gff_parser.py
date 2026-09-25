@@ -166,7 +166,7 @@ class GFFFile:
 class GFFParser:
     """Parser for GFF files used by Neverwinter Nights."""
 
-    # Type mappings
+    # Types whose value is stored in the field record itself.
     TYPE_SIZES = {
         GFFType.BYTE: 1,
         GFFType.CHAR: 1,
@@ -174,10 +174,13 @@ class GFFParser:
         GFFType.SHORT: 2,
         GFFType.DWORD: 4,
         GFFType.INT: 4,
-        GFFType.DWORD64: 8,
-        GFFType.INT64: 8,
         GFFType.FLOAT: 4,
-        GFFType.DOUBLE: 8,
+    }
+    # 8-byte types: the field record holds an offset into the Field Data block.
+    WIDE_TYPE_FORMATS = {
+        GFFType.DWORD64: "<Q",
+        GFFType.INT64: "<q",
+        GFFType.DOUBLE: "<d",
     }
 
     def __init__(self, file_path: Path, source_encoding: Optional[str] = None):
@@ -367,6 +370,12 @@ class GFFParser:
             # Simple types stored directly
             return self._parse_simple_type(field.type, field.data_or_offset)
 
+        elif field.type in self.WIDE_TYPE_FORMATS:
+            offset = self.field_data_offset + field.data_or_offset
+            if offset + 8 > len(self.data):
+                return 0
+            return struct.unpack_from(self.WIDE_TYPE_FORMATS[field.type], self.data, offset)[0]
+
         elif field.type == GFFType.CExoString:
             # Layout in Field Data block: [size DWORD (4)] [string bytes (size)]
             # data_or_offset is relative to field_data_offset
@@ -490,14 +499,8 @@ class GFFParser:
             if value & 0x80000000:
                 return value - 0x100000000
             return value
-        elif gff_type == GFFType.DWORD64:
-            return value
-        elif gff_type == GFFType.INT64:
-            return value
         elif gff_type == GFFType.FLOAT:
             return struct.unpack("<f", struct.pack("<I", value))[0]
-        elif gff_type == GFFType.DOUBLE:
-            return struct.unpack("<d", struct.pack("<Q", value))[0]
         else:
             return value
 

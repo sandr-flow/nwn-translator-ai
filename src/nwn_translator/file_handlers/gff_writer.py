@@ -206,6 +206,10 @@ class GFFWriter:
     def _emit_struct(self, fields_dict: Dict[str, Any], struct_id: int) -> int:
         """Emit one struct record and all its fields.
 
+        Keys starting with ``_`` are not GFF fields: ``_field_types`` and
+        ``_record_offsets`` are parser metadata, and ``_struct_id`` overrides
+        *struct_id*.
+
         Args:
             fields_dict: Key/value pairs of GFF fields in this struct.
             struct_id: The GFF StructID (0xFFFFFFFF for root struct).
@@ -216,56 +220,30 @@ class GFFWriter:
         struct_index = len(self._structs)
         # Reserve a slot first (so forward references work during recursion).
         self._structs.append(b"\x00" * 12)
+        struct_id = int(fields_dict.get("_struct_id", struct_id))
 
-        field_count = len(fields_dict)
-
-        if field_count == 0:
-            # No fields — DataOrDataOffset is 0xFFFFFFFF by convention.
-            record = _pack_struct(struct_id, 0xFFFFFFFF, 0)
-            self._structs[struct_index] = record
-            return struct_index
-
-        if field_count == 1:
-            # Single field: DataOrDataOffset is the direct field index.
-            label, value = next(iter(fields_dict.items()))
-            if label == "_field_types":
-                record = _pack_struct(struct_id, 0xFFFFFFFF, 0)
-                self._structs[struct_index] = record
-                return struct_index
-            field_types = fields_dict.get("_field_types", {})
-            explicit_type = field_types.get(label)
-            field_index = self._emit_field(label, value, explicit_type)
-            record = _pack_struct(struct_id, field_index, 1)
-            self._structs[struct_index] = record
-            return struct_index
-
-        # Multiple fields: DataOrDataOffset = byte offset into field-indices.
-        # IMPORTANT: emit ALL fields first (which may recursively add to
-        # _field_indices via child structs), then record the tail offset before
-        # appending this struct's own field indices.
-        collected_field_indices: List[int] = []
+        # Emit ALL fields first: child structs append their own field indices,
+        # so this struct's indices go after them as one contiguous run.
         field_types = fields_dict.get("_field_types", {})
-        for label, value in fields_dict.items():
-            if label.startswith("_") and label != "_struct_id":
-                continue
-            explicit_type = field_types.get(label)
-            field_index = self._emit_field(label, value, explicit_type)
-            collected_field_indices.append(field_index)
+        field_indices = [
+            self._emit_field(label, value, field_types.get(label))
+            for label, value in fields_dict.items()
+            if not label.startswith("_")
+        ]
 
-        # Update field_count since we skipped internal keys like _field_types
-        field_count = len(collected_field_indices)
-        if field_count == 0:
-            record = _pack_struct(struct_id, 0xFFFFFFFF, 0)
-            self._structs[struct_index] = record
-            return struct_index
+        if not field_indices:
+            # No fields — DataOrDataOffset is 0xFFFFFFFF by convention.
+            data_or_offset = 0xFFFFFFFF
+        elif len(field_indices) == 1:
+            # Single field: DataOrDataOffset is the direct field index.
+            data_or_offset = field_indices[0]
+        else:
+            # Multiple fields: DataOrDataOffset = byte offset into field-indices.
+            data_or_offset = len(self._field_indices)
+            for fi in field_indices:
+                self._field_indices += _struct.pack("<I", fi)
 
-        # This offset is now safe: all recursive emissions have finished.
-        fi_byte_offset = len(self._field_indices)
-        for fi in collected_field_indices:
-            self._field_indices += _struct.pack("<I", fi)
-
-        record = _pack_struct(struct_id, fi_byte_offset, field_count)
-        self._structs[struct_index] = record
+        self._structs[struct_index] = _pack_struct(struct_id, data_or_offset, len(field_indices))
         return struct_index
 
     def _emit_field(self, label: str, value: Any, explicit_type: Optional[int] = None) -> int:
@@ -507,7 +485,8 @@ class GFFWriter:
     def _encode_list(self, items: List[Any]) -> int:
         """Encode a GFF List into the list-indices block.
 
-        Each element in *items* must be a dict representing a child struct.
+        Each element in *items* must be a dict representing a child struct;
+        other elements are skipped.
 
         Args:
             items: List of dicts, each representing a child struct.
@@ -515,17 +494,19 @@ class GFFWriter:
         Returns:
             Byte offset into ``self._list_indices``.
         """
-        offset = len(self._list_indices)
-        self._list_indices += _struct.pack("<I", len(items))  # Count
-
+        # Emit the children first: their own nested lists append to the same
+        # block, so this list's count and indices go after them, contiguously.
+        child_indices: List[int] = []
         for item in items:
             if not isinstance(item, dict):
                 logger.warning("GFFWriter: List element is not a dict (%s), skipping.", type(item))
-                self._list_indices += _struct.pack("<I", 0)
                 continue
-            child_idx = self._emit_struct(item, struct_id=0)
-            self._list_indices += _struct.pack("<I", child_idx)
+            child_indices.append(self._emit_struct(item, struct_id=0))
 
+        offset = len(self._list_indices)
+        self._list_indices += _struct.pack("<I", len(child_indices))  # Count
+        for child_idx in child_indices:
+            self._list_indices += _struct.pack("<I", child_idx)
         return offset
 
     # ------------------------------------------------------------------

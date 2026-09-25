@@ -12,7 +12,12 @@ import pytest
 
 from src.nwn_translator.file_handlers.gff_writer import GFFWriter, GFFWriteError, write_gff_bytes
 from src.nwn_translator.file_handlers.gff_handler import GFFHandler, GFFHandlerError
-from src.nwn_translator.file_handlers.gff_parser import GFFParser, gff_to_dict
+from src.nwn_translator.file_handlers.gff_parser import (
+    GFFParser,
+    GFFType,
+    gff_to_dict,
+    parse_gff,
+)
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -194,6 +199,140 @@ class TestGFFRoundTrip:
         assert len(entries) == 1
         replies = entries[0].get("RepliesList", [])
         assert len(replies) == 1
+
+
+# ---------------------------------------------------------------------------
+# Nested lists and parser metadata
+# ---------------------------------------------------------------------------
+
+
+def _fields_only(value):
+    """Drop parser metadata (``_field_types``, ``_record_offsets``) recursively."""
+    if isinstance(value, dict):
+        return {k: _fields_only(v) for k, v in value.items() if not k.startswith("_")}
+    if isinstance(value, list):
+        return [_fields_only(v) for v in value]
+    return value
+
+
+def _loc(text: str) -> dict:
+    return {"StrRef": -1, "Value": text}
+
+
+def _dialog_graph() -> dict:
+    """Branching dialog: link lists on every node, some of them empty."""
+    return {
+        "StructType": "DLG",
+        "StartingList": [{"Index": 0}, {"Index": 2}],
+        "EntryList": [
+            {
+                "Text": _loc("Hello."),
+                "Speaker": "",
+                "RepliesList": [{"Index": 0, "IsChild": 0}, {"Index": 1, "IsChild": 0}],
+            },
+            {"Text": _loc("Farewell."), "Speaker": "bob_tag", "RepliesList": []},
+            {"Text": _loc("Back again?"), "Speaker": "", "RepliesList": [{"Index": 1}]},
+        ],
+        "ReplyList": [
+            {"Text": _loc("Who are you?"), "EntriesList": [{"Index": 1, "IsChild": 0}]},
+            {"Text": _loc("Bye."), "EntriesList": []},
+        ],
+    }
+
+
+class TestGFFNestedLists:
+    """Lists of structs whose structs carry their own lists."""
+
+    def test_earlier_element_with_nested_list(self):
+        data = {
+            "StructType": "DLG",
+            "EntryList": [
+                {"Text": _loc("A"), "RepliesList": [{"Index": 0}]},
+                {"Text": _loc("B")},
+            ],
+        }
+        assert _fields_only(_roundtrip(data)) == data
+
+    def test_empty_nested_list_after_a_plain_element(self):
+        data = {
+            "StructType": "DLG",
+            "EntryList": [{"Text": _loc("A")}, {"Text": _loc("B"), "RepliesList": []}],
+        }
+        assert _fields_only(_roundtrip(data)) == data
+
+    def test_dialog_graph_roundtrips(self):
+        data = _dialog_graph()
+        assert _fields_only(_roundtrip(data)) == data
+
+    def test_lists_nested_three_levels(self):
+        data = {
+            "StructType": "GIT",
+            "Creature List": [
+                {"Tag": "a", "ItemList": [{"Tag": "sword", "PropertiesList": [{"Param": 1}]}]},
+                {"Tag": "b", "ItemList": []},
+                {"Tag": "c", "ItemList": [{"Tag": "helm"}, {"Tag": "ring"}]},
+            ],
+            "Door List": [{"Tag": "door"}],
+        }
+        assert _fields_only(_roundtrip(data)) == data
+
+    def test_non_dict_list_elements_are_skipped(self):
+        data = {"StructType": "DLG", "EntryList": [{"Text": _loc("A")}, 7, {"Text": _loc("B")}]}
+        result = _roundtrip(data)
+        assert _fields_only(result["EntryList"]) == [{"Text": _loc("A")}, {"Text": _loc("B")}]
+
+
+class TestGFFWideValues:
+    """8-byte values live in the field data block, not in the field record."""
+
+    def test_unsigned_64_bit_value(self):
+        data = {"StructType": "GFF", "Tag": "x", "Big": 2**40}
+        assert _roundtrip(data)["Big"] == 2**40
+
+    def test_signed_64_bit_value(self):
+        data = {"StructType": "GFF", "Tag": "x", "Big": -5, "_field_types": {"Big": 7}}
+        assert _roundtrip(data)["Big"] == -5
+
+    def test_double_value(self):
+        data = {"StructType": "GFF", "Tag": "x", "D": 1.5, "_field_types": {"D": 9}}
+        result = _roundtrip(data)
+        assert result["D"] == 1.5
+        assert result["_field_types"]["D"] == int(GFFType.DOUBLE)
+
+
+class TestGFFParsedDictRewrite:
+    """A dict read back from a file carries metadata keys and must write again."""
+
+    def test_parsed_dialog_graph_rewrites_unchanged(self):
+        data = _dialog_graph()
+        parsed = _roundtrip(data)
+        assert "_field_types" in parsed
+        assert _fields_only(_roundtrip(parsed)) == data
+
+    def test_parsed_struct_with_one_field(self):
+        """Metadata keys must not count as fields: one field is stored inline."""
+        data = {"StructType": "UTI", "Tag": "a", "Cost": 2, "PropertiesList": [{"Param": 3}]}
+        parsed = _roundtrip(data)
+        assert _fields_only(_roundtrip(parsed)) == data
+
+    def test_parsed_field_types_are_kept(self, tmp_path):
+        """``_field_types`` pins types the heuristics would guess differently."""
+        parsed = _roundtrip({"StructType": "UTC", "Conversation": "bob"})
+        parsed["_field_types"]["Conversation"] = int(GFFType.CExoString)
+        out = tmp_path / "a.utc"
+        GFFHandler.write(out, parsed)
+        field = parse_gff(out).structs[0].fields["Conversation"]
+        assert field.type == GFFType.CExoString
+        assert field.value == "bob"
+
+    def test_struct_id_key_sets_the_struct_id(self, tmp_path):
+        data = {"StructType": "DLG", "EntryList": [{"_struct_id": 5, "Text": _loc("A")}]}
+        out = tmp_path / "a.dlg"
+        GFFHandler.write(out, data)
+        gff = parse_gff(out)
+        entry_index = gff.structs[0].fields["EntryList"].value[0]
+        assert gff.structs[entry_index].struct_id == 5
+        assert "_struct_id" not in gff.structs[entry_index].fields
 
 
 # ---------------------------------------------------------------------------

@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 INSTANCE_LISTS = {
     "Creature List": ["FirstName", "LastName", "Description"],
     "Placeable List": ["LocName", "Description"],
-    "Door List": ["LocalizedName", "Description"],
+    # Door instances carry their name in ``LocName`` (the .utd label);
+    # ``LocalizedName`` is only a fallback for toolsets that write it instead.
+    "Door List": ["LocName", "LocalizedName", "Description"],
     # GFF label is ``TriggerList`` (no space); ``Trigger List`` would never match.
     "TriggerList": ["LocalizedName", "Description"],
     # Only MapNote is player-visible (minimap/automap label).
@@ -66,7 +68,7 @@ def _meta_type_for_instance_field(list_key: str, field_name: str) -> str:
         if field_name == "Description":
             return "placeable_description"
     if list_key == "Door List":
-        if field_name == "LocalizedName":
+        if field_name in ("LocName", "LocalizedName"):
             return "door_name"
         if field_name == "Description":
             return "door_description"

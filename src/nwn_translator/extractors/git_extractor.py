@@ -114,7 +114,7 @@ def _build_instance_context(
         return "Placeable description (area instance)"
 
     if list_key == "Door List":
-        if field_name == "LocalizedName":
+        if field_name in ("LocName", "LocalizedName"):
             return "Door name (area instance)"
         return "Door description (area instance)"
 

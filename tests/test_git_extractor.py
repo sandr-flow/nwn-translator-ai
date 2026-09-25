@@ -1,5 +1,8 @@
 """Tests for GitExtractor (.git area instance files)."""
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from src.nwn_translator.extractors.git_extractor import GitExtractor
@@ -530,6 +533,34 @@ def test_creature_name_oracle_survives_blueprint_patching(tmp_path, monkeypatch)
     )
     assert "mcgee" in git_fields.get_module_creature_names(tmp_path)
     git_fields.clear_creature_name_cache()
+
+
+def test_creature_name_oracle_is_built_once_under_concurrency(tmp_path, monkeypatch):
+    """Extraction workers asking for the oracle at once share a single .utc scan."""
+    from src.nwn_translator.extractors import git_fields
+
+    workers = 8
+    calls = []
+    start = threading.Barrier(workers)
+
+    def slow_collect(root):
+        calls.append(root)
+        time.sleep(0.05)  # keep the build in flight while the other workers arrive
+        return frozenset({"mcgee"})
+
+    def lookup(_):
+        start.wait()
+        return git_fields.get_module_creature_names(tmp_path)
+
+    git_fields.clear_creature_name_cache()
+    monkeypatch.setattr(git_fields, "collect_blueprint_creature_names", slow_collect)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(lookup, range(workers)))
+    git_fields.clear_creature_name_cache()
+
+    assert len(calls) == 1
+    assert all(result is results[0] for result in results)
+    assert results[0] == frozenset({"mcgee"})
 
 
 def test_git_collector_rescues_blueprint_names_symmetrically():

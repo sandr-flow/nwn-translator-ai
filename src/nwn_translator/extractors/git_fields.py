@@ -6,6 +6,7 @@ whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
 """
 
 import logging
+import threading
 from collections import OrderedDict
 from functools import partial
 from pathlib import Path
@@ -160,6 +161,19 @@ def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
 
 _creature_name_cache: "OrderedDict[Path, FrozenSet[str]]" = OrderedDict()
 _CREATURE_NAME_CACHE_MAX = 4
+# Guards the cache and the per-directory build locks below.
+_creature_name_cache_lock = threading.Lock()
+# One lock per directory whose oracle is being built, so concurrent extractor
+# workers wait for a single .utc scan instead of each running their own.
+_creature_name_build_locks: Dict[Path, threading.Lock] = {}
+
+
+def _cached_creature_names(key: Path) -> Optional[FrozenSet[str]]:
+    with _creature_name_cache_lock:
+        cached = _creature_name_cache.get(key)
+        if cached is not None:
+            _creature_name_cache.move_to_end(key)
+        return cached
 
 
 def get_module_creature_names(root: Path) -> FrozenSet[str]:
@@ -168,24 +182,33 @@ def get_module_creature_names(root: Path) -> FrozenSet[str]:
     The entry built during extraction is deliberately reused at any later
     lookup for the same directory: by injection time the on-disk .utc files
     may already be patched with translated names, and rebuilding would break
-    original-text matching.
+    original-text matching. The oracle is built once per directory even when
+    extraction workers ask for it concurrently.
     """
     key = root.resolve()
-    cached = _creature_name_cache.get(key)
+    cached = _cached_creature_names(key)
     if cached is not None:
-        _creature_name_cache.move_to_end(key)
         return cached
-    names = collect_blueprint_creature_names(root)
-    logger.debug("Blueprint name oracle for %s: %d names", root, len(names))
-    _creature_name_cache[key] = names
-    while len(_creature_name_cache) > _CREATURE_NAME_CACHE_MAX:
-        _creature_name_cache.popitem(last=False)
+    with _creature_name_cache_lock:
+        build_lock = _creature_name_build_locks.setdefault(key, threading.Lock())
+    with build_lock:
+        cached = _cached_creature_names(key)
+        if cached is not None:
+            return cached
+        names = collect_blueprint_creature_names(root)
+        logger.debug("Blueprint name oracle for %s: %d names", root, len(names))
+        with _creature_name_cache_lock:
+            _creature_name_cache[key] = names
+            while len(_creature_name_cache) > _CREATURE_NAME_CACHE_MAX:
+                _creature_name_cache.popitem(last=False)
+            _creature_name_build_locks.pop(key, None)
     return names
 
 
 def clear_creature_name_cache() -> None:
     """Drop all cached name oracles (tests / long-lived processes)."""
-    _creature_name_cache.clear()
+    with _creature_name_cache_lock:
+        _creature_name_cache.clear()
 
 
 def _collect_strings_from_store_tree(

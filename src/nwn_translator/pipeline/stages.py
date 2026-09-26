@@ -792,7 +792,6 @@ def stage_inject(
         TranslationCancelled: If the run was cancelled before injection began;
             once files are being patched, the stage runs to its end.
     """
-    assert state.extract_dir is not None
     state.config.raise_if_cancelled()
     logger.info("Injecting translations...")
     for file_path, result, error in _run_pool(

@@ -82,7 +82,6 @@ def test_inject_records_ncs_patch_failure_stats(tmp_path: Path, monkeypatch) -> 
         "inject_translations_into_file",
         lambda *args, **kwargs: InjectedContent(script, False, 0, failure),
     )
-    translator.state.extract_dir = tmp_path
     content = ExtractedContent(content_type="ncs_script", items=[], source_file=script)
 
     stage_inject(translator.state, {script: ({}, content, ".ncs")}, {})

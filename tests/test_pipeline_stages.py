@@ -352,7 +352,6 @@ def test_inject_handles_results_in_file_order_regardless_of_completion_order(
         translation_log_writer=Writer(),
     )
     state = PipelineState(config=config, provider=Mock())
-    state.extract_dir = tmp_path
     empty = ExtractedContent(content_type="item", items=[], source_file=tmp_path)
 
     stage_inject(state, {path: ({}, empty, ".uti") for path in files}, {})

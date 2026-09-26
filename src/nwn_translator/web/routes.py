@@ -181,7 +181,10 @@ def _job_from_form(
         model: Model slug, if any.
         preserve_tokens: Protect NWN tokens.
         use_context: Build world context and glossary.
-        max_concurrent_requests: Parallel requests; the server default when omitted.
+        max_concurrent_requests: Parallel requests, at most the server's
+            ``NWN_TRANSLATE_MAX_CONCURRENT`` (also the value when omitted): the
+            number sizes the job's thread pools and semaphores, so a client may
+            lower it but not raise it.
         player_gender: Player gender for grammatical agreement.
         reasoning_effort: Provider reasoning effort, if any.
 
@@ -202,6 +205,9 @@ def _job_from_form(
         effort = parse_reasoning_effort(reasoning_effort)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    concurrency = max_concurrent_from_environment()
+    if max_concurrent_requests is not None:
+        concurrency = min(max(1, max_concurrent_requests), concurrency)
     return JobParams(
         api_key=api_key.strip(),
         target_lang=target,
@@ -209,11 +215,7 @@ def _job_from_form(
         model=model.strip() if model else None,
         preserve_tokens=preserve_tokens,
         use_context=use_context,
-        max_concurrent_requests=(
-            max(1, max_concurrent_requests)
-            if max_concurrent_requests is not None
-            else max_concurrent_from_environment()
-        ),
+        max_concurrent_requests=concurrency,
         player_gender=player_gender.strip() or "male",
         reasoning_effort=effort,
     )

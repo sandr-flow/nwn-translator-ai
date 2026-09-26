@@ -357,6 +357,36 @@ def test_texts_translated_counts_every_editor_row(
     assert payload["stats"]["texts_translated"] == 2
 
 
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [(None, 7), ("3", 3), ("0", 1), ("10000", 7)],
+)
+def test_requested_concurrency_is_capped_by_the_server_setting(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    requested: str | None,
+    expected: int,
+) -> None:
+    """The job's parallelism sizes thread pools; an API client must not raise it."""
+    monkeypatch.setenv("NWN_TRANSLATE_MAX_CONCURRENT", "7")
+    seen: list[int] = []
+
+    def recording_translate(self):
+        seen.append(self.config.max_concurrent_requests)
+        out = self.config.output_file
+        out.write_bytes(b"MOD")
+        return out
+
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", recording_translate)
+    data = {"api_key": "sk-x", "target_lang": "english"}
+    if requested is not None:
+        data["max_concurrent_requests"] = requested
+    files = {"file": ("c.mod", b"\x07" * 200, "application/octet-stream")}
+    r = client.post("/api/translate", files=files, data=data)
+    assert _wait_for_status(client, r.json()["task_id"], "completed")["status"] == "completed"
+    assert seen == [expected]
+
+
 def test_translate_rate_limit_second_request(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

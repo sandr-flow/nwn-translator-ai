@@ -43,13 +43,19 @@ def _parse_cors_origins() -> List[str]:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Open the database and run the periodic workspace purge while the app lives."""
+    """Open the database and run the periodic workspace purge while the app lives.
+
+    Shutdown waits for running translation jobs, so a graceful stop never cuts
+    a job off mid-write.
+    """
     init_db()
-    purge_task = asyncio.create_task(get_task_manager().purge_periodically())
+    task_manager = get_task_manager()
+    purge_task = asyncio.create_task(task_manager.purge_periodically())
     yield
     purge_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await purge_task
+    await asyncio.to_thread(task_manager.join_workers)
 
 
 def create_app() -> FastAPI:

@@ -320,7 +320,7 @@ async def start_translate(
         tm.discard_task(task.task_id)
         raise
 
-    asyncio.create_task(asyncio.to_thread(tm.run_job, task, job, input_path))
+    tm.start(task, job, input_path)
     return TranslateResponse(task_id=task.task_id)
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -88,6 +89,50 @@ def test_health_counts_running_job_until_it_finishes(
             break
         time.sleep(0.05)
     assert client.get("/api/health").json()["active_tasks"] == 0
+
+
+def _single_thread_default_executor() -> None:
+    """Shrink the running loop's default executor to one thread."""
+    asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=1))
+
+
+def test_running_job_leaves_the_default_executor_free(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Endpoints using ``asyncio.to_thread`` must answer while a translation runs.
+
+    With the job on the loop's default executor, one busy thread was enough to
+    block ``/api/models`` until the translation finished.
+    """
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def blocking_translate(self):
+        started.set()
+        release.wait(timeout=10)
+        finished.set()
+        out = self.config.output_file
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"DONE")
+        return out
+
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", blocking_translate)
+    monkeypatch.setattr(web_routes, "refresh_catalog", lambda force=False: {})
+    client.portal.call(_single_thread_default_executor)  # type: ignore[union-attr]
+
+    files = {"file": ("x.mod", b"\x05" * 200, "application/octet-stream")}
+    r = client.post(
+        "/api/translate", files=files, data={"api_key": "sk-x", "target_lang": "english"}
+    )
+    assert r.status_code == 200
+    try:
+        assert started.wait(timeout=5)
+        assert client.get("/api/models").status_code == 200
+        assert not finished.is_set(), "/api/models waited for the translation"
+    finally:
+        release.set()
+    assert _wait_for_status(client, r.json()["task_id"], "completed")["status"] == "completed"
 
 
 def test_health_ignores_tasks_interrupted_by_a_restart(

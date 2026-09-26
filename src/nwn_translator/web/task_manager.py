@@ -219,6 +219,8 @@ class TaskManager:
         self._lock = threading.Lock()
         #: IP -> task_id of the job occupying that IP's slot.
         self._active_by_ip: Dict[str, str] = {}
+        #: task_id -> thread running that task's job.
+        self._workers: Dict[str, threading.Thread] = {}
         self._reconcile_interrupted()
 
     def _reconcile_interrupted(self) -> None:
@@ -465,16 +467,39 @@ class TaskManager:
                 current_file=message,
             )
 
-    def run_job(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
-        """Translate the uploaded module of *task* and record the outcome.
+    def start(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
+        """Run the job of *task* on a worker thread of its own.
 
-        Blocks until the pipeline finishes; the task ends ``completed``,
-        ``cancelled`` or ``failed`` and its IP slot is released.
+        Jobs run for minutes to hours, so they must not occupy asyncio's default
+        executor, which the endpoints using ``asyncio.to_thread`` share.
 
         Args:
             task: Task that owns the job.
             job: Validated job settings.
             input_path: Uploaded module inside the task workspace.
+        """
+        worker = threading.Thread(
+            target=self._run_job,
+            args=(task, job, input_path),
+            name=f"translate-{task.task_id}",
+            daemon=True,
+        )
+        with self._lock:
+            self._workers[task.task_id] = worker
+        worker.start()
+
+    def join_workers(self) -> None:
+        """Wait until every running job has finished."""
+        with self._lock:
+            workers = list(self._workers.values())
+        for worker in workers:
+            worker.join()
+
+    def _run_job(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
+        """Translate the uploaded module of *task* and record the outcome.
+
+        The task ends ``completed``, ``cancelled`` or ``failed``, its IP slot is
+        released and the worker is unregistered.
         """
         base = self.workspace_for_task(task.task_id)
         temp_dir = base / "temp"
@@ -532,6 +557,8 @@ class TaskManager:
             self._finish(task, "failed", error=str(e))
         finally:
             self.release_active(task.client_ip, task.task_id)
+            with self._lock:
+                del self._workers[task.task_id]
 
     def _finish(self, task: TranslationTask, status: str, **fields: Any) -> None:
         """Move *task* to terminal *status* in memory and in SQLite.

@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import httpx
+import openai
 import pytest
 from openai import AuthenticationError, BadRequestError, InternalServerError
 
@@ -423,6 +424,30 @@ class TestRequestMetrics:
         assert first.variable_chars == len("GLOSSARY: X")
         assert first.success and second.success
         assert first.estimated_output_tokens == 2  # ceil(len("no json") / 4)
+
+    def test_every_failed_single_attempt_is_recorded(self, api, no_backoff):
+        recorder = RunMetricsRecorder()
+        p = OpenRouterProvider(api_key=FAKE_KEY, metrics_recorder=recorder)
+        limited = _status_error(openai.RateLimitError, 429, "slow down")
+        api.replies.extend([limited, _status_error(InternalServerError, 502)])
+        assert _translate(p).success
+        assert [(m.success, m.error, m.phase) for m in recorder.requests] == [
+            (False, "slow down", "generic_single"),
+            (False, "boom", "generic_single"),
+            (True, None, "generic_single"),
+        ]
+
+    def test_non_transient_failure_is_recorded(self, api):
+        recorder = RunMetricsRecorder()
+        p = OpenRouterProvider(api_key=FAKE_KEY, metrics_recorder=recorder)
+        api.replies.append(_status_error(AuthenticationError, 401, "denied"))
+        with pytest.raises(OpenRouterError):
+            run_async(
+                p.translate_batch_async([TranslationItem("A")], "english", "russian"),
+                timeout=5.0,
+            )
+        (metric,) = recorder.requests
+        assert (metric.success, metric.error, metric.batch_size) == (False, "denied", 1)
 
     def test_transient_batch_failure_is_recorded(self, api, no_backoff):
         recorder = RunMetricsRecorder()

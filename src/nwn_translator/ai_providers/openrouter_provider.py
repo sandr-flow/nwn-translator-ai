@@ -311,9 +311,10 @@ class OpenRouterProvider:
         glossary_chars: int = 0,
         use_reasoning: bool = True,
         stream: Optional[bool] = False,
-        record_failures: bool = True,
     ) -> str:
         """Send one JSON-mode chat request and return the stripped reply text.
+
+        Every attempt, failed or not, is recorded as one request metric.
 
         Args:
             system: System message content.
@@ -325,7 +326,6 @@ class OpenRouterProvider:
             glossary_chars: Glossary characters in the system prompt (metrics).
             use_reasoning: ``False`` requests the lowest effort the model allows.
             stream: Value of the ``stream`` field; ``None`` omits it.
-            record_failures: Record a failure metric for transient errors.
 
         Returns:
             The reply text, stripped.
@@ -359,13 +359,15 @@ class OpenRouterProvider:
         )
         try:
             response = await self._create(kwargs, use_reasoning=use_reasoning)
-            record(response=response)
-            return (response.choices[0].message.content or "").strip()
-        except TRANSIENT_ERRORS as exc:
-            if record_failures:
-                record(error=exc)
-            raise
         except Exception as exc:
+            record(error=exc)
+            if isinstance(exc, TRANSIENT_ERRORS):
+                raise
+            raise map_api_error(exc, self.PROVIDER_LABEL) from exc
+        record(response=response)
+        try:
+            return (response.choices[0].message.content or "").strip()
+        except Exception as exc:  # a reply without choices
             raise map_api_error(exc, self.PROVIDER_LABEL) from exc
 
     def _record_metric(
@@ -470,7 +472,6 @@ class OpenRouterProvider:
                 phase=current_llm_phase("generic_single"),
                 glossary_chars=len(glossary),
                 stream=None,
-                record_failures=False,
             )
             translated = parse_single_translation(raw)
             if translated:

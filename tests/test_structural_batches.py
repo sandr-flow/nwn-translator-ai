@@ -10,7 +10,7 @@ from nwn_translator.ai_providers.base import TranslationItem, TranslationResult
 from nwn_translator.ai_providers.batch_payload import build_batch_payload, source_windows
 from nwn_translator.ai_providers.ncs_gate import gate_user_prompt, parse_gate_verdicts
 from nwn_translator.config import TranslationConfig
-from nwn_translator.context.dialog_formatter import DialogFormatter
+from nwn_translator.context.dialog_formatter import format_nodes
 from nwn_translator.extractors.base import DialogNode, ExtractedContent, TranslatableItem
 from nwn_translator.extractors.creature_extractor import CreatureExtractor
 from nwn_translator.extractors.git_extractor import GitExtractor
@@ -187,7 +187,7 @@ def test_chunk_retains_edges_and_adjacent_context_without_extra_targets():
     before.replies = [selected]
     selected.replies = [after]
     after.replies = [selected]
-    script = DialogFormatter().format_nodes(["R1"], {"E0": before, "R1": selected, "E2": after}, {})
+    script = format_nodes(["R1"], {"E0": before, "R1": selected, "E2": after})
     assert "<<<A traveler.>>>" in script
     assert "Who are you?" in script and "Welcome." in script
     assert "<<<Who are you?>>>" not in script and "<<<Welcome.>>>" not in script

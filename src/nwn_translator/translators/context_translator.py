@@ -20,7 +20,7 @@ from ..config import (
     TRANSLATION_MAX_TOKENS,
     TRANSLATION_TEMPERATURE,
 )
-from ..context.dialog_formatter import DialogFormatter, iter_nodes
+from ..context.dialog_formatter import format_dialog_tree, format_nodes, iter_nodes
 from ..context.dialog_speakers import dialog_owners, speaker_description, tagged_speakers
 from ..context.world_context import WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode, dialog_item_id
@@ -105,7 +105,6 @@ class ContextualTranslationManager:
             config.translation_log,
             config.translation_log_writer,
         )
-        self.formatter = DialogFormatter()
         #: Originals sent to the model whose output was never accepted.
         self.failed_items: Set[Occurrence] = set()
 
@@ -284,12 +283,7 @@ class ContextualTranslationManager:
                     file_path.name,
                     len(pending_keys),
                 )
-                retry_script = self.formatter.format_nodes(
-                    pending_keys,
-                    node_map,
-                    original_text_map,
-                    text_overrides=sanitized_by_key,
-                )
+                retry_script = format_nodes(pending_keys, node_map, sanitized_by_key)
                 retry_prompt = self._build_token_retry_user_prompt(
                     file_path.name,
                     retry_script,
@@ -622,10 +616,7 @@ class ContextualTranslationManager:
 
     def _format_prepared_script(self, prepared: _PreparedDialog) -> str:
         """Format a prepared dialog without changing its node identities."""
-        return self.formatter.format_dialog_tree(
-            prepared.tree,
-            text_overrides=prepared.sanitized_by_key,
-        )
+        return format_dialog_tree(prepared.tree, prepared.sanitized_by_key)
 
     def _pack_dialog_groups(
         self,
@@ -897,17 +888,9 @@ class ContextualTranslationManager:
     ) -> List[tuple[List[str], str]]:
         """Return one full-dialog script or smaller node chunks for large dialogs."""
         if set(keys_for_api) == set(all_keys):
-            full_script = self.formatter.format_dialog_tree(
-                tree,
-                text_overrides=sanitized_by_key,
-            )
+            full_script = format_dialog_tree(tree, sanitized_by_key)
         else:
-            full_script = self.formatter.format_nodes(
-                keys_for_api,
-                node_map,
-                original_text_map,
-                text_overrides=sanitized_by_key,
-            )
+            full_script = format_nodes(keys_for_api, node_map, sanitized_by_key)
 
         if not full_script:
             return []
@@ -923,12 +906,7 @@ class ContextualTranslationManager:
         current_keys: List[str] = []
 
         for key in keys_for_api:
-            node_script = self.formatter.format_nodes(
-                current_keys + [key],
-                node_map,
-                original_text_map,
-                text_overrides=sanitized_by_key,
-            )
+            node_script = format_nodes(current_keys + [key], node_map, sanitized_by_key)
             if not node_script:
                 continue
 
@@ -939,12 +917,7 @@ class ContextualTranslationManager:
                 and len(self._glossary_block_for_texts([node_script]) or "") > GLOSSARY_MAX_CHARS
             )
             if would_exceed_chars or would_exceed_keys or would_exceed_terms:
-                script = self.formatter.format_nodes(
-                    current_keys,
-                    node_map,
-                    original_text_map,
-                    text_overrides=sanitized_by_key,
-                )
+                script = format_nodes(current_keys, node_map, sanitized_by_key)
                 if script:
                     chunks.append((list(current_keys), script))
                 current_keys = []
@@ -952,12 +925,7 @@ class ContextualTranslationManager:
             current_keys.append(key)
 
         if current_keys:
-            script = self.formatter.format_nodes(
-                current_keys,
-                node_map,
-                original_text_map,
-                text_overrides=sanitized_by_key,
-            )
+            script = format_nodes(current_keys, node_map, sanitized_by_key)
             if script:
                 chunks.append((list(current_keys), script))
 

@@ -4,19 +4,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.nwn_translator.async_utils import run_async
-from src.nwn_translator.ai_providers import openrouter_provider
-from src.nwn_translator.ai_providers.base import TranslationItem, TranslationResult
-from src.nwn_translator.ai_providers import (
+from nwn_translator.async_utils import run_async
+from nwn_translator.ai_providers import openrouter_provider
+from nwn_translator.ai_providers.base import TranslationItem, TranslationResult
+from nwn_translator.ai_providers import (
     create_provider,
     create_provider_for_config,
     detect_provider_from_key,
     provider_label,
 )
-from src.nwn_translator.config import TranslationConfig
-from src.nwn_translator.telemetry import RunMetricsRecorder
-from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
-from src.nwn_translator.ai_providers.polza_provider import PolzaProvider
+from nwn_translator.config import TranslationConfig
+from nwn_translator.telemetry import RunMetricsRecorder
+from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from nwn_translator.ai_providers.polza_provider import PolzaProvider
 
 
 class TestCreateProvider:

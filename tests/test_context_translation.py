@@ -8,22 +8,22 @@ from typing import Dict, List
 
 import pytest
 
-from src.nwn_translator.ai_providers.base import RateLimitError, TranslationResult
-from src.nwn_translator.config import (
+from nwn_translator.ai_providers.base import RateLimitError, TranslationResult
+from nwn_translator.config import (
     TRANSLATION_MAX_TOKENS,
     TranslationCancelled,
     TranslationConfig,
 )
-from src.nwn_translator.context.dialog_formatter import iter_nodes
-from src.nwn_translator.context.dialog_speakers import speaker_lines
-from src.nwn_translator.context.world_context import NPCInfo, WorldContext
-from src.nwn_translator.extractors.base import DialogNode
-from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
-from src.nwn_translator.prompts.dialog import speakers_block
-from src.nwn_translator.translators import context_translator as context_module
-from src.nwn_translator.translators import dialog_plan
-from src.nwn_translator.translators.context_translator import ContextualTranslationManager
-from src.nwn_translator.translators.dialog_plan import PreparedDialog, pack_groups
+from nwn_translator.context.dialog_formatter import iter_nodes
+from nwn_translator.context.dialog_speakers import speaker_lines
+from nwn_translator.context.world_context import NPCInfo, WorldContext
+from nwn_translator.extractors.base import DialogNode
+from nwn_translator.extractors.dialog_extractor import DialogExtractor
+from nwn_translator.prompts.dialog import speakers_block
+from nwn_translator.translators import context_translator as context_module
+from nwn_translator.translators import dialog_plan
+from nwn_translator.translators.context_translator import ContextualTranslationManager
+from nwn_translator.translators.dialog_plan import PreparedDialog, pack_groups
 
 #: Recovery budget used by these tests. The real one equals
 #: ``TRANSLATION_MAX_TOKENS``, which would hide the budget a request was sent with.

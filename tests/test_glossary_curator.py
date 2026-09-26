@@ -2,8 +2,8 @@
 
 from types import SimpleNamespace
 
-from src.nwn_translator.context.entity_candidates import EntityCandidateRegistry
-from src.nwn_translator.glossary_curator import GlossaryCurator
+from nwn_translator.context.entity_candidates import EntityCandidateRegistry
+from nwn_translator.glossary_curator import GlossaryCurator
 
 
 class _CuratorProvider:
@@ -97,7 +97,7 @@ def test_overall_timeout_keeps_decisions_of_finished_batches(monkeypatch):
     from dataclasses import replace
     from itertools import product
 
-    import src.nwn_translator.glossary_curator as module
+    import nwn_translator.glossary_curator as module
 
     monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, run_timeout_per_batch=0.1))
     registry = EntityCandidateRegistry()
@@ -120,7 +120,7 @@ def test_overall_timeout_keeps_decisions_of_finished_batches(monkeypatch):
 
 
 def test_infinite_priority_reads_as_no_priority():
-    from src.nwn_translator.glossary_curator import _parse_curator_json
+    from nwn_translator.glossary_curator import _parse_curator_json
 
     parsed = _parse_curator_json(
         '{"Auren Society": {"decision": "keep", "reason": "faction", "priority": Infinity}}',
@@ -136,7 +136,7 @@ def test_batch_that_raises_keeps_the_decisions_of_the_other_batches(monkeypatch)
     import json
     from itertools import product
 
-    import src.nwn_translator.glossary_curator as module
+    import nwn_translator.glossary_curator as module
 
     parse = module._parse_curator_json
 

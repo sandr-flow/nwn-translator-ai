@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from src.nwn_translator.extractors.base import extract_local_string
-from src.nwn_translator.extractors.git_extractor import GitExtractor
-from src.nwn_translator.formats.gff import read_gff
-from src.nwn_translator.extractors.git_fields import (
+from nwn_translator.extractors.base import extract_local_string
+from nwn_translator.extractors.git_extractor import GitExtractor
+from nwn_translator.formats.gff import read_gff
+from nwn_translator.extractors.git_fields import (
     INSTANCE_LISTS,
     INSTANCE_NESTED_ITEM_LISTS,
     ITEM_INVENTORY_FIELDS,

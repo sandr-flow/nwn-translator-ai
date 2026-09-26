@@ -3,15 +3,15 @@
 from pathlib import Path
 from typing import List
 
-from src.nwn_translator.context.dialog_formatter import (
+from nwn_translator.context.dialog_formatter import (
     format_dialog_tree,
     format_nodes,
     iter_nodes,
     node_key,
 )
-from src.nwn_translator.extractors.base import DialogNode
-from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
-from src.nwn_translator.translators.dialog_plan import prepare_dialog
+from nwn_translator.extractors.base import DialogNode
+from nwn_translator.extractors.dialog_extractor import DialogExtractor
+from nwn_translator.translators.dialog_plan import prepare_dialog
 
 
 def test_format_dialog_tree_does_not_repeat_reply_text_as_truncated_preview():

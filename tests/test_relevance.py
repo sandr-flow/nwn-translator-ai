@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.nwn_translator.context.relevance import (
+from nwn_translator.context.relevance import (
     is_relevant,
     tokenize,
     tokenize_corpus,

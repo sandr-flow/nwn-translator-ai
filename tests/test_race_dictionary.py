@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.nwn_translator.race_dictionary import RACE_TERMS, match_race_terms
+from nwn_translator.race_dictionary import RACE_TERMS, match_race_terms
 
 # All language keys present in the dictionary.
 ALL_LANGS = list(RACE_TERMS.keys())

@@ -4,22 +4,22 @@ import pytest
 from pathlib import Path
 from unittest.mock import Mock
 
-from src.nwn_translator.extractors.base import (
+from nwn_translator.extractors.base import (
     ExtractedContent,
     TranslatableItem,
     DialogNode,
 )
-from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
-from src.nwn_translator.extractors.journal_extractor import JournalExtractor
-from src.nwn_translator.extractors.item_extractor import ItemExtractor
-from src.nwn_translator.extractors.simple_extractors import (
+from nwn_translator.extractors.dialog_extractor import DialogExtractor
+from nwn_translator.extractors.journal_extractor import JournalExtractor
+from nwn_translator.extractors.item_extractor import ItemExtractor
+from nwn_translator.extractors.simple_extractors import (
     PlaceableExtractor,
     DoorExtractor,
     EncounterExtractor,
     StoreExtractor,
     TriggerExtractor,
 )
-from src.nwn_translator.resources import RESOURCE_KINDS
+from nwn_translator.resources import RESOURCE_KINDS
 
 
 class TestDialogExtractor:

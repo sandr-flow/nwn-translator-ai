@@ -1,6 +1,6 @@
 """Tests for Phase 2 glossary filtering (Glossary.to_prompt_block(texts=...))."""
 
-from src.nwn_translator.glossary import Glossary
+from nwn_translator.glossary import Glossary
 
 
 class TestGlossaryFilterByBatch:
@@ -179,7 +179,7 @@ class TestMemoizedMatching:
         assert g.matching_entries(batches[0]) == g.matching_entries(batches[0])
 
     def test_terminology_block_reuses_merged_glossary(self):
-        from src.nwn_translator.glossary import terminology_block
+        from nwn_translator.glossary import terminology_block
 
         g = Glossary(entries={"Perin": "Перин"})
         first = terminology_block(["Perin met a dwarf."], "russian", g)

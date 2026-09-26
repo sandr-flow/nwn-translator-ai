@@ -7,14 +7,14 @@ from typing import List
 
 import pytest
 
-from src.nwn_translator.context.entity_extractor import (
+from nwn_translator.context.entity_extractor import (
     EntityExtractor,
     _coerce_category,
     _parse_entities_json,
     _select_texts,
 )
-from src.nwn_translator.extractors.base import TranslatableItem
-from src.nwn_translator.prompts.terminology import build_entity_extraction_user_prompt
+from nwn_translator.extractors.base import TranslatableItem
+from nwn_translator.prompts.terminology import build_entity_extraction_user_prompt
 
 
 def _item(text: str, metadata=None) -> TranslatableItem:
@@ -284,7 +284,7 @@ class TestExtractIntegration:
         import asyncio
         from dataclasses import replace
 
-        import src.nwn_translator.context.entity_extractor as module
+        import nwn_translator.context.entity_extractor as module
 
         monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, run_timeout_per_batch=0.1))
 

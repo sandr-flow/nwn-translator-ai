@@ -9,21 +9,21 @@ Verifies that each supported target language:
 import json
 import pytest
 
-from src.nwn_translator.prompts import (
+from nwn_translator.prompts import (
     build_dialog_system_prompt,
     build_dialog_system_prompt_parts,
     build_entity_extraction_system_prompt,
     build_glossary_system_prompt,
     build_translation_system_prompt_parts,
 )
-from src.nwn_translator.ai_providers import openrouter_provider
-from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
-from src.nwn_translator.prompts._builder import (
+from nwn_translator.ai_providers import openrouter_provider
+from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from nwn_translator.prompts._builder import (
     CONTENT_PROFILE_SCRIPT_MESSAGE,
     build_batch_user_prompt,
     build_single_user_prompt,
 )
-from src.nwn_translator.prompts.examples import LANGUAGES, get_examples
+from nwn_translator.prompts.examples import LANGUAGES, get_examples
 
 ALL_LANGS = list(LANGUAGES)
 NON_RUSSIAN_LANGS = [lang for lang in ALL_LANGS if lang != "russian"]

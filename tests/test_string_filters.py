@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.nwn_translator.context.string_filters import (
+from nwn_translator.context.string_filters import (
     ENGINE_PLACEHOLDER_TAGS,
     ENGINE_TAG_PREFIXES,
     classify_entity_candidate,
@@ -11,8 +11,8 @@ from src.nwn_translator.context.string_filters import (
     is_valid_entity_name,
     should_skip_entity_source_text,
 )
-from src.nwn_translator.extractors import ncs_extractor
-from src.nwn_translator.extractors import git_fields
+from nwn_translator.extractors import ncs_extractor
+from nwn_translator.extractors import git_fields
 
 
 @pytest.mark.parametrize(

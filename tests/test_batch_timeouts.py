@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.nwn_translator.async_utils import run_async
+from nwn_translator.async_utils import run_async
 
 # ---------------------------------------------------------------------------
 # run_async timeout
@@ -57,8 +57,8 @@ class TestRunAsyncTimeout:
 
 def _build_glossary(names, provider, target_lang="russian", progress_callback=None):
     """Build a glossary for ``name -> category`` *names* with one batch."""
-    from src.nwn_translator.context.world_context import WorldContext
-    from src.nwn_translator.glossary_builder import GlossaryBuilder
+    from nwn_translator.context.world_context import WorldContext
+    from nwn_translator.glossary_builder import GlossaryBuilder
 
     world = WorldContext()
     world.extracted_names = list(names.items())
@@ -94,7 +94,7 @@ class TestGlossaryPartialFailure:
 
     def test_parse_glossary_json_matches_normalized_short_key(self):
         """Short keys must survive invisible whitespace/category quirks."""
-        from src.nwn_translator.glossary_builder import parse_glossary_json
+        from nwn_translator.glossary_builder import parse_glossary_json
 
         result = parse_glossary_json(
             '{"Kit": "\\u041d\\u0430\\u0431\\u043e\\u0440"}',
@@ -105,7 +105,7 @@ class TestGlossaryPartialFailure:
 
     def test_parse_glossary_json_uses_first_valid_object(self):
         """Trailing prose/examples after JSON must not poison parsing."""
-        from src.nwn_translator.glossary_builder import parse_glossary_json
+        from nwn_translator.glossary_builder import parse_glossary_json
 
         raw = (
             'Here is the translation:\n{"Kit": "\\u041d\\u0430\\u0431\\u043e\\u0440"}\n'
@@ -203,7 +203,7 @@ class TestGlossaryPartialFailure:
         import json
         from dataclasses import replace
 
-        import src.nwn_translator.glossary_builder as module
+        import nwn_translator.glossary_builder as module
 
         monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, run_timeout_per_batch=0.1))
 
@@ -216,8 +216,8 @@ class TestGlossaryPartialFailure:
         mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
         names = {f"Name{i:03d}": "character" for i in range(81)}
 
-        from src.nwn_translator.context.world_context import WorldContext
-        from src.nwn_translator.glossary_builder import GlossaryBuilder
+        from nwn_translator.context.world_context import WorldContext
+        from nwn_translator.glossary_builder import GlossaryBuilder
 
         world = WorldContext()
         world.extracted_names = list(names.items())
@@ -239,11 +239,11 @@ class TestTranslationManagerTimeouts:
         """A timed-out item must be recorded as a failed translation, not crash."""
         from dataclasses import dataclass, field
         from typing import Any, Dict, Optional
-        from src.nwn_translator.config import TranslationConfig
-        from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-        from src.nwn_translator.translators.model_calls import CallLimits
-        from src.nwn_translator.translators.translation_manager import TranslationManager
-        from src.nwn_translator.ai_providers.base import TranslationResult
+        from nwn_translator.config import TranslationConfig
+        from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+        from nwn_translator.translators.model_calls import CallLimits
+        from nwn_translator.translators.translation_manager import TranslationManager
+        from nwn_translator.ai_providers.base import TranslationResult
 
         config = TranslationConfig(
             api_key="test-key",
@@ -284,11 +284,11 @@ class TestTranslationManagerTimeouts:
 
     def test_queued_long_items_are_not_limited_by_fixed_outer_timeout(self):
         """The outer run_async timeout must scale with queued semaphore work."""
-        from src.nwn_translator.ai_providers.base import TranslationResult
-        from src.nwn_translator.config import TranslationConfig
-        from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-        from src.nwn_translator.translators.model_calls import CallLimits
-        from src.nwn_translator.translators.translation_manager import TranslationManager
+        from nwn_translator.ai_providers.base import TranslationResult
+        from nwn_translator.config import TranslationConfig
+        from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+        from nwn_translator.translators.model_calls import CallLimits
+        from nwn_translator.translators.translation_manager import TranslationManager
 
         config = TranslationConfig(
             api_key="test-key",

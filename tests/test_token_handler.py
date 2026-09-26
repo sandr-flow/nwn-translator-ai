@@ -2,7 +2,7 @@
 
 import re
 
-from src.nwn_translator.translators.token_handler import (
+from nwn_translator.translators.token_handler import (
     TokenHandler,
     normalize_translated_text,
     sanitize_text,

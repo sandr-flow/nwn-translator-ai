@@ -3,9 +3,9 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.nwn_translator.extractors.git_extractor import GitExtractor
-from src.nwn_translator.extractors.git_fields import INSTANCE_LISTS
-from src.nwn_translator.injectors.gff_injector import inject_gff
+from nwn_translator.extractors.git_extractor import GitExtractor
+from nwn_translator.extractors.git_fields import INSTANCE_LISTS
+from nwn_translator.injectors.gff_injector import inject_gff
 
 
 def _extracted_texts(gff):
@@ -199,7 +199,7 @@ def _inject_fixture(path, data, answers):
 
 
 class TestPatchGitInventory:
-    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    @patch("nwn_translator.injectors.gff_injector.GFFPatcher")
     def test_patches_waypoint_map_note_labels(self, mock_patcher_cls):
         data = {
             "WaypointList": [
@@ -219,7 +219,7 @@ class TestPatchGitInventory:
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(222, "Городские ворота")}
 
-    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    @patch("nwn_translator.injectors.gff_injector.GFFPatcher")
     def test_patches_item_list_fields(self, mock_patcher_cls):
         data = {
             "Placeable List": [
@@ -250,7 +250,7 @@ class TestPatchGitInventory:
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(100, "Сундук"), (200, "Футляр")}
 
-    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    @patch("nwn_translator.injectors.gff_injector.GFFPatcher")
     def test_patches_store_list_item_list_fields(self, mock_patcher_cls):
         data = {
             "StoreList": [
@@ -284,7 +284,7 @@ class TestPatchGitInventory:
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(300, "Оружейник"), (400, "Железный длинный меч")}
 
-    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    @patch("nwn_translator.injectors.gff_injector.GFFPatcher")
     def test_patches_store_list_loc_name_fields(self, mock_patcher_cls):
         data = {
             "StoreList": [
@@ -305,7 +305,7 @@ class TestPatchGitInventory:
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(310, "Кофейня")}
 
-    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    @patch("nwn_translator.injectors.gff_injector.GFFPatcher")
     def test_patches_nested_store_list_itemlist(self, mock_patcher_cls):
         data = {
             "StoreList": [
@@ -339,7 +339,7 @@ class TestPatchGitInventory:
         plist = patcher.patch_multiple.call_args[0][0]
         assert set(plist) == {(50, "Бар"), (900, "Кофе")}
 
-    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    @patch("nwn_translator.injectors.gff_injector.GFFPatcher")
     def test_patches_equip_item_list_fields(self, mock_patcher_cls):
         data = {
             "Creature List": [

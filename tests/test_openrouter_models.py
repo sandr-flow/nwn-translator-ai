@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from src.nwn_translator.ai_providers.openrouter_models import (
+from nwn_translator.ai_providers.openrouter_models import (
     FALLBACK,
     ModelReasoning,
     allowed_efforts,
@@ -87,7 +87,7 @@ def test_refresh_catalog_parses_live_payload():
     mock_client.__enter__.return_value = mock_client
     mock_client.__exit__.return_value = False
     with patch(
-        "src.nwn_translator.ai_providers.openrouter_models.httpx.Client",
+        "nwn_translator.ai_providers.openrouter_models.httpx.Client",
         return_value=mock_client,
     ):
         catalog = refresh_catalog(force=True)
@@ -104,7 +104,7 @@ def test_refresh_catalog_falls_back_on_http_error():
     mock_client.__enter__.return_value = mock_client
     mock_client.__exit__.return_value = False
     with patch(
-        "src.nwn_translator.ai_providers.openrouter_models.httpx.Client",
+        "nwn_translator.ai_providers.openrouter_models.httpx.Client",
         return_value=mock_client,
     ):
         catalog = refresh_catalog(force=True)
@@ -117,7 +117,7 @@ def test_lookup_fetches_the_catalog_once_when_openrouter_is_down():
     mock_client.__enter__.return_value = mock_client
     mock_client.__exit__.return_value = False
     with patch(
-        "src.nwn_translator.ai_providers.openrouter_models.httpx.Client",
+        "nwn_translator.ai_providers.openrouter_models.httpx.Client",
         return_value=mock_client,
     ):
         assert lookup_model_reasoning("vendor/unknown") == (False, None)

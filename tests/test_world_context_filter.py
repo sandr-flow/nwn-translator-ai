@@ -1,6 +1,6 @@
 """Tests for WorldContext.to_prompt_block(source_texts=...) filtering."""
 
-from src.nwn_translator.context.world_context import NPCInfo, WorldContext
+from nwn_translator.context.world_context import NPCInfo, WorldContext
 
 
 def _ctx() -> WorldContext:

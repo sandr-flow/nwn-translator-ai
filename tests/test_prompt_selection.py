@@ -1,7 +1,7 @@
 """Tests for prompt context budget selection."""
 
-from src.nwn_translator.context.world_context import NPCInfo, WorldContext
-from src.nwn_translator.glossary import Glossary
+from nwn_translator.context.world_context import NPCInfo, WorldContext
+from nwn_translator.glossary import Glossary
 
 
 def test_world_context_budget_does_not_pull_every_generic_match():

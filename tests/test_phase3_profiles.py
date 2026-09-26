@@ -12,15 +12,15 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-from src.nwn_translator.config import TranslationConfig
-from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-from src.nwn_translator.prompts import build_translation_system_prompt_parts
-from src.nwn_translator.prompts._builder import (
+from nwn_translator.config import TranslationConfig
+from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+from nwn_translator.prompts import build_translation_system_prompt_parts
+from nwn_translator.prompts._builder import (
     CONTENT_PROFILE_DEFAULT,
     CONTENT_PROFILE_SHORT_LABEL,
 )
-from src.nwn_translator.translators.translation_manager import TranslationManager
-from src.nwn_translator.translators.work_plan import BatchLimits
+from nwn_translator.translators.translation_manager import TranslationManager
+from nwn_translator.translators.work_plan import BatchLimits
 
 # ---------------------------------------------------------------------------
 # 3.4 — prompt-builder profile selection

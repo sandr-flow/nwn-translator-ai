@@ -8,15 +8,15 @@ import openai
 import pytest
 from openai import AuthenticationError, BadRequestError, InternalServerError
 
-from src.nwn_translator.async_utils import run_async
-from src.nwn_translator.ai_providers import errors, openrouter_provider
-from src.nwn_translator.ai_providers.base import ProviderError, RateLimitError, TranslationItem
-from src.nwn_translator.ai_providers.errors import OpenRouterError
-from src.nwn_translator.ai_providers.openrouter_provider import (
+from nwn_translator.async_utils import run_async
+from nwn_translator.ai_providers import errors, openrouter_provider
+from nwn_translator.ai_providers.base import ProviderError, RateLimitError, TranslationItem
+from nwn_translator.ai_providers.errors import OpenRouterError
+from nwn_translator.ai_providers.openrouter_provider import (
     OpenRouterProvider,
     parse_single_translation,
 )
-from src.nwn_translator.telemetry import RunMetricsRecorder
+from nwn_translator.telemetry import RunMetricsRecorder
 
 FAKE_KEY = "sk-or-v1-test1234"
 _REQUEST = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")

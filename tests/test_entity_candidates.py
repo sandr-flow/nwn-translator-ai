@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from src.nwn_translator.context.entity_candidates import (
+from nwn_translator.context.entity_candidates import (
     EntityCandidateRegistry,
     add_item_candidate,
 )
-from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
 
 
 def test_candidate_registry_merges_evidence_without_losing_sources():

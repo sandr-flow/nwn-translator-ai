@@ -9,13 +9,13 @@ import asyncio
 
 import pytest
 
-from src.nwn_translator.async_utils import (
+from nwn_translator.async_utils import (
     close_thread_resources,
     run_async,
     shutdown_thread_loop,
 )
-from src.nwn_translator.ai_providers import openrouter_provider
-from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from nwn_translator.ai_providers import openrouter_provider
+from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 
 
 @pytest.fixture(autouse=True)

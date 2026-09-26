@@ -9,18 +9,18 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.nwn_translator.config import TranslationConfig
-from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-from src.nwn_translator.glossary import Glossary, terminology_block
-from src.nwn_translator.prompts.token_retry import PRESERVE_INLINE_MARKUP, PRESERVE_PLACEHOLDERS
-from src.nwn_translator.translators.token_handler import (
+from nwn_translator.config import TranslationConfig
+from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+from nwn_translator.glossary import Glossary, terminology_block
+from nwn_translator.prompts.token_retry import PRESERVE_INLINE_MARKUP, PRESERVE_PLACEHOLDERS
+from nwn_translator.translators.token_handler import (
     TokenHandler,
     has_translatable_content,
     sanitize_text,
 )
-from src.nwn_translator.translators.model_calls import CallLimits
-from src.nwn_translator.translators.translation_manager import TranslationManager
-from src.nwn_translator.translators.work_plan import BatchLimits, WorkItem, is_batchable
+from nwn_translator.translators.model_calls import CallLimits
+from nwn_translator.translators.translation_manager import TranslationManager
+from nwn_translator.translators.work_plan import BatchLimits, WorkItem, is_batchable
 
 
 def _expected(content, answers):

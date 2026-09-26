@@ -6,11 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
-from src.nwn_translator.config import TranslationConfig
-from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
-from src.nwn_translator.injectors.gff_injector import inject_gff
-from src.nwn_translator.translators.token_handler import TokenHandler
+from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from nwn_translator.config import TranslationConfig
+from nwn_translator.extractors.dialog_extractor import DialogExtractor
+from nwn_translator.injectors.gff_injector import inject_gff
+from nwn_translator.translators.token_handler import TokenHandler
 
 
 class TestTokenPreservationWorkflow:
@@ -36,7 +36,7 @@ class TestTokenPreservationWorkflow:
 class TestDialogExtractionAndInjection:
     """Tests for dialog extraction and injection workflow."""
 
-    @patch("src.nwn_translator.injectors.gff_injector.GFFPatcher")
+    @patch("nwn_translator.injectors.gff_injector.GFFPatcher")
     def test_extract_and_inject_dialog(self, mock_patcher_cls):
         """Test extracting and re-injecting dialog content (binary patch via GFFPatcher)."""
         mock_patcher = MagicMock()

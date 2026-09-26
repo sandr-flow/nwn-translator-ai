@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from src.nwn_translator.telemetry import LLMRequestMetric, RunMetricsRecorder
+from nwn_translator.telemetry import LLMRequestMetric, RunMetricsRecorder
 
 
 def test_metrics_summary_and_json_output(tmp_path: Path):

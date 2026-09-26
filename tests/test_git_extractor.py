@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from src.nwn_translator.extractors.git_extractor import GitExtractor
+from nwn_translator.extractors.git_extractor import GitExtractor
 
 
 def test_git_extractor_collects_creature_equip_and_store_items():
@@ -438,7 +438,7 @@ def test_git_extractor_extracts_emote_trigger_texts():
 
 def test_git_extractor_rescues_blueprint_creature_names(tmp_path, monkeypatch):
     """A camel-cased .git creature name matching a .utc blueprint name is kept."""
-    from src.nwn_translator.extractors import git_fields
+    from nwn_translator.extractors import git_fields
 
     git_fields.clear_creature_name_cache()
     (tmp_path / "npc_mcgee.utc").write_bytes(b"")
@@ -473,7 +473,7 @@ def test_git_extractor_rescues_blueprint_creature_names(tmp_path, monkeypatch):
 
 def test_git_extractor_blocks_camel_names_without_blueprints(tmp_path):
     """Without a matching .utc blueprint the camel-case rule still applies."""
-    from src.nwn_translator.extractors import git_fields
+    from nwn_translator.extractors import git_fields
 
     git_fields.clear_creature_name_cache()
     extractor = GitExtractor()
@@ -489,7 +489,7 @@ def test_creature_name_oracle_survives_blueprint_patching(tmp_path, monkeypatch)
     By rebuild time the .utc files on disk may already carry translated
     names; rebuilding the oracle then would break original-text matching.
     """
-    from src.nwn_translator.extractors import git_fields
+    from nwn_translator.extractors import git_fields
 
     git_fields.clear_creature_name_cache()
     (tmp_path / "npc.utc").write_bytes(b"")
@@ -511,7 +511,7 @@ def test_creature_name_oracle_survives_blueprint_patching(tmp_path, monkeypatch)
 
 def test_creature_name_oracle_is_built_once_under_concurrency(tmp_path, monkeypatch):
     """Extraction workers asking for the oracle at once share a single .utc scan."""
-    from src.nwn_translator.extractors import git_fields
+    from nwn_translator.extractors import git_fields
 
     workers = 8
     calls = []
@@ -539,7 +539,7 @@ def test_creature_name_oracle_is_built_once_under_concurrency(tmp_path, monkeypa
 
 def test_git_filter_rescues_names_known_to_the_oracle():
     """A code-like creature name passes the filter only when a blueprint knows it."""
-    from src.nwn_translator.extractors.git_fields import should_translate_git_string
+    from nwn_translator.extractors.git_fields import should_translate_git_string
 
     assert not should_translate_git_string("McGee", "creature_first_name")
     assert should_translate_git_string("McGee", "creature_first_name", frozenset({"mcgee"}))
@@ -547,7 +547,7 @@ def test_git_filter_rescues_names_known_to_the_oracle():
 
 def test_possessive_hint_requires_the_name_to_start_a_word():
     """``Joanna's`` is not a possessive of ``Anna``."""
-    from src.nwn_translator.extractors.git_fields import npc_possessive_hint
+    from nwn_translator.extractors.git_fields import npc_possessive_hint
 
     npcs = {"anna": "Female"}
     assert npc_possessive_hint("Joanna's Box", npcs) == ""
@@ -558,7 +558,7 @@ def test_possessive_hint_requires_the_name_to_start_a_word():
 
 def test_possessive_hint_quotes_the_possessive_as_written():
     """The quoted name is the possessive occurrence, even after case-changing text."""
-    from src.nwn_translator.extractors.git_fields import npc_possessive_hint
+    from nwn_translator.extractors.git_fields import npc_possessive_hint
 
     npcs = {"joann": "Male", "anna": "Female"}
     assert npc_possessive_hint("ANNA met Anna's aunt", npcs) == (

@@ -362,12 +362,14 @@ class TaskManager:
     def discard_task(self, task_id: str) -> None:
         """Remove a task that never started running (lost the IP race, failed upload).
 
-        Drops it from memory and deletes its SQLite row so it does not linger in
-        the client's history.
+        Drops it from memory, its SQLite row so it does not linger in the
+        client's history, and its workspace, which no TTL purge would reach
+        without the row.
         """
         with self._lock:
             self._tasks.pop(task_id, None)
         delete_task_row(task_id)
+        shutil.rmtree(self.workspace_root / task_id, ignore_errors=True)
 
     def cancel(self, task: TranslationTask) -> None:
         """Ask a running task to stop and free its client's slot at once.

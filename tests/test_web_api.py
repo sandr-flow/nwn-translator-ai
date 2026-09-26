@@ -761,6 +761,22 @@ def test_failed_upload_frees_slot(client: TestClient, monkeypatch: pytest.Monkey
     assert r2.status_code == 200
 
 
+def test_failed_upload_leaves_no_workspace(
+    client: TestClient, task_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A discarded task has no row, so no TTL purge would ever remove its directory."""
+
+    async def interrupted_upload(upload, dest: Path, max_bytes: int) -> None:
+        dest.write_bytes(b"partial")
+        raise HTTPException(status_code=413, detail="too big")
+
+    monkeypatch.setattr(web_routes, "_stream_upload_to_file", interrupted_upload)
+    files = {"file": ("a.mod", b"\x01" * 200, "application/octet-stream")}
+    r = client.post("/api/translate", files=files, data={"api_key": "sk-x", "target_lang": "en"})
+    assert r.status_code == 413
+    assert list(task_workspace.iterdir()) == []
+
+
 def test_reject_cjk_source_lang_not_representable_in_game(client: TestClient) -> None:
     files = {"file": ("m.mod", b"\x00" * 200, "application/octet-stream")}
     data = {

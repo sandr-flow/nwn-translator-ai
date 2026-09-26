@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -89,3 +91,25 @@ def test_stages_record_candidates_metrics_and_terminology_trace() -> None:
         {"name": "Gewia", "decision": "keep", "reason": "speaker", "alias_of": None},
         {"name": "Stout Village", "decision": "keep", "reason": "", "alias_of": None},
     ]
+
+
+def test_glossary_overall_timeout_keeps_the_run_going(monkeypatch) -> None:
+    import nwn_translator.glossary_builder as builder
+
+    monkeypatch.setattr(builder, "_STAGE", replace(builder._STAGE, batch_timeout=0.05))
+
+    class _Stalled(_Provider):
+        async def complete_glossary_chat_async(self, system_prompt, user_prompt, **kwargs):
+            await asyncio.sleep(5)
+            return "{}"
+
+    log = _Log()
+    state = _state(_Stalled(), log)
+    assert state.world_context is not None
+    state.world_context.extracted_names = [("Perin", "character")]
+
+    stage_build_glossary(state)
+
+    assert state.glossary is not None
+    assert state.glossary.entries == {}
+    assert log.entries[-1]["event"] == "terminology_resolved"

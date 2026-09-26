@@ -81,10 +81,8 @@ class GlossaryBuilder:
             progress_callback: Optional progress reporter.
 
         Returns:
-            The glossary; empty, with a warning, when no usable entry survives.
-
-        Raises:
-            TimeoutError: When the whole build exceeds its overall time budget.
+            The glossary; empty, with a warning, when no usable entry survives
+            or the build fails as a whole (e.g. its overall time budget runs out).
         """
         pairs = world_context.get_glossary_names()
         if not pairs:
@@ -150,7 +148,13 @@ class GlossaryBuilder:
                 sem, remaining, send, parse_glossary_json, name=f"Glossary {label}"
             )
 
-        results = _STAGE.run(batches, translate_batch, concurrency=config.max_concurrent_requests)
+        try:
+            results = _STAGE.run(
+                batches, translate_batch, concurrency=config.max_concurrent_requests
+            )
+        except Exception as exc:
+            logger.warning("Glossary build failed; continuing without a glossary: %s", exc)
+            return Glossary()
 
         all_entries: Dict[str, str] = {}
         failed_batches = 0

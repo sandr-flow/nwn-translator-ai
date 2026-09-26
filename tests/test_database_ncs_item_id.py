@@ -155,6 +155,8 @@ def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyP
     cols = {row[1] for row in cur.fetchall()}
     assert "item_id" in cols
     assert "success" in cols
+    task_cols = {row[1] for row in db.get_db().execute("PRAGMA table_info(tasks)")}
+    assert {"model", "updated_at", "progress", "phase", "current_file"} <= task_cols
 
 
 def test_concurrent_access_is_serialized(isolated_db: None) -> None:

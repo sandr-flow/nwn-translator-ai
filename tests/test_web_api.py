@@ -15,11 +15,12 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from nwn_translator.ai_providers.base import TranslationResult
+from nwn_translator.config import DEFAULT_MODEL, TranslationCancelled
 from nwn_translator.web import database as db
 from nwn_translator.web import routes as web_routes
 from nwn_translator.web.app import UploadLimitMiddleware, create_app
 from nwn_translator.web.schemas import RebuildEdit
-from nwn_translator.web.task_manager import TaskManager, set_task_manager
+from nwn_translator.web.task_manager import TaskManager, get_task_manager, set_task_manager
 
 
 @pytest.fixture
@@ -330,6 +331,60 @@ def test_test_connection_mocked(client: TestClient, monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        (
+            "raises",
+            {"ok": False, "translated": None, "error": "boom", "model": None},
+        ),
+        (
+            "unparseable",
+            {"ok": False, "translated": None, "error": "bad reply", "model": "fake/model"},
+        ),
+    ],
+)
+def test_test_connection_failure_closes_the_client(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, outcome: str, expected: dict
+) -> None:
+    """A failed key check must still close the provider's HTTP client."""
+    closed: list[bool] = []
+
+    class FakeProvider:
+        model = "fake/model"
+
+        async def translate_async(self, text, source_lang, target_lang):
+            if outcome == "raises":
+                raise RuntimeError("boom")
+            return TranslationResult(translated="", original=text, success=False, error="bad reply")
+
+        async def close_async_client(self):
+            closed.append(True)
+
+        def get_provider_name(self):
+            return "openrouter"
+
+    monkeypatch.setattr(
+        "nwn_translator.web.routes.create_provider",
+        lambda api_key, model=None, **kw: FakeProvider(),
+    )
+
+    r = client.post("/api/test-connection", json={"api_key": "sk-test"})
+
+    assert r.json() == {**expected, "provider": "openrouter"}
+    assert closed == [True]
+
+
+def test_test_connection_rejects_an_unknown_reasoning_effort(client: TestClient) -> None:
+    r = client.post(
+        "/api/test-connection", json={"api_key": "sk-test", "reasoning_effort": "bogus"}
+    )
+
+    body = r.json()
+    assert (body["ok"], body["model"], body["provider"]) == (False, None, "openrouter")
+    assert body["error"].startswith("Invalid reasoning_effort 'bogus'")
+
+
+@pytest.mark.parametrize(
     "api_key,expected",
     [
         ("pza-abcdef", {"provider": "polza", "label": "POLZA.AI"}),
@@ -476,6 +531,270 @@ def test_requested_concurrency_is_capped_by_the_server_setting(
     r = client.post("/api/translate", files=files, data=data)
     assert _wait_for_status(client, r.json()["task_id"], "completed")["status"] == "completed"
     assert seen == [expected]
+
+
+@pytest.mark.parametrize(
+    ("form", "expected"),
+    [
+        (
+            {"api_key": "sk-x", "target_lang": "english"},
+            {
+                "api_key": "sk-x",
+                "target_lang": "english",
+                "source_lang": "auto",
+                "model": DEFAULT_MODEL,
+                "player_gender": "male",
+                "reasoning_effort": None,
+                "preserve_tokens": True,
+                "use_context": True,
+            },
+        ),
+        (
+            {
+                "api_key": " sk-x ",
+                "target_lang": " russian ",
+                "source_lang": "   ",
+                "model": " vendor/m ",
+                "player_gender": "  ",
+                "reasoning_effort": "HIGH",
+                "preserve_tokens": "false",
+                "use_context": "false",
+            },
+            {
+                "api_key": "sk-x",
+                "target_lang": "russian",
+                "source_lang": "auto",
+                "model": "vendor/m",
+                "player_gender": "male",
+                "reasoning_effort": "high",
+                "preserve_tokens": False,
+                "use_context": False,
+            },
+        ),
+    ],
+)
+def test_form_fields_reach_the_translation_config_normalized(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, form: dict, expected: dict
+) -> None:
+    """A renamed job field or a lost normalization would fall back to config defaults."""
+    seen: list[dict] = []
+
+    def recording_translate(self):
+        seen.append({name: getattr(self.config, name) for name in expected})
+        out = self.config.output_file
+        out.write_bytes(b"MOD")
+        return out
+
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", recording_translate)
+    files = {"file": ("f.mod", b"\x07" * 200, "application/octet-stream")}
+    task_id = client.post("/api/translate", files=files, data=form).json()["task_id"]
+
+    assert _wait_for_status(client, task_id, "completed")["status"] == "completed"
+    assert seen == [expected]
+    row = db.get_task_row(task_id)
+    assert row is not None
+    assert (row["target_lang"], row["source_lang"], row["model"]) == (
+        expected["target_lang"],
+        "auto",
+        form.get("model", "").strip() or None,
+    )
+
+
+def test_a_failed_job_records_its_error_and_frees_the_slot(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_translate(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", failing_translate)
+    files = {"file": ("f.mod", b"\x08" * 200, "application/octet-stream")}
+    data = {"api_key": "sk-x", "target_lang": "english"}
+    task_id = client.post("/api/translate", files=files, data=data).json()["task_id"]
+    payload = _wait_for_status(client, task_id, "failed")
+
+    assert (payload["status"], payload["error"]) == ("failed", "boom")
+    assert (payload["progress"], payload["phase"], payload["current_file"]) == (1.0, None, None)
+    row = db.get_task_row(task_id)
+    assert row is not None
+    assert (row["status"], row["error"], row["progress"], row["phase"]) == (
+        "failed",
+        "boom",
+        1.0,
+        None,
+    )
+    assert client.get(f"/api/tasks/{task_id}/download").status_code == 400
+    assert client.post("/api/translate", files=files, data=data).status_code == 200
+
+
+def test_a_cancelled_job_ends_cancelled_without_an_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def cancellable_translate(self):
+        started.set()
+        release.wait(timeout=10)
+        if self.config.cancel_check():
+            raise TranslationCancelled()
+        out = self.config.output_file
+        out.write_bytes(b"DONE")
+        return out
+
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", cancellable_translate)
+    files = {"file": ("c.mod", b"\x09" * 200, "application/octet-stream")}
+    data = {"api_key": "sk-x", "target_lang": "english"}
+    task_id = client.post("/api/translate", files=files, data=data).json()["task_id"]
+    assert started.wait(timeout=5)
+    try:
+        cancel = client.post(f"/api/tasks/{task_id}/cancel")
+        assert cancel.json() == {"ok": True, "status": "cancelling"}
+    finally:
+        release.set()
+    payload = _wait_for_status(client, task_id, "cancelled")
+
+    assert (payload["status"], payload["error"]) == ("cancelled", None)
+    assert (payload["progress"], payload["phase"], payload["current_file"]) == (1.0, None, None)
+    row = db.get_task_row(task_id)
+    assert row is not None
+    assert (row["status"], row["error"]) == ("cancelled", None)
+
+
+def test_deleting_a_finished_task_removes_its_workspace_at_once(
+    client: TestClient, task_workspace: Path
+) -> None:
+    """A finished worker is gone, so nothing is left for it to clean up later."""
+    files = {"file": ("d.mod", b"\x0a" * 200, "application/octet-stream")}
+    data = {"api_key": "sk-x", "target_lang": "english"}
+    task_id = client.post("/api/translate", files=files, data=data).json()["task_id"]
+    assert _wait_for_status(client, task_id, "completed")["status"] == "completed"
+    get_task_manager().join_workers()
+
+    assert client.delete(f"/api/tasks/{task_id}").json() == {"ok": True}
+    assert not (task_workspace / task_id).exists()
+    assert client.get("/api/health").json()["active_tasks"] == 0
+    assert client.get(f"/api/tasks/{task_id}/status").status_code == 404
+
+
+def test_history_and_status_of_tasks_known_only_to_the_database(client: TestClient) -> None:
+    """Tasks of an earlier process are served from their rows."""
+    done = "3f2c7a1e-8b4d-4e6f-a0b1-c2d3e4f5a6b7"
+    broken = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
+    db.create_task_row(
+        done, "tok", "1.1.1.1", 200.0, "done.mod", "russian", "auto", model="vendor/m"
+    )
+    db.update_task_row(
+        done,
+        status="completed",
+        result_path=str(Path("w") / "done_russian.mod"),
+        updated_at=300.0,
+        stats={
+            "files_processed": 2,
+            "errors": [f"e{i}" for i in range(7)],
+            "metrics": {"requests": [{"id": 1}], "calls": 3},
+        },
+    )
+    db.create_task_row(broken, "tok", "1.1.1.1", 100.0, "broken.mod", "german")
+    db.update_task_row(broken, status="failed", error="boom")
+    conn = db.get_db()
+    conn.execute("UPDATE tasks SET stats = ? WHERE task_id = ?", ("{not json", broken))
+    conn.commit()
+    headers = {"X-Client-Token": "tok"}
+    compact = {
+        "files_processed": 2,
+        "errors": ["e0", "e1", "e2", "e3", "e4"],
+        "total_errors": 7,
+        "metrics": {"calls": 3},
+    }
+
+    assert client.get("/api/history", headers=headers).json() == {
+        "items": [
+            {
+                "task_id": done,
+                "input_filename": "done.mod",
+                "status": "completed",
+                "created_at": 200.0,
+                "target_lang": "russian",
+                "source_lang": "auto",
+                "model": "vendor/m",
+                "updated_at": 300.0,
+                "stats": compact,
+            },
+            {
+                "task_id": broken,
+                "input_filename": "broken.mod",
+                "status": "failed",
+                "created_at": 100.0,
+                "target_lang": "german",
+                "source_lang": None,
+                "model": None,
+                "updated_at": None,
+                "stats": None,
+            },
+        ]
+    }
+    assert client.get("/api/history").json() == {"items": []}
+    assert client.get(f"/api/tasks/{done}/status", headers=headers).json() == {
+        "task_id": done,
+        "status": "completed",
+        "progress": 0.0,
+        "current_file": None,
+        "phase": None,
+        "result_filename": "done_russian.mod",
+        "error": None,
+        "stats": compact,
+        "target_lang": "russian",
+    }
+    assert client.get(f"/api/tasks/{broken}/status", headers=headers).json() == {
+        "task_id": broken,
+        "status": "failed",
+        "progress": 0.0,
+        "current_file": None,
+        "phase": None,
+        "result_filename": None,
+        "error": "boom",
+        "stats": None,
+        "target_lang": "german",
+    }
+
+
+def test_shutdown_waits_for_running_jobs(
+    task_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Job threads are daemons: only the lifespan's join keeps a stop from cutting a job off."""
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_translate(self):
+        started.set()
+        release.wait(timeout=10)
+        out = self.config.output_file
+        out.write_bytes(b"DONE")
+        return out
+
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", blocking_translate)
+    set_task_manager(TaskManager(workspace_root=task_workspace))
+    try:
+        client = TestClient(create_app())
+        client.__enter__()
+        files = {"file": ("s.mod", b"\x0b" * 200, "application/octet-stream")}
+        data = {"api_key": "sk-x", "target_lang": "english"}
+        task_id = client.post("/api/translate", files=files, data=data).json()["task_id"]
+        assert started.wait(timeout=5)
+        stopper = threading.Thread(target=client.__exit__, args=(None, None, None))
+        stopper.start()
+        stopper.join(timeout=0.5)
+        waited = stopper.is_alive()
+        release.set()
+        stopper.join(timeout=10)
+    finally:
+        release.set()
+        set_task_manager(None)
+
+    assert waited, "shutdown did not wait for the running job"
+    assert not stopper.is_alive()
+    row = db.get_task_row(task_id)
+    assert row is not None and row["status"] == "completed"
 
 
 def test_translate_rate_limit_second_request(
@@ -720,14 +1039,17 @@ def test_rebuilds_of_one_task_run_one_at_a_time(
         [RebuildEdit(file="a.utc", item_id="a", translated="Гоблин!")],
         [RebuildEdit(file="b.utc", item_id="b", translated="Орк!")],
     ]
-    threads = [threading.Thread(target=tm.rebuild, args=(task, e, "russian")) for e in edits]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=5)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(tm.rebuild, task, e, "russian") for e in edits]
+        for future in futures:
+            future.result(timeout=5)
 
     assert overlaps == [1, 1]
     assert seen[1] == {"a.utc": {"a": "Гоблин!"}, "b.utc": {"b": "Орк!"}}
+    assert db.get_item_translation_map_by_task(task.task_id) == {
+        "a.utc": {"a": "Гоблин!"},
+        "b.utc": {"b": "Орк!"},
+    }
 
 
 # ---------------------------------------------------------------------------

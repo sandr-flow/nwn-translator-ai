@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from nwn_translator.ai_providers.base import TranslationResult
 from nwn_translator.web import database as db
 from nwn_translator.web import routes as web_routes
-from nwn_translator.web.app import create_app
+from nwn_translator.web.app import UploadLimitMiddleware, create_app
 from nwn_translator.web.schemas import RebuildEdit
 from nwn_translator.web.task_manager import TaskManager, set_task_manager
 
@@ -800,3 +800,88 @@ def test_translate_rejects_oversized_stream(
     data = {"api_key": "sk-big", "target_lang": "russian"}
     r = client.post("/api/translate", files=files, data=data)
     assert r.status_code == 413
+
+
+# ---------------------------------------------------------------------------
+# Upload limit applied while the body streams in
+# ---------------------------------------------------------------------------
+
+
+def _chunks(*sizes: int) -> list[dict]:
+    """``http.request`` messages carrying bodies of the given sizes."""
+    return [
+        {"type": "http.request", "body": b"x" * size, "more_body": i < len(sizes) - 1}
+        for i, size in enumerate(sizes)
+    ]
+
+
+def _run_upload_limit(
+    messages: list[dict], headers: list[tuple[bytes, bytes]], path: str = "/api/translate"
+) -> tuple[list[bytes], list[dict], HTTPException | None]:
+    """Feed *messages* through the middleware into an app that reads the whole body.
+
+    Returns:
+        Bodies the app received, messages left unread, and the raised error.
+    """
+    pending = list(messages)
+    delivered: list[bytes] = []
+
+    async def receive() -> dict:
+        return pending.pop(0)
+
+    async def body_reader(scope, receive, send) -> None:
+        while True:
+            message = await receive()
+            delivered.append(message["body"])
+            if not message["more_body"]:
+                return
+
+    middleware = UploadLimitMiddleware(body_reader, path="/api/translate", max_bytes=25)
+    scope = {"type": "http", "path": path, "headers": headers}
+    try:
+        asyncio.run(middleware(scope, receive, None))  # type: ignore[arg-type]
+    except HTTPException as e:
+        return delivered, pending, e
+    return delivered, pending, None
+
+
+def test_upload_limit_rejects_a_declared_oversize_before_reading_it() -> None:
+    """Starlette would spool the whole body to disk before the handler ran."""
+    delivered, pending, error = _run_upload_limit(
+        _chunks(10, 10, 10, 10), [(b"content-length", b"40")]
+    )
+    assert error is not None and error.status_code == 413
+    assert delivered == []
+    assert pending == [], "the rest of the body must be drained for the client"
+
+
+def test_upload_limit_stops_an_undeclared_body_at_the_limit() -> None:
+    delivered, pending, error = _run_upload_limit(_chunks(10, 10, 10, 10), [])
+    assert error is not None and error.status_code == 413
+    assert delivered == [b"x" * 10, b"x" * 10]
+    assert pending == []
+
+
+def test_upload_limit_passes_bodies_within_the_limit_and_other_paths() -> None:
+    assert _run_upload_limit(_chunks(10, 15), [(b"content-length", b"25")])[2] is None
+    other = _run_upload_limit(_chunks(40), [(b"content-length", b"40")], path="/api/health")
+    assert other[2] is None and other[0] == [b"x" * 40]
+
+
+def test_oversized_upload_gets_the_413_message(
+    task_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The limit answers with the usual error and never reaches the handler."""
+    monkeypatch.setattr("nwn_translator.web.app.MAX_UPLOAD_BYTES", 1024)
+    set_task_manager(TaskManager(workspace_root=task_workspace))
+    try:
+        with TestClient(create_app()) as client:
+            files = {"file": ("big.mod", b"z" * 4096, "application/octet-stream")}
+            r = client.post(
+                "/api/translate", files=files, data={"api_key": "k", "target_lang": "x"}
+            )
+    finally:
+        set_task_manager(None)
+    assert r.status_code == 413
+    assert r.json() == {"detail": "Файл слишком большой (максимум 0 МБ)"}
+    assert not task_workspace.exists()

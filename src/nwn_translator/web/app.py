@@ -13,13 +13,63 @@ from typing import AsyncIterator, List
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .. import __version__
 from .database import init_db
-from .routes import router
+from .routes import MAX_UPLOAD_BYTES, router, upload_too_large
 from .task_manager import get_task_manager
 
 logger = logging.getLogger(__name__)
+
+_UPLOAD_PATH = "/api/translate"
+
+
+class UploadLimitMiddleware:
+    """Cap the request body of the upload route while it streams in.
+
+    FastAPI parses the whole multipart body, spooling files to disk, before a
+    handler runs, so a handler-side check comes too late. Once the declared or
+    received size passes the limit, the rest of the body is read and discarded
+    (the client then gets the 413 response rather than a reset connection) and
+    the request fails with 413.
+
+    Attributes:
+        app: Wrapped ASGI application.
+        path: Request path the limit applies to.
+        max_bytes: Largest accepted body.
+    """
+
+    def __init__(self, app: ASGIApp, path: str, max_bytes: int) -> None:
+        """Wrap *app*, limiting bodies sent to *path* to *max_bytes*."""
+        self.app = app
+        self.path = path
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Handle one ASGI connection."""
+        if scope["type"] != "http" or scope["path"] != self.path:
+            await self.app(scope, receive, send)
+            return
+        declared = 0
+        for name, value in scope["headers"]:
+            if name == b"content-length":
+                with contextlib.suppress(ValueError):
+                    declared = int(value)
+        received = 0
+
+        async def receive_within_limit() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if max(declared, received) > self.max_bytes:
+                    while message.get("more_body", False):
+                        message = await receive()
+                    raise upload_too_large(self.max_bytes)
+            return message
+
+        await self.app(scope, receive_within_limit, send)
 
 
 def _parse_cors_origins() -> List[str]:
@@ -67,6 +117,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Added first so CORS wraps it and also covers its 413 responses.
+    app.add_middleware(UploadLimitMiddleware, path=_UPLOAD_PATH, max_bytes=MAX_UPLOAD_BYTES)
     origins = _parse_cors_origins()
     app.add_middleware(
         CORSMiddleware,

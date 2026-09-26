@@ -68,8 +68,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
-#: Largest accepted upload. The bundled nginx enforces the same limit
-#: (``client_max_body_size 50m``) in front of the app.
+#: Largest accepted upload. The app enforces it on the request body while it
+#: streams in (``UploadLimitMiddleware``) and on the stored file; the bundled
+#: nginx applies the same limit (``client_max_body_size 50m``) in front.
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 _READ_CHUNK = 1024 * 1024
@@ -295,12 +296,6 @@ async def start_translate(
         player_gender=player_gender,
         reasoning_effort=reasoning_effort,
     )
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        with contextlib.suppress(ValueError):
-            if int(content_length) > MAX_UPLOAD_BYTES:
-                raise upload_too_large(MAX_UPLOAD_BYTES)
-
     task = tm.create_task(
         ip,
         file.filename,

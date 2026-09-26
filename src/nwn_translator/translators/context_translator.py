@@ -75,9 +75,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Output budget of the recovery requests. It equals ``TRANSLATION_MAX_TOKENS``,
-#: so a "higher max_tokens" step that re-sends the original prompt asks the
-#: model the first request again.
+#: Output budget of the recovery requests. It currently equals
+#: ``TRANSLATION_MAX_TOKENS``, so the "higher max_tokens" of the step warnings
+#: overstates it: a step that re-sends the original prompt repeats the first
+#: request. The step is kept on purpose: the request is sampled
+#: (``TRANSLATION_TEMPERATURE``), so a retry can still return a complete answer,
+#: and it is part of the fixed recovery sequence whose requests a run sends. The
+#: value stays a literal so that a lower first-request budget would give the
+#: recovery requests a higher one again.
 _RECOVERY_MAX_TOKENS = 32768
 
 #: Result of one pool job: its translations and ``(file, error)`` pairs.

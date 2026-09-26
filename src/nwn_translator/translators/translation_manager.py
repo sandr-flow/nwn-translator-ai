@@ -71,7 +71,7 @@ def unescape_literal_newlines(original: str, translated: str) -> str:
 
 
 class TranslationManager:
-    """Translates occurrences in deduplicated single and batch requests.
+    """Translator of occurrences in deduplicated single and batch requests.
 
     Attributes:
         config: Run settings.

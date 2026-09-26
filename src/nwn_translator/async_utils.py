@@ -1,4 +1,4 @@
-"""Run coroutines from synchronous code on one persistent event loop per thread."""
+"""Coroutines run from synchronous code on one persistent event loop per thread."""
 
 from __future__ import annotations
 

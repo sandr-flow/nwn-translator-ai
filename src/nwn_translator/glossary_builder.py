@@ -58,7 +58,7 @@ _CATEGORY_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
 
 class GlossaryBuilder:
-    """Builds a :class:`~nwn_translator.glossary.Glossary` via batched model requests."""
+    """Builder of a :class:`~nwn_translator.glossary.Glossary` via batched model requests."""
 
     def build(
         self,

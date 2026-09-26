@@ -110,7 +110,7 @@ def queued_timeout(work_units: int, per_call_timeout: float, concurrency: int) -
 
 
 class ModelCaller:
-    """Sends the translation requests of one run.
+    """Sender of the translation requests of one run.
 
     Attributes:
         config: Run settings (languages, concurrency, cancellation).

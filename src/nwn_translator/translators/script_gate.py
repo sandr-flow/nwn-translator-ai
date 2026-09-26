@@ -39,7 +39,7 @@ _UNAVAILABLE_VERDICT = {"translate": False, "reason": "gate_unavailable"}
 
 
 class ScriptGate:
-    """Approves or rejects the string literals of compiled scripts.
+    """Gate that approves or rejects the string literals of compiled scripts.
 
     Attributes:
         config: Run settings (source language, gate switch, concurrency).

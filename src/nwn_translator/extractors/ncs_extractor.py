@@ -81,7 +81,7 @@ def _is_definitely_not_translatable(
 
     # --- soft rules: heuristics for strings with no proven consumer ---
 
-    # Very short strings (single char, two chars)
+    # One or two characters are never a message on their own.
     if len(stripped) <= 2:
         return True
 

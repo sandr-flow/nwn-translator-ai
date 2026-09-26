@@ -205,7 +205,7 @@ class TranslationTask:
 
 
 class TaskManager:
-    """Runs translation jobs and rebuilds, and owns the in-memory task registry.
+    """Service that runs translation jobs and rebuilds and owns the in-memory task registry.
 
     Attributes:
         workspace_root: Directory holding one workspace per task.

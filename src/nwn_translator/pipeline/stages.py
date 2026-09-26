@@ -332,7 +332,7 @@ class PipelineState:
 
 
 class _ItemProgress:
-    """Turns the per-item bumps of the translation managers into progress events.
+    """Adapter that turns the per-item bumps of the translation managers into progress events.
 
     Dialog files are translated on a thread pool, so the counter is locked.
     The total is an estimate; the count never goes past it.

@@ -128,7 +128,7 @@ def build_batch_payload(items: List[TranslationItem]) -> Dict[str, Any]:
             cell["group"] = group_id
             if ref >= 0:
                 cell["source_window"] = ref
-            # Deduplicate identical complete field contexts within this group.
+            # A context shared by several fields of the group is sent once, by reference.
             context = cell.pop("context", None)
             if context:
                 shared.setdefault("field_contexts", [])

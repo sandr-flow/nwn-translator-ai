@@ -272,7 +272,7 @@ def _normalize_cleanup_whitespace(text: str) -> str:
 
 
 class TokenHandler:
-    """Placeholders of one source text: sanitize, restore, validate, clean up.
+    """Placeholder handler of one source text: sanitizing, restoring, validating, cleaning up.
 
     Attributes:
         preserve_tokens: Protect engine tokens (``<FirstName>``); inline tags,

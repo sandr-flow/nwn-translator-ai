@@ -448,7 +448,7 @@ def read_gff(
 
 
 class GFFPatcher:
-    """Rewrites CExoLocString fields of one GFF file in place.
+    """Patcher that rewrites CExoLocString fields of one GFF file in place.
 
     New payloads are appended to the end of the field data block, the field
     records are pointed at them, and the blocks after field data move back by

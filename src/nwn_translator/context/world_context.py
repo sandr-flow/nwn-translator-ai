@@ -503,7 +503,7 @@ class _Selection:
 
 
 class WorldScanner:
-    """Scans an extracted module directory to build a :class:`WorldContext`."""
+    """Scanner that builds a :class:`WorldContext` from an extracted module directory."""
 
     def scan_directory(
         self,

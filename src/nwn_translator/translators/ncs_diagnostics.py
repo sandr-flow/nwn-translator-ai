@@ -59,7 +59,7 @@ def add_sample(
 
 
 class NcsDiagnostics:
-    """Records the outcomes of script strings into one diagnostics block.
+    """Recorder of the outcomes of script strings in one diagnostics block.
 
     Attributes:
         block: The diagnostics block being filled.

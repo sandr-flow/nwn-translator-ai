@@ -57,6 +57,22 @@ def test_items_roundtrip(tmp_path: Path) -> None:
     assert loaded[0].items[0].item_id == "sword_name"
 
 
+def test_items_roundtrip_keeps_unicode_line_separators(tmp_path: Path) -> None:
+    """U+2028 and U+0085 stay unescaped in JSONL; they are not line breaks."""
+    text = "First second\u0085third\r\nfourth"
+    contents = [
+        ExtractedContent(
+            content_type="item",
+            items=[TranslatableItem(text=text, item_id="a:0")],
+            source_file=tmp_path / "a.uti",
+        )
+    ]
+    path = tmp_path / "items.jsonl"
+    artifacts.dump_items(path, contents)
+
+    assert [item.text for item in artifacts.load_items(path)[0].items] == [text]
+
+
 def test_world_context_roundtrip(tmp_path: Path) -> None:
     wc = WorldContext()
     wc.npcs["npc_a"] = NPCInfo(

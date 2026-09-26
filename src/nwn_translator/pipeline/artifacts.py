@@ -85,7 +85,8 @@ def load_items(path: Path) -> List[ExtractedContent]:
         One :class:`ExtractedContent` per source file, in file order.
     """
     groups: Dict[str, Dict[str, Any]] = {}
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    # JSON leaves U+2028 and U+0085 unescaped, and splitlines() would split on them.
+    for line in Path(path).read_text(encoding="utf-8").split("\n"):
         if not line.strip():
             continue
         row = json.loads(line)

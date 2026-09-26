@@ -1,23 +1,42 @@
-"""LLM-assisted curation of entity candidates before glossary translation."""
+"""Curation of entity candidates before glossary translation.
+
+A deterministic pass drops technical labels and demotes generic ones; the model
+then reviews the candidates whose status the rules cannot settle.
+"""
 
 from __future__ import annotations
 
-import asyncio
+import functools
 import json
 import logging
-import re
-from typing import Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set
 
-from .config import GLOSSARY_LLM_TIMEOUT, GLOSSARY_MAX_TOKENS, GLOSSARY_TEMPERATURE
+from .config import GLOSSARY_LLM_TIMEOUT, ProgressCallback
 from .context.entity_candidates import EntityCandidate, EntityCandidateRegistry
 from .context.string_filters import classify_entity_candidate
-from .telemetry import llm_phase
+from .json_utils import load_brace_span
+from .llm_batches import LlmStage, chunks, json_request
+from .prompts.terminology import build_curator_system_prompt, build_curator_user_prompt
+
+if TYPE_CHECKING:
+    from .ai_providers.base import TranslationProvider
+    from .config import TranslationConfig
+    from .llm_batches import Slot
 
 logger = logging.getLogger(__name__)
 
-_BATCH_SIZE = 80
-_MAX_RETRIES = 1
-_VALID_DECISIONS = {"keep", "local_only", "drop", "alias_of"}
+_VALID_DECISIONS = frozenset({"keep", "local_only", "drop", "alias_of"})
+
+#: A retry asks only for the keys the first reply left out; a failed request
+#: ends the batch. A batch keeps its concurrency slot for its retry.
+_STAGE = LlmStage(
+    phase="glossary_curation",
+    label="Glossary curation",
+    batch_size=80,
+    run_timeout_per_batch=GLOSSARY_LLM_TIMEOUT,
+    max_attempts=2,
+    slot_per_batch=True,
+)
 
 
 class GlossaryCurator:
@@ -26,21 +45,29 @@ class GlossaryCurator:
     def curate(
         self,
         registry: EntityCandidateRegistry,
-        provider: Any,
-        config: Any,
-        progress_callback=None,
+        provider: "TranslationProvider",
+        config: "TranslationConfig",
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> EntityCandidateRegistry:
-        """Apply deterministic and optional LLM curation in-place."""
+        """Apply the deterministic decisions, then the model's, to *registry* in place.
+
+        Args:
+            registry: Candidates to curate.
+            provider: Model provider.
+            config: Run configuration (target language, concurrency).
+            progress_callback: Optional progress reporter.
+
+        Returns:
+            *registry*. Candidates of a batch that raised, or was unfinished
+            when the overall budget ran out, keep their deterministic
+            decisions; the other batches' decisions still apply.
+        """
         candidates = registry.values()
         if not candidates:
             return registry
 
         for candidate in candidates:
-            result = classify_entity_candidate(
-                candidate.name,
-                candidate.category,
-                source=",".join(candidate.sources),
-            )
+            result = classify_entity_candidate(candidate.name, candidate.category)
             candidate.technical_score = result.technical_score
             if result.decision == "drop":
                 candidate.curation_decision = "drop"
@@ -49,49 +76,60 @@ class GlossaryCurator:
                 candidate.curation_decision = "local_only"
                 candidate.curation_reason = result.reason
 
-        if not hasattr(provider, "complete_json_chat_async"):
-            return registry
-
         llm_candidates = [
             c for c in registry.values() if c.curation_decision != "drop" and _needs_llm_curation(c)
         ]
         if not llm_candidates:
             return registry
 
-        batches = [
-            llm_candidates[i : i + _BATCH_SIZE] for i in range(0, len(llm_candidates), _BATCH_SIZE)
-        ]
-        from .async_utils import run_async
+        batches = chunks(llm_candidates, _STAGE.batch_size)
+        system_prompt = build_curator_system_prompt(config.target_lang)
 
-        async def run_all() -> List[Dict[str, Dict[str, Any]]]:
-            sem = asyncio.Semaphore(max(1, int(getattr(config, "max_concurrent_requests", 3))))
+        async def curate_batch(
+            slot: "Slot", number: int, batch: List[EntityCandidate]
+        ) -> Dict[str, Dict[str, Any]]:
+            # Runs once the batch holds its slot, so the progress names the
+            # batch the model is curating.
+            if progress_callback:
+                progress_callback(
+                    "scanning",
+                    number - 1,
+                    len(batches),
+                    f"Curating glossary candidates {number}/{len(batches)}",
+                )
+            by_name = {candidate.name: candidate for candidate in batch}
+            # Built exactly like this so the retry request and the missing-key
+            # fallback keep their iteration order.
+            remaining: Set[str] = set({candidate.name for candidate in batch})
 
-            async def run_one(idx: int, batch: List[EntityCandidate]) -> Dict[str, Dict[str, Any]]:
-                async with sem:
-                    if progress_callback:
-                        progress_callback(
-                            "scanning",
-                            idx,
-                            len(batches),
-                            f"Curating glossary candidates {idx + 1}/{len(batches)}",
-                        )
-                    return await self._curate_batch(provider, config, batch)
+            def prepare(
+                keys: List[str], _accepted: object, _attempt: int
+            ) -> Callable[[], Awaitable[str]]:
+                records = {name: by_name[name].to_curator_record() for name in keys}
+                user_prompt = build_curator_user_prompt(records)
+                return functools.partial(json_request, provider, system_prompt, user_prompt)
 
-            gathered: List[Dict[str, Dict[str, Any]]] = await asyncio.gather(
-                *[run_one(i, batch) for i, batch in enumerate(batches)]
+            decisions = await _STAGE.fill_keys(
+                slot,
+                remaining,
+                prepare,
+                _parse_curator_json,
+                name=f"Glossary curation batch {number}/{len(batches)}",
             )
-            return gathered
+            for missing in remaining:
+                decisions[missing] = {
+                    "decision": by_name[missing].curation_decision or "keep",
+                    "reason": "curator_missing_key",
+                    "priority": by_name[missing].priority,
+                }
+            return decisions
 
-        try:
-            results = run_async(
-                run_all(),
-                timeout=max(GLOSSARY_LLM_TIMEOUT, GLOSSARY_LLM_TIMEOUT * len(batches)),
-            )
-        except Exception as exc:
-            logger.warning("Glossary curation failed; using deterministic decisions: %s", exc)
-            return registry
+        results = _STAGE.run(batches, curate_batch, concurrency=config.max_concurrent_requests)
 
         for batch_result in results:
+            if isinstance(batch_result, BaseException):
+                logger.warning("Glossary curation batch failed: %s", batch_result)
+                continue
             for name, decision in batch_result.items():
                 registry.mark_curated(
                     name,
@@ -103,51 +141,9 @@ class GlossaryCurator:
 
         return registry
 
-    async def _curate_batch(
-        self,
-        provider: Any,
-        config: Any,
-        candidates: List[EntityCandidate],
-    ) -> Dict[str, Dict[str, Any]]:
-        expected = {candidate.name for candidate in candidates}
-        accepted: Dict[str, Dict[str, Any]] = {}
-        remaining: Set[str] = set(expected)
-        by_name = {candidate.name: candidate for candidate in candidates}
-
-        for _attempt in range(_MAX_RETRIES + 1):
-            if not remaining:
-                break
-            batch = [by_name[name] for name in sorted(remaining, key=str.lower)]
-            prompt = _build_user_prompt(batch)
-            try:
-                with llm_phase("glossary_curation"):
-                    raw = await asyncio.wait_for(
-                        provider.complete_json_chat_async(
-                            _build_system_prompt(getattr(config, "target_lang", "russian")),
-                            prompt,
-                            max_tokens=GLOSSARY_MAX_TOKENS,
-                            temperature=GLOSSARY_TEMPERATURE,
-                            use_reasoning=False,
-                        ),
-                        timeout=GLOSSARY_LLM_TIMEOUT,
-                    )
-            except Exception as exc:
-                logger.warning("Glossary curation batch failed: %s", exc)
-                break
-            parsed = _parse_curator_json(raw, remaining)
-            accepted.update(parsed)
-            remaining -= set(parsed)
-
-        for missing in remaining:
-            accepted[missing] = {
-                "decision": by_name[missing].curation_decision or "keep",
-                "reason": "curator_missing_key",
-                "priority": by_name[missing].priority,
-            }
-        return accepted
-
 
 def _needs_llm_curation(candidate: EntityCandidate) -> bool:
+    """Whether the rules leave *candidate*'s glossary status to the model."""
     if candidate.is_speaker_or_dialog_actor:
         return True
     if candidate.frequency > 1:
@@ -157,40 +153,25 @@ def _needs_llm_curation(candidate: EntityCandidate) -> bool:
     return candidate.category in {"unknown", "term", "faction", "organization"}
 
 
-def _build_system_prompt(target_lang: str) -> str:
-    return (
-        "You curate proper-name candidates for a Neverwinter Nights translation glossary. "
-        f"Target language: {target_lang}. Decide whether each candidate should be a "
-        "run-wide glossary entity. Return only JSON. Valid decisions are keep, "
-        "local_only, drop, alias_of. Use drop for technical labels, numbered generic "
-        "placeables and route labels. Keep recurring distinctive creature types and "
-        "in-world product or organization names, including their abbreviations. Use local_only "
-        "for labels useful only near their resource. Use alias_of for shorter/variant "
-        "names of another candidate only when the evidence identifies the same entity. "
-        "The alias target must be an existing candidate name, not a new spelling. "
-        "A shared word alone is not evidence: a creature type and its stronger variant "
-        "remain distinct. Gendered generic titles are contextual labels, not proper names. "
-        "reason is a short snake_case tag under 30 characters (for example "
-        "technical_label, recurring_creature, product_name, variant_of_target, "
-        "generic_title, local_label), never a sentence."
-    )
-
-
-def _build_user_prompt(candidates: List[EntityCandidate]) -> str:
-    data = {candidate.name: candidate.to_curator_record() for candidate in candidates}
-    return (
-        "Curate these candidates. Return a JSON object keyed by candidate name. "
-        "Each value must contain decision, reason (short tag), priority, and optionally "
-        "alias_of (an existing source form).\n\n" + json.dumps(data, ensure_ascii=False, indent=2)
-    )
-
-
 def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str, Any]]:
+    """Parse a curator reply into decisions for the expected candidate names.
+
+    Keys match exactly, else case-insensitively; values with an unknown
+    decision are skipped.
+
+    Args:
+        raw: Model reply, decoded with
+            :func:`~nwn_translator.json_utils.load_brace_span`.
+        expected_keys: Candidate names still awaiting a decision.
+
+    Returns:
+        Candidate name -> ``decision``, ``reason``, ``priority`` and
+        ``alias_of``, in reply order; empty when the reply does not decode.
+    """
     if not raw or not raw.strip():
         return {}
     try:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        data = json.loads(match.group(0) if match else raw)
+        data = load_brace_span(raw)
     except json.JSONDecodeError:
         return {}
     if not isinstance(data, dict):
@@ -215,13 +196,18 @@ def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str
 
 
 def _optional_int(value: Any) -> Optional[int]:
+    """Return *value* as ``int``, or ``None`` when it does not convert.
+
+    ``json.loads`` reads ``Infinity`` and ``NaN``, which ``int`` rejects.
+    """
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
 def _optional_str(value: Any) -> Optional[str]:
+    """Return *value* as a stripped non-empty string, or ``None``."""
     if value is None:
         return None
     text = str(value).strip()

@@ -57,6 +57,20 @@ def test_candidates_from_extracted_content_cover_git_and_dlg_evidence():
     assert by_name["Gewia"].evidence[0].source == "dlg_speaker"
 
 
+def test_restore_keeps_curated_fields_and_replaces_by_key():
+    source = EntityCandidateRegistry()
+    source.add("Brynlo", category="character", source="utc_name")
+    source.mark_curated("Brynlo", decision="local_only", reason="kept_local", priority=3)
+    saved = source.values()[0]
+
+    registry = EntityCandidateRegistry()
+    registry.add("brynlo", category="unknown", source="git_instance")
+    registry.restore([saved])
+
+    assert registry.values() == [saved]
+    assert (saved.curation_decision, saved.priority, saved.frequency) == ("local_only", 90, 1)
+
+
 def test_add_item_candidate_ignores_descriptions():
     registry = EntityCandidateRegistry()
     add_item_candidate(

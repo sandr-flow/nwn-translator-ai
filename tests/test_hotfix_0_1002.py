@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -20,7 +22,8 @@ from nwn_translator.context.entity_extractor import _select_texts
 from nwn_translator.context.world_context import NPCInfo, WorldContext
 from nwn_translator.extractors.base import TranslatableItem
 from nwn_translator.extractors.ncs_extractor import ncs_hard_veto_reason
-from nwn_translator.glossary import GlossaryBuilder
+from nwn_translator.glossary import restore_wrapping_quotes
+from nwn_translator.glossary_builder import GlossaryBuilder
 from nwn_translator.prompts import (
     build_glossary_system_prompt,
     build_translation_system_prompt_parts,
@@ -184,6 +187,21 @@ class TestEntitySelectShortNcs:
         assert "short dlg" not in selected
 
 
+def _glossary_request_line(world: WorldContext, name: str, category: str) -> str:
+    """Build a glossary holding *name* and return its line of the glossary request."""
+    world.extracted_names = [(name, category)]
+    requests = []
+
+    class _Provider:
+        async def complete_glossary_chat_async(self, system_prompt, user_prompt, **kwargs):
+            requests.append(user_prompt)
+            return json.dumps({key: key for key in kwargs["glossary_keys"]})
+
+    config = SimpleNamespace(target_lang="russian", max_concurrent_requests=1)
+    GlossaryBuilder().build(world, _Provider(), config)
+    return next(line for line in requests[0].splitlines() if line.startswith(f"- {name} ("))
+
+
 class TestGlossaryPersonalPolicy:
     def test_glossary_prompt_prefers_character_translit(self) -> None:
         prompt = build_glossary_system_prompt("russian")
@@ -207,18 +225,18 @@ class TestGlossaryPersonalPolicy:
     def test_format_line_includes_gender_and_firstname(self) -> None:
         ctx = WorldContext()
         ctx.npcs["g"] = NPCInfo("g", "Dawn", "Ioza", "", "Human", "Female", "dlg")
-        line = GlossaryBuilder._format_glossary_name_line("Dawn", "character", ctx)
+        line = _glossary_request_line(ctx, "Dawn", "character")
         assert "Female" in line or "female" in line.lower()
         assert "FirstName" in line
 
     def test_name_fields_are_context_not_inferred_translation_parts(self) -> None:
         ctx = WorldContext()
         ctx.npcs["jade"] = NPCInfo("jade", "Jade", "Falcon", "", "Elf", "Female", "dlg")
-        line = GlossaryBuilder._format_glossary_name_line("Jade Falcon", "character", ctx)
+        line = _glossary_request_line(ctx, "Jade Falcon", "character")
         assert "Jade" in line and "Falcon" in line and "Female" in line
 
     def test_nickname_line_asks_for_meaning(self) -> None:
-        line = GlossaryBuilder._format_glossary_name_line("sword-one", "nickname")
+        line = _glossary_request_line(WorldContext(), "sword-one", "nickname")
         assert "epithet" in line
         assert "translate meaning" in line
 
@@ -230,10 +248,7 @@ class TestAcceptFixes:
         assert _unescape_literal_newlines("No break", "a\\nb") == "a\\nb"
 
     def test_restore_wrapping_quotes(self) -> None:
-        assert (
-            GlossaryBuilder._restore_wrapping_quotes('"Welcome!"', "Добро пожаловать!")
-            == '"Добро пожаловать!"'
-        )
+        assert restore_wrapping_quotes('"Welcome!"', "Добро пожаловать!") == '"Добро пожаловать!"'
 
     def test_ncs_fragment_veto(self) -> None:
         assert ncs_hard_veto_reason("You must wait ") == "sentence_fragment"

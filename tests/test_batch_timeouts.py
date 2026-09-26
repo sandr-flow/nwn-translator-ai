@@ -8,6 +8,7 @@ Covers:
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -54,103 +55,70 @@ class TestRunAsyncTimeout:
 # ---------------------------------------------------------------------------
 
 
+def _build_glossary(names, provider, target_lang="russian", progress_callback=None):
+    """Build a glossary for ``name -> category`` *names* with one batch."""
+    from src.nwn_translator.context.world_context import WorldContext
+    from src.nwn_translator.glossary_builder import GlossaryBuilder
+
+    world = WorldContext()
+    world.extracted_names = list(names.items())
+    config = SimpleNamespace(target_lang=target_lang, max_concurrent_requests=1)
+    return GlossaryBuilder().build(world, provider, config, progress_callback)
+
+
 class TestGlossaryPartialFailure:
     """Glossary builder must survive individual batch failures."""
 
     def test_single_batch_failure_does_not_crash(self):
-        """If one batch fails (all retries timeout), _translate_batch_async returns {}."""
-        from src.nwn_translator.glossary import GlossaryBuilder
-
-        builder = GlossaryBuilder()
-        batch_seen = {"TestName": "character"}
-
+        """If every attempt of a batch times out, the build returns an empty glossary."""
         mock_provider = Mock()
         mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=TimeoutError("timeout"))
-        mock_provider.close_async_client = AsyncMock()
 
-        mock_config = Mock()
-        mock_config.target_lang = "russian"
+        glossary = _build_glossary({"TestName": "character"}, mock_provider)
 
-        sem = asyncio.Semaphore(1)
-
-        async def run_test():
-            return await builder._translate_batch_async(
-                sem,
-                batch_seen,
-                mock_provider,
-                mock_config,
-                1,
-                1,
-                None,
-            )
-
-        result = run_async(run_test(), timeout=10.0)
-        # Must return empty dict, NOT raise RuntimeError
-        assert result == {}
+        # Must return an empty glossary, NOT raise RuntimeError
+        assert glossary.entries == {}
+        assert mock_provider.complete_glossary_chat_async.call_count == 3
 
     def test_translate_batch_returns_entries_on_success(self):
         """Successful batch returns entries normally."""
         import json
-        from src.nwn_translator.glossary import GlossaryBuilder
-
-        builder = GlossaryBuilder()
-        batch_seen = {"Perin": "character", "Dark Forest": "location"}
-
-        mock_config = Mock()
-        mock_config.target_lang = "russian"
 
         expected_json = json.dumps({"Perin": "Перин", "Dark Forest": "Тёмный Лес"})
 
         mock_provider = Mock()
         mock_provider.complete_glossary_chat_async = AsyncMock(return_value=expected_json)
 
-        sem = asyncio.Semaphore(1)
-
-        async def run_test():
-            return await builder._translate_batch_async(
-                sem,
-                batch_seen,
-                mock_provider,
-                mock_config,
-                1,
-                1,
-                None,
-            )
-
-        result = run_async(run_test(), timeout=10.0)
-        assert result == {"Perin": "Перин", "Dark Forest": "Тёмный Лес"}
+        glossary = _build_glossary({"Perin": "character", "Dark Forest": "location"}, mock_provider)
+        assert glossary.entries == {"Perin": "Перин", "Dark Forest": "Тёмный Лес"}
 
     def test_parse_glossary_json_matches_normalized_short_key(self):
         """Short keys must survive invisible whitespace/category quirks."""
-        from src.nwn_translator.glossary import GlossaryBuilder
+        from src.nwn_translator.glossary_builder import parse_glossary_json
 
-        result = GlossaryBuilder._parse_glossary_json(
+        result = parse_glossary_json(
             '{"Kit": "\\u041d\\u0430\\u0431\\u043e\\u0440"}',
             {"Kit\u200b (item)"},
         )
 
-        assert result == {"Kit\u200b (item)": "\u041d\u0430\u0431\u043e\u0440"}
+        assert result == {"Kit\u200b (item)": "Набор"}
 
     def test_parse_glossary_json_uses_first_valid_object(self):
         """Trailing prose/examples after JSON must not poison parsing."""
-        from src.nwn_translator.glossary import GlossaryBuilder
+        from src.nwn_translator.glossary_builder import parse_glossary_json
 
         raw = (
             'Here is the translation:\n{"Kit": "\\u041d\\u0430\\u0431\\u043e\\u0440"}\n'
             'Example format: {"Other": "Value"}'
         )
 
-        result = GlossaryBuilder._parse_glossary_json(raw, {"Kit"})
+        result = parse_glossary_json(raw, {"Kit"})
 
-        assert result == {"Kit": "\u041d\u0430\u0431\u043e\u0440"}
+        assert result == {"Kit": "Набор"}
 
     def test_unchanged_glossary_form_is_a_valid_answer(self):
         """An unchanged name or abbreviation does not imply a failed response."""
         import json
-        from src.nwn_translator.glossary import GlossaryBuilder
-
-        builder = GlossaryBuilder()
-        batch_seen = {"Perin": "character", "Dark Forest": "location"}
 
         call_count = 0
 
@@ -166,33 +134,14 @@ class TestGlossaryPartialFailure:
 
         mock_provider = Mock()
         mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
-        mock_config = Mock()
-        mock_config.target_lang = "russian"
 
-        sem = asyncio.Semaphore(1)
-
-        async def run_test():
-            return await builder._translate_batch_async(
-                sem,
-                batch_seen,
-                mock_provider,
-                mock_config,
-                1,
-                1,
-                None,
-            )
-
-        result = run_async(run_test(), timeout=10.0)
-        assert result == {"Perin": "Перин", "Dark Forest": "Dark Forest"}
+        glossary = _build_glossary({"Perin": "character", "Dark Forest": "location"}, mock_provider)
+        assert glossary.entries == {"Perin": "Перин", "Dark Forest": "Dark Forest"}
         assert call_count == 1
 
     def test_partial_results_merged_across_attempts(self):
         """Partial results from multiple attempts must be merged."""
         import json
-        from src.nwn_translator.glossary import GlossaryBuilder
-
-        builder = GlossaryBuilder()
-        batch_seen = {"Alpha": "character", "Beta": "location", "Gamma": "item"}
 
         call_count = 0
 
@@ -208,25 +157,74 @@ class TestGlossaryPartialFailure:
 
         mock_provider = Mock()
         mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
-        mock_config = Mock()
-        mock_config.target_lang = "russian"
 
-        sem = asyncio.Semaphore(1)
-
-        async def run_test():
-            return await builder._translate_batch_async(
-                sem,
-                batch_seen,
-                mock_provider,
-                mock_config,
-                1,
-                1,
-                None,
-            )
-
-        result = run_async(run_test(), timeout=10.0)
-        assert result == {"Alpha": "Альфа", "Beta": "Бета", "Gamma": "Гамма"}
+        glossary = _build_glossary(
+            {"Alpha": "character", "Beta": "location", "Gamma": "item"}, mock_provider
+        )
+        assert glossary.entries == {"Alpha": "Альфа", "Beta": "Бета", "Gamma": "Гамма"}
         assert call_count == 2
+
+    def test_progress_reports_every_attempt_and_its_outcome(self):
+        """Each attempt is announced, then reported as failed or with the names done."""
+        import json
+
+        replies = [TimeoutError("timeout"), json.dumps({"Alpha": "Альфа"}), "not json"]
+
+        async def fake_glossary(system_prompt, user_prompt, **kwargs):
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
+        messages = []
+
+        glossary = _build_glossary(
+            {"Alpha": "character", "Beta": "location"},
+            mock_provider,
+            progress_callback=lambda phase, done, total, message: messages.append(
+                (phase, done, total, message)
+            ),
+        )
+
+        assert glossary.entries == {"Alpha": "Альфа"}
+        assert messages == [
+            ("scanning", 0, 1, "Glossary glossary (attempt 1/3)…"),
+            ("scanning", 0, 1, "Glossary glossary: attempt 1 failed, retrying…"),
+            ("scanning", 0, 1, "Glossary glossary (attempt 2/3)…"),
+            ("scanning", 0, 1, "Glossary glossary: 1/2 names done"),
+            ("scanning", 0, 1, "Glossary glossary (attempt 3/3)…"),
+            ("scanning", 0, 1, "Glossary glossary: attempt 3 failed, retrying…"),
+        ]
+
+    def test_overall_timeout_keeps_finished_batches(self, monkeypatch):
+        """A batch still running at the overall deadline must not discard the others."""
+        import json
+        from dataclasses import replace
+
+        import src.nwn_translator.glossary_builder as module
+
+        monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, run_timeout_per_batch=0.1))
+
+        async def fake_glossary(system_prompt, user_prompt, *, glossary_keys, **kwargs):
+            if len(glossary_keys) < 80:
+                await asyncio.sleep(5)
+            return json.dumps({key: key.upper() for key in glossary_keys})
+
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
+        names = {f"Name{i:03d}": "character" for i in range(81)}
+
+        from src.nwn_translator.context.world_context import WorldContext
+        from src.nwn_translator.glossary_builder import GlossaryBuilder
+
+        world = WorldContext()
+        world.extracted_names = list(names.items())
+        config = SimpleNamespace(target_lang="russian", max_concurrent_requests=2)
+        glossary = GlossaryBuilder().build(world, mock_provider, config)
+
+        assert glossary.entries == {name: name.upper() for name in list(names)[:80]}
 
 
 # ---------------------------------------------------------------------------
@@ -345,10 +343,6 @@ class TestGlossaryEchoBackAcceptance:
     def test_unchanged_names_accepted_without_retries(self):
         """Valid unchanged names do not spend retries."""
         import json
-        from src.nwn_translator.glossary import GlossaryBuilder
-
-        builder = GlossaryBuilder()
-        batch_seen = {"Almraiven": "location", "Perin": "character"}
 
         call_count = 0
 
@@ -359,45 +353,25 @@ class TestGlossaryEchoBackAcceptance:
 
         mock_provider = Mock()
         mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
-        mock_config = Mock()
-        mock_config.target_lang = "french"
 
-        sem = asyncio.Semaphore(1)
-
-        async def run_test():
-            return await builder._translate_batch_async(
-                sem,
-                batch_seen,
-                mock_provider,
-                mock_config,
-                1,
-                1,
-                None,
-            )
-
-        result = run_async(run_test(), timeout=10.0)
-        assert result == {"Almraiven": "Almraiven", "Perin": "Perin"}
+        glossary = _build_glossary(
+            {"Almraiven": "location", "Perin": "character"}, mock_provider, "french"
+        )
+        assert glossary.entries == {"Almraiven": "Almraiven", "Perin": "Perin"}
         assert call_count == 1  # Identity translations are valid decisions.
 
     def test_build_degrades_to_empty_glossary_on_garbage(self, caplog):
         """Unusable responses everywhere -> empty glossary + warning, no exception."""
         import logging
-        from src.nwn_translator.glossary import GlossaryBuilder
-
-        world_context = Mock()
-        world_context.candidates = None
-        world_context.get_glossary_names = Mock(return_value=[("Perin", "character")])
 
         mock_provider = Mock()
         mock_provider.complete_glossary_chat_async = AsyncMock(return_value="not json at all")
-        mock_provider.close_async_client = AsyncMock()
-
-        mock_config = Mock()
-        mock_config.target_lang = "russian"
-        mock_config.max_concurrent_requests = 2
 
         caplog.set_level(logging.WARNING)
-        glossary = GlossaryBuilder().build(world_context, mock_provider, mock_config)
+        glossary = _build_glossary({"Perin": "character"}, mock_provider)
 
         assert glossary.entries == {}
+        assert mock_provider.complete_glossary_chat_async.call_count == 3
         assert "no usable entries" in caplog.text
+        errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+        assert "Glossary glossary returned no usable entries after 3 attempts" in errors

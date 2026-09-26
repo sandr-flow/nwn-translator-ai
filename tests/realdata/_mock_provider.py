@@ -23,8 +23,8 @@ MARKER = "[MT]"
 class MockTranslateProvider:
     """Marks strings deterministically without any API call.
 
-    Without ``complete_json_chat_async`` the pipeline skips entity extraction,
-    glossary curation and contextual dialogs, as for a provider without them.
+    It implements the translation and NCS gate tasks only, so it serves runs
+    with ``use_context=False``; :class:`MockContextProvider` covers the rest.
     """
 
     model = "mock/echo"

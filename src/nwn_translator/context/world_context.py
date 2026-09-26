@@ -1,20 +1,29 @@
-"""World context scanner for contextual translation.
+"""World registry of NPCs, areas, quests and items for contextual translation.
 
-This module provides tools to scan a module's extracted files before translation
-begins, collecting a registry of NPCs, areas, items, and quests. This data is
-then fed into the AI system prompt to provide world context and improve
-translation coherence.
+:class:`WorldScanner` reads the module's creature, area, journal, item and
+placement files once before translation. :class:`WorldContext` holds what it
+found: the glossary takes its names, dialog speaker resolution its actors, NCS
+translation its script owners, and every dialog prompt the WORLD CONTEXT block
+of the entities that dialog mentions.
 """
 
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from ..config import ProgressCallback
+from ..extractors.base import TranslatableItem, extract_local_string
 from ..formats.gff import read_gff
-from ..extractors.base import extract_local_string
-from ..nwn_constants import race_label, gender_label
+from ..nwn_constants import gender_label, race_label
 from .entity_candidates import EntityCandidateRegistry
+from .relevance import (
+    SourceTokenIndex,
+    common_hierarchy_components,
+    hierarchical_entry_passes,
+    is_relevant,
+    tokenize_corpus,
+)
 from .string_filters import classify_entity_candidate, is_generic_entity_label
 
 if TYPE_CHECKING:
@@ -33,6 +42,37 @@ _GIT_DIALOG_ACTOR_LISTS: Tuple[Tuple[str, str], ...] = (
 )
 #: Blueprints of non-creature objects that can own a dialog.
 _DIALOG_OBJECT_KINDS: Dict[str, str] = {".utp": "placeable", ".utd": "door"}
+
+
+@dataclass(frozen=True)
+class _NamedSpec:
+    """How the world scan registers a tagged, named entity.
+
+    Attributes:
+        count: Key of the entity kind in the scan summary counts.
+        registry: The ``WorldContext`` dict (tag -> name) the entity goes into.
+        name_field: CExoLocString field holding the name.
+        category: Category of the name candidate.
+        source: Evidence source of the name candidate.
+    """
+
+    count: str
+    registry: Callable[["WorldContext"], Dict[str, str]]
+    name_field: str
+    category: str
+    source: str
+
+
+#: Blueprints registered by tag and name.
+_NAMED_BLUEPRINTS: Dict[str, _NamedSpec] = {
+    ".are": _NamedSpec("areas", lambda ctx: ctx.areas, "Name", "location", "are_name"),
+    ".uti": _NamedSpec("items", lambda ctx: ctx.items, "LocalizedName", "item", "uti_name"),
+}
+#: Journal categories (``.jrl`` ``Categories`` structs) register quests the same way.
+_JOURNAL_CATEGORY = _NamedSpec("quests", lambda ctx: ctx.quests, "Name", "quest", "jrl_category")
+
+#: One WORLD CONTEXT entry: ``(name, tag, rendered line)``.
+_Row = Tuple[str, str, str]
 
 #: Creature blueprint event-script ResRef fields (Aurora UTC). SpeakString in
 #: those scripts runs as OBJECT_SELF — the creature that owns the assignment.
@@ -53,9 +93,25 @@ UTC_SCRIPT_FIELDS: Tuple[str, ...] = (
 )
 
 
+def _local_string(struct: Dict[str, Any], key: str) -> str:
+    """Embedded text of the CExoLocString field *key*, or ``""``."""
+    return extract_local_string(struct.get(key, {})) or ""
+
+
 @dataclass
 class NPCInfo:
-    """Information about a specific NPC, or another object that can speak in a dialog."""
+    """A creature, or another object that can speak in a dialog.
+
+    Attributes:
+        tag: Object tag.
+        first_name: First name; the name of a placeable or door.
+        last_name: Last name.
+        description: Creature blueprint description.
+        race: Race label (``Creature`` when unknown); empty for placeables and doors.
+        gender: Gender label; empty for placeables and doors.
+        conversation: Conversation ResRef.
+        kind: ``creature``, ``placeable`` or ``door``.
+    """
 
     tag: str
     first_name: str
@@ -64,8 +120,6 @@ class NPCInfo:
     race: str
     gender: str
     conversation: str
-    #: ``creature``, or ``placeable`` / ``door`` for dialog actors that are not
-    #: creatures (their name is in ``first_name``, race and gender are empty).
     kind: str = "creature"
 
     @property
@@ -75,33 +129,69 @@ class NPCInfo:
             p for p in (self.first_name, self.last_name) if p and str(p).strip()
         ).strip()
 
+    @classmethod
+    def from_creature(cls, data: Dict[str, Any], description: str = "") -> "NPCInfo":
+        """Summarize a creature struct: a ``.utc`` blueprint or a ``.git`` placement.
+
+        Args:
+            data: Parsed creature struct.
+            description: Description to keep (blueprints only).
+
+        Returns:
+            The creature's summary.
+        """
+        return cls(
+            tag=str(data.get("Tag") or ""),
+            first_name=_local_string(data, "FirstName"),
+            last_name=_local_string(data, "LastName"),
+            description=description,
+            race=race_label(data.get("Race", -1)) or "Creature",
+            gender=gender_label(data.get("Gender", -1)),
+            conversation=str(data.get("Conversation") or ""),
+        )
+
 
 @dataclass
 class WorldContext:
-    """Registry of world entities for context injection."""
+    """Registry of world entities for context injection.
+
+    Attributes:
+        npcs: Creature blueprints by tag (those with a conversation, a
+            description or a first name).
+        areas: Area name by tag.
+        quests: Journal category name by tag.
+        items: Item name by tag.
+        extracted_names: ``(name, category)`` pairs found by entity extraction.
+        candidates: Evidence-backed glossary candidates.
+        script_owners: Script ResRef (casefolded) -> creatures that assign
+            that script on an event.
+        dialog_actors_by_conversation: Objects that can speak in dialogs besides
+            the creature blueprints in ``npcs`` (creatures, placeables and doors
+            placed in areas, placeable and door blueprints), by casefolded
+            Conversation ResRef. Only dialog speaker resolution reads them.
+        dialog_actors_by_tag: The same actors by tag.
+    """
 
     npcs: Dict[str, NPCInfo] = field(default_factory=dict)
     areas: Dict[str, str] = field(default_factory=dict)
     quests: Dict[str, str] = field(default_factory=dict)
     items: Dict[str, str] = field(default_factory=dict)
-    #: Proper nouns discovered by :class:`EntityExtractor` in text bodies.
-    #: Populated after Phase A, before glossary build.
     extracted_names: List[Tuple[str, str]] = field(default_factory=list)
     candidates: EntityCandidateRegistry = field(default_factory=EntityCandidateRegistry)
-    #: Script ResRef (casefolded) → creatures that assign that script on an event.
     script_owners: Dict[str, List[NPCInfo]] = field(default_factory=dict)
-    #: Objects that can speak in dialogs besides the creature blueprints in
-    #: ``npcs``: creatures, placeables and doors placed in areas (.git) and
-    #: placeable/door blueprints. Keyed by casefolded Conversation ResRef and by
-    #: tag. Only dialog speaker resolution reads them.
     dialog_actors_by_conversation: Dict[str, List[NPCInfo]] = field(default_factory=dict)
     dialog_actors_by_tag: Dict[str, List[NPCInfo]] = field(default_factory=dict)
 
     def register_dialog_actor(self, actor: NPCInfo) -> bool:
         """Index *actor* by its Conversation and its tag for dialog speaker lookup.
 
-        Identical placements of one blueprint are indexed once. Returns ``True``
-        when the actor was new.
+        Identical placements of one blueprint are indexed once.
+
+        Args:
+            actor: The object.
+
+        Returns:
+            ``True`` when the actor was new.
         """
         added = False
         conversation = str(actor.conversation or "").strip().casefold()
@@ -118,7 +208,12 @@ class WorldContext:
         return added
 
     def register_script_owner(self, resref: object, npc: NPCInfo) -> None:
-        """Record that *npc* runs *resref* as an event script (OBJECT_SELF)."""
+        """Record that *npc* runs *resref* as an event script (OBJECT_SELF).
+
+        Args:
+            resref: Script ResRef; empty and ``****``/``nw_`` placeholders are ignored.
+            npc: The creature; one owner per tag is kept.
+        """
         key = str(resref or "").strip().casefold()
         if not key or key in {"****", "nw_"}:
             return
@@ -130,9 +225,14 @@ class WorldContext:
     def speaker_hint_for_script(self, script_stem: object) -> Optional[str]:
         """Compact speaker metadata for NCS translation of *script_stem*.
 
-        Returns ``None`` when no UTC assigns this script. Shared blueprints
-        (many goblins → one bark script) summarize race/gender instead of
-        listing every name.
+        Shared blueprints (many goblins → one bark script) summarize race and
+        gender instead of listing every name.
+
+        Args:
+            script_stem: Script name without extension.
+
+        Returns:
+            The hint, or ``None`` when no creature assigns this script.
         """
         key = str(script_stem or "").strip().casefold()
         if not key:
@@ -165,62 +265,49 @@ class WorldContext:
         summary_parts.append(f"shared by {len(owners)} creatures")
         return "Speaker (OBJECT_SELF): " + ", ".join(summary_parts)
 
-    def enrich_ncs_item_context(self, item: Any) -> None:
-        """Append speaker metadata to a ``ncs_string`` item's context in place."""
-        meta = getattr(item, "metadata", None) or {}
+    def enrich_ncs_item_context(self, item: TranslatableItem) -> None:
+        """Append the speaker hint of its script to an ``ncs_string`` item's context.
+
+        Args:
+            item: Extracted item; other item types and scripts without an
+                owner are left unchanged, and a hint is added only once.
+        """
+        meta = item.metadata or {}
         if meta.get("type") != "ncs_string":
             return
-        location = getattr(item, "location", None) or ""
+        location = item.location or ""
         stem = Path(str(location)).stem if location else ""
         hint = self.speaker_hint_for_script(stem)
         if not hint:
             return
-        current = (getattr(item, "context", None) or "").strip()
+        current = (item.context or "").strip()
         if hint in current:
             return
         item.context = f"{current} {hint}".strip() if current else hint
 
-    def gender_for_character_name(self, name: object) -> Optional[str]:
-        """Return NPC gender when *name* matches a known FirstName or full name."""
-        needle = " ".join(str(name or "").split()).strip().casefold()
-        if not needle:
-            return None
-        genders = set()
-        for npc in self.npcs.values():
-            first = (npc.first_name or "").strip().casefold()
-            full = npc.display_name.casefold()
-            if needle == first or needle == full:
-                gender = (npc.gender or "").strip()
-                genders.add(gender)
-        return next(iter(genders)) if len(genders) == 1 else None
-
     def get_all_names(self) -> List[Tuple[str, str]]:
-        """Collect (name, category) pairs for glossary pre-translation.
+        """Collect every known name for the glossary, uncurated.
 
-        Categories: ``character``, ``location``, ``quest``, ``item``,
-        ``organization``, ``unknown``.
+        Returns:
+            ``(name, category)`` pairs: NPC full names (``character``), then
+            areas (``location``), quests (``quest``) and items (``item``), each
+            sorted by tag, then the extracted names.
         """
         out: List[Tuple[str, str]] = []
 
         for _tag, npc in sorted(self.npcs.items()):
-            parts = [p for p in (npc.first_name, npc.last_name) if p and str(p).strip()]
-            full = " ".join(parts).strip()
+            full = npc.display_name
             if full:
                 out.append((full, "character"))
-            elif npc.first_name and str(npc.first_name).strip():
-                out.append((str(npc.first_name).strip(), "character"))
 
-        for _tag, name in sorted(self.areas.items()):
-            if name and str(name).strip():
-                out.append((str(name).strip(), "location"))
-
-        for _tag, name in sorted(self.quests.items()):
-            if name and str(name).strip():
-                out.append((str(name).strip(), "quest"))
-
-        for _tag, name in sorted(self.items.items()):
-            if name and str(name).strip():
-                out.append((str(name).strip(), "item"))
+        for mapping, category in (
+            (self.areas, "location"),
+            (self.quests, "quest"),
+            (self.items, "item"),
+        ):
+            for _tag, name in sorted(mapping.items()):
+                if name and str(name).strip():
+                    out.append((str(name).strip(), category))
 
         for name, category in self.extracted_names:
             n = (name or "").strip()
@@ -230,7 +317,12 @@ class WorldContext:
         return out
 
     def get_glossary_names(self) -> List[Tuple[str, str]]:
-        """Return curated/evidence-backed glossary candidates when available."""
+        """Return the curated glossary candidates, else every known name.
+
+        Returns:
+            The eligible candidates' ``(name, category)`` pairs, or
+            :meth:`get_all_names` when no candidate is eligible.
+        """
         if self.candidates:
             pairs = self.candidates.glossary_pairs()
             if pairs:
@@ -248,205 +340,164 @@ class WorldContext:
         Args:
             glossary: If set, append canonical translations next to matching English names.
             target_lang: Short label for those hints (e.g. ``russian`` → ``RUS``).
-            source_texts: When provided, only entities whose name or tag is
-                relevant (exact / prefix>=4 / Damerau-Levenshtein<=1 on
-                tokens>=6 chars) to the source corpus are emitted.  Empty
-                category sections are dropped entirely.  ``None`` returns
-                the full block (used by glossary build and other callers
-                that need a complete view).
+            source_texts: When provided, only entities relevant to the source
+                corpus are emitted (see :mod:`.relevance`), ranked and capped
+                at :data:`WORLD_CONTEXT_MAX_ENTRIES` entries and about
+                :data:`WORLD_CONTEXT_MAX_CHARS` characters; empty sections are
+                dropped. ``None`` returns the full block.
 
         Returns:
-            Formatted string containing necessary context.
+            The WORLD CONTEXT block, or ``""`` when it would list nothing.
         """
-        from .relevance import (
-            common_hierarchy_components,
-            hierarchical_entry_passes,
-            is_relevant,
-            tokenize_corpus,
+        texts = None if source_texts is None else list(source_texts)
+        selection = (
+            None
+            if texts is None
+            else _Selection(
+                texts, [*self.areas.values(), *self.quests.values(), *self.items.values()]
+            )
         )
+        label = _target_lang_label(target_lang)
+        entries = glossary.entries if glossary else {}
 
-        source_tokens = tokenize_corpus(source_texts) if source_texts is not None else None
-        source_joined = "\n".join(str(t) for t in source_texts or [] if t).casefold()
+        def gloss(name: str) -> str:
+            translation = entries.get(name.strip())
+            return f" [{label}: {translation}]" if translation else ""
 
-        all_hierarchy_names: List[str] = []
-        all_hierarchy_names.extend(self.areas.values())
-        all_hierarchy_names.extend(self.quests.values())
-        all_hierarchy_names.extend(self.items.values())
-        common_components = (
-            common_hierarchy_components(all_hierarchy_names) if source_tokens is not None else set()
-        )
+        def name_rows(mapping: Dict[str, str]) -> List[_Row]:
+            return [
+                (name, tag, f"  * {name} (Tag: {tag}){gloss(name)}")
+                for tag, name in sorted(mapping.items())
+            ]
 
-        def _keep(*candidates: str, category: str = "") -> bool:
-            if source_tokens is None:
-                return True
-            joined = " ".join(c for c in candidates if c)
-            if not joined:
-                return False
-            primary = candidates[0] if candidates else ""
-            if primary and is_generic_entity_label(primary, category):
-                # Generic labels (e.g. ``Human Female``, ``Almraiven Resident``)
-                # are shared across many indistinguishable NPCs. Even when the
-                # label happens to appear in the source as a descriptive phrase,
-                # admitting all carriers floods the prompt with noise without
-                # adding translation evidence — drop them entirely.
-                return False
-            if not is_relevant(joined, source_tokens):
-                return False
-            if primary:
-                if not hierarchical_entry_passes(
-                    primary, source_joined, source_tokens, common_components
-                ):
-                    return False
-            return True
-
-        def _score(name: str, tag: str, category: str) -> int:
-            if source_tokens is None:
-                return 0
-            filter_result = classify_entity_candidate(name, category)
-            if filter_result.decision == "drop":
-                return -1000
-            name_key = (name or "").casefold()
-            tag_key = (tag or "").casefold()
-            generic = is_generic_entity_label(name, category)
-            if generic:
-                if not (name_key and name_key in source_joined):
-                    return -1000
-                # Tag/speaker-id matches do not count as evidence for generics.
-                return 100
-            score = 0
-            if name_key and name_key in source_joined:
-                score += 1000
-            if tag_key and tag_key in source_joined:
-                score += 900
-            if filter_result.decision == "deprioritize":
-                score -= 500
-            return score
-
-        budget_remaining = {
-            "entries": WORLD_CONTEXT_MAX_ENTRIES,
-            "chars": WORLD_CONTEXT_MAX_CHARS,
-        }
-
-        def _budget_lines(scored_lines: List[Tuple[int, str]]) -> List[str]:
-            if source_tokens is None:
-                return [line for _score_value, line in scored_lines]
-            selected: List[str] = []
-            for _score_value, line in sorted(scored_lines, key=lambda x: (-x[0], x[1].lower())):
-                if _score_value < 0:
-                    continue
-                if budget_remaining["entries"] <= 0:
-                    break
-                next_chars = budget_remaining["chars"] - len(line) - 1
-                if selected and next_chars < 0:
-                    break
-                selected.append(line)
-                budget_remaining["entries"] -= 1
-                budget_remaining["chars"] = max(0, next_chars)
-            return selected
-
-        lines = []
-        lines.append("WORLD CONTEXT:")
-        lang_lbl = self._label_for_target_lang(target_lang)
-
-        def _gloss_suffix(en_name: str) -> str:
-            if not glossary or not glossary.entries:
-                return ""
-            tr = glossary.entries.get(en_name.strip())
-            if not tr:
-                return ""
-            return f" [{lang_lbl}: {tr}]"
-
-        npc_scored_lines: List[Tuple[int, str]] = []
+        npc_rows: List[_Row] = []
         for tag, npc in sorted(self.npcs.items()):
-            name_parts = [npc.first_name, npc.last_name]
-            full_name = " ".join(p for p in name_parts if p).strip() or tag
-            if not _keep(full_name, tag, category="character"):
-                continue
-            gloss = ""
-            if full_name != tag:
-                gloss = _gloss_suffix(full_name)
+            name = npc.display_name or tag
+            traits = ", ".join(trait for trait in (npc.race, npc.gender) if trait)
+            line = f"  * [{tag}] {name}"
+            if traits:
+                line += f" ({traits})"
+            if name != tag:
+                line += gloss(name)
+            description = (npc.description or "").strip()
+            if description:
+                line += f" - {description}"
+            npc_rows.append((name, tag, line))
 
-            desc_parts = []
-            if npc.race:
-                desc_parts.append(npc.race)
-            if npc.gender:
-                desc_parts.append(npc.gender)
+        lines = ["WORLD CONTEXT:"]
+        for header, category, rows in (
+            ("- KEY CHARACTERS IN THE GAME:", "character", npc_rows),
+            ("- LOCATIONS:", "location", name_rows(self.areas)),
+            ("- QUESTS:", "quest", name_rows(self.quests)),
+            ("- KEY ITEMS:", "item", name_rows(self.items)),
+        ):
+            if selection is None:
+                selected = [line for _name, _tag, line in rows]
+            else:
+                selected = selection.select(category, rows)
+            if selected:
+                lines.append(header)
+                lines.extend(selected)
 
-            traits_str = f" ({', '.join(desc_parts)})" if desc_parts else ""
-
-            npc_line = f"  * [{tag}] {full_name}{traits_str}{gloss}"
-
-            desc = (npc.description or "").strip()
-            if desc:
-                npc_line += f" - {desc}"
-
-            npc_scored_lines.append((_score(full_name, tag, "character"), npc_line))
-        npc_lines = _budget_lines(npc_scored_lines)
-        if npc_lines:
-            lines.append("- KEY CHARACTERS IN THE GAME:")
-            lines.extend(npc_lines)
-
-        area_lines = _budget_lines(
-            [
-                (_score(name, tag, "location"), f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
-                for tag, name in sorted(self.areas.items())
-                if _keep(name, tag, category="location")
-            ]
-        )
-        if area_lines:
-            lines.append("- LOCATIONS:")
-            lines.extend(area_lines)
-
-        quest_lines = _budget_lines(
-            [
-                (_score(name, tag, "quest"), f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
-                for tag, name in sorted(self.quests.items())
-                if _keep(name, tag, category="quest")
-            ]
-        )
-        if quest_lines:
-            lines.append("- QUESTS:")
-            lines.extend(quest_lines)
-
-        item_lines = _budget_lines(
-            [
-                (_score(name, tag, "item"), f"  * {name} (Tag: {tag}){_gloss_suffix(name)}")
-                for tag, name in sorted(self.items.items())
-                if _keep(name, tag, category="item")
-            ]
-        )
-        if item_lines:
-            lines.append("- KEY ITEMS:")
-            lines.extend(item_lines)
-
-        # If filtering produced no entries at all, suppress the lone header.
         if len(lines) == 1:
             return ""
         return "\n".join(lines)
 
-    @staticmethod
-    def _label_for_target_lang(target_lang: Optional[str]) -> str:
-        """Short label for inline glossary hints (e.g. RUS, ENG)."""
-        if not target_lang or not str(target_lang).strip():
-            return "TL"
-        t = str(target_lang).strip()
-        if len(t) <= 4:
-            return t.upper()
-        return t[:3].upper()
+
+def _target_lang_label(target_lang: Optional[str]) -> str:
+    """Short label for inline glossary hints: ``RUS`` for russian, ``TL`` when unknown."""
+    if not target_lang or not str(target_lang).strip():
+        return "TL"
+    t = str(target_lang).strip()
+    if len(t) <= 4:
+        return t.upper()
+    return t[:3].upper()
+
+
+class _Selection:
+    """Relevance filter and shared budget of one WORLD CONTEXT block."""
+
+    def __init__(self, texts: List[str], hierarchy_names: List[str]) -> None:
+        self._index = SourceTokenIndex(tokenize_corpus(texts))
+        self._joined = "\n".join(str(t) for t in texts if t).casefold()
+        self._common = common_hierarchy_components(hierarchy_names)
+        self._entries_left = WORLD_CONTEXT_MAX_ENTRIES
+        self._chars_left = WORLD_CONTEXT_MAX_CHARS
+
+    def select(self, category: str, rows: List[_Row]) -> List[str]:
+        """Return the lines of the relevant *rows*, best first, within the remaining budget.
+
+        Args:
+            category: Entity category of the section (``character``, ``location``,
+                ``quest`` or ``item``).
+            rows: Candidate entries of one section.
+
+        Returns:
+            The selected lines; the shared budget shrinks by what they take.
+        """
+        scored = [
+            (self._score(name, tag, category), line)
+            for name, tag, line in rows
+            if self._keep(name, tag, category)
+        ]
+        selected: List[str] = []
+        for score, line in sorted(scored, key=lambda x: (-x[0], x[1].lower())):
+            if score < 0:
+                continue
+            if self._entries_left <= 0:
+                break
+            next_chars = self._chars_left - len(line) - 1
+            # A section always gets its first line, even past the character budget.
+            if selected and next_chars < 0:
+                break
+            selected.append(line)
+            self._entries_left -= 1
+            self._chars_left = max(0, next_chars)
+        return selected
+
+    def _keep(self, name: str, tag: str, category: str) -> bool:
+        """Whether the entry is evidenced by the source corpus."""
+        joined = " ".join(c for c in (name, tag) if c)
+        if not joined:
+            return False
+        if name and is_generic_entity_label(name, category):
+            # Generic labels (e.g. ``Human Female``, ``Almraiven Resident``)
+            # are shared across many indistinguishable NPCs. Even when the
+            # label happens to appear in the source as a descriptive phrase,
+            # admitting all carriers floods the prompt with noise without
+            # adding translation evidence — drop them entirely.
+            return False
+        if not is_relevant(joined, self._index):
+            return False
+        if name and not hierarchical_entry_passes(name, self._joined, self._common):
+            return False
+        return True
+
+    def _score(self, name: str, tag: str, category: str) -> int:
+        """Rank a kept entry: literal name and tag hits first, deprioritized labels last."""
+        decision = classify_entity_candidate(name, category).decision
+        if decision == "drop":
+            return -1000
+        score = 0
+        name_key = (name or "").casefold()
+        tag_key = (tag or "").casefold()
+        if name_key and name_key in self._joined:
+            score += 1000
+        if tag_key and tag_key in self._joined:
+            score += 900
+        if decision == "deprioritize":
+            score -= 500
+        return score
 
 
 class WorldScanner:
-    """Scans an extracted module directory to build a WorldContext."""
-
-    def __init__(self):
-        """Initialize the scanner."""
-        self._source_encoding: Optional[str] = None
+    """Scans an extracted module directory to build a :class:`WorldContext`."""
 
     def scan_directory(
         self,
         extract_dir: Path,
         gff_cache: Optional[Dict[Path, Dict[str, Any]]] = None,
-        progress_callback=None,
+        progress_callback: Optional[ProgressCallback] = None,
         source_encoding: Optional[str] = None,
     ) -> WorldContext:
         """Scan the directory and build world context.
@@ -455,22 +506,16 @@ class WorldScanner:
             extract_dir: Path to directory containing extracted module files.
             gff_cache: Optional shared parse cache (same object as ModuleTranslator).
                 Must be read with the same *source_encoding* everywhere it is shared.
+            progress_callback: Optional progress reporter (every 20 files).
             source_encoding: Declared code page for module string bytes.
 
         Returns:
-            Populated WorldContext.
+            Populated WorldContext. Files that fail to parse are skipped.
         """
-        self._source_encoding = source_encoding
         logger.info("Scanning module for world context...")
         context = WorldContext()
+        counts = {"npcs": 0, "areas": 0, "quests": 0, "items": 0, "actors": 0}
 
-        count_npcs = 0
-        count_areas = 0
-        count_quests = 0
-        count_items = 0
-        count_dialog_actors = 0
-
-        # Collect scannable files first for progress reporting
         scannable_exts = {".utc", ".are", ".jrl", ".uti", ".git", *_DIALOG_OBJECT_KINDS}
         scan_files = [
             f for f in extract_dir.rglob("*") if f.is_file() and f.suffix.lower() in scannable_exts
@@ -486,286 +531,155 @@ class WorldScanner:
                 )
 
             ext = file_path.suffix.lower()
-
+            resource = file_path.name
             try:
+                data = read_gff(file_path, cache=gff_cache, source_encoding=source_encoding)
                 if ext == ".utc":
-                    if self._process_utc(file_path, context, gff_cache):
-                        count_npcs += 1
-                elif ext == ".are":
-                    if self._process_are(file_path, context, gff_cache):
-                        count_areas += 1
+                    counts["npcs"] += _scan_creature(context, data, resource)
                 elif ext == ".jrl":
-                    count_quests += self._process_jrl(file_path, context, gff_cache)
-                elif ext == ".uti":
-                    if self._process_uti(file_path, context, gff_cache):
-                        count_items += 1
-                elif ext == ".git":
-                    count_dialog_actors += self._process_git(file_path, context, gff_cache)
-                elif ext in _DIALOG_OBJECT_KINDS:
-                    data = read_gff(
-                        file_path, cache=gff_cache, source_encoding=self._source_encoding
+                    counts[_JOURNAL_CATEGORY.count] += sum(
+                        _register_named(context, category, _JOURNAL_CATEGORY, resource)
+                        for category in data.get("Categories", [])
+                        if isinstance(category, dict)
                     )
-                    if self._register_dialog_actor(data, _DIALOG_OBJECT_KINDS[ext], context):
-                        count_dialog_actors += 1
+                elif ext in _NAMED_BLUEPRINTS:
+                    spec = _NAMED_BLUEPRINTS[ext]
+                    counts[spec.count] += _register_named(context, data, spec, resource)
+                elif ext == ".git":
+                    counts["actors"] += _scan_placements(context, data)
+                else:
+                    counts["actors"] += _register_dialog_actor(
+                        context, data, _DIALOG_OBJECT_KINDS[ext]
+                    )
             except Exception as e:
                 logger.debug("Failed to scan context from %s: %s", file_path.name, e)
 
         logger.info(
             "World context built: %d NPCs, %d locations, %d quests, %d items, "
             "%d other dialog actors",
-            count_npcs,
-            count_areas,
-            count_quests,
-            count_items,
-            count_dialog_actors,
+            counts["npcs"],
+            counts["areas"],
+            counts["quests"],
+            counts["items"],
+            counts["actors"],
         )
         return context
 
-    def _get_local_string(self, data: Dict[str, Any], key: str) -> str:
-        """Extract text from a CExoLocString field in parsed GFF data.
 
-        Args:
-            data: Parsed GFF struct dict.
-            key: Field name (e.g. ``"FirstName"``, ``"LocalizedName"``).
+def _scan_creature(context: WorldContext, data: Dict[str, Any], resource: str) -> bool:
+    """Register a creature blueprint (.utc): script owner, NPC and name candidate.
 
-        Returns:
-            Extracted string, or empty string if not found.
-        """
-        obj = data.get(key, {})
-        return extract_local_string(obj) or ""
+    Only creatures with a conversation, a description or a first name become
+    NPCs, so the prompt is not flooded with generic monsters.
 
-    def _process_utc(
-        self,
-        file_path: Path,
-        context: WorldContext,
-        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
-    ) -> bool:
-        """Extract NPC data from a .utc (Creature) file into *context*.
+    Args:
+        context: World context to populate.
+        data: Parsed creature blueprint.
+        resource: File name of the blueprint (candidate evidence).
 
-        Args:
-            file_path: Path to the .utc file.
-            context: World context to populate.
-            gff_cache: Optional shared GFF parse cache.
+    Returns:
+        ``True`` when the creature was added to ``context.npcs``.
+    """
+    description = _local_string(data, "Description")
+    npc = NPCInfo.from_creature(data, description)
+    if not npc.tag:
+        return False
+    for script_field in UTC_SCRIPT_FIELDS:
+        resref = data.get(script_field, "")
+        if isinstance(resref, bytes):
+            resref = resref.decode("ascii", errors="ignore")
+        context.register_script_owner(resref, npc)
 
-        Returns:
-            ``True`` if the NPC was added to the context.
-        """
-        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
-        tag = data.get("Tag", "")
-        if not tag:
-            return False
-
-        first_name = self._get_local_string(data, "FirstName")
-        last_name = self._get_local_string(data, "LastName")
-        desc = self._get_local_string(data, "Description")
-
-        # In NWN: Race and Gender are IDs. We could map them to strings,
-        # but for prompt context, just capturing them if available is good.
-        # These are usually ints. Let's do a basic mapping for common ones.
-        race_id = data.get("Race", -1)
-        gender_id = data.get("Gender", -1)
-        conversation = data.get("Conversation", "")
-
-        race_str = race_label(race_id) or "Creature"
-        gender_str = gender_label(gender_id)
-
-        npc = NPCInfo(
-            tag=tag,
-            first_name=first_name,
-            last_name=last_name,
-            description=desc,
-            race=race_str,
-            gender=gender_str,
-            conversation=conversation if isinstance(conversation, str) else str(conversation or ""),
+    if not (npc.conversation or description or npc.first_name):
+        return False
+    context.npcs[npc.tag] = npc
+    if npc.display_name:
+        context.candidates.add(
+            npc.display_name,
+            category="character",
+            source="utc_name",
+            resource=resource,
+            field="FirstName/LastName",
+            context=description,
+            is_speaker_or_dialog_actor=bool(npc.conversation),
         )
-        for script_field in UTC_SCRIPT_FIELDS:
-            resref = data.get(script_field, "")
-            if isinstance(resref, bytes):
-                resref = resref.decode("ascii", errors="ignore")
-            context.register_script_owner(resref, npc)
+    return True
 
-        # Only add to context if it has a conversation or a description,
-        # otherwise we might fill context window with generic monsters.
-        # But for unique names, it's also worth keeping.
-        if conversation or desc or first_name:
-            context.npcs[tag] = npc
-            full_name = npc.display_name
-            if full_name:
-                context.candidates.add(
-                    full_name,
-                    category="character",
-                    source="utc_name",
-                    resource=file_path.name,
-                    field="FirstName/LastName",
-                    context=desc,
-                    is_speaker_or_dialog_actor=bool(conversation),
-                )
-            return True
+
+def _register_named(
+    context: WorldContext, struct: Dict[str, Any], spec: _NamedSpec, resource: str
+) -> bool:
+    """Register a tagged, named entity (area, item or quest) and its name candidate.
+
+    Args:
+        context: World context to populate.
+        struct: Area or item blueprint, or one journal category.
+        spec: Where the entity goes and how its candidate is labelled.
+        resource: File name of the struct (candidate evidence).
+
+    Returns:
+        ``True`` when the struct had both a tag and a name.
+    """
+    tag = struct.get("Tag", "")
+    name = _local_string(struct, spec.name_field)
+    if not (tag and name):
         return False
+    spec.registry(context)[tag] = name
+    context.candidates.add(
+        name, category=spec.category, source=spec.source, resource=resource, field=spec.name_field
+    )
+    return True
 
-    def _process_are(
-        self,
-        file_path: Path,
-        context: WorldContext,
-        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
-    ) -> bool:
-        """Extract area name from an .are (Area) file into *context*.
 
-        Args:
-            file_path: Path to the .are file.
-            context: World context to populate.
-            gff_cache: Optional shared GFF parse cache.
+def _scan_placements(context: WorldContext, data: Dict[str, Any]) -> int:
+    """Register the creatures, placeables and doors placed in an area (.git).
 
-        Returns:
-            ``True`` if the area was added to the context.
-        """
-        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
-        tag = data.get("Tag", "")
-        name = self._get_local_string(data, "Name")
+    A placed instance can rename its blueprint or give it another
+    Conversation, so dialog owners are looked up among the placements too.
 
-        if tag and name:
-            context.areas[tag] = name
-            context.candidates.add(
-                name,
-                category="location",
-                source="are_name",
-                resource=file_path.name,
-                field="Name",
-            )
-            return True
-        return False
+    Args:
+        context: World context to populate.
+        data: Parsed area instance file.
 
-    def _process_jrl(
-        self,
-        file_path: Path,
-        context: WorldContext,
-        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
-    ) -> int:
-        """Extract quest names from a .jrl (Journal) file into *context*.
-
-        Args:
-            file_path: Path to the .jrl file.
-            context: World context to populate.
-            gff_cache: Optional shared GFF parse cache.
-
-        Returns:
-            Number of quests added to the context.
-        """
-        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
-        categories = data.get("Categories", [])
-
-        added = 0
-        for cat in categories:
-            if not isinstance(cat, dict):
-                continue
-            tag = cat.get("Tag", "")
-            name = self._get_local_string(cat, "Name")
-            if tag and name:
-                context.quests[tag] = name
-                context.candidates.add(
-                    name,
-                    category="quest",
-                    source="jrl_category",
-                    resource=file_path.name,
-                    field="Name",
-                )
+    Returns:
+        Number of dialog actors added to the context.
+    """
+    added = 0
+    for list_key, kind in _GIT_DIALOG_ACTOR_LISTS:
+        instances = data.get(list_key)
+        if not isinstance(instances, list):
+            continue
+        for instance in instances:
+            if isinstance(instance, dict) and _register_dialog_actor(context, instance, kind):
                 added += 1
+    return added
 
-        return added
 
-    def _process_uti(
-        self,
-        file_path: Path,
-        context: WorldContext,
-        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
-    ) -> bool:
-        """Extract item name from a .uti (Item) file into *context*.
+def _register_dialog_actor(context: WorldContext, data: Dict[str, Any], kind: str) -> bool:
+    """Register one creature, placeable or door struct as a dialog actor.
 
-        Args:
-            file_path: Path to the .uti file.
-            context: World context to populate.
-            gff_cache: Optional shared GFF parse cache.
+    Args:
+        context: World context to populate.
+        data: Blueprint or placed instance struct.
+        kind: ``creature``, ``placeable`` or ``door``.
 
-        Returns:
-            ``True`` if the item was added to the context.
-        """
-        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
-        tag = data.get("Tag", "")
-        name = self._get_local_string(data, "LocalizedName")
-
-        # Only add uniquely-tagged items or items with descriptions
-        # to avoid blowing up the context window with generic items.
-        # For simplicity, we filter out common ones or generic tags if needed.
-        # For now, if it has a LocalizedName and Tag, add it.
-        if tag and name:
-            context.items[tag] = name
-            context.candidates.add(
-                name,
-                category="item",
-                source="uti_name",
-                resource=file_path.name,
-                field="LocalizedName",
-            )
-            return True
-        return False
-
-    def _process_git(
-        self,
-        file_path: Path,
-        context: WorldContext,
-        gff_cache: Optional[Dict[Path, Dict[str, Any]]],
-    ) -> int:
-        """Register the creatures, placeables and doors placed in an area (.git).
-
-        A placed instance can rename its blueprint or give it another
-        Conversation, so dialog owners are looked up among the placements too.
-
-        Returns:
-            Number of dialog actors added to the context.
-        """
-        data = read_gff(file_path, cache=gff_cache, source_encoding=self._source_encoding)
-        added = 0
-        for list_key, kind in _GIT_DIALOG_ACTOR_LISTS:
-            instances = data.get(list_key)
-            if not isinstance(instances, list):
-                continue
-            for instance in instances:
-                if isinstance(instance, dict) and self._register_dialog_actor(
-                    instance, kind, context
-                ):
-                    added += 1
-        return added
-
-    def _register_dialog_actor(
-        self, data: Dict[str, Any], kind: str, context: WorldContext
-    ) -> bool:
-        """Register one creature, placeable or door struct as a dialog actor.
-
-        Returns:
-            ``True`` if the actor was new to the context.
-        """
-        tag = str(data.get("Tag") or "")
-        conversation = str(data.get("Conversation") or "")
-        if kind == "creature":
-            first_name = self._get_local_string(data, "FirstName")
-            last_name = self._get_local_string(data, "LastName")
-            race = race_label(data.get("Race", -1)) or "Creature"
-            gender = gender_label(data.get("Gender", -1))
-        else:
-            first_name = self._get_local_string(data, "LocName") or self._get_local_string(
-                data, "LocalizedName"
-            )
-            last_name = race = gender = ""
-        if not tag and not first_name.strip() and not last_name.strip():
-            return False
+    Returns:
+        ``True`` if the actor was new to the context.
+    """
+    if kind == "creature":
+        actor = NPCInfo.from_creature(data)
+    else:
+        name = _local_string(data, "LocName") or _local_string(data, "LocalizedName")
         actor = NPCInfo(
-            tag=tag,
-            first_name=first_name,
-            last_name=last_name,
+            tag=str(data.get("Tag") or ""),
+            first_name=name,
+            last_name="",
             description="",
-            race=race,
-            gender=gender,
-            conversation=conversation,
+            race="",
+            gender="",
+            conversation=str(data.get("Conversation") or ""),
             kind=kind,
         )
-        return context.register_dialog_actor(actor)
+    if not actor.tag and not actor.first_name.strip() and not actor.last_name.strip():
+        return False
+    return context.register_dialog_actor(actor)

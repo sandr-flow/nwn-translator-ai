@@ -32,7 +32,7 @@ from openai.resources.chat.completions import AsyncCompletions
 from nwn_translator import config
 from nwn_translator.ai_providers import create_provider
 from nwn_translator.ai_providers.base import TranslationItem
-from nwn_translator.glossary_curator import _build_system_prompt as curator_system_prompt
+from nwn_translator.prompts.terminology import build_curator_system_prompt as curator_system_prompt
 from nwn_translator.prompts import (
     build_dialog_system_prompt_parts,
     build_entity_extraction_system_prompt,
@@ -41,7 +41,7 @@ from nwn_translator.prompts import (
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "prompt_snapshots.json"
 
-#: Every target language with its own examples module under ``prompts/examples``.
+#: Every target language with its own examples in ``prompts.examples``.
 LANGUAGES = (
     "russian",
     "english",

@@ -26,7 +26,7 @@ from typing import (
 from tqdm import tqdm
 
 from ..config import TranslationConfig
-from ..glossary import GLOSSARY_MAX_CHARS, GlossaryBuilder, terminology_block
+from ..glossary import GLOSSARY_MAX_CHARS, restore_wrapping_quotes, terminology_block
 from ..prompts._builder import (
     CONTENT_PROFILE_DEFAULT,
     CONTENT_PROFILE_SCRIPT_MESSAGE,
@@ -520,7 +520,7 @@ class TranslationManager:
                     allow_cleanup=True,
                 )
                 translated = _unescape_literal_newlines(item.text, outcome.final_text)
-                translated = GlossaryBuilder._restore_wrapping_quotes(item.text, translated)
+                translated = restore_wrapping_quotes(item.text, translated)
                 translations[item.key] = translated
                 if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
                     self._increment_ncs_count("translated")
@@ -935,7 +935,7 @@ class TranslationManager:
 
         translated = outcome.final_text
         translated = _unescape_literal_newlines(item.text, translated)
-        translated = GlossaryBuilder._restore_wrapping_quotes(item.text, translated)
+        translated = restore_wrapping_quotes(item.text, translated)
         if (item.text or "").strip() and not (translated or "").strip():
             logger.warning(
                 "Empty translation rejected for %s",

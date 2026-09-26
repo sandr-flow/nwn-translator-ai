@@ -1,4 +1,10 @@
-"""Helpers for extracting JSON objects from LLM responses."""
+"""Helpers for extracting JSON objects from LLM responses.
+
+Each reply parser keeps the tolerance its call site was built and tested with:
+:func:`load_first_json_object` and :func:`json_extract_first_object` decode the
+object at the first ``{``, :func:`load_brace_span` strictly decodes the greedy
+``{ … }`` span, and :func:`scan_first_json_object` tries every ``{`` in turn.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ from typing import Any, Dict, Optional, cast
 
 _OPENING_FENCE = r"^```(?:json)?\s*"
 _CLOSING_FENCE = re.compile(r"\s*```\s*$")
+_BRACE_SPAN = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def strip_json_markdown_fences(raw: str, *, case_sensitive: bool = False) -> str:
@@ -70,3 +77,62 @@ def json_extract_first_object(raw: str) -> Optional[Dict[str, Any]]:
         return _decode_first_object(strip_json_markdown_fences(raw))
     except json.JSONDecodeError:
         return None
+
+
+def load_brace_span(raw: str) -> Any:
+    """Strictly decode the text from the first ``{`` to the last ``}`` of *raw*.
+
+    The span is greedy, so prose around one object is ignored, but text between
+    two objects makes the span invalid. Strict decoding rejects raw control
+    characters inside strings.
+
+    Args:
+        raw: Model reply.
+
+    Returns:
+        The decoded value; *raw* is decoded whole when it has no ``{ … }`` span.
+
+    Raises:
+        json.JSONDecodeError: When the span (or *raw*) is not valid JSON.
+    """
+    match = _BRACE_SPAN.search(raw)
+    return json.loads(match.group(0) if match else raw)
+
+
+def scan_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
+    """Return the first object that decodes at any ``{`` of *raw*, leniently.
+
+    Each ``{`` is tried in turn with ``strict=False`` (raw newlines inside strings
+    are accepted), so an unparsable fragment before a valid object is skipped.
+    *raw* is decoded whole as a last resort.
+
+    Args:
+        raw: Model reply.
+
+    Returns:
+        The first decodable object, or ``None`` when *raw* decodes whole to a
+        non-object value.
+
+    Raises:
+        json.JSONDecodeError: The last decoding error, when no object decodes.
+    """
+    decoder = json.JSONDecoder(strict=False)
+    last_error: Optional[json.JSONDecodeError] = None
+    for match in re.finditer(r"\{", raw):
+        try:
+            data, _end = decoder.raw_decode(raw[match.start() :])
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if isinstance(data, dict):
+            return data
+    try:
+        data = json.loads(raw, strict=False)
+    except json.JSONDecodeError as exc:
+        last_error = exc
+    else:
+        if isinstance(data, dict):
+            return data
+    if last_error is not None:
+        raise last_error
+    return None

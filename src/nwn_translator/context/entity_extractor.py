@@ -1,190 +1,192 @@
-"""LLM-based proper-noun extraction from translatable texts.
+"""LLM extraction of proper nouns embedded in translatable texts.
 
-:class:`EntityExtractor` fills the gap left by
-:class:`~nwn_translator.context.world_context.WorldScanner`: names embedded
-inside dialog lines, descriptions, sign text, etc. — which never appear as
-standalone GFF fields and therefore never reach the glossary.
-
-Pipeline position: runs after Phase A (all TranslatableItems extracted) and
-before :class:`~nwn_translator.glossary.GlossaryBuilder` so discovered names
-propagate into the glossary prompt.
+The world scan only sees names stored in their own GFF fields. :class:`EntityExtractor`
+finds the names inside dialog lines, descriptions and sign text, so they reach the
+glossary too. It runs after extraction, before glossary curation.
 """
 
 from __future__ import annotations
 
-import asyncio
+import functools
 import json
 import logging
-import re
 import time
-from typing import TYPE_CHECKING, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
-from ..config import (
-    GLOSSARY_LLM_TIMEOUT,
-    GLOSSARY_MAX_TOKENS,
-    GLOSSARY_RUN_TIMEOUT,
-    GLOSSARY_TEMPERATURE,
-    ProgressCallback,
+from ..config import GLOSSARY_RUN_TIMEOUT, ProgressCallback
+from ..json_utils import load_brace_span
+from ..llm_batches import RUN_TIMEOUT_CAP, LlmStage, chunks, json_request
+from ..prompts.terminology import (
+    build_entity_extraction_system_prompt,
+    build_entity_extraction_user_prompt,
 )
-from ..telemetry import llm_phase
+from .entity_candidates import EntityCandidateRegistry
 from .string_filters import (
     describe_rejection,
     is_valid_entity_name,
     should_skip_entity_source_text,
 )
-from .entity_candidates import EntityCandidateRegistry
 
 if TYPE_CHECKING:
-    from ..ai_providers.openrouter_provider import OpenRouterProvider
+    from ..ai_providers.base import TranslationProvider
     from ..config import TranslationConfig
     from ..extractors.base import TranslatableItem
+    from ..llm_batches import Slot
 
 logger = logging.getLogger(__name__)
 
-#: Skip strings shorter than this — names/labels rarely contain embedded proper nouns.
+#: Texts shorter than this rarely embed a proper noun and are skipped.
 _MIN_TEXT_LENGTH = 40
 
-#: Max texts per LLM call (keeps the prompt within a few KB of payload).
-_BATCH_TEXT_COUNT = 50
+#: Accepted entity categories; anything else becomes ``"unknown"``.
+_VALID_CATEGORIES = frozenset(
+    {"character", "location", "organization", "item", "nickname", "term", "unknown"}
+)
 
-#: Absolute cap on the whole extraction run (seconds).
-_MAX_OVERALL_TIMEOUT = 900.0
-
-#: Accepted entity category values (anything else collapses to ``"unknown"``).
-_VALID_CATEGORIES: Set[str] = {
-    "character",
-    "location",
-    "organization",
-    "item",
-    "nickname",
-    "term",
-    "unknown",
-}
+#: One request per batch of texts, no retry.
+_STAGE = LlmStage(
+    phase="entity_extraction",
+    label="Entity extraction",
+    batch_size=50,
+    run_timeout_per_batch=GLOSSARY_RUN_TIMEOUT,
+    max_run_timeout=RUN_TIMEOUT_CAP,
+)
 
 
 class EntityExtractor:
-    """Find proper nouns embedded in TranslatableItem texts via LLM."""
+    """Find proper nouns embedded in item texts via the model."""
 
     def extract_candidates(
         self,
         items: List["TranslatableItem"],
-        provider: "OpenRouterProvider",
+        provider: "TranslationProvider",
         config: "TranslationConfig",
         known_names: Set[str],
         progress_callback: Optional[ProgressCallback] = None,
     ) -> EntityCandidateRegistry:
-        """Return evidence-backed candidates discovered in item text bodies."""
+        """Return evidence-backed candidates for the names found in *items*.
+
+        Args:
+            items: All extracted items (dialog and non-dialog).
+            provider: Model provider.
+            config: Run configuration (source language, concurrency).
+            known_names: Names the world scan already knows; skipped case-insensitively.
+            progress_callback: Optional progress reporter.
+
+        Returns:
+            One ``entity_extractor`` evidence per new name, with the first item
+            text that mentions it as context.
+        """
         registry = EntityCandidateRegistry()
-        for name, category in self.extract(
-            items,
-            provider,
-            config,
-            known_names,
-            progress_callback=progress_callback,
-        ):
-            context = _first_context_for_name(items, name)
+        found = self.extract(items, provider, config, known_names, progress_callback)
+        if not found:
+            return registry
+        folded_texts = [(item.text or "").casefold() for item in items]
+        for name, category in found:
             registry.add(
                 name,
                 category=category,
                 source="entity_extractor",
                 resource="",
                 field="text",
-                context=context,
+                context=_first_context_for_name(items, folded_texts, name),
             )
         return registry
 
     def extract(
         self,
         items: List["TranslatableItem"],
-        provider: "OpenRouterProvider",
+        provider: "TranslationProvider",
         config: "TranslationConfig",
         known_names: Set[str],
         progress_callback: Optional[ProgressCallback] = None,
     ) -> List[Tuple[str, str]]:
-        """Return (name, category) pairs for proper nouns found in *items*.
+        """Return ``(name, category)`` pairs for the proper nouns found in *items*.
 
         Args:
-            items: All translatable items from Phase A (dialog + non-dialog).
-            provider: LLM provider for extraction calls.
-            config: Translation configuration (source language, concurrency).
-            known_names: Names already known to WorldScanner; used to skip
-                duplicates case-insensitively.
+            items: All extracted items (dialog and non-dialog).
+            provider: Model provider.
+            config: Run configuration (source language, concurrency).
+            known_names: Names the world scan already knows; skipped case-insensitively.
             progress_callback: Optional progress reporter.
 
         Returns:
-            List of unique (name, category) tuples NOT already in *known_names*.
-            Returns an empty list on complete failure (never raises).
+            New names in reply order, deduplicated case-insensitively and
+            filtered by :func:`is_valid_entity_name`. Failed batches, and
+            batches unfinished when the overall budget runs out, contribute
+            nothing; the method never raises for model errors.
         """
-        if not hasattr(provider, "complete_json_chat_async"):
-            logger.warning("Entity extraction skipped: provider has no complete_json_chat_async")
-            return []
-
         texts = _select_texts(items)
         if not texts:
             logger.info("Entity extraction: no texts above length threshold, skipping")
             return []
 
-        batches = _batch_texts(texts, _BATCH_TEXT_COUNT)
-        logger.info(
-            "Entity extraction: %d texts in %d batch(es)…",
-            len(texts),
-            len(batches),
-        )
-
-        overall_timeout = min(GLOSSARY_RUN_TIMEOUT * len(batches), _MAX_OVERALL_TIMEOUT)
-
-        from ..async_utils import run_async
-
-        known_lower = {n.strip().lower() for n in known_names if n and n.strip()}
-        source_lang = getattr(config, "source_lang", "English") or "English"
+        batches = chunks(texts, _STAGE.batch_size)
+        logger.info("Entity extraction: %d texts in %d batch(es)…", len(texts), len(batches))
+        source_lang = config.source_lang or "English"
         if source_lang.lower() == "auto":
             source_lang = "English"
+        system_prompt = build_entity_extraction_system_prompt(source_lang)
 
-        try:
-            results = run_async(
-                self._run_all_batches_async(
-                    batches,
-                    provider,
-                    config,
-                    source_lang,
-                    progress_callback,
-                ),
-                timeout=overall_timeout,
+        async def extract_batch(
+            slot: "Slot", number: int, batch: List[str]
+        ) -> Optional[List[Tuple[str, str]]]:
+            if progress_callback:
+                progress_callback(
+                    "scanning",
+                    number - 1,
+                    len(batches),
+                    f"Entity extraction batch {number}/{len(batches)}…",
+                )
+            user_prompt = build_entity_extraction_user_prompt(batch)
+            started = time.monotonic()
+            try:
+                raw = await _STAGE.request(
+                    slot, functools.partial(json_request, provider, system_prompt, user_prompt)
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Entity extraction batch %d/%d LLM error after %.1fs: %s",
+                    number,
+                    len(batches),
+                    time.monotonic() - started,
+                    exc,
+                )
+                return None
+            entries = _parse_entities_json(raw)
+            logger.info(
+                "Entity extraction batch %d/%d: %d entities in %.1fs",
+                number,
+                len(batches),
+                len(entries),
+                time.monotonic() - started,
             )
-        except Exception as exc:
-            logger.warning(
-                "Entity extraction failed; continuing without extracted names: %s",
-                exc,
-            )
-            return []
+            return entries
 
+        results = _STAGE.run(batches, extract_batch, concurrency=config.max_concurrent_requests)
+
+        known_lower = {n.strip().lower() for n in known_names if n and n.strip()}
         out: List[Tuple[str, str]] = []
         seen_lower: Set[str] = set()
         failed = 0
         rejected: List[Tuple[str, str]] = []
-        for batch_idx, batch_result in enumerate(results, 1):
-            if isinstance(batch_result, BaseException):
+        for number, result in enumerate(results, 1):
+            if not isinstance(result, list):
                 failed += 1
-                logger.warning(
-                    "Entity extraction batch %d/%d failed: %s",
-                    batch_idx,
-                    len(batches),
-                    batch_result,
-                )
+                if result is not None:
+                    logger.warning(
+                        "Entity extraction batch %d/%d failed: %s", number, len(batches), result
+                    )
                 continue
-            if not batch_result:
-                continue
-            for name, category in batch_result:
-                clean_name = name.strip()
-                clean_category = _coerce_category(category)
-                key = clean_name.lower()
-                if not key or key in known_lower or key in seen_lower:
+            for name, category in result:
+                key = name.lower()
+                if key in known_lower or key in seen_lower:
                     continue
-                if not is_valid_entity_name(clean_name, clean_category):
-                    rejected.append((clean_name, describe_rejection(clean_name, clean_category)))
+                if not is_valid_entity_name(name, category):
+                    rejected.append((name, describe_rejection(name, category)))
                     continue
                 seen_lower.add(key)
-                out.append((clean_name, clean_category))
+                out.append((name, category))
 
         logger.info(
             "Entity extraction: %d accepted, %d rejected (%d batch failure(s))",
@@ -199,103 +201,9 @@ class EntityExtractor:
             )
         return out
 
-    async def _run_all_batches_async(
-        self,
-        batches: List[List[str]],
-        provider: "OpenRouterProvider",
-        config: "TranslationConfig",
-        source_lang: str,
-        progress_callback: Optional[ProgressCallback],
-    ) -> List[List[Tuple[str, str]] | BaseException]:
-        """Run every batch concurrently under a semaphore."""
-        sem = asyncio.Semaphore(max(1, config.max_concurrent_requests))
-        total = len(batches)
-
-        async def _one(idx: int, batch: List[str]):
-            return await self._extract_batch_async(
-                sem,
-                provider,
-                source_lang,
-                batch,
-                idx,
-                total,
-                progress_callback,
-            )
-
-        results: List[Union[List[Tuple[str, str]], BaseException]] = await asyncio.gather(
-            *[_one(i + 1, b) for i, b in enumerate(batches)],
-            return_exceptions=True,
-        )
-        return results
-
-    async def _extract_batch_async(
-        self,
-        sem: asyncio.Semaphore,
-        provider: "OpenRouterProvider",
-        source_lang: str,
-        texts: List[str],
-        batch_idx: int,
-        total_batches: int,
-        progress_callback: Optional[ProgressCallback],
-    ) -> List[Tuple[str, str]]:
-        """Send one batch to the LLM and parse its JSON response."""
-        from ..prompts import build_entity_extraction_system_prompt
-
-        system_prompt = build_entity_extraction_system_prompt(source_lang)
-        user_prompt = _format_user_prompt(texts)
-
-        if progress_callback:
-            progress_callback(
-                "scanning",
-                batch_idx - 1,
-                total_batches,
-                f"Entity extraction batch {batch_idx}/{total_batches}…",
-            )
-
-        t0 = time.monotonic()
-        try:
-            async with sem:
-                with llm_phase("entity_extraction"):
-                    raw = await asyncio.wait_for(
-                        provider.complete_json_chat_async(
-                            system_prompt,
-                            user_prompt,
-                            max_tokens=GLOSSARY_MAX_TOKENS,
-                            temperature=GLOSSARY_TEMPERATURE,
-                            use_reasoning=False,
-                        ),
-                        timeout=GLOSSARY_LLM_TIMEOUT,
-                    )
-        except (TimeoutError, asyncio.TimeoutError, Exception) as exc:
-            elapsed = time.monotonic() - t0
-            logger.warning(
-                "Entity extraction batch %d/%d LLM error after %.1fs: %s",
-                batch_idx,
-                total_batches,
-                elapsed,
-                exc,
-            )
-            return []
-
-        elapsed = time.monotonic() - t0
-        entries = _parse_entities_json(raw)
-        logger.info(
-            "Entity extraction batch %d/%d: %d entities in %.1fs",
-            batch_idx,
-            total_batches,
-            len(entries),
-            elapsed,
-        )
-        return entries
-
-
-# ---------------------------------------------------------------------------
-# Helpers (module-private)
-# ---------------------------------------------------------------------------
-
 
 def _select_texts(items: List["TranslatableItem"]) -> List[str]:
-    """Pick unique text bodies likely to contain embedded proper nouns."""
+    """Pick the unique item texts likely to embed proper nouns, in item order."""
     seen: Set[str] = set()
     out: List[str] = []
     for item in items:
@@ -317,35 +225,30 @@ def _select_texts(items: List["TranslatableItem"]) -> List[str]:
     return out
 
 
-def _first_context_for_name(items: List["TranslatableItem"], name: str) -> str:
-    """Return a short source snippet containing *name* when available."""
+def _first_context_for_name(
+    items: List["TranslatableItem"], folded_texts: List[str], name: str
+) -> str:
+    """Return the first item text containing *name* (casefolded substring), clipped to 240.
+
+    Args:
+        items: Extracted items, in order.
+        folded_texts: Casefolded text of each item, parallel to *items*.
+        name: Name to look for.
+
+    Returns:
+        The item text with newlines flattened, or ``""`` when no text contains *name*.
+    """
     needle = (name or "").casefold()
     if not needle:
         return ""
-    for item in items:
-        text = item.text or ""
-        if needle in text.casefold():
-            return text.replace("\n", " ")[:240]
+    for item, folded in zip(items, folded_texts):
+        if needle in folded:
+            return (item.text or "").replace("\n", " ")[:240]
     return ""
 
 
-def _batch_texts(texts: List[str], batch_size: int) -> List[List[str]]:
-    """Split flat list into fixed-size batches."""
-    return [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
-
-
-def _format_user_prompt(texts: List[str]) -> str:
-    """Build a numbered list for the extraction user prompt."""
-    lines = ["Extract proper nouns from these texts:", ""]
-    for idx, text in enumerate(texts):
-        # Escape embedded double-quotes so the LLM sees clean delimiters.
-        safe = text.replace("\n", " ").replace('"', "'")
-        lines.append(f'[{idx}] "{safe}"')
-    return "\n".join(lines)
-
-
 def _coerce_category(category: object) -> str:
-    """Normalise whatever the model returned into a valid category."""
+    """Normalize a model-supplied category to one of :data:`_VALID_CATEGORIES`."""
     if not isinstance(category, str):
         return "unknown"
     c = category.strip().lower()
@@ -353,14 +256,25 @@ def _coerce_category(category: object) -> str:
 
 
 def _parse_entities_json(raw: str) -> List[Tuple[str, str]]:
-    """Extract ``entities`` array from JSON, tolerating common model quirks."""
+    """Parse an entity-extraction reply into ``(name, category)`` pairs.
+
+    The pairs come from the ``entities`` list or, failing that, the first list
+    value of the object; entries without a non-empty string name are skipped.
+
+    Args:
+        raw: Model reply, decoded with
+            :func:`~nwn_translator.json_utils.load_brace_span`.
+
+    Returns:
+        Stripped names with their normalized category, in reply order; empty
+        when the reply does not decode to an object holding such a list.
+    """
     if not raw or not raw.strip():
         return []
 
     try:
-        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-        data = json.loads(json_match.group(0) if json_match else raw)
-    except (json.JSONDecodeError, AttributeError) as exc:
+        data = load_brace_span(raw)
+    except json.JSONDecodeError as exc:
         logger.warning("Failed to parse entity extraction JSON: %s", exc)
         return []
 

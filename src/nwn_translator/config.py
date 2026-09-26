@@ -47,7 +47,6 @@ DEFAULT_MODEL = "google/gemini-3.8-flash"
 TRANSLATION_TEMPERATURE: float = 0.6
 TRANSLATION_MAX_TOKENS: int = 32768
 GLOSSARY_TEMPERATURE: float = 0.3
-GLOSSARY_FALLBACK_TEMPERATURE: float = 0.2
 GLOSSARY_MAX_TOKENS: int = 16384
 #: The NCS gate must decide conservatively, so it samples close to greedy.
 NCS_GATE_TEMPERATURE: float = 0.15
@@ -55,12 +54,14 @@ NCS_GATE_TEMPERATURE: float = 0.15
 #: a truncated one) is requested once more with twice the budget before the batch is split.
 NCS_GATE_MAX_TOKENS: Tuple[int, ...] = (8192, 16384)
 
-#: Timeout (s) of one glossary, curator or entity-extraction LLM call;
+#: Timeout (s) of one glossary, curator or entity-extraction LLM call. It is also
+#: the per-batch share of the overall deadline of a curation run (times the batch
+#: count, uncapped; batches unfinished by then keep their deterministic decisions);
 #: ``NWN_GLOSSARY_LLM_TIMEOUT`` overrides it (min 30).
 GLOSSARY_LLM_TIMEOUT: float = _env_number("NWN_GLOSSARY_LLM_TIMEOUT", 300.0, 30.0, float)
-#: Per-batch share (s) of the ``run_async`` timeout of a glossary or entity-extraction
-#: run (times the batch count, capped at 900 s); ``NWN_GLOSSARY_RUN_TIMEOUT`` overrides
-#: it (min 60).
+#: Per-batch share (s) of the overall deadline of a glossary or entity-extraction run
+#: (times the batch count, capped at ``llm_batches.RUN_TIMEOUT_CAP``; batches
+#: unfinished by then are dropped); ``NWN_GLOSSARY_RUN_TIMEOUT`` overrides it (min 60).
 GLOSSARY_RUN_TIMEOUT: float = _env_number("NWN_GLOSSARY_RUN_TIMEOUT", 360.0, 60.0, float)
 
 #: OpenRouter ``reasoning.effort`` values, lowest first.

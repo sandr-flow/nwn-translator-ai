@@ -34,7 +34,8 @@ from ..context.dialog_speakers import dialog_line_speaker
 from ..context.world_context import WorldScanner, WorldContext
 from ..context.entity_extractor import EntityExtractor
 from ..context.entity_candidates import EntityCandidateRegistry
-from ..glossary import Glossary, GlossaryBuilder
+from ..glossary import Glossary
+from ..glossary_builder import GlossaryBuilder
 from ..glossary_curator import GlossaryCurator
 from ..telemetry import RunMetricsRecorder
 from ..translation_logging import translation_log_writer_for_config, write_trace

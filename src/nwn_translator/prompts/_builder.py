@@ -1,17 +1,14 @@
-"""Shared prompt building blocks for AI translation.
+"""Translation and dialog prompts, and the rule fragments they share.
 
-Centralises the translation rules that are common across line-by-line,
-contextual dialog, and glossary system prompts so that updates only need
-to happen in one place.
-
-All examples are loaded from per-language modules in ``prompts.examples``
-so that few-shot demonstrations match the actual target language.
+The translation rules common to line-by-line, batch and contextual dialog
+prompts live here once. Few-shot examples come from :mod:`.examples`, so the
+demonstrations match the target language.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from .examples import get_examples
 
@@ -24,7 +21,17 @@ def _nickname_examples(target_lang: str) -> List[Tuple[str, str, str, str]]:
     return [(str(a), str(b), str(c), str(d)) for a, b, c, d in raw]
 
 
-def _format_nickname_examples(target_lang: str, *, indent: str = "      ") -> str:
+def format_nickname_examples(target_lang: str, *, indent: str = "      ") -> str:
+    """Render the nickname few-shot lines shared by translation and glossary prompts.
+
+    Args:
+        target_lang: Target language; languages without nickname examples use
+            the English ones.
+        indent: Prefix of every line.
+
+    Returns:
+        One ``- "english" -> "good" (GOOD) — NOT ...`` line per example.
+    """
     lines = [
         f'{indent}- "{eng}" -> "{good}" (GOOD) \u2014 NOT "{bad_t}" '
         f'(transliteration) \u2014 NOT "{bad_n}" (numeral calque of "-one")'
@@ -112,7 +119,7 @@ def _proper_names_rules(target_lang: str) -> str:
         for eng, good, bad in descriptive
     )
     pers_lines = "\n".join(f'      - "{eng}" -> "{tr}"' for eng, tr in personal)
-    nick_lines = _format_nickname_examples(target_lang)
+    nick_lines = format_nickname_examples(target_lang)
 
     declension_note = ex.get("declension_note", "")
     declension_block = f"   {declension_note}" if declension_note else ""
@@ -174,7 +181,7 @@ def _speech_style_rules(target_lang: str) -> str:
 
 
 def _player_gender_rule(gender: str) -> str:
-    """One-liner for player character grammatical gender agreement."""
+    """Rule text: grammatical forms addressing the player agree with *gender*."""
     agreement = "masculine" if gender == "male" else "feminine"
     return (
         f"PLAYER CHARACTER: the protagonist is {gender}. All grammatical forms "
@@ -184,7 +191,7 @@ def _player_gender_rule(gender: str) -> str:
 
 
 def _token_preservation_rule() -> str:
-    """One-liner for preserving game tokens."""
+    """Rule text: helper placeholders and inline NWN tags stay unchanged."""
     return (
         "TAG/TOKEN PRESERVATION (mandatory):\n"
         "- Keep helper placeholders like __NWN_TOKEN_ABC__, __NWN_INLINE_XYZ__ unchanged \u2014 no "
@@ -198,7 +205,7 @@ def _token_preservation_rule() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Composite prompt builders (public API)
+# RULES bodies of the translation content profiles
 # ---------------------------------------------------------------------------
 
 
@@ -476,127 +483,3 @@ def build_dialog_system_prompt(
     if variable:
         return f"{stable}\n\n{variable}"
     return stable
-
-
-def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
-    """System prompt for extracting proper nouns from game texts.
-
-    Used by :class:`~nwn_translator.context.entity_extractor.EntityExtractor`
-    to find character/location/organization names that are embedded in
-    dialogs, descriptions, and sign text but don't appear as standalone
-    GFF fields (and are therefore missed by WorldScanner).
-
-    Args:
-        source_lang: The language of the texts being analyzed. Names must be
-            returned in this language exactly as they appear in the source.
-    """
-    return (
-        f"You are analyzing {source_lang} texts from a Neverwinter Nights game module.\n"
-        "Extract only high-confidence proper nouns visible in natural-language game text: "
-        "character names, place names, organization names, unique named objects, and "
-        "recurring epithets or hyphenated terms used as forms of address. Prefer "
-        "returning too few names over returning technical or uncertain labels.\n\n"
-        'Return a single JSON object with one key "entities" whose value is '
-        'an array of entity objects with "name" and "type" fields.\n'
-        'Valid types: "character", "location", "organization", "item", '
-        '"nickname", "unknown".\n\n'
-        "FEW-SHOT EXAMPLES (note: these illustrate the task; real inputs will be "
-        f"in {source_lang}):\n\n"
-        "Input:\n"
-        '[0] "Leading a coach to Stout Village with farming equipment to deliver."\n'
-        '[1] "Gotta hand-carry some letters to the Western Gate from the castle."\n'
-        '[2] "Hello! I can take you back to Penultima City, if you\'d like to leave."\n'
-        "[3] \"I saw your ad posted by the Guild of Middlemen. You're looking for "
-        'adventurer(s), yes?"\n'
-        '[4] "Hello! I\'m the Magical Plot Fairy. Do you need a recap?"\n'
-        '[5] "Contact R. Freely in Stout Village for details."\n'
-        '[6] "Stay back, sword-one!"\n'
-        '[7] "Must.. protect... sword-one... ghh"\n\n'
-        "Output:\n"
-        '{"entities": [\n'
-        '  {"name": "Stout Village", "type": "location"},\n'
-        '  {"name": "Western Gate", "type": "location"},\n'
-        '  {"name": "Penultima City", "type": "location"},\n'
-        '  {"name": "Guild of Middlemen", "type": "organization"},\n'
-        '  {"name": "Magical Plot Fairy", "type": "character"},\n'
-        '  {"name": "R. Freely", "type": "character"},\n'
-        '  {"name": "sword-one", "type": "nickname"}\n'
-        "]}\n\n"
-        "Negative examples that MUST return no entities:\n"
-        '[0] "DMFI Admin Server Wand"\n'
-        '[1] "ARCH_TARGET"\n'
-        '[2] "WILL_O_WISP"\n'
-        '[3] "BakersPlea"\n'
-        '[4] "Hello <FirstName>, choose <race>."\n'
-        'Output: {"entities": []}\n\n'
-        "Rules:\n"
-        "- Include proper nouns that are names of specific characters, places, "
-        "organizations, or unique objects.\n"
-        "- Include recurring compound nicknames or hyphenated terms used as forms "
-        'of address (type: "nickname"). These must be translated consistently.\n'
-        "- Do NOT include placeholders or angle tokens such as <FirstName>, <FullName>, "
-        "<race>, <man/woman>, or <CustomToken:123>.\n"
-        "- Do NOT include acronyms, brands, system terms, engine/toolset terms, or utility "
-        "labels such as NWN, DMFI, D&D, AD&D, Bioware, or ARCH_TARGET.\n"
-        "- Do NOT include file names, resource references, script names, blueprint tags, "
-        "or labels that look like CamelCase identifiers, snake_case identifiers, "
-        "underscore constants, route labels, or wildcard patterns.\n"
-        "- Do NOT include common game terms (sword, goblin, mine, chest, potion, etc.).\n"
-        "- Do NOT include race or class names (dwarf, elf, wizard, halfling, etc.).\n"
-        "- Do NOT include common words, adjectives, or generic phrases.\n"
-        '- Use "unknown" only for a natural-language multi-word proper noun whose category '
-        "is genuinely unclear; otherwise omit uncertain candidates.\n"
-        "- Each name should appear only once in your output (deduplicate across all input lines).\n"
-        "- Preserve original spelling exactly as it appears in the text.\n"
-        '- Return {"entities": []} if no proper nouns are found.\n'
-        "Do not use markdown code fences."
-    )
-
-
-def build_glossary_system_prompt(target_lang: str) -> str:
-    """System prompt for glossary proper-name translation."""
-    ex = get_examples(target_lang)
-    personal = ex["glossary_personal"]
-    descriptive = ex["glossary_descriptive"]
-
-    pers_ex = ", ".join(f'"{eng}" -> "{tr}"' for eng, tr in personal)
-    desc_ex = ", ".join(f'"{eng}" -> "{good}" (NOT "{bad}")' for eng, good, bad in descriptive)
-    nick_ex = _format_nickname_examples(target_lang, indent="  ")
-
-    return (
-        f"You are preparing a translation glossary for the game Neverwinter Nights.\n"
-        f"Target language: {target_lang}.\n\n"
-        "Translate each proper name below into the target language.\n\n"
-        "KEY RULES \u2014 translating vs transliterating:\n"
-        "- Personal names (character first/last names, unique fantasy names): "
-        "TRANSLITERATE into target-language script, even when the token coincides "
-        "with an ordinary English word (Dawn, Grace, Hunter as given names — "
-        "NOT calques of the common nouns).\n"
-        f"  Examples: {pers_ex}\n"
-        "- Nicknames / vocatives (category nickname): TRANSLATE the meaning as a "
-        'short natural epithet ("the one who is/has X"), not as a personal name. '
-        "Fit vocative vs grammatical object to the sentence; do not freeze an "
-        "English-shaped compound. Do NOT phonetic-transliterate ordinary English "
-        'words. Do NOT calque the English suffix "-one" as a numeral '
-        "— that suffix is speaker pidgin, not a number.\n"
-        f"  Examples:\n{nick_ex}\n"
-        "- Descriptive/meaningful names (locations, items, quests, titles composed of "
-        "real English words with clear meaning): TRANSLATE the meaning. "
-        "NEVER produce phonetic transliteration of English words.\n"
-        f"  Examples: {desc_ex}\n"
-        "- When in doubt: character given/family names transliterate. "
-        "Nicknames built from ordinary English words translate as an epithet. "
-        "Multi-word descriptive titles translate the meaning. "
-        "Made-up fantasy words transliterate.\n\n"
-        "Hints in parentheses may include gender (feminine/masculine) and field "
-        "(FirstName) — use them; do not put those hints into JSON keys.\n\n"
-        "Return personal names in nominative (dictionary) form only; the game will "
-        "inflect in context later. For nicknames, store a short epithet the "
-        "translator can adapt (vocative vs object), not a frozen compound.\n\n"
-        "OUTPUT: A single JSON object whose keys are the EXACT English name "
-        "(WITHOUT the category hint in parentheses) and values are the translations.\n"
-        'Example: the list entry "- Perin Izrick (character)" '
-        'must produce key "Perin Izrick", NOT "Perin Izrick (character)".\n'
-        "Do not omit keys. Do not add keys not in the list.\n"
-        "Do not use markdown code fences."
-    )

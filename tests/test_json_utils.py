@@ -8,7 +8,9 @@ import pytest
 
 from nwn_translator.json_utils import (
     json_extract_first_object,
+    load_brace_span,
     load_first_json_object,
+    scan_first_json_object,
     strip_json_markdown_fences,
 )
 
@@ -74,3 +76,19 @@ def test_load_first_json_object_error_positions_refer_to_stripped_text(raw, mess
     with pytest.raises(json.JSONDecodeError) as exc_info:
         load_first_json_object(raw)
     assert str(exc_info.value) == message
+
+
+def test_load_brace_span_is_greedy_and_strict() -> None:
+    assert load_brace_span('Sure: {"a": {"b": 1}} done') == {"a": {"b": 1}}
+    assert load_brace_span("[1, 2]") == [1, 2]
+    for raw in ('{"a": 1} and {"b": 2}', '{"a": "x\ny"}', "no json"):
+        with pytest.raises(json.JSONDecodeError):
+            load_brace_span(raw)
+
+
+def test_scan_first_json_object_skips_broken_fragments() -> None:
+    raw = 'Example: {broken} then {"a": "x\ny"} and {"b": 2}'
+    assert scan_first_json_object(raw) == {"a": "x\ny"}
+    assert scan_first_json_object("[1, 2]") is None
+    with pytest.raises(json.JSONDecodeError):
+        scan_first_json_object('{"unclosed": ')

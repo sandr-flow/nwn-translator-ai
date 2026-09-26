@@ -1,16 +1,16 @@
 """Static cross-language dictionary of canonical D&D/Forgotten Realms race and
 creature translations.
 
-Used to inject context-sensitive translation hints into prompts: before each
-LLM call the source text is scanned for known English race terms and only the
-matched entries (for the current target language) are appended to the system
-prompt.
+:func:`~nwn_translator.glossary.terminology_block` merges :data:`RACE_TERMS`
+into the GLOSSARY block of every translation prompt. When a prompt has no
+glossary block, the provider falls back to :func:`match_race_terms`, which
+renders only the terms the source text mentions.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 # ---------------------------------------------------------------------------
 # Data: {target_lang: {english_form_lowercase: canonical_translation}}
@@ -536,8 +536,15 @@ def match_race_terms(text: str, target_lang: str) -> str:
     """Scan *text* for known race/creature terms and return a prompt block.
 
     Only terms that actually appear in *text* (case-insensitive, word-boundary)
-    are included.  Returns an empty string when nothing matches or when
-    *target_lang* has no dictionary entry.
+    are included.
+
+    Args:
+        text: Source text of the prompt.
+        target_lang: Target language name.
+
+    Returns:
+        The RACE/CREATURE TERMS block, longest terms first, or ``""`` when
+        nothing matches or *target_lang* has no dictionary.
     """
     if not text or not target_lang:
         return ""

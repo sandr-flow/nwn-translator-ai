@@ -127,7 +127,8 @@ def token_retry_prompt(
         f"The previous answer for {filename} changed, dropped, or omitted preserved NWN "
         f"tags/tokens for keys: {keys_csv}.",
         _keys_exactly(keys),
-        "Preserve every placeholder and helper token surrogate EXACTLY as it appears in the script.",
+        "Preserve every placeholder and helper token surrogate EXACTLY as it appears "
+        "in the script.",
         "Do not rename, reorder, delete, duplicate, or replace any placeholder.",
         "Translate only the normal prose and the text inside square brackets.",
         "",

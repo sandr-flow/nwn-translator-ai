@@ -393,13 +393,12 @@ class TaskManager:
         """
         with self._lock:
             task = self._tasks.pop(task_id, None)
-            if task is not None:
-                task.request_cancel()
-                if self._active_by_ip.get(task.client_ip) == task_id:
-                    del self._active_by_ip[task.client_ip]
             worker_running = task_id in self._workers
             if worker_running:
                 self._orphaned.add(task_id)
+        if task is not None:
+            task.request_cancel()
+            self.release_active(task.client_ip, task_id)
         delete_task_row(task_id)
         if not worker_running:
             shutil.rmtree(self.workspace_root / task_id, ignore_errors=True)

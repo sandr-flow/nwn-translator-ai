@@ -1,4 +1,9 @@
-"""Pydantic request and response models of the web API."""
+"""Pydantic request and response models of the web API.
+
+A model's docstring, ``Attributes`` included, becomes its schema description in
+the OpenAPI document, so the attributes describe the HTTP fields; most fields
+carry no ``Field(description=...)`` of their own.
+"""
 
 from typing import Any, Dict, List, Literal, Optional
 

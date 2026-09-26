@@ -23,6 +23,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    Optional,
     Sequence,
     Set,
     TypeVar,
@@ -58,6 +59,10 @@ KeyRequest = Callable[[List[str], Dict[str, V], int], Callable[[], Awaitable[str
 
 #: Reply parser: ``(reply, keys still expected) -> answered keys``.
 KeyParser = Callable[[str, Set[str]], Dict[str, V]]
+
+#: Observer of a finished attempt: ``(attempt, keys it answered)``; the count is
+#: 0 when the request failed or the reply had no usable key.
+AttemptObserver = Callable[[int, int], None]
 
 
 def chunks(items: Sequence[B], size: int) -> List[List[B]]:
@@ -227,6 +232,7 @@ class LlmStage:
         parse: KeyParser[V],
         *,
         name: str,
+        on_attempt: Optional[AttemptObserver] = None,
     ) -> Dict[str, V]:
         """Request the keys in *remaining* until each is answered or the attempts run out.
 
@@ -245,12 +251,14 @@ class LlmStage:
                 request.
             parse: Extracts the answered keys from a reply.
             name: Batch name for log lines.
+            on_attempt: Called after every attempt, once *remaining* is
+                updated.
 
         Returns:
             Answered key -> value, in answer order.
 
         Raises:
-            Exception: Whatever *prepare* or *parse* raises.
+            Exception: Whatever *prepare*, *parse* or *on_attempt* raises.
         """
         total = len(remaining)
         accepted: Dict[str, V] = {}
@@ -279,6 +287,8 @@ class LlmStage:
                     time.monotonic() - started,
                     exc,
                 )
+                if on_attempt:
+                    on_attempt(attempt, 0)
                 if self.retry_on_error:
                     continue
                 break
@@ -306,6 +316,8 @@ class LlmStage:
                     elapsed,
                     _clip(raw, 600),
                 )
+            if on_attempt:
+                on_attempt(attempt, len(parsed))
         if remaining:
             missing = sorted(remaining)
             logger.warning(

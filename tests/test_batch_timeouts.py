@@ -55,7 +55,7 @@ class TestRunAsyncTimeout:
 # ---------------------------------------------------------------------------
 
 
-def _build_glossary(names, provider, target_lang="russian"):
+def _build_glossary(names, provider, target_lang="russian", progress_callback=None):
     """Build a glossary for ``name -> category`` *names* with one batch."""
     from src.nwn_translator.context.world_context import WorldContext
     from src.nwn_translator.glossary_builder import GlossaryBuilder
@@ -63,7 +63,7 @@ def _build_glossary(names, provider, target_lang="russian"):
     world = WorldContext()
     world.extracted_names = list(names.items())
     config = SimpleNamespace(target_lang=target_lang, max_concurrent_requests=1)
-    return GlossaryBuilder().build(world, provider, config)
+    return GlossaryBuilder().build(world, provider, config, progress_callback)
 
 
 class TestGlossaryPartialFailure:
@@ -163,6 +163,40 @@ class TestGlossaryPartialFailure:
         )
         assert glossary.entries == {"Alpha": "Альфа", "Beta": "Бета", "Gamma": "Гамма"}
         assert call_count == 2
+
+    def test_progress_reports_every_attempt_and_its_outcome(self):
+        """Each attempt is announced, then reported as failed or with the names done."""
+        import json
+
+        replies = [TimeoutError("timeout"), json.dumps({"Alpha": "Альфа"}), "not json"]
+
+        async def fake_glossary(system_prompt, user_prompt, **kwargs):
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
+        messages = []
+
+        glossary = _build_glossary(
+            {"Alpha": "character", "Beta": "location"},
+            mock_provider,
+            progress_callback=lambda phase, done, total, message: messages.append(
+                (phase, done, total, message)
+            ),
+        )
+
+        assert glossary.entries == {"Alpha": "Альфа"}
+        assert messages == [
+            ("scanning", 0, 1, "Glossary glossary (attempt 1/3)…"),
+            ("scanning", 0, 1, "Glossary glossary: attempt 1 failed, retrying…"),
+            ("scanning", 0, 1, "Glossary glossary (attempt 2/3)…"),
+            ("scanning", 0, 1, "Glossary glossary: 1/2 names done"),
+            ("scanning", 0, 1, "Glossary glossary (attempt 3/3)…"),
+            ("scanning", 0, 1, "Glossary glossary: attempt 3 failed, retrying…"),
+        ]
 
     def test_overall_timeout_keeps_finished_batches(self, monkeypatch):
         """A batch still running at the overall deadline must not discard the others."""
@@ -339,3 +373,5 @@ class TestGlossaryEchoBackAcceptance:
         assert glossary.entries == {}
         assert mock_provider.complete_glossary_chat_async.call_count == 3
         assert "no usable entries" in caplog.text
+        errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+        assert "Glossary glossary returned no usable entries after 3 attempts" in errors

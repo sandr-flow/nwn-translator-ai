@@ -145,12 +145,34 @@ class GlossaryBuilder:
                     temperature=GLOSSARY_TEMPERATURE,
                 )
 
+            def report(attempt: int, answered: int) -> None:
+                if not progress_callback:
+                    return
+                if answered:
+                    done = len(batch) - len(remaining)
+                    message = f"Glossary {label}: {done}/{len(batch)} names done"
+                else:
+                    message = f"Glossary {label}: attempt {attempt} failed, retrying…"
+                progress_callback("scanning", number - 1, len(batches), message)
+
             # Built from the batch dict exactly like this: the set's iteration
             # order decides the order of the accepted forms a retry repeats (KI-008).
             remaining = set(batch.keys())
-            return await _STAGE.fill_keys(
-                slot, remaining, prepare, parse_glossary_json, name=f"Glossary {label}"
+            entries = await _STAGE.fill_keys(
+                slot,
+                remaining,
+                prepare,
+                parse_glossary_json,
+                name=f"Glossary {label}",
+                on_attempt=report,
             )
+            if not entries:
+                logger.error(
+                    "Glossary %s returned no usable entries after %d attempts",
+                    label,
+                    _STAGE.max_attempts,
+                )
+            return entries
 
         results = _STAGE.run(batches, translate_batch, concurrency=config.max_concurrent_requests)
 

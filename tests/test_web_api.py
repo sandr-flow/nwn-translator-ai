@@ -16,6 +16,7 @@ from nwn_translator.ai_providers.base import TranslationResult
 from nwn_translator.web import database as db
 from nwn_translator.web import routes as web_routes
 from nwn_translator.web.app import create_app
+from nwn_translator.web.schemas import RebuildEdit
 from nwn_translator.web.task_manager import TaskManager, set_task_manager
 
 
@@ -575,6 +576,49 @@ class TestOneJobPerIpSlot:
         tm.discard_task(task.task_id)
         assert tm.get(task.task_id) is None
         assert db.get_task_row(task.task_id) is None
+
+
+def test_rebuilds_of_one_task_run_one_at_a_time(
+    isolated_tm: TaskManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two quick rebuilds must not interleave patches of the same extracted files.
+
+    Each rebuild also has to start from the edits the previous one stored, or
+    the later module silently drops the earlier edit.
+    """
+    tm = isolated_tm
+    task = tm.create_task("9.9.9.9", "a.mod")
+    task.extract_dir, task.result_path = tmp_path, tmp_path / "out.mod"
+    db.insert_translation(task.task_id, "Goblin", "Гоблин", file="a.utc", item_id="a")
+    db.insert_translation(task.task_id, "Orc", "Орк", file="b.utc", item_id="b")
+    guard = threading.Lock()
+    running: list[int] = []
+    overlaps: list[int] = []
+    seen: list[dict] = []
+
+    def slow_rebuild(extract_dir, translations, output_path, original_mod_path, target_lang):
+        with guard:
+            running.append(1)
+            overlaps.append(len(running))
+        time.sleep(0.2)
+        seen.append({name: dict(items) for name, items in translations.items()})
+        with guard:
+            running.pop()
+        return output_path
+
+    monkeypatch.setattr("nwn_translator.web.task_manager.rebuild_module", slow_rebuild)
+    edits = [
+        [RebuildEdit(file="a.utc", item_id="a", translated="Гоблин!")],
+        [RebuildEdit(file="b.utc", item_id="b", translated="Орк!")],
+    ]
+    threads = [threading.Thread(target=tm.rebuild, args=(task, e, "russian")) for e in edits]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert overlaps == [1, 1]
+    assert seen[1] == {"a.utc": {"a": "Гоблин!"}, "b.utc": {"b": "Орк!"}}
 
 
 # ---------------------------------------------------------------------------

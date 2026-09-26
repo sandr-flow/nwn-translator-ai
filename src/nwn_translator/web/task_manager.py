@@ -15,9 +15,10 @@ import shutil
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 from ..config import (
     TranslationCancelled,
@@ -223,6 +224,8 @@ class TaskManager:
         self._workers: Dict[str, threading.Thread] = {}
         #: Deleted tasks whose worker is still winding down.
         self._orphaned: Set[str] = set()
+        #: task_id -> (rebuild lock, number of rebuilds holding or awaiting it).
+        self._rebuild_locks: Dict[str, Tuple[threading.Lock, int]] = {}
         self._reconcile_interrupted()
 
     def _reconcile_interrupted(self) -> None:
@@ -407,7 +410,9 @@ class TaskManager:
         No provider calls are made. An edit addresses one ``(file, item_id)`` and
         reaches every identical line its editor row stands for. The edits are
         persisted after a successful rebuild, so the editor and later rebuilds
-        see the current values.
+        see the current values. Rebuilds of one task run one at a time: they
+        patch the same extracted files and each starts from the edits the
+        previous one stored.
 
         Args:
             task: A completed task whose ``extract_dir`` and ``result_path`` exist.
@@ -415,20 +420,36 @@ class TaskManager:
             target_lang: Language that drives the string encoding.
         """
         assert task.extract_dir is not None and task.result_path is not None
-        translations = get_item_translation_map_by_task(task.task_id)
-        edited = editor.expand_edits(get_translations_by_task(task.task_id), edits)
-        for (filename, item_id), text in edited.items():
-            translations.setdefault(filename, {})[item_id] = text
-        rebuild_module(
-            task.extract_dir,
-            translations,
-            task.result_path,
-            original_mod_path=task.input_path or task.result_path,
-            target_lang=target_lang,
-        )
-        for (filename, item_id), text in edited.items():
-            update_translation_text(task.task_id, filename, item_id, text)
-        update_task_row(task.task_id, updated_at=time.time())
+        with self._rebuild_lock(task.task_id):
+            translations = get_item_translation_map_by_task(task.task_id)
+            edited = editor.expand_edits(get_translations_by_task(task.task_id), edits)
+            for (filename, item_id), text in edited.items():
+                translations.setdefault(filename, {})[item_id] = text
+            rebuild_module(
+                task.extract_dir,
+                translations,
+                task.result_path,
+                original_mod_path=task.input_path or task.result_path,
+                target_lang=target_lang,
+            )
+            for (filename, item_id), text in edited.items():
+                update_translation_text(task.task_id, filename, item_id, text)
+            update_task_row(task.task_id, updated_at=time.time())
+
+    @contextmanager
+    def _rebuild_lock(self, task_id: str) -> Iterator[None]:
+        """Hold the rebuild lock of *task_id*; the lock exists only while in use."""
+        with self._lock:
+            lock, users = self._rebuild_locks.get(task_id, (threading.Lock(), 0))
+            self._rebuild_locks[task_id] = (lock, users + 1)
+        try:
+            with lock:
+                yield
+        finally:
+            with self._lock:
+                lock, users = self._rebuild_locks.pop(task_id)
+                if users > 1:
+                    self._rebuild_locks[task_id] = (lock, users - 1)
 
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
         """Create the pipeline progress callback of *task*.

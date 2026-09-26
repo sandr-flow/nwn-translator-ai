@@ -11,7 +11,7 @@ so that few-shot demonstrations match the actual target language.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .examples import get_examples
 
@@ -295,6 +295,9 @@ def build_translation_system_prompt_parts(
     The *variable* half holds the GLOSSARY section (may include per-call
     race-term hints) and is the only portion that changes between calls.
 
+    *batch_mode* asks for a flat ID map instead of a single ``translation`` key
+    and closes the stable half with the BATCH MODE rules.
+
     *content_profile* selects one of a small, deterministic set of rule
     bodies (Phase 3.4 — dynamic few-shot).  It MUST depend only on the
     content-type mix of the caller's batch; otherwise cache hits are lost.
@@ -333,8 +336,74 @@ def build_translation_system_prompt_parts(
         "Do not include any other keys, your thought process, explanations, or any "
         "markdown formatting outside the JSON object.\n"
     )
+    if batch_mode:
+        stable += _BATCH_MODE_RULES
     variable = glossary_block.strip() if glossary_block and glossary_block.strip() else ""
     return stable, variable
+
+
+#: Batch-only rules closing the stable half of the batch prompt, so every batch
+#: call shares one cacheable prefix.
+_BATCH_MODE_RULES = (
+    "\nBATCH MODE: Input items have numeric IDs. Input is either the item map "
+    "itself or an object with items and shared groups maps. Each item is "
+    "either a plain string or an object "
+    '{"text": "...", "hint": "...", "context": "..."}. '
+    'The hint (e.g. "item_name", "creature_first_name", "store_name") '
+    "tells you what kind of game entity this is — use it to decide "
+    "whether to translate the meaning or transliterate. "
+    "The optional context describes where the string appears in the "
+    "game — use it to choose tone and grammatical forms. "
+    "Items may come from different resources; use each item's own context. "
+    "Their order in this batch does not imply a shared conversation. "
+    "Grouped input has groups and items maps. Translate ONLY the numeric keys "
+    "of items. Each item references its group and optional field context_ref "
+    "and source_window indices. Groups describe one structural object, quest "
+    "category, or script; different groups are independent. Shared source and "
+    "approved speech are context only, never additional outputs. Script constant "
+    "order is NOT proven execution order. Keep each field separate. "
+    "For creature_first_name return ONLY the first name; for creature_last_name "
+    "return ONLY the surname or title. Never add the other name field. "
+    "Translate item names naturally; item_description is the unidentified "
+    "description and item_identified_description is the identified description. "
+    "Return a JSON object with the EXACT SAME numeric keys, where each "
+    "value is the translated string (NOT an object). "
+    "Do NOT rename, add, or remove keys. "
+    "Do NOT wrap in markdown. Output ONLY the JSON object.\n"
+)
+
+
+def build_single_user_prompt(text: str, source_lang: str, context: Optional[str] = None) -> str:
+    """User message of a single-string translation request.
+
+    Args:
+        text: Text to translate.
+        source_lang: Source language name.
+        context: Context hint placed before the text when non-empty.
+
+    Returns:
+        The user message.
+    """
+    prompt = f"Text to translate from {source_lang}:\n\n{text}"
+    if context:
+        prompt = f"Context Hint: {context}\n\n{prompt}"
+    return prompt
+
+
+def build_batch_user_prompt(source_lang: str, payload_json: str) -> str:
+    """User message of a batch translation request.
+
+    Args:
+        source_lang: Source language name.
+        payload_json: Serialized item map (``batch_payload.serialize_batch_payload``).
+
+    Returns:
+        The user message.
+    """
+    return (
+        f"Translate the items from {source_lang}. Return only a flat object of numeric "
+        "item IDs and translated strings. Shared groups are context only.\n\n"
+    ) + payload_json
 
 
 def build_translation_system_prompt(

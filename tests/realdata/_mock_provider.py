@@ -1,6 +1,6 @@
-"""Deterministic mock translation provider for the V2.4 round-trip test.
+"""Deterministic mock translation providers for the corpus round-trip tests.
 
-It prepends a fixed marker to every non-empty string and otherwise echoes the
+They prepend a fixed marker to every non-empty string and otherwise echo the
 input. Token placeholders inserted by ``token_handler`` survive untouched (the
 marker is added in front), so restore/validation behave exactly as in a real
 run — only the network call is replaced.
@@ -8,9 +8,11 @@ run — only the network call is replaced.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Optional
 
-from nwn_translator.ai_providers.base import BaseAIProvider, TranslationResult
+from nwn_translator.ai_providers.base import TranslationResult
 from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 
 #: Marker injected in front of every translated string; ASCII so it encodes in
@@ -18,19 +20,19 @@ from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 MARKER = "[MT]"
 
 
-class MockTranslateProvider(BaseAIProvider):
-    """Marks strings deterministically without any API call."""
+class MockTranslateProvider:
+    """Marks strings deterministically without any API call.
 
-    def __init__(self) -> None:
-        super().__init__(api_key="mock-key", model="mock/echo")
+    Without ``complete_json_chat_async`` the pipeline skips entity extraction,
+    glossary curation and contextual dialogs, as for a provider without them.
+    """
 
-    def get_default_model(self) -> str:
-        return "mock/echo"
+    model = "mock/echo"
 
     def get_provider_name(self) -> str:
         return "mock"
 
-    def translate(
+    async def translate_async(
         self,
         text: str,
         source_lang: str,
@@ -42,15 +44,36 @@ class MockTranslateProvider(BaseAIProvider):
         translated = MARKER + text if text else text
         return TranslationResult(translated=translated, original=text, success=True)
 
+    async def translate_batch_async(
+        self, items, source_lang, target_lang, glossary_block=None, content_profile=None
+    ):
+        return [
+            await self.translate_async(
+                item.original,
+                source_lang,
+                target_lang,
+                context=item.context,
+                glossary_block=glossary_block,
+                content_profile=content_profile,
+            )
+            for item in items
+        ]
+
+    async def classify_ncs_translate_gate_batch_async(self, entries, *, source_lang):
+        return {str(e["key"]): {"translate": True, "reason": "noop_gate"} for e in entries}
+
+    async def close_async_client(self) -> None:
+        return None
+
 
 class MockContextProvider(OpenRouterProvider):
     """Exercise the context pipeline with deterministic in-memory model responses."""
 
     def __init__(self):
-        BaseAIProvider.__init__(self, api_key="mock-key", model="mock/context")
+        super().__init__(api_key="mock-key", model="mock/context")
         self.requests = []
 
-    def translate(
+    async def translate_async(
         self,
         text,
         source_lang,
@@ -71,9 +94,7 @@ class MockContextProvider(OpenRouterProvider):
             text_out = text
         return TranslationResult(original=text, translated=MARKER + text_out)
 
-    translate_async = BaseAIProvider.translate_async
-    translate_batch_async = BaseAIProvider.translate_batch_async
-    close_async_client = BaseAIProvider.close_async_client
+    translate_batch_async = MockTranslateProvider.translate_batch_async
 
     async def classify_ncs_translate_gate_batch_async(self, entries, **kwargs):
         return {
@@ -87,14 +108,9 @@ class MockContextProvider(OpenRouterProvider):
     async def complete_glossary_chat_async(
         self, system_prompt, user_prompt, *, glossary_keys, **kwargs
     ):
-        import json
-
         return json.dumps({name: name for name in glossary_keys})
 
     async def complete_json_chat_async(self, system_prompt, user_prompt, **kwargs):
-        import json
-        import re
-
         def nodes(script):
             return {
                 key: MARKER + text

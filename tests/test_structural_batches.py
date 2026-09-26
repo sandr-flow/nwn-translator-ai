@@ -8,7 +8,7 @@ import pytest
 
 from nwn_translator.ai_providers.base import TranslationItem, TranslationResult
 from nwn_translator.ai_providers.batch_payload import build_batch_payload, source_windows
-from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from nwn_translator.ai_providers.ncs_gate import gate_user_prompt, parse_gate_verdicts
 from nwn_translator.config import TranslationConfig
 from nwn_translator.context.dialog_formatter import DialogFormatter
 from nwn_translator.extractors.base import DialogNode, ExtractedContent, TranslatableItem
@@ -95,17 +95,12 @@ def test_gate_shared_sources_preserve_per_occurrence_consumers():
         }
         for i, consumer in enumerate(["SpeakString:0", "SetLocalString:1"])
     ]
-    provider = OpenRouterProvider(api_key="test")
-    payload = json.loads(
-        provider._ncs_gate_build_user_prompt(source_lang="en", entries=entries).split("\n\n", 1)[1]
-    )
+    payload = json.loads(gate_user_prompt(entries, "en").split("\n\n", 1)[1])
     assert len(payload["sources"]["a.ncs"]) == 1
     assert (
         payload["entries"]["0"]["bytecode_context"] != payload["entries"]["1"]["bytecode_context"]
     )
-    assert (
-        provider._parse_ncs_gate_raw('{"0":{"translate":true}}', entries)["1"]["translate"] is False
-    )
+    assert parse_gate_verdicts('{"0":{"translate":true}}', entries)["1"]["translate"] is False
 
 
 def test_structural_fields_share_request_despite_different_lengths():

@@ -156,13 +156,17 @@ def test_model_lookup_invalid_slug(client: TestClient) -> None:
 def test_test_connection_mocked(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeProvider:
         model = "fake/model"
+        closed = False
 
-        def translate(self, text, source_lang, target_lang, context=None, glossary_block=None):
+        async def translate_async(self, text, source_lang, target_lang):
             return TranslationResult(
                 translated="тест",
                 original=text,
                 success=True,
             )
+
+        async def close_async_client(self):
+            FakeProvider.closed = True
 
         def get_provider_name(self):
             return "openrouter"
@@ -178,8 +182,28 @@ def test_test_connection_mocked(client: TestClient, monkeypatch: pytest.MonkeyPa
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["ok"] is True
-    assert body["translated"] == "тест"
+    assert body == {
+        "ok": True,
+        "translated": "тест",
+        "error": None,
+        "model": "fake/model",
+        "provider": "openrouter",
+    }
+    assert FakeProvider.closed is True
+
+
+@pytest.mark.parametrize(
+    "api_key,expected",
+    [
+        ("pza-abcdef", {"provider": "polza", "label": "POLZA.AI"}),
+        ("sk-or-v1-abc", {"provider": "openrouter", "label": "OpenRouter"}),
+        ("   ", {"provider": "", "label": ""}),
+    ],
+)
+def test_detect_provider(client: TestClient, api_key: str, expected: dict) -> None:
+    r = client.post("/api/detect-provider", json={"api_key": api_key})
+    assert r.status_code == 200
+    assert r.json() == expected
 
 
 def test_translate_invalid_reasoning_effort(client: TestClient) -> None:

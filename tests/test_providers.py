@@ -1,67 +1,19 @@
 """Tests for AI provider base types and create_provider (OpenRouter)."""
 
-import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
-from src.nwn_translator.ai_providers.base import (
-    BaseAIProvider,
-    TranslationItem,
-    TranslationResult,
-    ProviderError,
+import pytest
+
+from src.nwn_translator.async_utils import run_async
+from src.nwn_translator.ai_providers import openrouter_provider
+from src.nwn_translator.ai_providers.base import TranslationItem, TranslationResult
+from src.nwn_translator.ai_providers import (
+    create_provider,
+    detect_provider_from_key,
+    provider_label,
 )
-from src.nwn_translator.ai_providers import create_provider, detect_provider_from_key
 from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from src.nwn_translator.ai_providers.polza_provider import PolzaProvider
-
-
-class MockAIProvider(BaseAIProvider):
-    """Mock AI provider for testing."""
-
-    def get_default_model(self) -> str:
-        return "mock-model"
-
-    def get_provider_name(self) -> str:
-        return "mock"
-
-    def translate(self, text, source_lang, target_lang, context=None, glossary_block=None):
-        return TranslationResult(
-            translated=f"[{target_lang}] {text}",
-            original=text,
-            success=True,
-        )
-
-
-class TestBaseAIProvider:
-    """Tests for BaseAIProvider."""
-
-    def test_init_requires_api_key(self):
-        """Test that provider requires API key."""
-        with pytest.raises(ProviderError):
-            MockAIProvider(api_key="")
-
-    def test_get_provider_name(self):
-        """Test getting provider name."""
-        provider = MockAIProvider(api_key="test-key")
-        assert provider.get_provider_name() == "mock"
-
-    def test_get_default_model(self):
-        """Test getting default model."""
-        provider = MockAIProvider(api_key="test-key")
-        assert provider.get_default_model() == "mock-model"
-
-    def test_translate_simple_text(self):
-        """Test translating simple text."""
-        provider = MockAIProvider(api_key="test-key")
-        result = provider.translate("Hello", "english", "spanish")
-        assert result.success
-        assert "spanish" in result.translated
-        assert result.original == "Hello"
-
-    def test_translate_with_context(self):
-        """Test translating with context."""
-        provider = MockAIProvider(api_key="test-key")
-        result = provider.translate("Hello", "english", "spanish", context="Greeting")
-        assert result.success
 
 
 class TestCreateProvider:
@@ -69,25 +21,43 @@ class TestCreateProvider:
 
     def test_create_returns_openrouter(self):
         """create_provider must return OpenRouterProvider."""
-        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
-            p = create_provider("sk-or-test", model="openai/gpt-4o")
+        p = create_provider("sk-or-test", model="openai/gpt-4o", player_gender="female")
         assert isinstance(p, OpenRouterProvider)
         assert p.model == "openai/gpt-4o"
+        assert p.player_gender == "female"
 
-    def test_create_returns_polza_for_pza_prefix(self):
-        """``pza…`` keys route to PolzaProvider with the Polza base URL."""
-        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI") as mock_openai_cls:
-            p = create_provider("pza-abcdef1234567890", model="openai/gpt-4o")
+    def test_create_returns_polza_for_pza_prefix(self, monkeypatch):
+        """``pza…`` keys route to PolzaProvider with the Polza base URL and no extra headers."""
+        client_cls = MagicMock()
+        monkeypatch.setattr(openrouter_provider, "AsyncOpenAI", client_cls)
+        p = create_provider("pza-abcdef1234567890", model="openai/gpt-4o")
+
+        async def touch_client():
+            return p.async_client
+
+        run_async(touch_client(), timeout=5.0)
         assert isinstance(p, PolzaProvider)
         assert p.get_provider_name() == "polza"
-        assert mock_openai_cls.call_args.kwargs["base_url"] == "https://polza.ai/api/v1"
+        assert client_cls.call_args.kwargs["base_url"] == "https://polza.ai/api/v1"
+        assert client_cls.call_args.kwargs["default_headers"] == {}
 
     def test_create_falls_back_to_openrouter_for_unknown_prefix(self):
         """Unrecognised keys default to OpenRouter (safe fallback)."""
-        with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):
-            p = create_provider("just-random-chars", model="openai/gpt-4o")
+        p = create_provider("just-random-chars", model="openai/gpt-4o")
         assert isinstance(p, OpenRouterProvider)
         assert not isinstance(p, PolzaProvider)
+
+    def test_unknown_keyword_is_rejected(self):
+        with pytest.raises(TypeError):
+            create_provider("sk-or-test", site_name="typo")
+
+
+class TestProviderLabel:
+    def test_labels(self):
+        assert provider_label("openrouter") == "OpenRouter"
+        assert provider_label("polza") == "POLZA.AI"
+        assert provider_label("") == ""
+        assert provider_label("unknown") == ""
 
 
 class TestDetectProviderFromKey:

@@ -9,12 +9,12 @@ import pytest
 from openai import APIStatusError, BadRequestError
 
 from nwn_translator.ai_providers.base import RateLimitError
-from nwn_translator.ai_providers.openrouter_provider import (
+from nwn_translator.ai_providers.errors import (
     OpenRouterError,
-    OpenRouterProvider,
-    _extract_retry_after_seconds,
-    _is_rate_or_budget_error,
-    _wait_with_retry_after,
+    is_rate_or_budget_error,
+    map_api_error,
+    retry_after_seconds,
+    wait_with_retry_after,
 )
 from nwn_translator.context.entity_extractor import _select_texts
 from nwn_translator.context.world_context import NPCInfo, WorldContext
@@ -47,17 +47,16 @@ class TestCompactStatsForApi:
 class TestOpenRouterBudgetRetry:
     def test_402_budget_is_rate_limit(self) -> None:
         msg = "Error code: 402 - in_flight_budget_exhausted Retry-After: 120"
-        assert _is_rate_or_budget_error(msg, Exception(msg))
-        assert _extract_retry_after_seconds(Exception(msg)) == 120.0
+        assert is_rate_or_budget_error(Exception(msg))
+        assert retry_after_seconds(Exception(msg)) == 120.0
 
     def test_map_402_raises_rate_limit_error(self) -> None:
-        provider = OpenRouterProvider.__new__(OpenRouterProvider)
-        provider.PROVIDER_LABEL = "OpenRouter"
-        with pytest.raises(RateLimitError) as exc_info:
-            provider._map_openrouter_exception(
-                Exception("402 in_flight_budget_exhausted Retry-After: 120")
-            )
-        assert exc_info.value.retry_after_seconds == 120.0
+        error = map_api_error(Exception("402 in_flight_budget_exhausted Retry-After: 120"), "X")
+        assert isinstance(error, RateLimitError)
+        assert error.retry_after_seconds == 120.0
+        assert (
+            str(error) == "X rate limit exceeded: 402 in_flight_budget_exhausted Retry-After: 120"
+        )
 
     def test_status_code_decides_over_digits_in_the_message(self) -> None:
         request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
@@ -66,17 +65,29 @@ class TestOpenRouterBudgetRetry:
             response=httpx.Response(400, request=request),
             body=None,
         )
-        assert not _is_rate_or_budget_error(str(too_long), too_long)
+        assert not is_rate_or_budget_error(too_long)
+        assert isinstance(map_api_error(too_long, "OpenRouter"), OpenRouterError)
         budget = APIStatusError(
             "Payment required", response=httpx.Response(402, request=request), body=None
         )
-        assert _is_rate_or_budget_error(str(budget), budget)
+        assert is_rate_or_budget_error(budget)
+
+    def test_retry_after_header_and_precedence(self) -> None:
+        request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        limited = APIStatusError(
+            "Retry-After: 9",
+            response=httpx.Response(429, request=request, headers={"Retry-After": "30"}),
+            body=None,
+        )
+        assert retry_after_seconds(limited) == 30.0
+        assert retry_after_seconds(RateLimitError("Retry-After: 9", retry_after_seconds=5)) == 5
+        assert retry_after_seconds(RateLimitError("Retry-After: 9", retry_after_seconds=0)) == 9
+        assert retry_after_seconds(Exception("no hint")) is None
 
     def test_map_other_errors_stay_openrouter(self) -> None:
-        provider = OpenRouterProvider.__new__(OpenRouterProvider)
-        provider.PROVIDER_LABEL = "OpenRouter"
-        with pytest.raises(OpenRouterError):
-            provider._map_openrouter_exception(Exception("permission denied"))
+        error = map_api_error(Exception("permission denied"), "POLZA.AI")
+        assert isinstance(error, OpenRouterError)
+        assert str(error) == "POLZA.AI translation failed: permission denied"
 
     def test_wait_floors_at_retry_after(self) -> None:
         class _Outcome:
@@ -89,8 +100,8 @@ class TestOpenRouterBudgetRetry:
             outcome = _Outcome()
             attempt_number = 1
 
-        waited = _wait_with_retry_after(_State())
-        assert waited >= 120.0
+        waited = wait_with_retry_after(_State())
+        assert 120.0 <= waited <= 126.0
 
 
 class TestNcsSpeakerMeta:

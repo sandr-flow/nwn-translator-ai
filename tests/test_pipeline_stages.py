@@ -247,3 +247,26 @@ def test_cancel_during_extract_drops_queued_futures(
     # only the few already started when the cancel fired.
     assert started_count < total_files / 2
     assert elapsed < total_files * sleep_per_file / 2 / 2
+
+
+def test_extract_keeps_input_order_regardless_of_completion_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Items reach batching in file order even when workers finish out of order."""
+    files = [tmp_path / f"f{i}.uti" for i in range(8)]
+
+    def reversed_speed_extract(self, file_path):
+        # Earlier files take longer, so completion order is the reverse of input order.
+        time.sleep(0.02 * (len(files) - files.index(file_path)))
+        return {}, ExtractedContent(content_type="item", items=[], source_file=file_path), ".uti"
+
+    monkeypatch.setattr(PipelineState, "_extract_file", reversed_speed_extract)
+    config = TranslationConfig(
+        api_key="test-key",
+        model="test-model",
+        input_file=tmp_path / "m.mod",
+        max_concurrent_requests=8,
+    )
+    state = PipelineState(config=config, provider=Mock())
+
+    assert list(stage_extract(state, files)) == files

@@ -511,6 +511,9 @@ def stage_extract(state: PipelineState, translatable_files: List[Path]) -> Extra
             executor.shutdown(wait=False, cancel_futures=True)
             raise
 
+    # Workers finish in any order; item order drives batch composition, so keep
+    # the input order to make requests independent of thread timing.
+    extracted_map = {fp: extracted_map[fp] for fp in translatable_files if fp in extracted_map}
     logger.info("Phase A complete: %d files extracted", len(extracted_map))
     return extracted_map
 

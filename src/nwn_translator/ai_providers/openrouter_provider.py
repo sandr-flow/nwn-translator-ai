@@ -236,13 +236,17 @@ class OpenRouterProvider:
         return cast(AsyncOpenAI, self._thread_local.async_client)
 
     async def close_async_client(self) -> None:
-        """Close this thread's client; call it before the event loop shuts down."""
+        """Close this thread's client; call it before the event loop shuts down.
+
+        A failing close is logged at debug level and otherwise ignored: the run's
+        results do not depend on it.
+        """
         client = getattr(self._thread_local, "async_client", None)
         if client is not None:
             try:
                 await client.close()
             except Exception:
-                pass
+                logger.debug("Closing the %s client failed", self.PROVIDER_LABEL, exc_info=True)
             self._thread_local.async_client = None
             self._thread_local.client_loop = self._NO_LOOP_CACHED
 

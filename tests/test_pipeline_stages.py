@@ -359,11 +359,21 @@ def test_inject_handles_results_in_file_order_regardless_of_completion_order(
     assert state.stats["files_processed"] == 4
 
 
-def test_translatable_files_come_in_ntfs_order_on_every_file_system(tmp_path: Path) -> None:
+def test_translatable_files_come_in_ntfs_order_on_every_file_system(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Upper-cased names sort '_' after letters and '.' before '_', as NTFS lists them."""
     names = ["_x.ncs", "b.dlg", "a_b.utc", "A.uti", "a.dlg", "a-b.dlg", "a1.jrl", "note.txt"]
     for name in names:
         (tmp_path / name).write_bytes(b"")
+    real_rglob = Path.rglob
+
+    def other_file_system_order(self: Path, pattern: str):
+        # NTFS itself lists the NTFS order; reverse code-point order stands
+        # for any other file system.
+        return sorted(real_rglob(self, pattern), key=lambda path: path.name, reverse=True)
+
+    monkeypatch.setattr(Path, "rglob", other_file_system_order)
 
     found = [path.name for path in find_translatable_files(tmp_path)]
 

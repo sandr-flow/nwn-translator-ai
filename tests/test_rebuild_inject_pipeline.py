@@ -6,7 +6,9 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from nwn_translator.config import TranslationConfig
+from nwn_translator.context.world_context import WorldContext
 from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.injectors.base import InjectedContent
 from nwn_translator.main import (
@@ -15,8 +17,9 @@ from nwn_translator.main import (
     load_parsed_and_extracted,
 )
 from nwn_translator.pipeline import stages
-from nwn_translator.pipeline.stages import PipelineState, stage_inject
+from nwn_translator.pipeline.stages import PipelineState, stage_inject, stage_translate
 
+from tests.support.stub_managers import stub_translation_managers
 from tests.test_ncs import _consts, _retn, _write_ncs
 
 
@@ -100,38 +103,59 @@ def test_inject_records_ncs_patch_failure_stats(tmp_path: Path, monkeypatch) -> 
     ]
 
 
-def test_log_per_file_emits_failed_originals(tmp_path: Path) -> None:
+def test_translate_stage_logs_the_rejections_of_both_managers(tmp_path: Path, monkeypatch) -> None:
+    """A rejected line keeps its source text with success False; an untouched item gets no row."""
     writer = CapturingWriter()
     config = TranslationConfig(
         api_key="test-key",
+        model="test-model",
         input_file=tmp_path / "m.mod",
         translation_log_writer=writer,
     )
-    src = tmp_path / "a.uti"
-    extracted = ExtractedContent(
-        content_type="item",
-        items=[TranslatableItem(text="Boom", item_id="x:0", location=str(src))],
-        source_file=src,
-    )
-    skipped = ExtractedContent(
-        content_type="item",
-        items=[TranslatableItem(text="Internal", item_id="skip", location=str(src))],
-        source_file=src,
-    )
     state = PipelineState(config=config, provider=Mock())
-    failed = {("a.uti", "x:0")}
-    stages._log_editor_rows(state, {src: ({}, extracted, ".uti")}, {}, failed)
-    failed_rows = [e for e in writer.entries if e.get("success") is False]
-    assert len(failed_rows) == 1
-    assert failed_rows[0]["original"] == "Boom"
-    assert failed_rows[0]["translated"] == "Boom"
-    assert failed_rows[0]["item_id"] == "x:0"
-    assert failed_rows[0]["file"] == "a.uti"
+    state.extract_dir = tmp_path
+    state.world_context = WorldContext()
+    uti = tmp_path / "a.uti"
+    items = ExtractedContent(
+        content_type="item",
+        items=[
+            TranslatableItem(text="Boom", item_id="x:0", location=str(uti)),
+            TranslatableItem(text="Fine", item_id="x:1", location=str(uti)),
+            TranslatableItem(text="Internal", item_id="skip", location=str(uti)),
+        ],
+        source_file=uti,
+    )
+    dlg = tmp_path / "talk.dlg"
+    dlg_data = {
+        "StructType": "DLG",
+        "StartingList": [{"Index": 0}],
+        "EntryList": [{"Text": {"StrRef": -1, "Value": "Hello."}, "RepliesList": []}],
+        "ReplyList": [],
+    }
+    stub_translation_managers(
+        monkeypatch,
+        batch=({("a.uti", "x:1"): "Хорошо"}, {("a.uti", "x:0")}),
+        dialogs=({}, {("talk.dlg", "talk:entry:0")}),
+    )
 
-    writer.entries.clear()
-    other = tmp_path / "b.uti"
-    stages._log_editor_rows(state, {other: ({}, skipped, ".uti")}, {}, failed)
-    assert writer.entries == []
+    stage_translate(
+        state,
+        {
+            uti: ({}, items, ".uti"),
+            dlg: (dlg_data, DialogExtractor().extract(dlg, dlg_data), ".dlg"),
+        },
+    )
+
+    rows = [
+        (row["file"], row["item_id"], row["original"], row["translated"], row["success"])
+        for row in writer.entries
+    ]
+    assert rows == [
+        ("a.uti", "x:0", "Boom", "Boom", False),
+        ("a.uti", "x:1", "Fine", "Хорошо", True),
+        ("talk.dlg", "talk:entry:0", "Hello.", "Hello.", False),
+    ]
+    assert {row["model"] for row in writer.entries} == {"test-model"}
 
 
 def test_ncs_item_id_stable_after_length_changing_patch(tmp_path: Path) -> None:

@@ -20,9 +20,10 @@ Examples::
     python scripts/stage.py translate --extract-dir work/extract --from work --out work \
         --only-ext .ncs
 
-    # Inject saved translations and repack, no LLM calls.
+    # Inject saved translations and repack into work/, no LLM calls. Repacking
+    # needs the original archive for its header.
     python scripts/stage.py inject --extract-dir work/extract --from work
-    python scripts/stage.py repack --extract-dir work/extract --out work
+    python scripts/stage.py repack module.mod --extract-dir work/extract --out work
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from dotenv import load_dotenv
 
-from nwn_translator.config import DEFAULT_MODEL, TranslationConfig
+from nwn_translator.config import DEFAULT_MODEL, TranslationConfig, create_output_path
 from nwn_translator.formats.erf import ERFReader
 from nwn_translator.pipeline import artifacts
 from nwn_translator.pipeline.stages import (
@@ -72,12 +73,15 @@ def _build_state(args: argparse.Namespace) -> PipelineState:
     # stages (unpack/extract/inject/repack) never call it; LLM stages need a
     # real key (via --api-key or NWN_TRANSLATE_API_KEY) and fail at call time.
     api_key = args.api_key or os.getenv("NWN_TRANSLATE_API_KEY") or "offline-placeholder-key"
+    input_file = Path(args.input) if args.input else Path(".")
     config_kwargs: Dict[str, Any] = {
         "api_key": api_key,
         "model": args.model,
         "source_lang": args.source_lang,
         "target_lang": args.target_lang,
-        "input_file": Path(args.input) if args.input else Path("."),
+        "input_file": input_file,
+        # A repacked module goes to the artifact directory, not next to the input.
+        "output_file": create_output_path(input_file, args.target_lang, output_dir=args.out),
         "skip_cleanup": True,  # runner keeps extract_dir between stages
         "player_gender": args.player_gender,
         "reasoning_effort": args.reasoning_effort,
@@ -87,6 +91,12 @@ def _build_state(args: argparse.Namespace) -> PipelineState:
     if args.max_concurrent is not None:
         config_kwargs["max_concurrent_requests"] = max(1, int(args.max_concurrent))
     return PipelineState.create(TranslationConfig(**config_kwargs))
+
+
+def _require_archive(args: argparse.Namespace, command: str) -> None:
+    """Stop unless the input is an archive file; repacking copies its header."""
+    if not args.input or not Path(args.input).is_file():
+        raise SystemExit(f"{command} requires the original archive (.mod/.erf/.hak) as input")
 
 
 def _resolve_extract_dir(
@@ -241,7 +251,8 @@ def cmd_inject(args: argparse.Namespace, state: PipelineState, art_in: Path, art
 
 
 def cmd_repack(args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path) -> None:
-    """Pack the unpacked files into a module."""
+    """Pack the unpacked files into a module in ``--out``."""
+    _require_archive(args, "repack")
     _resolve_extract_dir(args, state, do_extract=False)
     output_path = stage_repack(state)
     logger.info("Repacked module: %s", output_path)
@@ -250,6 +261,7 @@ def cmd_repack(args: argparse.Namespace, state: PipelineState, art_in: Path, art
 
 def cmd_all(args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path) -> None:
     """Run the full chain stage-by-stage, dumping every artifact along the way."""
+    _require_archive(args, "all")
     extract_dir = _resolve_extract_dir(args, state, do_extract=True)
     stage_worldscan(state)
     artifacts.dump_world_context(art_out / "world_context.json", state.world_context)

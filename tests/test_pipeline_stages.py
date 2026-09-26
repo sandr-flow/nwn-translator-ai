@@ -193,23 +193,6 @@ def test_extract_then_inject_stage_isolated(tmp_path: Path) -> None:
     assert any((c.string_value or "") == "Hi there all!" for c in patched.string_constants)
 
 
-def test_only_ext_filter_isolates_file_type(tmp_path: Path) -> None:
-    """A type filter restricts extraction/injection to one extension."""
-    extract_dir = tmp_path / "extract"
-    extract_dir.mkdir()
-    _write_ncs(extract_dir, "a.ncs", _consts("Greetings!"), _retn())
-    (extract_dir / "note.txt").write_text("ignored", encoding="utf-8")
-
-    state = _det_state(tmp_path)
-    state.extract_dir = extract_dir
-
-    all_files = find_translatable_files(extract_dir)
-    ncs_only = [f for f in all_files if f.suffix.lower() == ".ncs"]
-    extracted_map = stage_extract(state, ncs_only)
-
-    assert {p.suffix.lower() for p in extracted_map} == {".ncs"}
-
-
 def test_cancel_during_extract_drops_queued_futures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

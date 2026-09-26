@@ -3,30 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List
+from typing import AsyncIterator, List
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .database import get_db, init_db
+from .. import __version__
+from .database import init_db
 from .routes import router
-from .task_manager import get_task_manager, purge_loop_task_manager
+from .task_manager import get_task_manager
 
 logger = logging.getLogger(__name__)
 
 
 def _parse_cors_origins() -> List[str]:
-    """Parse ``NWN_WEB_CORS_ORIGINS`` env var into a list of allowed origins.
+    """Parse ``NWN_WEB_CORS_ORIGINS`` into a list of allowed origins.
 
     Defaults to an empty list (no cross-origin access) when unset: the SPA is
     served from the same origin as the API — directly or behind nginx — so CORS
-    is not needed. Set the env var to a comma-separated origin list (or ``*``) to
-    opt in explicitly.
+    is not needed. Set the variable to a comma-separated origin list (or ``*``)
+    to opt in explicitly.
 
     Returns:
         List of origin strings.
@@ -40,28 +42,18 @@ def _parse_cors_origins() -> List[str]:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    """FastAPI lifespan context manager.
-
-    Starts a background task that periodically purges expired translation
-    tasks and cancels it on shutdown.
-    """
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Open the database and run the periodic workspace purge while the app lives."""
     init_db()
-    app.state.db = get_db()
-    app.state.task_manager = get_task_manager()
-    purge_task = asyncio.create_task(purge_loop_task_manager(app.state.task_manager, 3600))
+    purge_task = asyncio.create_task(get_task_manager().purge_periodically())
     yield
     purge_task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await purge_task
-    except asyncio.CancelledError:
-        pass
 
 
 def create_app() -> FastAPI:
-    """Build FastAPI app with API routes and optional static SPA."""
-    from nwn_translator import __version__
-
+    """Build the FastAPI app: API routes, CORS, and the SPA from ``NWN_WEB_STATIC_DIR``."""
     app = FastAPI(
         title="NWN Modules Translator",
         description="Веб-API перевода модулей Neverwinter Nights",

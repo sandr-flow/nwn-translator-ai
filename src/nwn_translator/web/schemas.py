@@ -1,4 +1,4 @@
-"""Pydantic schemas for the web API."""
+"""Pydantic request and response models of the web API."""
 
 from typing import Any, Dict, List, Literal, Optional
 
@@ -12,7 +12,7 @@ class TranslateResponse(BaseModel):
 
 
 class TaskStatusResponse(BaseModel):
-    """JSON snapshot of task state (polling / initial load)."""
+    """Snapshot of a task's state, polled by the UI."""
 
     task_id: str
     status: str
@@ -26,7 +26,7 @@ class TaskStatusResponse(BaseModel):
 
 
 class TestConnectionRequest(BaseModel):
-    """Body for OpenRouter connectivity check."""
+    """Body of the provider connectivity check (OpenRouter or POLZA.AI, by key)."""
 
     api_key: str = Field(..., min_length=1)
     model: Optional[str] = None
@@ -35,7 +35,7 @@ class TestConnectionRequest(BaseModel):
 
 
 class TestConnectionResponse(BaseModel):
-    """Result of connectivity check."""
+    """Result of the connectivity check."""
 
     ok: bool
     translated: Optional[str] = None
@@ -88,61 +88,66 @@ class ModelLookupResponse(BaseModel):
     reasoning: ModelReasoningInfo
 
 
-class ErrorResponse(BaseModel):
-    """Generic error payload."""
-
-    detail: str
-
-
 class DialogSpeaker(BaseModel):
-    """Who speaks a dialog line."""
+    """Who speaks a dialog line.
 
-    #: ``npc`` (a creature, placeable or door), ``player`` (a reply) or
-    #: ``owner_unknown`` (the dialog owner, when no scanned object uses this dialog).
+    Attributes:
+        kind: ``npc`` (a creature, placeable or door), ``player`` (a reply) or
+            ``owner_unknown`` (the dialog owner, when no scanned object uses
+            this dialog).
+        name: Object name; several are joined with " / " (up to three, then "+N").
+        tag: Object tag, joined like ``name``.
+    """
+
     kind: Literal["npc", "player", "owner_unknown"]
-    #: Object name; several are joined with " / " (up to three, then "+N").
     name: str = ""
-    #: Object tag, joined like ``name``.
     tag: str = ""
 
 
 class TranslationItem(BaseModel):
-    """A single original/translated pair."""
+    """One editor row: an original with its translation.
+
+    Attributes:
+        original: Source text.
+        translated: Current translation.
+        item_id: Stable per-file identifier used to address this item on rebuild.
+        duplicate_item_ids: Other items the row stands for.
+        failed: The model was asked to translate the line and its answer was rejected.
+        shared_with: Other files containing the same original.
+        speaker: Speaker of a ``.dlg`` line; ``None`` for other files.
+    """
 
     original: str
     translated: str
-    #: Stable per-file identifier used to address this item on rebuild.
     item_id: str = ""
     duplicate_item_ids: List[str] = Field(
         default_factory=list,
         description="Other items of this file with the same original and translation; "
         "an edit of this row applies to them too",
     )
-    #: True when the model was asked to translate this line and the result was rejected.
     failed: bool = False
     shared_with: List[str] = Field(
         default_factory=list,
         description="Other filenames containing the same original text",
     )
-    #: Speaker of a ``.dlg`` line; ``None`` for other files.
     speaker: Optional[DialogSpeaker] = None
 
 
 class TranslationFileGroup(BaseModel):
-    """Translations grouped by source file."""
+    """Editor rows of one source file."""
 
     filename: str
     items: List[TranslationItem]
 
 
 class TranslationsResponse(BaseModel):
-    """Structured translation data for the editor."""
+    """Editor rows of a task, grouped by source file."""
 
     files: List[TranslationFileGroup]
 
 
 class RebuildEdit(BaseModel):
-    """A single edited translation addressed by source file + item_id."""
+    """One edited translation, addressed by source file and ``item_id``."""
 
     file: str
     item_id: str
@@ -150,19 +155,23 @@ class RebuildEdit(BaseModel):
 
 
 class RebuildRequest(BaseModel):
-    """Request to rebuild .mod with edited translations.
+    """Request to rebuild the module with edited translations.
 
     Edits are addressed by ``(file, item_id)`` so two identical originals in
     different files (or different dialog nodes) can be edited independently.
+
+    Attributes:
+        edits: Edited translations.
+        target_lang: Language used for the translation (drives the GFF/NCS
+            string encoding); the task's language when omitted.
     """
 
     edits: List[RebuildEdit] = Field(default_factory=list)
-    #: Must match the language used for translation (drives GFF/NCS encoding).
     target_lang: Optional[str] = None
 
 
 class RebuildResponse(BaseModel):
-    """Response after rebuild completes."""
+    """Response after a rebuild completes."""
 
     result_filename: str
 
@@ -182,13 +191,18 @@ class TaskHistoryItem(BaseModel):
 
 
 class TaskHistoryResponse(BaseModel):
-    """List of tasks for a client token."""
+    """Tasks of one client token, newest first."""
 
     items: List[TaskHistoryItem]
 
 
 class ConfigResponse(BaseModel):
-    """Server-side defaults for the UI (API key from env, default model)."""
+    """Server-side defaults for the UI.
+
+    Attributes:
+        api_key: The server's ``.env`` key, only in local mode.
+        default_model: Model used when the client picks none.
+    """
 
     api_key: Optional[str] = None
     default_model: str

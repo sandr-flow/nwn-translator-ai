@@ -305,9 +305,10 @@ def decode_stats(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     if not raw:
         return None
     try:
-        return json.loads(raw)
+        stats: Dict[str, Any] = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return None
+    return stats
 
 
 def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

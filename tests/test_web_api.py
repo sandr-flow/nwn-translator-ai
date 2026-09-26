@@ -38,7 +38,7 @@ def client(task_workspace: Path, monkeypatch: pytest.MonkeyPatch):
         return out
 
     monkeypatch.setattr(
-        "nwn_translator.web.task_manager.ModuleTranslator.translate",
+        "nwn_translator.main.ModuleTranslator.translate",
         fake_translate,
     )
 
@@ -69,7 +69,7 @@ def test_health_counts_running_job_until_it_finishes(
         return out
 
     monkeypatch.setattr(
-        "nwn_translator.web.task_manager.ModuleTranslator.translate",
+        "nwn_translator.main.ModuleTranslator.translate",
         blocking_translate,
     )
 
@@ -254,9 +254,7 @@ def test_texts_translated_counts_every_editor_row(
         out.write_bytes(b"MOD")
         return out
 
-    monkeypatch.setattr(
-        "nwn_translator.web.task_manager.ModuleTranslator.translate", translate_with_rows
-    )
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", translate_with_rows)
     files = {"file": ("rows.mod", b"\x04" * 200, "application/octet-stream")}
     r = client.post(
         "/api/translate", files=files, data={"api_key": "sk-x", "target_lang": "english"}
@@ -280,7 +278,7 @@ def test_translate_rate_limit_second_request(
         return out
 
     monkeypatch.setattr(
-        "nwn_translator.web.task_manager.ModuleTranslator.translate",
+        "nwn_translator.main.ModuleTranslator.translate",
         slow_translate,
     )
 

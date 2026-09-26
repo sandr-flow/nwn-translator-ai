@@ -1,24 +1,22 @@
-"""HTTP and SSE routes for the web API."""
+"""HTTP routes of the web API (all under ``/api``).
+
+Handlers validate requests and shape responses; job execution, rebuilds and task
+lifecycle live in :class:`~nwn_translator.web.task_manager.TaskManager`, the
+editor row model in :mod:`~nwn_translator.web.editor`.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+from typing import Iterator, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-
-from ..config import (
-    max_concurrent_from_environment,
-    parse_reasoning_effort,
-    target_lang_supported_for_nwn_injection,
-)
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..ai_providers import (
@@ -34,26 +32,26 @@ from ..ai_providers.openrouter_models import (
     reasoning_payload,
     refresh_catalog,
 )
+from ..config import (
+    max_concurrent_from_environment,
+    parse_reasoning_effort,
+    target_lang_supported_for_nwn_injection,
+)
 from . import editor
-from .deps import web_task_manager
 from .database import (
     compact_stats_for_api,
-    delete_task_row,
-    get_item_translation_map_by_task,
-    get_task_row,
+    decode_stats,
     get_translations_by_task,
     list_tasks_by_token,
-    update_task_row,
-    update_translation_text,
 )
 from .schemas import (
     ConfigResponse,
     DetectProviderRequest,
     DetectProviderResponse,
+    ModelListItem,
     ModelLookupResponse,
     ModelReasoningInfo,
     ModelsResponse,
-    ModelListItem,
     RebuildRequest,
     RebuildResponse,
     TaskHistoryItem,
@@ -64,72 +62,75 @@ from .schemas import (
     TranslateResponse,
     TranslationsResponse,
 )
+from .task_manager import JobParams, TaskManager, TranslationTask, get_task_manager
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api")
+
+#: Largest accepted upload. The bundled nginx enforces the same limit
+#: (``client_max_body_size 50m``) in front of the app.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+_READ_CHUNK = 1024 * 1024
+
+_MODULE_SUFFIXES = (".mod", ".erf", ".hak")
+
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+_IP_BUSY_DETAIL = "Уже выполняется перевод с вашего IP. Дождитесь завершения."
+
+#: Why a language is refused: NWN stores strings in a single-byte Windows code page.
+_UNSUPPORTED_LANG_DETAIL = (
+    "Недоступно для модулей NWN: строки записываются в однобайтовую кодировку Windows "
+    "(зависит от языка); китайский, японский, корейский и турецкий в игре не отображаются. "
+    "Выберите другой язык."
+)
 
 #: Friendly labels for the providers exposed to the UI.
 _PROVIDER_LABELS: dict[str, str] = {
     OpenRouterProvider.PROVIDER_NAME: OpenRouterProvider.PROVIDER_LABEL,
     PolzaProvider.PROVIDER_NAME: PolzaProvider.PROVIDER_LABEL,
 }
-from .task_manager import MAX_UPLOAD_BYTES, TaskManager, TranslationTask
 
-logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api")
-
-_READ_CHUNK = 1024 * 1024
+def upload_too_large(max_bytes: int) -> HTTPException:
+    """Return the 413 error for an upload over *max_bytes*."""
+    return HTTPException(
+        status_code=413,
+        detail=f"Файл слишком большой (максимум {max_bytes // (1024 * 1024)} МБ)",
+    )
 
 
 async def _stream_upload_to_file(upload: UploadFile, dest: Path, max_bytes: int) -> None:
-    """Write upload body to *dest* in chunks; enforce *max_bytes* total size."""
+    """Copy the upload to *dest* in chunks; a partial file is removed on failure.
+
+    Raises:
+        HTTPException: 413 when the upload exceeds *max_bytes*.
+    """
     total = 0
     try:
         with dest.open("wb") as out:
-            while True:
-                chunk = await upload.read(_READ_CHUNK)
-                if not chunk:
-                    break
+            while chunk := await upload.read(_READ_CHUNK):
                 total += len(chunk)
                 if total > max_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"Файл слишком большой (максимум {max_bytes // (1024 * 1024)} МБ)",
-                    )
+                    raise upload_too_large(max_bytes)
                 out.write(chunk)
-    except HTTPException:
-        if dest.exists():
-            try:
-                dest.unlink()
-            except OSError:
-                pass
+    except BaseException:
+        with contextlib.suppress(OSError):
+            dest.unlink(missing_ok=True)
         raise
-    except Exception:
-        if dest.exists():
-            try:
-                dest.unlink()
-            except OSError:
-                pass
-        raise
-
-
-@router.get("/health")
-async def health(tm: TaskManager = Depends(web_task_manager)) -> dict:
-    """Liveness check for Docker / балансировщики.
-
-    ``active_tasks`` is the number of unfinished translation jobs; the deploy
-    script polls it and recreates the container only when it reaches zero.
-    """
-    return {"status": "ok", "active_tasks": tm.active_task_count()}
 
 
 def _client_ip(request: Request) -> str:
     """Extract the client IP address from the request.
 
-    Trusts ``X-Forwarded-For`` only when ``NWN_WEB_TRUSTED_PROXIES`` is set
-    (comma-separated list of IPs/CIDRs).  Otherwise uses the direct client
-    address to prevent spoofing.
+    Trusts ``X-Forwarded-For`` only when the direct peer is listed in
+    ``NWN_WEB_TRUSTED_PROXIES`` (comma-separated IPs); otherwise uses the direct
+    client address to prevent spoofing.
 
     Args:
-        request: Incoming FastAPI/Starlette request.
+        request: Incoming request.
 
     Returns:
         Client IP string, or ``"unknown"`` if not determinable.
@@ -148,7 +149,7 @@ def _client_ip(request: Request) -> str:
 
 
 def _client_token(request: Request) -> str:
-    """Extract the anonymous client token from ``X-Client-Token`` header.
+    """Return the anonymous client token from the ``X-Client-Token`` header.
 
     Falls back to the ``client_token`` query parameter because plain browser
     navigations (download links) cannot send custom headers.
@@ -159,10 +160,104 @@ def _client_token(request: Request) -> str:
     return (request.query_params.get("client_token") or "").strip()
 
 
+def _job_from_form(
+    *,
+    api_key: str,
+    target_lang: str,
+    source_lang: str,
+    model: Optional[str],
+    preserve_tokens: bool,
+    use_context: bool,
+    max_concurrent_requests: Optional[int],
+    player_gender: str,
+    reasoning_effort: Optional[str],
+) -> JobParams:
+    """Validate and normalize the job fields of a translate request.
+
+    Args:
+        api_key: Provider API key.
+        target_lang: Target language.
+        source_lang: Source language or ``"auto"``.
+        model: Model slug, if any.
+        preserve_tokens: Protect NWN tokens.
+        use_context: Build world context and glossary.
+        max_concurrent_requests: Parallel requests; the server default when omitted.
+        player_gender: Player gender for grammatical agreement.
+        reasoning_effort: Provider reasoning effort, if any.
+
+    Returns:
+        The job settings.
+
+    Raises:
+        HTTPException: 400 for a language NWN cannot display or an unknown
+            reasoning effort.
+    """
+    target = target_lang.strip()
+    if not target_lang_supported_for_nwn_injection(target):
+        raise HTTPException(status_code=400, detail=f"Целевой язык: {_UNSUPPORTED_LANG_DETAIL}")
+    source = source_lang.strip() or "auto"
+    if source.lower() != "auto" and not target_lang_supported_for_nwn_injection(source):
+        raise HTTPException(status_code=400, detail=f"Исходный язык: {_UNSUPPORTED_LANG_DETAIL}")
+    try:
+        effort = parse_reasoning_effort(reasoning_effort)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return JobParams(
+        api_key=api_key.strip(),
+        target_lang=target,
+        source_lang=source,
+        model=model.strip() if model else None,
+        preserve_tokens=preserve_tokens,
+        use_context=use_context,
+        max_concurrent_requests=(
+            max(1, max_concurrent_requests)
+            if max_concurrent_requests is not None
+            else max_concurrent_from_environment()
+        ),
+        player_gender=player_gender.strip() or "male",
+        reasoning_effort=effort,
+    )
+
+
+def require_task_owner(
+    task_id: str,
+    request: Request,
+    tm: TaskManager = Depends(get_task_manager),
+) -> TranslationTask:
+    """Resolve the path's task and enforce that the caller owns it.
+
+    When the task has an owner (non-empty ``client_token``), the request's token
+    must match it. Tasks without an owner stay accessible.
+
+    Raises:
+        HTTPException: 400 for a malformed task id, 404 if the task does not
+            exist, 403 if the token does not match the owner.
+    """
+    if not _UUID_RE.match(task_id):
+        raise HTTPException(status_code=400, detail="Неверный формат task_id")
+    task = tm.find(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    owner = task.client_token.strip()
+    if owner and _client_token(request) != owner:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
+    return task
+
+
+@router.get("/health")
+async def health(tm: TaskManager = Depends(get_task_manager)) -> dict:
+    """Liveness check for Docker and load balancers.
+
+    ``active_tasks`` is the number of unfinished translation jobs; the deploy
+    script polls it and recreates the container only when it reaches zero.
+    """
+    return {"status": "ok", "active_tasks": tm.active_task_count()}
+
+
 @router.post("/translate", response_model=TranslateResponse)
 async def start_translate(
     request: Request,
-    tm: TaskManager = Depends(web_task_manager),
+    tm: TaskManager = Depends(get_task_manager),
     file: UploadFile = File(...),
     api_key: str = Form(...),
     target_lang: str = Form(...),
@@ -174,74 +269,50 @@ async def start_translate(
     player_gender: str = Form("male"),
     reasoning_effort: Optional[str] = Form(None),
 ) -> TranslateResponse:
-    """Accept a .mod/.erf/.hak upload and start translation in the background."""
-    ip = _client_ip(request)
-    active = tm.active_task_id_for_ip(ip)
-    if active:
-        raise HTTPException(
-            status_code=429,
-            detail="Уже выполняется перевод с вашего IP. Дождитесь завершения.",
-        )
+    """Accept a .mod/.erf/.hak upload and start translating it in the background.
 
+    Raises:
+        HTTPException: 429 while the client IP has a running job, 400 for an
+            invalid file name or job field, 413 for an oversized upload.
+    """
+    ip = _client_ip(request)
+    if tm.active_task_id_for_ip(ip):
+        raise HTTPException(status_code=429, detail=_IP_BUSY_DETAIL)
     if not file.filename:
         raise HTTPException(status_code=400, detail="Имя файла не указано")
-
-    suffix = Path(file.filename).suffix.lower()
-    if suffix not in (".mod", ".erf", ".hak"):
-        raise HTTPException(
-            status_code=400,
-            detail="Допустимы только файлы .mod, .erf или .hak",
-        )
-
-    _cp1251_lang_error = (
-        "Недоступно для модулей NWN: строки записываются в однобайтовую кодировку Windows "
-        "(зависит от языка); китайский, японский, корейский и турецкий в игре не отображаются. "
-        "Выберите другой язык."
+    if Path(file.filename).suffix.lower() not in _MODULE_SUFFIXES:
+        raise HTTPException(status_code=400, detail="Допустимы только файлы .mod, .erf или .hak")
+    job = _job_from_form(
+        api_key=api_key,
+        target_lang=target_lang,
+        source_lang=source_lang,
+        model=model,
+        preserve_tokens=preserve_tokens,
+        use_context=use_context,
+        max_concurrent_requests=max_concurrent_requests,
+        player_gender=player_gender,
+        reasoning_effort=reasoning_effort,
     )
-    tl_norm = target_lang.strip()
-    if not target_lang_supported_for_nwn_injection(tl_norm):
-        raise HTTPException(status_code=400, detail=f"Целевой язык: {_cp1251_lang_error}")
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        with contextlib.suppress(ValueError):
+            if int(content_length) > MAX_UPLOAD_BYTES:
+                raise upload_too_large(MAX_UPLOAD_BYTES)
 
-    sl_norm = (source_lang or "").strip() or "auto"
-    if sl_norm.lower() != "auto" and not target_lang_supported_for_nwn_injection(sl_norm):
-        raise HTTPException(status_code=400, detail=f"Исходный язык: {_cp1251_lang_error}")
-
-    try:
-        reasoning_effort_norm = parse_reasoning_effort(reasoning_effort)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-    cl = request.headers.get("content-length")
-    if cl is not None:
-        try:
-            if int(cl) > MAX_UPLOAD_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"Файл слишком большой (максимум {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ)",
-                )
-        except ValueError:
-            pass
-
-    token = _client_token(request)
-    model_slug = model.strip() if model else None
     task = tm.create_task(
         ip,
         file.filename,
-        client_token=token,
-        target_lang=target_lang.strip(),
-        source_lang=source_lang.strip() or "auto",
-        model=model_slug,
+        client_token=_client_token(request),
+        target_lang=job.target_lang,
+        source_lang=job.source_lang,
+        model=job.model,
     )
     # Claim the one-job-per-IP slot atomically before the (slow) upload; the
     # check at the top of the handler is only a fast path and is racy on its own.
     if not tm.try_register_active(ip, task.task_id):
         tm.discard_task(task.task_id)
-        raise HTTPException(
-            status_code=429,
-            detail="Уже выполняется перевод с вашего IP. Дождитесь завершения.",
-        )
-    base = tm.workspace_for_task(task.task_id)
-    input_path = base / Path(file.filename).name
+        raise HTTPException(status_code=429, detail=_IP_BUSY_DETAIL)
+    input_path = tm.workspace_for_task(task.task_id) / Path(file.filename).name
     try:
         await _stream_upload_to_file(file, input_path, MAX_UPLOAD_BYTES)
     except BaseException:
@@ -249,119 +320,25 @@ async def start_translate(
         tm.discard_task(task.task_id)
         raise
 
-    mc = (
-        max(1, int(max_concurrent_requests))
-        if max_concurrent_requests is not None
-        else max_concurrent_from_environment()
-    )
-
-    async def run_job() -> None:
-        await asyncio.to_thread(
-            tm.run_translation_in_thread,
-            task,
-            api_key=api_key.strip(),
-            target_lang=target_lang.strip(),
-            source_lang=source_lang.strip() or "auto",
-            model=model_slug,
-            preserve_tokens=preserve_tokens,
-            use_context=use_context,
-            max_concurrent_requests=mc,
-            player_gender=player_gender.strip() or "male",
-            reasoning_effort=reasoning_effort_norm,
-            input_path=input_path,
-        )
-
-    asyncio.create_task(run_job())
+    asyncio.create_task(asyncio.to_thread(tm.run_job, task, job, input_path))
     return TranslateResponse(task_id=task.task_id)
-
-
-def _task_or_404(task_id: str, tm: TaskManager) -> TranslationTask:
-    """Look up a translation task by ID — first in-memory, then DB.
-
-    For tasks found only in DB (finished, evicted from memory), a minimal
-    ``TranslationTask`` is reconstructed from the stored row.
-
-    Raises:
-        HTTPException: 400 if task_id is not a valid UUID.
-        HTTPException: 404 if the task is not found anywhere.
-    """
-    if not _UUID_RE.match(task_id):
-        raise HTTPException(status_code=400, detail="Неверный формат task_id")
-    task = tm.get(task_id)
-    if task:
-        return task
-    # Fallback: reconstruct from DB
-    row = get_task_row(task_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Задача не найдена")
-    task = TranslationTask(
-        task_id=row["task_id"],
-        client_ip=row["client_ip"],
-        client_token=row.get("client_token", ""),
-        created_at=row["created_at"],
-        status=row["status"],
-        input_filename=row.get("input_filename", ""),
-    )
-    if row.get("result_path"):
-        task.result_path = Path(row["result_path"])
-    if row.get("extract_dir"):
-        task.extract_dir = Path(row["extract_dir"])
-    if row.get("input_path"):
-        task.input_path = Path(row["input_path"])
-    task.target_lang = row.get("target_lang")
-    task.source_lang = row.get("source_lang")
-    task.error = row.get("error")
-    if row.get("stats"):
-        try:
-            task.stats = json.loads(row["stats"])
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return task
-
-
-def require_task_owner(
-    task_id: str,
-    request: Request,
-    tm: TaskManager = Depends(web_task_manager),
-) -> TranslationTask:
-    """Resolve a task and enforce that the caller owns it.
-
-    When the task has an owner (non-empty ``client_token``), the request's
-    ``X-Client-Token`` must match it, otherwise access is denied. Tasks without
-    an owner stay accessible (legacy rows / tokenless creation).
-
-    Raises:
-        HTTPException: 400/404 from :func:`_task_or_404`; 403 if the token does
-        not match the task owner.
-    """
-    task = _task_or_404(task_id, tm)
-    owner = (task.client_token or "").strip()
-    if owner and _client_token(request) != owner:
-        raise HTTPException(status_code=403, detail="Нет доступа к этой задаче")
-    return task
 
 
 @router.get("/tasks/{task_id}/status", response_model=TaskStatusResponse)
 async def task_status(
     task: TranslationTask = Depends(require_task_owner),
 ) -> TaskStatusResponse:
-    """Return a JSON snapshot of the current task state."""
-    result_name = task.result_path.name if task.result_path else None
-    target_lang = task.target_lang
-    if not target_lang:
-        row = get_task_row(task.task_id)
-        if row:
-            target_lang = row.get("target_lang")
+    """Return a snapshot of the task state."""
     return TaskStatusResponse(
         task_id=task.task_id,
         status=task.status,
         progress=task.progress,
         current_file=task.current_file,
         phase=task.phase,
-        result_filename=result_name,
+        result_filename=task.result_path.name if task.result_path else None,
         error=task.error,
         stats=compact_stats_for_api(task.stats),
-        target_lang=target_lang,
+        target_lang=task.target_lang,
     )
 
 
@@ -369,7 +346,7 @@ async def task_status(
 async def download_result(
     task: TranslationTask = Depends(require_task_owner),
 ) -> FileResponse:
-    """Download the translated module file for a completed task."""
+    """Download the translated module of a completed task."""
     if task.status != "completed" or not task.result_path or not task.result_path.is_file():
         raise HTTPException(status_code=400, detail="Файл результата ещё не готов")
     return FileResponse(
@@ -383,12 +360,12 @@ async def download_result(
 async def download_log(
     task: TranslationTask = Depends(require_task_owner),
 ) -> StreamingResponse:
-    """Download the translation log as JSONL (generated from SQLite)."""
+    """Download the task's translation rows as JSONL."""
     rows = get_translations_by_task(task.task_id)
     if not rows:
         raise HTTPException(status_code=404, detail="Лог недоступен")
 
-    def generate():
+    def generate() -> Iterator[str]:
         for row in rows:
             yield json.dumps(row, ensure_ascii=False) + "\n"
 
@@ -409,142 +386,82 @@ async def get_translations(
 
 @router.post("/tasks/{task_id}/rebuild", response_model=RebuildResponse)
 async def rebuild_task(
-    task_id: str,
     body: RebuildRequest,
     task: TranslationTask = Depends(require_task_owner),
+    tm: TaskManager = Depends(get_task_manager),
 ) -> RebuildResponse:
-    """Rebuild the .mod file with edited translations (no LLM calls)."""
+    """Rebuild the module with the editor's edits (no provider calls).
+
+    Raises:
+        HTTPException: 400 when the task is not completed or its files are gone,
+            500 when the rebuild fails.
+    """
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="Задача ещё не завершена")
-    if not task.extract_dir or not Path(task.extract_dir).is_dir():
+    if not task.extract_dir or not task.extract_dir.is_dir():
         raise HTTPException(
             status_code=400,
             detail="Извлечённые файлы модуля недоступны (возможно, были очищены)",
         )
-
-    # Build the per-(file, item_id) translation map from SQLite, then apply the
-    # user's edits on top. An edit addresses one (file, item_id) and reaches every
-    # identical line its editor row stands for.
-    translations_by_item_id = get_item_translation_map_by_task(task_id)
-    edited = editor.expand_edits(get_translations_by_task(task_id), body.edits)
-    for (filename, item_id), translated in edited.items():
-        translations_by_item_id.setdefault(filename, {})[item_id] = translated
-
-    extract_dir = Path(task.extract_dir)
-    output_path = task.result_path
-    original_mod_path = task.input_path or output_path
-    if output_path is None or original_mod_path is None:
+    if task.result_path is None:
         raise HTTPException(status_code=400, detail="Task has no result path")
 
+    target_lang = (body.target_lang or "").strip() or task.target_lang
     try:
-        from ..main import rebuild_module
-
-        task_row: Optional[Dict[str, Any]] = get_task_row(task_id)
-        req_tl = (body.target_lang or "").strip() or None
-        rebuild_target_lang = req_tl or task.target_lang or (task_row or {}).get("target_lang")
-
-        await asyncio.to_thread(
-            rebuild_module,
-            extract_dir,
-            translations_by_item_id,
-            output_path,
-            original_mod_path=original_mod_path,
-            target_lang=rebuild_target_lang,
-        )
+        await asyncio.to_thread(tm.rebuild, task, body.edits, target_lang)
     except Exception as e:
         logger.exception("Rebuild failed for task %s", task.task_id)
-        raise HTTPException(status_code=500, detail=f"Ошибка сборки: {e}")
-
-    # Persist the edits so a later editor session reads the current values and a
-    # subsequent no-edit rebuild does not revert them with a stale snapshot.
-    for (filename, item_id), translated in edited.items():
-        update_translation_text(task_id, filename, item_id, translated)
-
-    import time
-
-    update_task_row(task_id, updated_at=time.time())
-    return RebuildResponse(result_filename=output_path.name)
+        raise HTTPException(status_code=500, detail=f"Ошибка сборки: {e}") from e
+    return RebuildResponse(result_filename=task.result_path.name)
 
 
 @router.get("/history", response_model=TaskHistoryResponse)
 async def task_history(request: Request) -> TaskHistoryResponse:
-    """Return translation history for the client identified by ``X-Client-Token``."""
+    """Return the translation history of the client identified by its token."""
     token = _client_token(request)
     if not token:
         return TaskHistoryResponse(items=[])
-    rows = list_tasks_by_token(token)
-    items = []
-    for r in rows:
-        stats = None
-        if r.get("stats"):
-            try:
-                stats = compact_stats_for_api(json.loads(r["stats"]))
-            except (json.JSONDecodeError, TypeError):
-                pass
-        items.append(
+    return TaskHistoryResponse(
+        items=[
             TaskHistoryItem(
-                task_id=r["task_id"],
-                input_filename=r.get("input_filename", ""),
-                status=r["status"],
-                created_at=r["created_at"],
-                target_lang=r.get("target_lang"),
-                source_lang=r.get("source_lang"),
-                model=r.get("model"),
-                updated_at=r.get("updated_at"),
-                stats=stats,
+                task_id=row["task_id"],
+                input_filename=row["input_filename"],
+                status=row["status"],
+                created_at=row["created_at"],
+                target_lang=row["target_lang"],
+                source_lang=row["source_lang"],
+                model=row["model"],
+                updated_at=row["updated_at"],
+                stats=compact_stats_for_api(decode_stats(row["stats"])),
             )
-        )
-    return TaskHistoryResponse(items=items)
+            for row in list_tasks_by_token(token)
+        ]
+    )
 
 
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(
     task: TranslationTask = Depends(require_task_owner),
-    tm: TaskManager = Depends(web_task_manager),
+    tm: TaskManager = Depends(get_task_manager),
 ) -> dict:
-    """Signal a running task to stop at the next safe checkpoint.
+    """Stop a running task at its next checkpoint and free the client's slot.
 
-    Progress is lost — already-paid-for in-flight API calls finish but their
-    results are discarded. Only the owning client can cancel.
-
-    The one-job-per-IP slot is released immediately: the worker may keep
-    running until its next cancellation checkpoint (a hung provider call can
-    take minutes to time out), and the user must not stay locked out of
-    starting a new translation for that long.
+    Progress is lost: in-flight provider calls finish, but their results are
+    discarded.
     """
     if task.is_finished():
         return {"ok": True, "status": task.status}
-
-    task.request_cancel()
-    # Persist ``cancelling`` immediately so history/resume do not keep showing
-    # a live ``translating`` job while the worker waits on an in-flight LLM call.
-    # Not a terminal status — the worker still owns the eventual cancelled/failed.
-    task.status = "cancelling"
-    update_task_row(task.task_id, status="cancelling")
-    tm.release_active(task.client_ip, task.task_id)
+    tm.cancel(task)
     return {"ok": True, "status": "cancelling"}
 
 
 @router.delete("/tasks/{task_id}")
 async def delete_task(
-    task_id: str,
-    tm: TaskManager = Depends(web_task_manager),
-    _owner: TranslationTask = Depends(require_task_owner),
+    task: TranslationTask = Depends(require_task_owner),
+    tm: TaskManager = Depends(get_task_manager),
 ) -> dict:
-    """Delete a task from history. Only the owning client can delete."""
-    # Remove workspace from disk
-    workspace = tm.workspace_root / task_id
-    if workspace.is_dir():
-        import shutil
-
-        shutil.rmtree(workspace, ignore_errors=True)
-
-    # Remove from in-memory store
-    with tm._lock:
-        tm._tasks.pop(task_id, None)
-
-    # Delete from DB (CASCADE removes translations)
-    delete_task_row(task_id)
+    """Delete a task from history."""
+    tm.delete(task.task_id)
     return {"ok": True}
 
 
@@ -581,29 +498,25 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
 
 @router.post("/detect-provider", response_model=DetectProviderResponse)
 async def detect_provider(body: DetectProviderRequest) -> DetectProviderResponse:
-    """Infer the active provider from an API key prefix (no network calls)."""
+    """Infer the provider from an API key prefix (no network calls)."""
     name = detect_provider_from_key(body.api_key)
-    label = _PROVIDER_LABELS.get(name, "")
-    return DetectProviderResponse(provider=name, label=label)
+    return DetectProviderResponse(provider=name, label=_PROVIDER_LABELS.get(name, ""))
 
 
 @router.get("/models", response_model=ModelsResponse)
 async def list_models() -> ModelsResponse:
-    """Return the curated pool with per-model OpenRouter reasoning options."""
+    """Return the curated model pool with per-model OpenRouter reasoning options."""
     catalog = await asyncio.to_thread(refresh_catalog)
-    items: list[ModelListItem] = []
-    for slug in OpenRouterProvider.POPULAR_MODELS:
-        info = catalog.get(slug) or OPENROUTER_REASONING_FALLBACK.get(slug)
-        items.append(
-            ModelListItem(
-                id=slug,
-                reasoning=ModelReasoningInfo(**reasoning_payload(info)),
-            )
+    items = [
+        ModelListItem(
+            id=slug,
+            reasoning=ModelReasoningInfo(
+                **reasoning_payload(catalog.get(slug) or OPENROUTER_REASONING_FALLBACK.get(slug))
+            ),
         )
-    return ModelsResponse(
-        default_model=OpenRouterProvider.DEFAULT_MODEL,
-        models=items,
-    )
+        for slug in OpenRouterProvider.POPULAR_MODELS
+    ]
+    return ModelsResponse(default_model=OpenRouterProvider.DEFAULT_MODEL, models=items)
 
 
 @router.get("/models/lookup", response_model=ModelLookupResponse)
@@ -622,17 +535,13 @@ async def lookup_model(slug: str = Query(..., min_length=1, max_length=200)) -> 
 
 @router.get("/config", response_model=ConfigResponse)
 async def get_config() -> ConfigResponse:
-    """Return server-side defaults for the UI: default model and, only on a local
-    run, the server's ``.env`` API key for autofill.
+    """Return server-side UI defaults: the default model and, locally, the ``.env`` key.
 
     The key is exposed solely in local mode (the process bound to loopback by
-    ``python -m nwn_translator.web``). A deployed/exposed instance never hands it
-    out — this is a BYOK product, so remote users supply their own key.
+    ``python -m nwn_translator.web``). A deployed instance never hands it out:
+    this is a BYOK product, so remote users supply their own key.
     """
     api_key = None
     if os.environ.get("NWN_WEB_LOCAL_MODE") == "1":
         api_key = os.environ.get("NWN_TRANSLATE_API_KEY", "").strip() or None
-    return ConfigResponse(
-        api_key=api_key,
-        default_model=OpenRouterProvider.DEFAULT_MODEL,
-    )
+    return ConfigResponse(api_key=api_key, default_model=OpenRouterProvider.DEFAULT_MODEL)

@@ -23,6 +23,11 @@ def _enable_local_mode_if_loopback(host: str) -> bool:
 
 
 def main() -> None:
+    """Load ``.env`` and serve the app with uvicorn.
+
+    ``NWN_WEB_HOST`` (default ``127.0.0.1``), ``NWN_WEB_PORT`` (``8000``) and
+    ``NWN_WEB_RELOAD`` configure the server.
+    """
     load_dotenv()
     try:
         import uvicorn

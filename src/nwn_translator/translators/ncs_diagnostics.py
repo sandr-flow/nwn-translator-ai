@@ -109,3 +109,28 @@ class NcsDiagnostics:
             sample["error"] = error
         add_sample(self.block, sample, count_field)
         write_trace(self._log_writer, {"event": "ncs_diagnostic", **sample})
+
+    def timeout(self, item: TranslatableItem) -> None:
+        """Record that the request of a script string timed out and will be retried.
+
+        Args:
+            item: The script string.
+        """
+        self.record(item, reason="translation_timeout", count_field="timeout")
+
+    def retry_outcome(
+        self, item: TranslatableItem, success: bool, error: Optional[str] = None
+    ) -> None:
+        """Record whether the retry after a :meth:`timeout` recovered a script string.
+
+        Args:
+            item: The script string.
+            success: The retry produced an answer.
+            error: Error of a failed retry.
+        """
+        if success:
+            self.record(
+                item, reason="translation_timeout_retry_recovered", count_field="retry_recovered"
+            )
+        else:
+            self.record(item, reason="translation_timeout_retry_failed", error=error)

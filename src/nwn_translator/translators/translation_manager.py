@@ -330,23 +330,11 @@ class TranslationManager:
         """
         for w in failed:
             if w.key in timed_out:
-                self._diagnostics.record(
-                    w.item, reason="translation_timeout", count_field="timeout"
-                )
+                self._diagnostics.timeout(w.item)
         results = caller.run_fallback_pass(failed, scripts=True)
         for w, result in zip(failed, results):
-            if w.key not in timed_out:
-                continue
-            if result.success:
-                self._diagnostics.record(
-                    w.item,
-                    reason="translation_timeout_retry_recovered",
-                    count_field="retry_recovered",
-                )
-            else:
-                self._diagnostics.record(
-                    w.item, reason="translation_timeout_retry_failed", error=result.error
-                )
+            if w.key in timed_out:
+                self._diagnostics.retry_outcome(w.item, result.success, result.error)
         return results
 
     def _process(

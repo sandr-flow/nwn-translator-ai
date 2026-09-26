@@ -68,3 +68,21 @@ def test_log_failure_does_not_lose_the_sample():
     diagnostics.record(_item(1), reason="gate_rejected:no")
     assert diagnostics.block["samples"][0]["reason"] == "gate_rejected:no"
     assert "error" not in diagnostics.block["samples"][0]
+
+
+def test_timeout_and_retry_outcomes_are_counted_samples():
+    diagnostics = NcsDiagnostics(new_ncs_diagnostics(), _Writer())
+
+    diagnostics.timeout(_item(1))
+    diagnostics.retry_outcome(_item(1), True)
+    diagnostics.timeout(_item(2))
+    diagnostics.retry_outcome(_item(2), False, "late")
+
+    block = diagnostics.block
+    assert [(s["item_id"], s["reason"], s.get("error")) for s in block["samples"]] == [
+        ("s:1", "translation_timeout", None),
+        ("s:1", "translation_timeout_retry_recovered", None),
+        ("s:2", "translation_timeout", None),
+        ("s:2", "translation_timeout_retry_failed", "late"),
+    ]
+    assert (block["timeout"], block["retry_recovered"], block["failed"]) == (2, 1, 0)

@@ -278,23 +278,20 @@ class ModelCaller:
             if result.success:
                 logger.info("Timeout retry recovered translation for '%s…'", work.sanitized[:40])
             return result
-        self.diagnostics.record(work.item, reason="translation_timeout", count_field="timeout")
+        self.diagnostics.timeout(work.item)
         try:
             result = await self._ask(work, self.ncs_fallback_request(work))
         except asyncio.TimeoutError:
-            error = f"Timeout after {timeout}s"
+            result = self._failed(work, f"Timeout after {timeout}s")
         except Exception as exc:
-            error = str(exc)
+            result = self._failed(work, str(exc))
         else:
-            if result.success:
-                self.diagnostics.record(
-                    work.item,
-                    reason="translation_timeout_retry_recovered",
-                    count_field="retry_recovered",
-                )
-            return result
-        self.diagnostics.record(work.item, reason="translation_timeout_retry_failed", error=error)
-        return self._failed(work, error)
+            if not result.success:
+                # Only an error or a timeout is a failed retry here; the fallback
+                # pass of failed batches also counts an unsuccessful answer.
+                return result
+        self.diagnostics.retry_outcome(work.item, result.success, result.error)
+        return result
 
     async def translate_ncs_fallback(
         self, sem: asyncio.Semaphore, work: WorkItem

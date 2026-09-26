@@ -182,20 +182,18 @@ def dump_candidates(path: Path, registry: Optional[EntityCandidateRegistry]) -> 
 def load_candidates(path: Path) -> EntityCandidateRegistry:
     """Reconstruct an :class:`EntityCandidateRegistry` from ``candidates.json``.
 
-    Restores exact curated fields (decision/priority/score), which the public
-    ``add``/``extend`` API would recompute, so it assigns into the registry's
-    backing store directly.
+    The curated fields (decision, priority, score) are restored exactly, not
+    recomputed from the evidence.
     """
     registry = EntityCandidateRegistry()
-    for row in _read_json(path):
-        evidence = [EntityEvidence(**ev) for ev in row.get("evidence", [])]
-        candidate = EntityCandidate(
+    registry.restore(
+        EntityCandidate(
             name=row["name"],
             normalized_name=row["normalized_name"],
             category=row.get("category", "unknown"),
             frequency=row.get("frequency", 0),
             contexts=list(row.get("contexts", [])),
-            evidence=evidence,
+            evidence=[EntityEvidence(**ev) for ev in row.get("evidence", [])],
             is_speaker_or_dialog_actor=row.get("is_speaker_or_dialog_actor", False),
             technical_score=row.get("technical_score", 0),
             priority=row.get("priority", 0),
@@ -203,7 +201,8 @@ def load_candidates(path: Path) -> EntityCandidateRegistry:
             curation_reason=row.get("curation_reason", ""),
             alias_of=row.get("alias_of"),
         )
-        registry._items[candidate.normalized_name] = candidate
+        for row in _read_json(path)
+    )
     return registry
 
 

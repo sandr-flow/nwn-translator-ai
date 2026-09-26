@@ -1,9 +1,14 @@
-"""Evidence-backed entity candidates for glossary and prompt context."""
+"""Evidence-backed entity candidates for the glossary and prompt context.
+
+Every source that sees a name (the world scan, extracted fields, dialog
+speakers, entity extraction) adds an evidence record; the registry merges them
+per normalized name. Curation then decides which candidates seed the glossary.
+"""
 
 from __future__ import annotations
 
-import re
 import logging
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,8 +17,12 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from ..extractors.base import ExtractedContent, TranslatableItem
 from .string_filters import classify_entity_candidate
 
+logger = logging.getLogger(__name__)
+
 _SPACE_RE = re.compile(r"\s+")
 
+#: Candidate priority by evidence source; the highest one seen is kept. Only the
+#: ``candidates.json`` artifact shows it, no decision reads it.
 SOURCE_PRIORITY = {
     "dlg_speaker": 95,
     "utc_name": 90,
@@ -24,6 +33,7 @@ SOURCE_PRIORITY = {
     "entity_extractor": 60,
 }
 
+#: Extracted item type -> ``(category, evidence source, field label)``.
 TYPE_TO_CANDIDATE: Dict[str, Tuple[str, str, str]] = {
     "creature_first_name": ("character", "git_instance", "FirstName"),
     "creature_last_name": ("character", "git_instance", "LastName"),
@@ -40,7 +50,7 @@ TYPE_TO_CANDIDATE: Dict[str, Tuple[str, str, str]] = {
 
 
 def normalize_entity_name(name: object) -> str:
-    """Return a stable casefolded entity key."""
+    """Return the registry key of *name*: NFKC, collapsed whitespace, casefolded."""
     text = unicodedata.normalize("NFKC", "" if name is None else str(name))
     text = _SPACE_RE.sub(" ", text).strip().casefold()
     return text
@@ -48,7 +58,16 @@ def normalize_entity_name(name: object) -> str:
 
 @dataclass
 class EntityEvidence:
-    """One source observation supporting an entity candidate."""
+    """One source observation supporting an entity candidate.
+
+    Attributes:
+        source: Evidence source label (a :data:`SOURCE_PRIORITY` key).
+        resource: File name the observation comes from.
+        field: GFF field or item field label.
+        category: Category the source suggests.
+        context: Text around the name.
+        is_speaker_or_dialog_actor: The name speaks or owns a dialog.
+    """
 
     source: str
     resource: str = ""
@@ -60,7 +79,22 @@ class EntityEvidence:
 
 @dataclass
 class EntityCandidate:
-    """A possible named entity backed by one or more evidence records."""
+    """A possible named entity backed by one or more evidence records.
+
+    Attributes:
+        name: Display form (first seen, whitespace collapsed).
+        normalized_name: Registry key (:func:`normalize_entity_name`).
+        category: First specific category any evidence suggested.
+        frequency: Number of evidence records.
+        contexts: Up to three distinct context snippets (240 characters each).
+        evidence: All evidence records, in arrival order.
+        is_speaker_or_dialog_actor: Any evidence marks the name as speaking.
+        technical_score: Score of the deterministic filter (artifact only).
+        priority: Highest source priority seen, or a curator's higher value.
+        curation_decision: ``keep``, ``local_only``, ``drop`` or ``alias_of``.
+        curation_reason: Short reason tag of the decision.
+        alias_of: Source form of the entity this name is an alias of.
+    """
 
     name: str
     normalized_name: str
@@ -92,12 +126,12 @@ class EntityCandidate:
 
     @property
     def sources(self) -> List[str]:
-        """Return unique evidence source labels."""
+        """Sorted unique evidence source labels."""
         return sorted({ev.source for ev in self.evidence})
 
     @property
     def resources(self) -> List[str]:
-        """Return unique resource labels."""
+        """Sorted unique non-empty resource labels."""
         return sorted({ev.resource for ev in self.evidence if ev.resource})
 
     @property
@@ -105,20 +139,11 @@ class EntityCandidate:
         """Whether this candidate may seed the run-wide glossary."""
         if self.curation_decision in {"drop", "local_only"}:
             return False
-        filter_result = classify_entity_candidate(
-            self.name,
-            self.category,
-            source=",".join(self.sources),
-        )
-        return filter_result.decision != "drop"
+        return classify_entity_candidate(self.name, self.category).decision != "drop"
 
     def to_curator_record(self) -> Dict[str, object]:
-        """Return the compact JSON-serializable record sent to the curator."""
-        filter_result = classify_entity_candidate(
-            self.name,
-            self.category,
-            source=",".join(self.sources),
-        )
+        """Return the JSON record the curator sees for this candidate."""
+        filter_result = classify_entity_candidate(self.name, self.category)
         return {
             "name": self.name,
             "category": self.category,
@@ -149,16 +174,29 @@ class EntityCandidateRegistry:
         field: str = "",
         context: str = "",
         is_speaker_or_dialog_actor: bool = False,
-    ) -> Optional[EntityCandidate]:
-        """Add evidence for *name* and return the candidate."""
+    ) -> None:
+        """Add one evidence record for *name*, creating its candidate on first sight.
+
+        A new candidate starts with the deterministic filter's score and a
+        ``drop`` decision when the filter drops the name. Blank names are ignored.
+
+        Args:
+            name: Observed name.
+            category: Category the source suggests.
+            source: Evidence source label.
+            resource: File name of the observation.
+            field: Field label of the observation.
+            context: Text around the name.
+            is_speaker_or_dialog_actor: The name speaks or owns a dialog.
+        """
         clean = _SPACE_RE.sub(" ", "" if name is None else str(name)).strip()
         normalized = normalize_entity_name(clean)
         if not normalized:
-            return None
+            return
 
         candidate = self._items.get(normalized)
         if candidate is None:
-            filter_result = classify_entity_candidate(clean, category, source=source)
+            filter_result = classify_entity_candidate(clean, category)
             candidate = EntityCandidate(
                 name=clean,
                 normalized_name=normalized,
@@ -178,10 +216,9 @@ class EntityCandidateRegistry:
                 is_speaker_or_dialog_actor=is_speaker_or_dialog_actor,
             )
         )
-        return candidate
 
     def extend(self, candidates: Iterable[EntityCandidate]) -> None:
-        """Merge candidates from another source."""
+        """Replay the evidence of *candidates* (e.g. another registry's values) into this one."""
         for candidate in candidates:
             for evidence in candidate.evidence:
                 self.add(
@@ -194,8 +231,21 @@ class EntityCandidateRegistry:
                     is_speaker_or_dialog_actor=evidence.is_speaker_or_dialog_actor,
                 )
 
+    def restore(self, candidates: Iterable[EntityCandidate]) -> None:
+        """Insert saved candidates as they are, keeping their curated fields.
+
+        Unlike :meth:`extend`, nothing is recomputed: the decision, priority
+        and score of a loaded ``candidates.json`` stay exactly as saved.
+
+        Args:
+            candidates: Candidates keyed by their ``normalized_name``; a later
+                one replaces an earlier one with the same key.
+        """
+        for candidate in candidates:
+            self._items[candidate.normalized_name] = candidate
+
     def values(self) -> List[EntityCandidate]:
-        """Return candidates in deterministic order."""
+        """Return the candidates sorted by normalized name."""
         return [self._items[k] for k in sorted(self._items)]
 
     def mark_curated(
@@ -207,7 +257,15 @@ class EntityCandidateRegistry:
         priority: Optional[int] = None,
         alias_of: Optional[str] = None,
     ) -> None:
-        """Apply a curator decision to an existing candidate."""
+        """Apply a curator decision to an existing candidate.
+
+        Args:
+            name: Candidate name (matched by normalized form); unknown names are ignored.
+            decision: New curation decision.
+            reason: Reason tag.
+            priority: Curator priority; raises the candidate's priority only.
+            alias_of: Alias target; ``None`` clears a previous one.
+        """
         key = normalize_entity_name(name)
         candidate = self._items.get(key)
         if candidate is None:
@@ -219,7 +277,7 @@ class EntityCandidateRegistry:
         candidate.alias_of = alias_of or None
 
     def glossary_pairs(self) -> List[Tuple[str, str]]:
-        """Return ``(name, category)`` pairs eligible for run-wide glossary."""
+        """Return ``(name, category)`` of the candidates eligible for the glossary."""
         out: List[Tuple[str, str]] = []
         for candidate in self.values():
             if candidate.eligible_for_glossary:
@@ -227,7 +285,13 @@ class EntityCandidateRegistry:
         return out
 
     def resolved_aliases(self) -> Dict[str, str]:
-        """Resolve evidenced aliases; reject missing targets, cycles, and dropped roots."""
+        """Resolve alias chains to their root candidate.
+
+        Returns:
+            Eligible alias name -> name of its eligible root; chains with a
+            missing target, a cycle or an ineligible link are dropped with a
+            warning.
+        """
         result: Dict[str, str] = {}
         for candidate in self.values():
             if not candidate.alias_of or not candidate.eligible_for_glossary:
@@ -238,7 +302,7 @@ class EntityCandidateRegistry:
                 key = normalize_entity_name(current.alias_of)
                 target = self._items.get(key)
                 if key in visited or target is None or not target.eligible_for_glossary:
-                    logging.getLogger(__name__).warning(
+                    logger.warning(
                         "Unresolved glossary alias %r -> %r", candidate.name, current.alias_of
                     )
                     break
@@ -252,7 +316,14 @@ class EntityCandidateRegistry:
     def from_extracted_content(
         cls, contents: Iterable[ExtractedContent]
     ) -> "EntityCandidateRegistry":
-        """Build candidates from extracted translatable items and DLG speakers."""
+        """Build candidates from extracted name fields and dialog speakers.
+
+        Args:
+            contents: Extracted content of every resource.
+
+        Returns:
+            A new registry.
+        """
         registry = cls()
         for content in contents:
             resource = Path(content.source_file).name if content.source_file else ""
@@ -266,7 +337,17 @@ def add_item_candidate(
     item: TranslatableItem,
     resource: str,
 ) -> None:
-    """Add candidate evidence derived from a single extracted item."""
+    """Add the evidence one extracted item gives, if any.
+
+    Dialog lines contribute their speaker; name fields listed in
+    :data:`TYPE_TO_CANDIDATE` contribute their text. Everything in a ``.git``
+    resource counts as ``git_instance`` evidence.
+
+    Args:
+        registry: Registry to add to.
+        item: Extracted item.
+        resource: File name of the item's resource.
+    """
     meta = item.metadata or {}
     item_type = str(meta.get("type", ""))
     if item_type in {"entry", "reply"}:
@@ -286,7 +367,7 @@ def add_item_candidate(
     mapped = TYPE_TO_CANDIDATE.get(item_type)
     if mapped is None:
         return
-    category, source, field = mapped
+    category, source, field_label = mapped
     if resource.lower().endswith(".git"):
         source = "git_instance"
     registry.add(
@@ -294,6 +375,6 @@ def add_item_candidate(
         category=category,
         source=source,
         resource=resource,
-        field=str(meta.get("git_field") or field),
+        field=str(meta.get("git_field") or field_label),
         context=item.context or "",
     )

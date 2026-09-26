@@ -6,7 +6,6 @@ AI providers, and injectors.
 
 import asyncio
 import logging
-import re
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -47,7 +46,7 @@ if TYPE_CHECKING:
 from ..ai_providers import TranslationItem, TranslationProvider, TranslationResult
 from ..ai_providers.batch_payload import batch_payload_chars
 from ..extractors.base import ExtractedContent, Occurrence, Translations
-from .token_handler import TokenHandler, sanitize_text
+from .token_handler import has_translatable_content, sanitize_text
 
 
 def _unescape_literal_newlines(original: str, translated: str) -> str:
@@ -61,35 +60,6 @@ def _unescape_literal_newlines(original: str, translated: str) -> str:
     if "\\n" not in translated and "\\r" not in translated:
         return translated
     return translated.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
-
-
-# Placeholders produced by TokenHandler.sanitize() that carry no translatable
-# content and must be stripped before checking if a sanitized string is empty.
-# The core is matched exactly (8-hex nonce + decimal counter, see
-# TokenHandler._make_placeholder): a permissive [A-Za-z0-9_]+ would greedily
-# swallow a single word sandwiched between two placeholders
-# (__NWN_INLINE_x_0__Attack__NWN_INLINE_x_1__) and misclassify it as empty.
-_PLACEHOLDER_CORE = r"(?:NWN_INLINE|NWN_TOKEN)_[0-9a-f]{8}_\d+"
-_NON_TRANSLATABLE_RE = re.compile(
-    rf"__{_PLACEHOLDER_CORE}__"
-    rf"|\[\[{_PLACEHOLDER_CORE}\]\]"
-    rf"|<<\[{_PLACEHOLDER_CORE}\]>>"
-    rf"|<\[{_PLACEHOLDER_CORE}\]>"
-)
-
-
-def _is_empty_after_sanitize(sanitized: str) -> bool:
-    """True when *sanitized* has no letter/digit once placeholders are removed.
-
-    NWN token placeholders (``<<TOKEN_n>>``) and internal NWN-tag helper
-    placeholders are stripped; the remainder is scanned for any Unicode
-    letter or digit.  Whitespace, punctuation, and lone underscores do not
-    count as translatable content.
-    """
-    if not sanitized:
-        return True
-    stripped = _NON_TRANSLATABLE_RE.sub("", sanitized)
-    return not re.search(r"[^\W_]", stripped, flags=re.UNICODE)
 
 
 logger = logging.getLogger(__name__)
@@ -120,7 +90,6 @@ class TranslationManager:
             config.translation_log,
             config.translation_log_writer,
         )
-        self.token_handler = TokenHandler(preserve_standard_tokens=config.preserve_tokens)
 
         # Statistics
         self.stats: Dict[str, Any] = {
@@ -1086,7 +1055,7 @@ class TranslationManager:
         real_items: List[dict] = []
         passthrough_items: List[dict] = []
         for d in uncached_items:
-            if _is_empty_after_sanitize(d["sanitized"]):
+            if not has_translatable_content(d["sanitized"]):
                 passthrough_items.append(d)
             else:
                 real_items.append(d)

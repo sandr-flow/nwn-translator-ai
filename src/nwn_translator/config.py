@@ -345,27 +345,3 @@ def create_output_path(
     suffix = input_path.suffix
     parent = Path(output_dir) if output_dir is not None else input_path.parent
     return parent / f"{stem}{lang_suffix(target_lang)}{suffix}"
-
-
-# Standard NWN tokens that should be preserved (frozenset for O(1) membership)
-STANDARD_TOKENS = frozenset(
-    {
-        "<FirstName>",
-        "<LastName>",
-        "<Class>",
-        "<Race>",
-        "<Gender>",
-        "<HisHer>",
-        "<HeShe>",
-        "<HimHer>",
-        "<BoyGirl>",
-        "<BrotherSister>",
-        "<SirMadam>",
-        "<LadLass>",
-        "<MasterMistress>",
-        "<LordLady>",
-        "<Possessive>",
-        "<Subject>",
-        "<Target>",
-    }
-)

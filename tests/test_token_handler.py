@@ -4,9 +4,7 @@ import re
 
 from src.nwn_translator.translators.token_handler import (
     TokenHandler,
-    TokenValidator,
     normalize_translated_text,
-    restore_text,
     sanitize_text,
 )
 
@@ -21,21 +19,21 @@ class TestTokenHandler:
         handler = TokenHandler()
         result = handler.sanitize("Hello world")
         assert result.sanitized_text == "Hello world"
-        assert len(result.replacements) == 0
-        assert handler.get_token_count() == 0
+        assert result.artifacts == []
+        assert handler.artifacts == []
 
     def test_sanitize_with_first_name_token(self):
         handler = TokenHandler()
         result = handler.sanitize("Hello <FirstName>")
         assert TOKEN_PLACEHOLDER_RE.fullmatch(result.sanitized_text.split()[-1])
-        assert len(result.replacements) == 1
+        assert len(result.artifacts) == 1
         assert result.artifacts[0].kind == "engine_token"
 
     def test_sanitize_with_custom_token(self):
         handler = TokenHandler()
         result = handler.sanitize("Test <CustomToken:123>")
         assert TOKEN_PLACEHOLDER_RE.fullmatch(result.sanitized_text.split()[-1])
-        assert len(result.replacements) == 1
+        assert len(result.artifacts) == 1
         assert result.artifacts[0].original == "<CustomToken:123>"
 
     def test_sanitize_preserves_inline_tags_and_engine_tokens(self):
@@ -57,7 +55,7 @@ class TestTokenHandler:
         assert restored == original
 
     def test_preserve_tokens_disabled_keeps_engine_tokens_but_still_hides_inline_tags(self):
-        handler = TokenHandler(preserve_standard_tokens=False)
+        handler = TokenHandler(preserve_tokens=False)
         result = handler.sanitize("<StartAction>[Wave]</Start> Hello <FirstName>")
         assert "<FirstName>" in result.sanitized_text
         assert len(INLINE_PLACEHOLDER_RE.findall(result.sanitized_text)) == 2
@@ -72,7 +70,7 @@ class TestTokenHandler:
             f"<<[{match[2:-2]}]>>" for match in TOKEN_PLACEHOLDER_RE.findall(sanitized)
         ]
         translated = f"{inline_wrapped[0]}[Машет]{inline_wrapped[1]} Привет {token_wrapped[0]}."
-        restored = restore_text(translated, handler)
+        restored = handler.restore(translated)
         assert restored == "<StartAction>[Машет]</Start> Привет <FirstName>."
 
     def test_double_angle_dialog_action_preserves_markers_but_translates_inner_text(self):
@@ -112,7 +110,7 @@ class TestTokenHandler:
         """
         handler = TokenHandler()
         result = handler.sanitize("-more-")
-        inline_placeholders = [r.placeholder for r in result.replacements]
+        inline_placeholders = [a.placeholder for a in result.artifacts]
         assert len(inline_placeholders) == 2
 
         finalized = handler.finalize_translation(
@@ -125,7 +123,7 @@ class TestTokenHandler:
     def test_dash_dialog_action_validates_multiword_cyrillic_inner(self):
         handler = TokenHandler()
         result = handler.sanitize("-give him the letter-")
-        inline_placeholders = [r.placeholder for r in result.replacements]
+        inline_placeholders = [a.placeholder for a in result.artifacts]
         assert len(inline_placeholders) == 2
 
         finalized = handler.finalize_translation(
@@ -147,9 +145,9 @@ class TestTokenHandler:
         assert [a.original for a in result.artifacts] == ["-", "<FirstName>", "-"]
 
         token_placeholder = next(
-            r.placeholder for r in result.replacements if r.original == "<FirstName>"
+            a.placeholder for a in result.artifacts if a.original == "<FirstName>"
         )
-        markers = [r.placeholder for r in result.replacements if r.original == "-"]
+        markers = [a.placeholder for a in result.artifacts if a.original == "-"]
         finalized = handler.finalize_translation(
             f"{markers[0]}смотрит на {token_placeholder}{markers[1]}"
         )
@@ -177,7 +175,7 @@ class TestTokenHandler:
         original = "Yes, yes - take it and go - your job is done pimp !"
         result = handler.sanitize(original)
         assert result.sanitized_text == original
-        assert len(result.replacements) == 0
+        assert result.artifacts == []
 
     def test_prose_dashes_in_translation_validate_as_exact_match(self):
         handler = TokenHandler()
@@ -197,70 +195,83 @@ class TestTokenHandler:
         ):
             result = handler.sanitize(original)
             assert result.sanitized_text == original, original
-            assert len(result.replacements) == 0, original
+            assert result.artifacts == [], original
 
     def test_dash_action_validation_catches_dropped_nested_token(self):
         """A nested token corrupted by the model fails exact validation."""
         handler = TokenHandler()
         result = handler.sanitize("-glances at <FirstName>-")
-        markers = [r.placeholder for r in result.replacements if r.original == "-"]
+        markers = [a.placeholder for a in result.artifacts if a.original == "-"]
         # Model dropped the engine-token placeholder entirely.
         report = handler.validate_text(handler.restore(f"{markers[0]}смотрит{markers[1]}"))
         assert not report.is_exact_match
-        assert "<FirstName>" in report.missing
+        assert report.mismatch_type == "count_mismatch"
+        assert report.expected_sequence == ["-", "<FirstName>", "-"]
+        assert report.actual_sequence == ["-", "-"]
 
 
-class TestTokenValidator:
-    """Tests for exact preserved-artifact validation."""
+class TestValidation:
+    """Exact preserved-artifact validation of restored answers."""
+
+    @staticmethod
+    def _report(original: str, restored: str):
+        handler = TokenHandler()
+        handler.sanitize(original)
+        return handler.validate_text(restored)
 
     def test_validate_restoration_success(self):
-        original = "<StartCheck>[Persuade]</Start> Hello <FirstName>!"
-        restored = "<StartCheck>[Убеждение]</Start> Привет <FirstName>!"
-        assert TokenValidator.validate_restoration(original, restored)
+        report = self._report(
+            "<StartCheck>[Persuade]</Start> Hello <FirstName>!",
+            "<StartCheck>[Убеждение]</Start> Привет <FirstName>!",
+        )
+        assert report.is_exact_match
+        assert report.mismatch_type == "exact_match"
 
     def test_validate_restoration_fails_on_tag_type_change(self):
-        original = "<StartHighlight>[Shudder.]</Start>"
-        restored = "<StartAction>[Вздрогнуть.]</StartAction>"
-        report = TokenValidator.validate_exact_texts(original, restored)
+        report = self._report(
+            "<StartHighlight>[Shudder.]</Start>", "<StartAction>[Вздрогнуть.]</StartAction>"
+        )
         assert not report.is_exact_match
         assert report.mismatch_type in {"count_mismatch", "value_mismatch"}
         assert report.expected_sequence == ["<StartHighlight>", "</Start>"]
         assert report.actual_sequence == ["<StartAction>", "</StartAction>"]
 
     def test_validate_restoration_fails_on_order_change(self):
-        original = "<FirstName><CustomToken:123>"
-        restored = "<CustomToken:123><FirstName>"
-        report = TokenValidator.validate_exact_texts(original, restored)
+        report = self._report("<FirstName><CustomToken:123>", "<CustomToken:123><FirstName>")
         assert not report.is_exact_match
         assert report.mismatch_type == "order_mismatch"
 
-    def test_find_token_mismatches_reports_missing_and_extra(self):
-        original = "<FirstName><CustomToken:123>"
-        restored = "<FirstName><BadToken>"
-        missing, extra = TokenValidator.find_token_mismatches(original, restored)
-        assert missing == ["<CustomToken:123>"]
-        assert extra == ["<BadToken>"]
+    def test_value_mismatch_reports_both_sequences(self):
+        report = self._report("<FirstName><CustomToken:123>", "<FirstName><BadToken>")
+        assert report.mismatch_type == "value_mismatch"
+        assert report.expected_sequence == ["<FirstName>", "<CustomToken:123>"]
+        assert report.actual_sequence == ["<FirstName>", "<BadToken>"]
 
     def test_validate_rejects_start_tag_replacement_for_double_angle_action(self):
-        original = "<<Walk away from the shaft>>"
-        restored = "<StartAction>Walk away from the shaft</StartAction>"
-        report = TokenValidator.validate_exact_texts(original, restored)
+        report = self._report(
+            "<<Walk away from the shaft>>",
+            "<StartAction>Walk away from the shaft</StartAction>",
+        )
         assert not report.is_exact_match
         assert report.expected_sequence == ["<<", ">>"]
         assert report.actual_sequence == ["<StartAction>", "</StartAction>"]
 
     def test_validate_rejects_new_pseudo_angle_tags(self):
-        original = "Good evening, madam."
-        restored = "Good evening, <sir/madam>."
-        report = TokenValidator.validate_exact_texts(original, restored)
+        report = self._report("Good evening, madam.", "Good evening, <sir/madam>.")
         assert not report.is_exact_match
         assert report.expected_sequence == []
         assert report.actual_sequence == ["<sir/madam>"]
 
-    def test_extract_all_tokens_ignores_inline_tags(self):
-        text = "<StartAction>[Wave]</Start> Hello <FirstName> <CustomToken:123>"
-        tokens = TokenValidator.extract_all_tokens(text)
-        assert set(tokens) == {"CustomToken:123", "FirstName"}
+    def test_engine_tokens_and_inline_tags_are_told_apart(self):
+        handler = TokenHandler()
+        handler.sanitize("<StartAction>[Wave]</Start> Hello <FirstName> <CustomToken:123>")
+        kinds = {artifact.original: artifact.kind for artifact in handler.artifacts}
+        assert kinds == {
+            "<StartAction>": "inline_tag",
+            "</Start>": "inline_tag",
+            "<FirstName>": "engine_token",
+            "<CustomToken:123>": "engine_token",
+        }
 
 
 class TestCleanupPath:
@@ -348,7 +359,7 @@ class TestDeterministicNonce:
     def test_roundtrip_still_restores(self):
         text = "Hello <FirstName>, welcome <StartAction>[wave]</Start>"
         sanitized, handler = sanitize_text(text)
-        assert restore_text(sanitized, handler) == text
+        assert handler.restore(sanitized) == text
 
 
 class TestCaseInsensitiveRestoration:
@@ -358,13 +369,13 @@ class TestCaseInsensitiveRestoration:
         sanitized, handler = sanitize_text("Hello <FirstName>.")
         placeholder = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)
         translated = sanitized.replace(placeholder, placeholder.lower()).replace("Hello", "Привет")
-        assert restore_text(translated, handler) == "Привет <FirstName>."
+        assert handler.restore(translated) == "Привет <FirstName>."
 
     def test_uppercased_core_restores_token(self):
         sanitized, handler = sanitize_text("Hello <FirstName>.")
         placeholder = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)
         translated = sanitized.replace(placeholder, placeholder.upper())
-        assert "<FirstName>" in restore_text(translated, handler)
+        assert "<FirstName>" in handler.restore(translated)
 
     def test_recased_output_is_exact_valid_first_try(self):
         """A case-only mutation must not burn a retry."""
@@ -379,7 +390,7 @@ class TestCaseInsensitiveRestoration:
         sanitized, handler = sanitize_text("Hello <FirstName>.")
         core = TOKEN_PLACEHOLDER_RE.search(sanitized).group(0)[2:-2]
         translated = f"Привет [[{core.lower()}]]."
-        assert restore_text(translated, handler) == "Привет <FirstName>."
+        assert handler.restore(translated) == "Привет <FirstName>."
 
 
 class TestPlaceholderResidueBarrier:
@@ -392,7 +403,8 @@ class TestPlaceholderResidueBarrier:
         assert not outcome.exact_valid
         assert outcome.used_cleanup
         assert "nwn_token" not in outcome.final_text.lower()
-        assert "<FirstName>" in outcome.mismatch_report.missing
+        assert outcome.mismatch_report.expected_sequence == ["<FirstName>"]
+        assert outcome.mismatch_report.actual_sequence == []
 
     def test_recased_mangled_prefix_is_stripped(self):
         _, handler = sanitize_text("Hello <FirstName>.")
@@ -448,7 +460,8 @@ class TestUnpairedOriginalTags:
         result = handler.finalize_translation(mangled, allow_cleanup=True)
         assert not result.exact_valid
         assert result.used_cleanup
-        assert "</Start>" in result.mismatch_report.missing
+        assert result.mismatch_report.expected_sequence == ["<StartAction>", "</Start>"]
+        assert "</Start>" not in result.mismatch_report.actual_sequence
         assert "<Start" not in result.final_text
 
     def test_lost_tag_on_unpaired_original_still_caught(self):
@@ -457,7 +470,8 @@ class TestUnpairedOriginalTags:
         mangled = sanitized.replace(handler.artifacts[0].placeholder, "")
         result = handler.finalize_translation(mangled, allow_cleanup=False)
         assert not result.exact_valid
-        assert "<StartAction>" in result.mismatch_report.missing
+        assert result.mismatch_report.expected_sequence == ["<StartAction>"]
+        assert "<StartAction>" not in result.mismatch_report.actual_sequence
 
 
 class TestNormalizationAndForeignScript:

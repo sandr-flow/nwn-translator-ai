@@ -11,11 +11,8 @@ import pytest
 
 from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-from src.nwn_translator.translators.token_handler import TokenHandler
-from src.nwn_translator.translators.translation_manager import (
-    TranslationManager,
-    _is_empty_after_sanitize,
-)
+from src.nwn_translator.translators.token_handler import TokenHandler, has_translatable_content
+from src.nwn_translator.translators.translation_manager import TranslationManager
 
 
 def _expected(content, answers):
@@ -45,7 +42,7 @@ class TestEmptyAfterSanitize:
         """A lone word wrapped in tags used to be misclassified as empty:
         the permissive placeholder regex greedily matched across the word."""
         sanitized = TokenHandler().sanitize(text).sanitized_text
-        assert not _is_empty_after_sanitize(sanitized)
+        assert has_translatable_content(sanitized)
 
     @pytest.mark.parametrize(
         "text",
@@ -60,16 +57,16 @@ class TestEmptyAfterSanitize:
     )
     def test_tokens_and_punctuation_only_stay_passthrough(self, text):
         sanitized = TokenHandler().sanitize(text).sanitized_text
-        assert _is_empty_after_sanitize(sanitized)
+        assert not has_translatable_content(sanitized)
 
     def test_multi_word_tagged_text_is_translatable(self):
         sanitized = TokenHandler().sanitize("<StartAction>Attack the guard</Start> now")
-        assert not _is_empty_after_sanitize(sanitized.sanitized_text)
+        assert has_translatable_content(sanitized.sanitized_text)
 
     def test_mangled_bracket_placeholders_still_stripped(self):
-        assert _is_empty_after_sanitize("[[NWN_TOKEN_abcdef01_0]]!")
-        assert _is_empty_after_sanitize("<[NWN_INLINE_deadbeef_2]>...")
-        assert not _is_empty_after_sanitize("[[NWN_TOKEN_abcdef01_0]]Word[[NWN_TOKEN_abcdef01_1]]")
+        assert not has_translatable_content("[[NWN_TOKEN_abcdef01_0]]!")
+        assert not has_translatable_content("<[NWN_INLINE_deadbeef_2]>...")
+        assert has_translatable_content("[[NWN_TOKEN_abcdef01_0]]Word[[NWN_TOKEN_abcdef01_1]]")
 
 
 @dataclass

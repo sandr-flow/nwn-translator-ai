@@ -37,8 +37,7 @@ from nwn_translator.pipeline.stages import (
     load_parsed_and_extracted,
     run_pipeline,
 )
-from nwn_translator.translators.token_handler import TokenHandler
-from nwn_translator.translators.translation_manager import _is_empty_after_sanitize
+from nwn_translator.translators.token_handler import TokenHandler, has_translatable_content
 
 from ._corpus import extract_module
 from ._mock_provider import MARKER, MockContextProvider, MockTranslateProvider
@@ -120,7 +119,7 @@ def _mock_roundtrip(corpus_module: Path, tmp_path: Path, *, use_context: bool) -
             if MARKER in item.text:
                 continue
             sanitized = TokenHandler().sanitize(item.text).sanitized_text
-            if _is_empty_after_sanitize(sanitized):
+            if not has_translatable_content(sanitized):
                 continue
             missing_marker += 1
             if len(missing_examples) < 20:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -423,6 +424,28 @@ def test_texts_translated_counts_every_editor_row(
 
     assert payload["status"] == "completed", payload
     assert payload["stats"]["texts_translated"] == 2
+
+
+def test_a_failed_row_count_keeps_the_job_completed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The module is already written; a lost statistic must not refuse the download."""
+
+    def locked(task_id: str) -> int:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("nwn_translator.web.task_manager.count_translations", locked)
+    files = {"file": ("count.mod", b"\x04" * 200, "application/octet-stream")}
+    r = client.post(
+        "/api/translate", files=files, data={"api_key": "sk-x", "target_lang": "english"}
+    )
+    task_id = r.json()["task_id"]
+    payload = _wait_for_status(client, task_id, "completed")
+
+    assert payload["status"] == "completed", payload
+    assert payload["error"] is None
+    assert "texts_translated" not in payload["stats"]
+    assert client.get(f"/api/tasks/{task_id}/download").content == b"FAKE_MOD"
 
 
 @pytest.mark.parametrize(

@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 import shutil
+import sqlite3
 import threading
 import time
 import uuid
@@ -584,9 +585,13 @@ class TaskManager:
             task.result_path = Path(result_path)
             task.extract_dir = translator.extract_dir
             task.stats = translator.get_statistics()
-            # Editor rows of every file, dialogs included; ``items_translated``
-            # counts only accepted non-dialog answers.
-            task.stats["texts_translated"] = count_translations(task.task_id)
+            # Editor rows of every file, dialogs and rejected lines included;
+            # ``items_translated`` counts only accepted non-dialog items.
+            try:
+                task.stats["texts_translated"] = count_translations(task.task_id)
+            except sqlite3.Error as e:
+                # The module is already written; only this statistic is lost.
+                logger.warning("Could not count the rows of task %s: %s", task.task_id, e)
             self._finish(
                 task,
                 "completed",

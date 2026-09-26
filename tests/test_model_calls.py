@@ -7,6 +7,7 @@ from nwn_translator.ai_providers.base import TranslationResult
 from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.base import TranslatableItem
 from nwn_translator.translation_logging import NullTranslationLogWriter
+from nwn_translator.translators import model_calls
 from nwn_translator.translators.model_calls import CallLimits, ModelCaller, queued_timeout
 from nwn_translator.translators.ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
 from nwn_translator.translators.token_handler import sanitize_text
@@ -95,3 +96,26 @@ def test_batch_errors_become_failed_results():
     results = _run(_caller(provider).translate_batch(asyncio.Semaphore(1), work))
 
     assert (results[0].success, results[0].error, results[0].original) == (False, "down", "a")
+
+
+def test_pass_budget_covers_a_timeout_retry_in_every_slot(monkeypatch):
+    budgets = []
+
+    def fake_run_async(coro, *, timeout):
+        coro.close()
+        budgets.append(timeout)
+        return [], []
+
+    monkeypatch.setattr(model_calls, "run_async", fake_run_async)
+    caller = _caller(Mock(), CallLimits(item_timeout=100.0, min_pass_timeout=0.0))
+    work = [_work(text) for text in ("a", "b", "c")]
+
+    caller.run_main_pass(work, [], None)
+    caller.run_fallback_pass(work, scripts=False)
+    caller.run_fallback_pass(work, scripts=True)
+
+    # One slot, three items: each may hold it for a request and its timeout retry.
+    assert budgets[0] >= 3 * 2 * 100.0
+    assert budgets[1] >= 3 * 2 * 100.0
+    # Script fallback requests are not retried in their slot.
+    assert 3 * 100.0 <= budgets[2] < 3 * 2 * 100.0

@@ -432,6 +432,7 @@ class ModelCaller:
         single_results, batch_results = self._run_pass(
             run_all(),
             singles=len(singles),
+            single_slot=self._retrying_slot,
             batch_calls=sum(2 * len(batch) - 1 for batch in batches),
             floor=self.limits.min_pass_timeout,
             pad=60.0,
@@ -463,23 +464,39 @@ class ModelCaller:
         return self._run_pass(
             run_all(),
             singles=len(work),
+            single_slot=self.limits.item_timeout if scripts else self._retrying_slot,
             batch_calls=0,
             floor=self.limits.min_pass_timeout / 2,
             pad=30.0,
         )
+
+    @property
+    def _retrying_slot(self) -> float:
+        """Longest semaphore hold of :meth:`translate_one`: a request and its timeout retry."""
+        return 2 * self.limits.item_timeout
 
     def _run_pass(
         self,
         coro: Coroutine[Any, Any, _T],
         *,
         singles: int,
+        single_slot: float,
         batch_calls: int,
         floor: float,
         pad: float,
     ) -> _T:
-        """Run one pass with a budget that covers its queued requests."""
+        """Run one pass with a budget that covers its queued requests.
+
+        Args:
+            coro: The pass.
+            singles: Single requests in the pass.
+            single_slot: Longest time one single request holds its slot.
+            batch_calls: Upper bound of batch requests, halving included.
+            floor: Smallest budget.
+            pad: Seconds added to the queued time.
+        """
         queue = (
-            queued_timeout(singles, self.limits.item_timeout, self.concurrency)
+            queued_timeout(singles, single_slot, self.concurrency)
             + queued_timeout(batch_calls, self.limits.batch_timeout, self.concurrency)
             + pad
         )

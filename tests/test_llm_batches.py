@@ -89,6 +89,24 @@ class TestRun:
         assert stage.run(list(range(5)), worker, concurrency=2) == ["ok"] * 5
         assert peak == 2
 
+    def test_slot_per_batch_keeps_the_slot_for_every_request_of_a_batch(self):
+        stage = _stage(slot_per_batch=True)
+        order: List[tuple] = []
+
+        async def worker(slot, number, batch):
+            for attempt in (1, 2):
+
+                async def send() -> str:
+                    order.append((number, attempt))
+                    await asyncio.sleep(0.01)
+                    return "ok"
+
+                await stage.request(slot, send)
+            return number
+
+        assert stage.run(["a", "b", "c"], worker, concurrency=1) == [1, 2, 3]
+        assert order == [(1, 1), (1, 2), (2, 1), (2, 2), (3, 1), (3, 2)]
+
 
 class TestRequest:
     def test_request_is_tagged_with_the_stage_phase(self):

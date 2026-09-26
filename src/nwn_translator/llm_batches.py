@@ -3,9 +3,9 @@
 Entity extraction, glossary curation and glossary building all split their
 input into batches, send each batch to the model under one concurrency limit
 and parse a JSON reply per request. :class:`LlmStage` holds the policy of one
-stage (metrics phase, batch size, attempts, timeouts) and runs its batches;
-:meth:`LlmStage.fill_keys` is the retry loop that asks again for the keys a
-reply left out.
+stage (metrics phase, batch size, attempts, concurrency slots, timeouts) and
+runs its batches; :meth:`LlmStage.fill_keys` is the retry loop that asks again
+for the keys a reply left out.
 """
 
 from __future__ import annotations
@@ -14,8 +14,20 @@ import asyncio
 import logging
 import math
 import time
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List, Sequence, Set, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Sequence,
+    Set,
+    TypeVar,
+    Union,
+)
 
 from .async_utils import run_async
 from .config import GLOSSARY_LLM_TIMEOUT, GLOSSARY_MAX_TOKENS, GLOSSARY_TEMPERATURE
@@ -33,8 +45,12 @@ B = TypeVar("B")
 R = TypeVar("R")
 V = TypeVar("V")
 
-#: Worker of one batch: ``(semaphore, 1-based batch number, batch) -> result``.
-BatchWorker = Callable[[asyncio.Semaphore, int, B], Awaitable[R]]
+#: What a request holds while it runs: a slot of the run's concurrency limit,
+#: or a no-op when its batch already holds one.
+Slot = AbstractAsyncContextManager[Any]
+
+#: Worker of one batch: ``(request slot, 1-based batch number, batch) -> result``.
+BatchWorker = Callable[[Slot, int, B], Awaitable[R]]
 
 #: Request builder of one attempt: ``(keys sorted by str.lower, accepted so far, attempt)
 #: -> function starting the request``.
@@ -96,6 +112,10 @@ class LlmStage:
             only for the keys still missing.
         retry_on_error: Retry after a failed request; otherwise the batch stops
             at its first failed request.
+        slot_per_batch: A batch takes its concurrency slot before its first
+            request and keeps it until its last, so its retry runs before
+            other batches start; otherwise each request waits for a slot of
+            its own.
         batch_timeout: Overall time budget per batch (seconds).
         max_run_timeout: Ceiling of the overall budget of one :meth:`run`.
     """
@@ -106,6 +126,7 @@ class LlmStage:
     batch_timeout: float
     max_attempts: int = 1
     retry_on_error: bool = False
+    slot_per_batch: bool = False
     max_run_timeout: float = math.inf
 
     def run_timeout(self, batch_count: int) -> float:
@@ -126,9 +147,11 @@ class LlmStage:
 
         Args:
             batches: Batches in request order.
-            worker: Coroutine function processing one batch; it passes the
-                semaphore to :meth:`request` or :meth:`fill_keys`.
-            concurrency: Maximum requests in flight.
+            worker: Coroutine function processing one batch; it passes its
+                slot to :meth:`request` or :meth:`fill_keys`. With
+                :attr:`slot_per_batch` it runs while its batch holds a slot.
+            concurrency: Maximum requests (with :attr:`slot_per_batch`,
+                batches) in flight.
 
         Returns:
             One entry per batch: its result, the exception its worker raised,
@@ -138,8 +161,15 @@ class LlmStage:
 
         async def run_all() -> List[Union[R, BaseException]]:
             sem = asyncio.Semaphore(max(1, concurrency))
+
+            async def run_batch(number: int, batch: B) -> R:
+                if not self.slot_per_batch:
+                    return await worker(sem, number, batch)
+                async with sem:
+                    return await worker(nullcontext(), number, batch)
+
             tasks = [
-                asyncio.ensure_future(worker(sem, number, batch))
+                asyncio.ensure_future(run_batch(number, batch))
                 for number, batch in enumerate(batches, 1)
             ]
             if not tasks:
@@ -169,11 +199,11 @@ class LlmStage:
 
         return run_async(run_all(), timeout=None)
 
-    async def request(self, sem: asyncio.Semaphore, send: Callable[[], Awaitable[str]]) -> str:
-        """Send one request once *sem* admits it, tagged with the stage's metrics phase.
+    async def request(self, slot: Slot, send: Callable[[], Awaitable[str]]) -> str:
+        """Send one request while holding *slot*, tagged with the stage's metrics phase.
 
         Args:
-            sem: Concurrency limit shared by the run.
+            slot: The worker's request slot (see :meth:`run`).
             send: Starts the provider request.
 
         Returns:
@@ -183,7 +213,7 @@ class LlmStage:
             TimeoutError: When the request exceeds ``GLOSSARY_LLM_TIMEOUT``.
             Exception: Whatever the provider raises.
         """
-        async with sem:
+        async with slot:
             # The phase must be set before wait_for runs the request, so the
             # provider's metrics see it.
             with llm_phase(self.phase):
@@ -191,7 +221,7 @@ class LlmStage:
 
     async def fill_keys(
         self,
-        sem: asyncio.Semaphore,
+        slot: Slot,
         remaining: Set[str],
         prepare: KeyRequest[V],
         parse: KeyParser[V],
@@ -207,7 +237,7 @@ class LlmStage:
         in which :func:`parse` may report answers.
 
         Args:
-            sem: Concurrency limit shared by the run.
+            slot: The worker's request slot (see :meth:`run`).
             remaining: Keys to answer; updated in place.
             prepare: Builds the request of one attempt. It runs before the
                 request waits for its slot and outside the failure handling,
@@ -239,7 +269,7 @@ class LlmStage:
             send = prepare(keys, accepted, attempt)
             started = time.monotonic()
             try:
-                raw = await self.request(sem, send)
+                raw = await self.request(slot, send)
             except Exception as exc:
                 logger.warning(
                     "%s attempt %d/%d: request failed after %.1fs: %s",

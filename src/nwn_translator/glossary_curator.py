@@ -19,23 +19,23 @@ from .llm_batches import LlmStage, chunks, json_request
 from .prompts.terminology import build_curator_system_prompt, build_curator_user_prompt
 
 if TYPE_CHECKING:
-    import asyncio
-
     from .ai_providers.base import TranslationProvider
     from .config import TranslationConfig
+    from .llm_batches import Slot
 
 logger = logging.getLogger(__name__)
 
 _VALID_DECISIONS = frozenset({"keep", "local_only", "drop", "alias_of"})
 
 #: A retry asks only for the keys the first reply left out; a failed request
-#: ends the batch.
+#: ends the batch. A batch keeps its concurrency slot for its retry.
 _STAGE = LlmStage(
     phase="glossary_curation",
     label="Glossary curation",
     batch_size=80,
     batch_timeout=GLOSSARY_LLM_TIMEOUT,
     max_attempts=2,
+    slot_per_batch=True,
 )
 
 
@@ -85,8 +85,10 @@ class GlossaryCurator:
         system_prompt = build_curator_system_prompt(config.target_lang)
 
         async def curate_batch(
-            sem: "asyncio.Semaphore", number: int, batch: List[EntityCandidate]
+            slot: "Slot", number: int, batch: List[EntityCandidate]
         ) -> Dict[str, Dict[str, Any]]:
+            # Runs once the batch holds its slot, so the progress names the
+            # batch the model is curating.
             if progress_callback:
                 progress_callback(
                     "scanning",
@@ -107,7 +109,7 @@ class GlossaryCurator:
                 return functools.partial(json_request, provider, system_prompt, user_prompt)
 
             decisions = await _STAGE.fill_keys(
-                sem,
+                slot,
                 remaining,
                 prepare,
                 _parse_curator_json,

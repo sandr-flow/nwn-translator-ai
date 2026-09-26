@@ -55,6 +55,42 @@ def test_curator_drops_numbered_labels_before_llm():
     assert provider.calls == []
 
 
+def test_batch_keeps_its_slot_for_its_retry_and_reports_progress_when_it_starts():
+    import asyncio
+    import json
+    from itertools import product
+
+    registry = EntityCandidateRegistry()
+    for a, b in list(product("abcdefghijklmn", repeat=2))[:170]:
+        registry.add(f"Guild of {a.upper()}{b}", category="term", source="entity_extractor")
+    events = []
+
+    class _AnswersHalfFirst(_CuratorProvider):
+        async def complete_json_chat_async(self, system_prompt, user_prompt, **kwargs):
+            records = json.loads(user_prompt[user_prompt.index("{") :])
+            events.append(("request", len(records)))
+            await asyncio.sleep(0.01)
+            answered = list(records)[: len(records) // 2]
+            return json.dumps({name: {"decision": "keep", "reason": "llm"} for name in answered})
+
+    def progress(phase, done, total, message):
+        events.append(("progress", message))
+
+    GlossaryCurator().curate(registry, _AnswersHalfFirst([]), _config(), progress)
+
+    assert events == [
+        ("progress", "Curating glossary candidates 1/3"),
+        ("request", 80),
+        ("request", 40),
+        ("progress", "Curating glossary candidates 2/3"),
+        ("request", 80),
+        ("request", 40),
+        ("progress", "Curating glossary candidates 3/3"),
+        ("request", 10),
+        ("request", 5),
+    ]
+
+
 def test_overall_timeout_keeps_decisions_of_finished_batches(monkeypatch):
     import asyncio
     import json

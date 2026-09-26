@@ -31,11 +31,10 @@ from .prompts.terminology import (
 )
 
 if TYPE_CHECKING:
-    import asyncio
-
     from .ai_providers.base import TranslationProvider
     from .config import TranslationConfig
     from .context.world_context import NPCInfo, WorldContext
+    from .llm_batches import Slot
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +119,7 @@ class GlossaryBuilder:
         system_prompt = build_glossary_system_prompt(config.target_lang)
 
         async def translate_batch(
-            sem: "asyncio.Semaphore", number: int, batch_names: List[str]
+            slot: "Slot", number: int, batch_names: List[str]
         ) -> Dict[str, str]:
             label = f"batch {number}/{len(batches)}" if len(batches) > 1 else "glossary"
             batch = {name: seen[name] for name in batch_names}
@@ -150,7 +149,7 @@ class GlossaryBuilder:
             # order decides the order of the accepted forms a retry repeats (KI-008).
             remaining = set(batch.keys())
             return await _STAGE.fill_keys(
-                sem, remaining, prepare, parse_glossary_json, name=f"Glossary {label}"
+                slot, remaining, prepare, parse_glossary_json, name=f"Glossary {label}"
             )
 
         results = _STAGE.run(batches, translate_batch, concurrency=config.max_concurrent_requests)

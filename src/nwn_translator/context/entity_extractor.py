@@ -28,11 +28,10 @@ from .string_filters import (
 )
 
 if TYPE_CHECKING:
-    import asyncio
-
     from ..ai_providers.base import TranslationProvider
     from ..config import TranslationConfig
     from ..extractors.base import TranslatableItem
+    from ..llm_batches import Slot
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +129,7 @@ class EntityExtractor:
         system_prompt = build_entity_extraction_system_prompt(source_lang)
 
         async def extract_batch(
-            sem: "asyncio.Semaphore", number: int, batch: List[str]
+            slot: "Slot", number: int, batch: List[str]
         ) -> Optional[List[Tuple[str, str]]]:
             if progress_callback:
                 progress_callback(
@@ -143,7 +142,7 @@ class EntityExtractor:
             started = time.monotonic()
             try:
                 raw = await _STAGE.request(
-                    sem, functools.partial(json_request, provider, system_prompt, user_prompt)
+                    slot, functools.partial(json_request, provider, system_prompt, user_prompt)
                 )
             except Exception as exc:
                 logger.warning(

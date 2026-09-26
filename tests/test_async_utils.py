@@ -9,7 +9,11 @@ import asyncio
 
 import pytest
 
-from src.nwn_translator.async_utils import run_async, shutdown_thread_loop
+from src.nwn_translator.async_utils import (
+    close_thread_resources,
+    run_async,
+    shutdown_thread_loop,
+)
 from src.nwn_translator.ai_providers import openrouter_provider
 from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 
@@ -112,3 +116,40 @@ class TestClientReuse:
         shutdown_thread_loop()
         run_async(touch_client())
         assert len(constructed) == 2
+
+
+class TestCloseThreadResources:
+    """close_thread_resources closes the provider's client, then the loop."""
+
+    @staticmethod
+    async def _get_loop():
+        return asyncio.get_running_loop()
+
+    def test_closes_the_client_on_the_thread_loop_then_the_loop(self):
+        class Provider:
+            closed_on = None
+
+            async def close_async_client(self):
+                Provider.closed_on = asyncio.get_running_loop()
+
+        loop = run_async(self._get_loop())
+        close_thread_resources(Provider())
+
+        assert Provider.closed_on is loop
+        assert loop.is_closed()
+
+    def test_failing_close_still_closes_the_loop(self):
+        class Provider:
+            async def close_async_client(self):
+                raise RuntimeError("close failed")
+
+        loop = run_async(self._get_loop())
+        close_thread_resources(Provider())
+
+        assert loop.is_closed()
+
+    def test_provider_without_client_only_closes_the_loop(self):
+        loop = run_async(self._get_loop())
+        close_thread_resources(object())
+
+        assert loop.is_closed()

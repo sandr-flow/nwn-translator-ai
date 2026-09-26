@@ -8,8 +8,9 @@ by tag, and replies are the player's. The dialog prompt and the web editor share
 this resolution.
 """
 
-from typing import Iterable, List, Optional, Tuple, TypedDict
+from typing import Iterable, List, Mapping, Optional, Tuple, TypedDict
 
+from ..extractors.base import DialogNode
 from .world_context import NPCInfo, WorldContext
 
 #: Owners listed by name in an editor label; the rest are counted (``+N``).
@@ -85,6 +86,43 @@ def tagged_speakers(world_context: Optional[WorldContext], tag: str) -> List[NPC
             *world_context.dialog_actors_by_tag.get(tag, []),
         ]
     )
+
+
+def speaker_lines(
+    world_context: Optional[WorldContext],
+    dlg_stem: str,
+    node_map: Mapping[str, DialogNode],
+    file_label: str = "",
+) -> List[str]:
+    """Describe who speaks a dialog's NPC lines, for the dialog prompt.
+
+    The owner rarely names themself in their lines, so the relevance-filtered
+    world context usually omits them and the model would have to guess the
+    speaker's gender. One line covers the unmarked ``[NPC]`` lines (the
+    owners), then one line per ``Speaker`` tag of an entry, in tag order;
+    descriptions are sorted and joined with ``; or``.
+
+    Args:
+        world_context: Scanned module objects.
+        dlg_stem: Dialog resource name without extension.
+        node_map: The dialog's nodes by script key.
+        file_label: File name that scopes each line (``In a.dlg, lines …``),
+            so lines of several dialogs can share one grouped request.
+
+    Returns:
+        The lines; none when no speaker is known.
+    """
+    scope = f"In {file_label}, lines" if file_label else "Lines"
+    lines: List[str] = []
+    owners = sorted({speaker_description(npc) for npc in dialog_owners(world_context, dlg_stem)})
+    if owners:
+        lines.append(f"- {scope} marked [NPC]: spoken by " + "; or ".join(owners))
+    tags = sorted({node.speaker for node in node_map.values() if node.is_entry and node.speaker})
+    for tag in tags:
+        descs = sorted({speaker_description(npc) for npc in tagged_speakers(world_context, tag)})
+        if descs:
+            lines.append(f"- {scope} marked [{tag}]: spoken by " + "; or ".join(descs))
+    return lines
 
 
 def _join_listed(values: Iterable[str]) -> str:

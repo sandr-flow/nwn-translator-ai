@@ -1,140 +1,156 @@
-"""Dialog formatter for contextual translation.
+"""Render dialog trees as the numbered scripts sent to the model.
 
-Converts a hierarchical dialog tree into a flat, numbered script format
-suitable for LLM contextual translation.
+A node is addressed by its key: ``E{i}`` for NPC entry *i* and ``R{i}`` for
+player reply *i*, where *i* is the node's index in ``EntryList`` /
+``ReplyList``. Each node becomes a block with its key, speaker, text between
+``<<<`` and ``>>>`` and the keys it leads to; the model answers with a JSON
+object keyed the same way.
 """
 
-from typing import List, Set, Dict, Any, Optional
+from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple
+
 from ..extractors.base import DialogNode
 
+#: Longest text shown for an adjacent, context-only node.
+_CONTEXT_PREVIEW_CHARS = 600
 
-class DialogFormatter:
-    """Formats dialog trees into script representations for LLMs."""
 
-    def format_dialog_tree(
-        self,
-        tree: List[DialogNode],
-        text_overrides: Optional[Dict[str, str]] = None,
-    ) -> str:
-        """Format an entire dialog tree into a readable script.
+def node_key(node: DialogNode) -> str:
+    """Return the script key of a node: ``E3`` for entry 3, ``R0`` for reply 0.
 
-        Outputs a script where each node is prefixed with an ID (e.g., [E0] for Entry 0,
-        [R1] for Reply 1). This allows the LLM to return translations keyed by these IDs
-        while seeing the full branching structure with 'Go to' references.
+    Args:
+        node: A dialog node.
 
-        Args:
-            tree: List of root DialogNodes (from DialogExtractor.build_dialog_tree).
-            text_overrides: Optional mapping of node key (e.g. ``"E0"``) to text that
-                should be used instead of ``node.text``.  Allows callers to substitute
-                sanitized text without mutating the original dialog nodes.
+    Returns:
+        The key.
+    """
+    return f"{'E' if node.is_entry else 'R'}{node.node_id}"
 
-        Returns:
-            Formatted script string.
-        """
-        lines = []
-        visited = set()
 
-        # We process roots first, then all nodes discovered through BFS/DFS to
-        # ensure all referenced "Go to [E...]" blocks are eventually printed.
-        queue = list(tree)
-        nodes_to_process = []
+def speaker_label(node: DialogNode) -> str:
+    """Return the speaker shown for a node: its tag, else ``NPC`` or ``Player``.
 
-        # Flatten tree to maintain a stable order of processing (Entries first)
-        def collect_nodes(nodes: List[DialogNode]):
-            for node in nodes:
-                node_id = f"{'E' if node.is_entry else 'R'}{node.node_id}"
-                if node_id not in visited:
-                    visited.add(node_id)
-                    nodes_to_process.append(node)
-                    collect_nodes(node.replies)
+    Args:
+        node: A dialog node.
 
-        collect_nodes(queue)
+    Returns:
+        The label.
+    """
+    return node.speaker or ("NPC" if node.is_entry else "Player")
 
-        if not nodes_to_process:
-            return ""
 
-        # Print all nodes
-        overrides = text_overrides or {}
-        for node in nodes_to_process:
-            node_key = f"{'E' if node.is_entry else 'R'}{node.node_id}"
-            speaker = node.speaker if node.speaker else ("NPC" if node.is_entry else "Player")
-            node_text = overrides.get(node_key, node.text or "")
+def iter_nodes(tree: List[DialogNode]) -> Iterator[Tuple[str, DialogNode]]:
+    """Walk a dialog tree depth-first in pre-order, yielding each node key once.
 
-            # Format current node with EXACT text for translation
-            lines.append(f"[{node_key}] [{speaker}]:")
-            lines.append(f"<<<{node_text}>>>")
+    The first occurrence of a key is yielded and its subtree walked; later
+    occurrences (a reply linked from several entries) are skipped with their
+    subtrees. The walk is iterative, so chains longer than the recursion limit
+    work.
 
-            # Identify where the replies lead (or if it's an end node)
-            if not node.replies:
-                lines.append(f"   -> [END DIALOGUE]")
-            else:
-                for reply in node.replies:
-                    reply_key = f"{'E' if reply.is_entry else 'R'}{reply.node_id}"
+    Args:
+        tree: Root nodes (from ``DialogExtractor.build_dialog_tree``).
 
-                    if node.is_entry:
-                        # Do not echo reply text here. Showing a truncated preview
-                        # gives the model two competing versions of the same node:
-                        # the full <<<...>>> block and the shortened routing hint.
-                        lines.append(f"   -> Player Reply [{reply_key}]")
-                    else:
-                        lines.append(f"   -> NPC Response [{reply_key}]")
+    Yields:
+        ``(key, node)`` pairs in walk order.
+    """
+    seen: Set[str] = set()
+    # Children are pushed in reverse so the first child is walked first; a key
+    # is checked when popped, after the previous sibling's subtree is complete.
+    stack = list(reversed(tree))
+    while stack:
+        node = stack.pop()
+        key = node_key(node)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield key, node
+        stack.extend(reversed(node.replies))
 
-            lines.append("")  # Empty line between blocks
 
-        return "\n".join(lines).strip()
+def _render_blocks(
+    nodes: Iterable[Tuple[str, DialogNode]], overrides: Mapping[str, str]
+) -> List[str]:
+    """Render one block per node: header, text and the keys the node leads to.
 
-    def format_nodes(
-        self,
-        keys: List[str],
-        node_map: Dict[str, DialogNode],
-        text_map: Dict[str, str],
-        text_overrides: Optional[Dict[str, str]] = None,
-    ) -> str:
-        """Format selected targets with graph edges and bounded adjacent context.
+    Args:
+        nodes: ``(key, node)`` pairs in output order.
+        overrides: Key to text used instead of ``node.text``.
 
-        Args:
-            keys: Node IDs (e.g. ["E5", "R12"]) to include.
-            node_map: Full mapping of node ID → DialogNode.
-            text_map: Mapping of node ID → original text (used for speaker lookup).
-            text_overrides: Optional mapping of node key to text that should be
-                used instead of ``node.text``.
+    Returns:
+        The script lines; each block ends with an empty line.
+    """
+    lines: List[str] = []
+    for key, node in nodes:
+        lines.append(f"[{key}] [{speaker_label(node)}]:")
+        lines.append(f"<<<{overrides.get(key, node.text or '')}>>>")
+        if not node.replies:
+            lines.append("   -> [END DIALOGUE]")
+        for child in node.replies:
+            # Only the child's key: a text preview here would give the model a
+            # second, shortened version of a line it must translate in full.
+            kind = "NPC Response" if child.is_entry else "Player Reply"
+            lines.append(f"   -> {kind} [{node_key(child)}]")
+        lines.append("")
+    return lines
 
-        Returns:
-            Script with target blocks and explicitly non-target adjacent nodes.
-        """
-        overrides = text_overrides or {}
-        lines = []
-        selected = set(keys)
-        boundary: Dict[str, DialogNode] = {}
-        for key in keys:
-            node = node_map.get(key)
-            if node is None:
-                continue
-            speaker = node.speaker if node.speaker else ("NPC" if node.is_entry else "Player")
-            node_text = overrides.get(key, node.text or "")
-            lines.append(f"[{key}] [{speaker}]:")
-            lines.append(f"<<<{node_text}>>>")
-            if not node.replies:
-                lines.append("   -> [END DIALOGUE]")
-            for reply in node.replies:
-                reply_key = f"{'E' if reply.is_entry else 'R'}{reply.node_id}"
-                lines.append(
-                    f"   -> {'NPC Response' if reply.is_entry else 'Player Reply'} [{reply_key}]"
-                )
-                if reply_key not in selected:
-                    boundary[reply_key] = node_map.get(reply_key, reply)
-            lines.append("")
-        for key, node in node_map.items():
-            if key not in selected and any(
-                f"{'E' if child.is_entry else 'R'}{child.node_id}" in selected
-                for child in node.replies
-            ):
-                boundary[key] = node
-        if boundary:
-            lines.append("Adjacent nodes (context only; do not return translations for these IDs):")
-            for key, node in boundary.items():
-                speaker = node.speaker or ("NPC" if node.is_entry else "Player")
-                text = overrides.get(key, node.text or "")
-                preview = text[:600] + ("…" if len(text) > 600 else "")
-                lines.append(f"Context {key} ({speaker}): {preview}")
-        return "\n".join(lines).strip()
+
+def format_dialog_tree(
+    tree: List[DialogNode], text_overrides: Optional[Mapping[str, str]] = None
+) -> str:
+    """Render every node of a dialog tree, in :func:`iter_nodes` order.
+
+    Nodes without text are rendered too (``<<<>>>``) so that every routing
+    hint points at a block.
+
+    Args:
+        tree: Root nodes (from ``DialogExtractor.build_dialog_tree``).
+        text_overrides: Key to text used instead of ``node.text`` (the
+            sanitized texts, so the nodes themselves stay untouched).
+
+    Returns:
+        The script; empty for an empty tree.
+    """
+    return "\n".join(_render_blocks(iter_nodes(tree), text_overrides or {})).strip()
+
+
+def format_nodes(
+    keys: List[str],
+    node_map: Dict[str, DialogNode],
+    text_overrides: Optional[Mapping[str, str]] = None,
+) -> str:
+    """Render selected nodes, followed by their neighbours as context only.
+
+    The neighbours are the selected nodes' children and parents that are not
+    selected themselves: children in block order first, then parents in
+    *node_map* order. They are listed after a header telling the model not to
+    translate them, with their text cut to 600 characters.
+
+    Args:
+        keys: Keys of the nodes to translate, in output order.
+        node_map: Every node of the dialog by key, in walk order.
+        text_overrides: Key to text used instead of ``node.text``.
+
+    Returns:
+        The script.
+    """
+    overrides = text_overrides or {}
+    selected = set(keys)
+    lines = _render_blocks(((key, node_map[key]) for key in keys), overrides)
+    neighbours: Dict[str, DialogNode] = {}
+    for key in keys:
+        for child in node_map[key].replies:
+            child_key = node_key(child)
+            if child_key not in selected:
+                neighbours[child_key] = node_map.get(child_key, child)
+    for key, node in node_map.items():
+        if key not in selected and any(node_key(child) in selected for child in node.replies):
+            neighbours[key] = node
+    if neighbours:
+        lines.append("Adjacent nodes (context only; do not return translations for these IDs):")
+        for key, node in neighbours.items():
+            text = overrides.get(key, node.text or "")
+            preview = text[:_CONTEXT_PREVIEW_CHARS]
+            if len(text) > _CONTEXT_PREVIEW_CHARS:
+                preview += "…"
+            lines.append(f"Context {key} ({speaker_label(node)}): {preview}")
+    return "\n".join(lines).strip()

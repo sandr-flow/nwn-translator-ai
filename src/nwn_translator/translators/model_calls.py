@@ -36,23 +36,42 @@ _T = TypeVar("_T")
 #: Called once per item when its first-pass request is finished.
 Done = Optional[Callable[[WorkItem], None]]
 
+#: Bounds of the slack added to a queued budget (half of one call), so a short
+#: call still gets a few seconds and a long one at most a minute.
+_MIN_QUEUE_SLACK = 5.0
+_MAX_QUEUE_SLACK = 60.0
+
 
 @dataclass(frozen=True)
 class CallLimits:
     """Timeouts and retry budget of translation requests.
 
+    A pass may run as long as its queued requests need (see
+    :func:`queued_timeout`) plus a pad, and never less than its floor.
+
     Attributes:
         item_timeout: Seconds for one single-string request.
         batch_timeout: Seconds for one batch request.
-        min_pass_timeout: Lower bound of the main pass budget; fallback passes
-            get half of it. Larger queues scale the budget up.
+        min_pass_timeout: Lower bound of the main pass budget. Larger queues
+            scale the budget up.
+        main_pass_pad: Seconds the main pass gets beyond its queued requests,
+            for scheduling and result handling between them.
+        fallback_pass_pad: The same headroom for a fallback pass, which sends
+            fewer and only single requests.
         token_retries: Extra requests for an answer that broke tokens or tags.
     """
 
     item_timeout: float = 120.0
     batch_timeout: float = 180.0
     min_pass_timeout: float = 660.0
+    main_pass_pad: float = 60.0
+    fallback_pass_pad: float = 30.0
     token_retries: int = 2
+
+    @property
+    def min_fallback_pass_timeout(self) -> float:
+        """Lower bound of a fallback pass budget: half the main pass floor."""
+        return self.min_pass_timeout / 2
 
 
 @dataclass(frozen=True)
@@ -79,12 +98,13 @@ def queued_timeout(work_units: int, per_call_timeout: float, concurrency: int) -
         concurrency: Semaphore size.
 
     Returns:
-        Waves times the per-call timeout, plus slack; 0 for no work.
+        Waves times the per-call timeout, plus slack of half a call within
+        5 to 60 seconds; 0 for no work.
     """
     if work_units <= 0:
         return 0.0
     waves = (work_units + concurrency - 1) // concurrency
-    slack = max(5.0, min(60.0, per_call_timeout * 0.5))
+    slack = max(_MIN_QUEUE_SLACK, min(_MAX_QUEUE_SLACK, per_call_timeout * 0.5))
     return waves * per_call_timeout + slack
 
 
@@ -432,7 +452,7 @@ class ModelCaller:
             single_slot=self._retrying_slot,
             batch_calls=sum(2 * len(batch) - 1 for batch in batches),
             floor=self.limits.min_pass_timeout,
-            pad=60.0,
+            pad=self.limits.main_pass_pad,
         )
         return single_results, [result for results in batch_results for result in results]
 
@@ -463,8 +483,8 @@ class ModelCaller:
             singles=len(work),
             single_slot=self.limits.item_timeout if scripts else self._retrying_slot,
             batch_calls=0,
-            floor=self.limits.min_pass_timeout / 2,
-            pad=30.0,
+            floor=self.limits.min_fallback_pass_timeout,
+            pad=self.limits.fallback_pass_pad,
         )
 
     @property

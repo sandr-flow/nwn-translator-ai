@@ -119,3 +119,29 @@ def test_pass_budget_covers_a_timeout_retry_in_every_slot(monkeypatch):
     assert budgets[1] >= 3 * 2 * 100.0
     # Script fallback requests are not retried in their slot.
     assert 3 * 100.0 <= budgets[2] < 3 * 2 * 100.0
+
+
+def test_pass_budgets_add_their_pads_and_keep_their_floors(monkeypatch):
+    budgets = []
+
+    def fake_run_async(coro, *, timeout):
+        coro.close()
+        budgets.append(timeout)
+        return [], []
+
+    monkeypatch.setattr(model_calls, "run_async", fake_run_async)
+    work = [_work(text) for text in ("a", "b", "c")]
+    padded = CallLimits(
+        item_timeout=100.0, min_pass_timeout=0.0, main_pass_pad=1.0, fallback_pass_pad=2.0
+    )
+    floored = CallLimits(item_timeout=1.0, min_pass_timeout=1000.0)
+
+    for limits in (padded, floored):
+        caller = _caller(Mock(), limits)
+        caller.run_main_pass(work, [], None)
+        caller.run_fallback_pass(work, scripts=False)
+        caller.run_fallback_pass(work, scripts=True)
+
+    # Three queued slots of 200 s (a request and its timeout retry) plus 60 s slack.
+    assert budgets[:3] == [661.0, 662.0, 3 * 100.0 + 50.0 + 2.0]
+    assert budgets[3:] == [1000.0, 500.0, 500.0]

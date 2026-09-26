@@ -1,7 +1,7 @@
 """Tests for language-specific prompt generation.
 
 Verifies that each supported target language:
-- Has its own examples module
+- Has its own examples
 - Produces prompts with examples in the correct language (no Russian leakage)
 - All three prompt builders work with every language
 """
@@ -23,14 +23,14 @@ from src.nwn_translator.prompts._builder import (
     build_batch_user_prompt,
     build_single_user_prompt,
 )
-from src.nwn_translator.prompts.examples import get_examples, _LANG_MODULE_MAP
+from src.nwn_translator.prompts.examples import LANGUAGES, get_examples
 
-ALL_LANGS = list(_LANG_MODULE_MAP.keys())
+ALL_LANGS = list(LANGUAGES)
 NON_RUSSIAN_LANGS = [lang for lang in ALL_LANGS if lang != "russian"]
 
 
-class TestExamplesModules:
-    """Every language has a well-formed examples module."""
+class TestExamples:
+    """Every language has well-formed examples."""
 
     REQUIRED_KEYS = {
         "proper_names",

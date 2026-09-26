@@ -41,7 +41,7 @@ from nwn_translator.prompts import (
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "prompt_snapshots.json"
 
-#: Every target language with its own examples module under ``prompts/examples``.
+#: Every target language with its own examples in ``prompts.examples``.
 LANGUAGES = (
     "russian",
     "english",

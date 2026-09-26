@@ -332,7 +332,7 @@ def _rebuild_edits(log_lines: List[dict]) -> Dict[str, Dict[str, str]]:
     return edits
 
 
-def run_one(scenario: str, module: Path, out_dir: Path) -> None:
+def run_one(scenario: str, module: Path, out_dir: Path, concurrency: int = 1) -> None:
     """Translate and rebuild *module* under *scenario*; write normalized results."""
     recorder = _Recorder()
     _install_fake_endpoint(recorder)
@@ -358,8 +358,8 @@ def run_one(scenario: str, module: Path, out_dir: Path) -> None:
             temp_dir=work,
             skip_cleanup=True,
             quiet=True,
-            # One worker makes thread completion order, and so the run, reproducible.
-            max_concurrent_requests=1,
+            # One worker is the reference; more workers must give the same results.
+            max_concurrent_requests=concurrency,
             **overrides,
         )
         t0 = time.perf_counter()
@@ -451,7 +451,16 @@ def record(args: argparse.Namespace) -> int:
         target = out / _slug(scenario, module)
         with open(out / f"{_slug(scenario, module)}.stderr.log", "wb") as err:
             code = subprocess.call(
-                [sys.executable, __file__, "run", scenario, str(module), str(target)],
+                [
+                    sys.executable,
+                    __file__,
+                    "run",
+                    scenario,
+                    str(module),
+                    str(target),
+                    "--concurrency",
+                    str(args.concurrency),
+                ],
                 env=env,
                 stdout=subprocess.DEVNULL,
                 stderr=err,
@@ -533,6 +542,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     rec.add_argument("--jobs", type=int, default=4)
     rec.add_argument("--scenario", action="append", help="limit to these scenarios")
     rec.add_argument("--module", action="append", help="limit to modules containing this text")
+    rec.add_argument("--concurrency", type=int, default=1, help="max_concurrent_requests")
     cmp_ = sub.add_parser("compare", help="compare two recorded result directories")
     cmp_.add_argument("baseline")
     cmp_.add_argument("candidate")
@@ -544,12 +554,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     one.add_argument("scenario")
     one.add_argument("module")
     one.add_argument("out")
+    one.add_argument("--concurrency", type=int, default=1)
     args = parser.parse_args(argv)
     if args.command == "record":
         return record(args)
     if args.command == "compare":
         return compare(args)
-    run_one(args.scenario, Path(args.module), Path(args.out))
+    run_one(args.scenario, Path(args.module), Path(args.out), args.concurrency)
     return 0
 
 

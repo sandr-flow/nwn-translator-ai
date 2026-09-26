@@ -1,6 +1,6 @@
 """Run-level telemetry for LLM requests.
 
-The translation JSONL log is item-oriented.  This module records request-level
+The translation JSONL log is item-oriented. This module records request-level
 metrics so pipeline changes can be compared by actual LLM calls and prompt
 budget, not only by translated strings.
 """
@@ -21,13 +21,27 @@ _CURRENT_PHASE: ContextVar[Optional[str]] = ContextVar("nwn_llm_phase", default=
 
 
 def current_llm_phase(default: str) -> str:
-    """Return the current request phase label."""
+    """Return the phase set by the enclosing :func:`llm_phase`, else *default*.
+
+    Args:
+        default: Phase of the calling task.
+
+    Returns:
+        The phase label for request metrics.
+    """
     return _CURRENT_PHASE.get() or default
 
 
 @contextmanager
 def llm_phase(phase: str) -> Iterator[None]:
-    """Temporarily tag provider calls made in this context with *phase*."""
+    """Tag the provider requests made inside the ``with`` block with *phase*.
+
+    Args:
+        phase: Phase label for request metrics.
+
+    Yields:
+        Nothing; the label applies until the block exits.
+    """
     token = _CURRENT_PHASE.set(phase)
     try:
         yield
@@ -37,7 +51,32 @@ def llm_phase(phase: str) -> Iterator[None]:
 
 @dataclass
 class LLMRequestMetric:
-    """One physical LLM request attempt."""
+    """One physical LLM request attempt.
+
+    Attributes:
+        request_id: Opaque unique id.
+        phase: Pipeline phase (``llm_phase`` label or the task's default).
+        provider: Provider name.
+        model: Model slug.
+        batch_size: Items answered by the request.
+        stable_chars: Characters of the cacheable system prompt half.
+        variable_chars: Characters of the per-call system prompt half.
+        user_chars: Characters of the user message.
+        world_context_chars: Reserved; always 0.
+        glossary_chars: Characters of the glossary block in the system prompt.
+        prompt_chars: ``stable_chars + variable_chars + user_chars``.
+        estimated_input_tokens: Reported prompt tokens, else ``ceil(prompt_chars / 4)``.
+        estimated_output_tokens: Reported completion tokens, else ``ceil(reply / 4)``.
+        usage_input_tokens: Prompt tokens reported by the API.
+        usage_output_tokens: Completion tokens reported by the API.
+        latency_ms: Wall time of the attempt.
+        retry_count: Reserved; always 0.
+        timeout: The attempt timed out.
+        parse_recovery: Reserved; always ``None``.
+        success: The API returned a response.
+        error: Error text of a failed attempt.
+        created_at: Unix time of recording.
+    """
 
     request_id: str
     phase: str
@@ -63,8 +102,33 @@ class LLMRequestMetric:
     created_at: float = field(default_factory=time.time)
 
 
+#: Metric fields summed per phase, in report order.
+_SUMMED_FIELDS = (
+    "prompt_chars",
+    "stable_chars",
+    "variable_chars",
+    "user_chars",
+    "world_context_chars",
+    "glossary_chars",
+    "estimated_input_tokens",
+    "estimated_output_tokens",
+    "usage_input_tokens",
+    "usage_output_tokens",
+    "latency_ms",
+)
+#: Per-phase summary keys in report order; ``avg_latency_ms`` is appended last.
+_PHASE_KEYS = (
+    "requests",
+    "successful_requests",
+    "failed_requests",
+    "timeouts",
+    "batch_items",
+    *_SUMMED_FIELDS,
+)
+
+
 class RunMetricsRecorder:
-    """Thread-safe accumulator for request metrics and phase summaries."""
+    """Thread-safe accumulator for request metrics and run counters."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -72,74 +136,58 @@ class RunMetricsRecorder:
         self._counters: Dict[str, int] = {}
 
     def next_request_id(self) -> str:
-        """Return an opaque request id."""
+        """Return a new opaque request id."""
         return uuid.uuid4().hex
 
     def increment(self, key: str, by: int = 1) -> None:
-        """Increment a named run-level counter."""
+        """Add *by* to the run counter *key*.
+
+        Args:
+            key: Counter name.
+            by: Increment.
+        """
         with self._lock:
             self._counters[key] = int(self._counters.get(key, 0)) + by
 
     def record(self, metric: LLMRequestMetric) -> None:
-        """Append a request metric."""
+        """Append one request metric.
+
+        Args:
+            metric: The metric to store.
+        """
         with self._lock:
             self._requests.append(metric)
 
     @property
     def requests(self) -> List[LLMRequestMetric]:
-        """Return a snapshot of recorded requests."""
+        """A snapshot of the recorded request metrics."""
         with self._lock:
             return list(self._requests)
 
     def summary(self) -> Dict[str, Any]:
-        """Return aggregate metrics grouped by phase."""
-        phases: Dict[str, Dict[str, Any]] = {}
+        """Aggregate the recorded requests by phase.
+
+        Returns:
+            ``total_requests``, ``phases`` (per phase: request counts, summed sizes,
+            tokens and latency, and ``avg_latency_ms``) and the run ``counters``.
+        """
+        phases: Dict[str, Dict[str, int]] = {}
         with self._lock:
             requests = list(self._requests)
             counters = dict(self._counters)
 
         for metric in requests:
-            phase = phases.setdefault(
-                metric.phase,
-                {
-                    "requests": 0,
-                    "successful_requests": 0,
-                    "failed_requests": 0,
-                    "timeouts": 0,
-                    "batch_items": 0,
-                    "prompt_chars": 0,
-                    "stable_chars": 0,
-                    "variable_chars": 0,
-                    "user_chars": 0,
-                    "world_context_chars": 0,
-                    "glossary_chars": 0,
-                    "estimated_input_tokens": 0,
-                    "estimated_output_tokens": 0,
-                    "usage_input_tokens": 0,
-                    "usage_output_tokens": 0,
-                    "latency_ms": 0,
-                },
-            )
+            phase = phases.setdefault(metric.phase, dict.fromkeys(_PHASE_KEYS, 0))
             phase["requests"] += 1
-            phase["successful_requests"] += 1 if metric.success else 0
-            phase["failed_requests"] += 0 if metric.success else 1
-            phase["timeouts"] += 1 if metric.timeout else 0
+            phase["successful_requests"] += int(metric.success)
+            phase["failed_requests"] += int(not metric.success)
+            phase["timeouts"] += int(metric.timeout)
             phase["batch_items"] += metric.batch_size
-            phase["prompt_chars"] += metric.prompt_chars
-            phase["stable_chars"] += metric.stable_chars
-            phase["variable_chars"] += metric.variable_chars
-            phase["user_chars"] += metric.user_chars
-            phase["world_context_chars"] += metric.world_context_chars
-            phase["glossary_chars"] += metric.glossary_chars
-            phase["estimated_input_tokens"] += metric.estimated_input_tokens
-            phase["estimated_output_tokens"] += metric.estimated_output_tokens
-            phase["usage_input_tokens"] += metric.usage_input_tokens or 0
-            phase["usage_output_tokens"] += metric.usage_output_tokens or 0
-            phase["latency_ms"] += metric.latency_ms
+            for name in _SUMMED_FIELDS:
+                phase[name] += getattr(metric, name) or 0
 
         for phase in phases.values():
-            requests_count = max(1, int(phase["requests"]))
-            phase["avg_latency_ms"] = int(phase["latency_ms"] / requests_count)
+            phase["avg_latency_ms"] = int(phase["latency_ms"] / max(1, phase["requests"]))
 
         return {
             "total_requests": len(requests),
@@ -148,14 +196,22 @@ class RunMetricsRecorder:
         }
 
     def to_json_dict(self) -> Dict[str, Any]:
-        """Return a machine-readable metrics document."""
+        """Return the metrics document.
+
+        Returns:
+            ``{"summary": ..., "requests": [...]}`` with one dict per request.
+        """
         return {
             "summary": self.summary(),
             "requests": [asdict(metric) for metric in self.requests],
         }
 
     def write_json(self, path: Path) -> None:
-        """Write metrics as UTF-8 JSON."""
+        """Write :meth:`to_json_dict` as indented UTF-8 JSON, creating parent directories.
+
+        Args:
+            path: Output file.
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -163,12 +219,27 @@ class RunMetricsRecorder:
 
 
 def estimate_tokens(chars: int) -> int:
-    """Cheap tokenizer-independent estimate used when provider usage is absent."""
+    """Estimate tokens from characters when the API reports no usage.
+
+    Args:
+        chars: Character count.
+
+    Returns:
+        ``ceil(chars / 4)``, at least 0.
+    """
     return max(0, (int(chars) + 3) // 4)
 
 
 def split_system_prompt_chars(system_prompt: Any) -> tuple[int, int]:
-    """Return ``(stable_chars, variable_chars)`` for a system message payload."""
+    """Measure the cacheable and per-call parts of a system message.
+
+    Args:
+        system_prompt: Plain text, or content parts in which ``cache_control`` marks
+            the cacheable part.
+
+    Returns:
+        ``(stable_chars, variable_chars)``; plain text counts as stable.
+    """
     if isinstance(system_prompt, list):
         stable = 0
         variable = 0
@@ -186,7 +257,14 @@ def split_system_prompt_chars(system_prompt: Any) -> tuple[int, int]:
 
 
 def usage_tokens(response: Any) -> tuple[Optional[int], Optional[int]]:
-    """Extract prompt/completion token usage from OpenAI-compatible responses."""
+    """Read token usage from an OpenAI-compatible response.
+
+    Args:
+        response: Chat completion (``usage`` as object or dict), or ``None``.
+
+    Returns:
+        ``(prompt_tokens, completion_tokens)``, each ``None`` when not reported.
+    """
     usage = getattr(response, "usage", None)
     if usage is None:
         return None, None

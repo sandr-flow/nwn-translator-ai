@@ -10,13 +10,14 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Protocol, TypeVar
 
 logger = logging.getLogger(__name__)
 
+_Result = TypeVar("_Result")
+
 
 class TranslationLogWriter(Protocol):
     """Append one JSON-serializable log record per translation."""
 
     def write(self, entry: Dict[str, Any]) -> None:
         """Persist a single log entry (e.g. one line of JSONL)."""
-        ...
 
 
 class FileTranslationLogWriter:
@@ -56,10 +57,14 @@ def translation_log_writer_for_config(
     translation_log: Optional[Path],
     override: Optional[TranslationLogWriter] = None,
 ) -> TranslationLogWriter:
-    """Resolve writer from optional path and optional injected override.
+    """Resolve the log writer of a run.
 
-    If ``override`` is set, it wins. Else if ``translation_log`` is set, use file writer.
-    Otherwise null writer.
+    Args:
+        translation_log: JSONL log path, or ``None``.
+        override: Injected writer (web database); wins over *translation_log*.
+
+    Returns:
+        *override*, else a file writer for *translation_log*, else a null writer.
     """
     if override is not None:
         return override
@@ -68,11 +73,13 @@ def translation_log_writer_for_config(
     return NullTranslationLogWriter()
 
 
-_Result = TypeVar("_Result")
-
-
 def write_trace(writer: TranslationLogWriter, entry: Dict[str, Any]) -> None:
-    """A diagnostic writer failure must not change a translation or patch result."""
+    """Write a diagnostic log entry; a writer failure never changes a result.
+
+    Args:
+        writer: Log writer.
+        entry: JSON-serializable log entry.
+    """
     try:
         writer.write(entry)
     except Exception as exc:
@@ -80,6 +87,7 @@ def write_trace(writer: TranslationLogWriter, entry: Dict[str, Any]) -> None:
 
 
 def _trace_value(value: Any) -> Any:
+    """Convert dataclasses, tuples and paths into JSON-ready values."""
     if is_dataclass(value) and not isinstance(value, type):
         return _trace_value(asdict(value))
     if isinstance(value, dict):
@@ -98,7 +106,23 @@ async def logged_model_call(
     trace_context: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> _Result:
-    """Trace a logical provider call and response, without provider credentials."""
+    """Call a provider task and log the request and its response.
+
+    The request entry records ``method.__name__`` and the call arguments, never
+    provider credentials; the response entry records the result or the error type.
+
+    Args:
+        writer: Log writer.
+        method: Bound provider task method (e.g. ``provider.translate_batch_async``).
+        trace_context: Caller context stored with the request entry.
+        **kwargs: Arguments of *method*.
+
+    Returns:
+        The method's result.
+
+    Raises:
+        BaseException: Whatever *method* raises, after logging its type.
+    """
     request_id = uuid4().hex
     write_trace(
         writer,

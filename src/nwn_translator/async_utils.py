@@ -1,4 +1,4 @@
-"""Async helper utilities."""
+"""Run coroutines from synchronous code on one persistent event loop per thread."""
 
 from __future__ import annotations
 
@@ -73,6 +73,12 @@ def run_async(
         coro: The coroutine to execute.
         timeout: Maximum seconds to wait for *coro* to complete.
             ``None`` disables the timeout.  Default: :data:`DEFAULT_TIMEOUT`.
+
+    Returns:
+        The coroutine's result.
+
+    Raises:
+        TimeoutError: When the coroutine raises one, including the expiry of *timeout*.
     """
     loop = _get_thread_loop()
     if timeout is not None and timeout > 0:

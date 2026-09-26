@@ -18,8 +18,8 @@ from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.formats.gff import read_gff
 from tests.support.gff_writer import write_gff
 from nwn_translator.main import rebuild_module
+from nwn_translator.pipeline import stages
 from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_translate
-from nwn_translator.translators.translation_manager import TranslationManager
 from nwn_translator.web import database as db
 from nwn_translator.web.app import create_app
 from nwn_translator.web.task_manager import TaskManager, set_task_manager
@@ -199,7 +199,6 @@ def test_per_file_rows_carry_speakers_for_dialog_lines_only(tmp_path: Path) -> N
     config = TranslationConfig(
         api_key="k", input_file=tmp_path / "m.mod", translation_log_writer=writer
     )
-    manager = TranslationManager(config, Mock())
     dlg_path = tmp_path / "severina.dlg"
     dlg_data = _severina_dlg()
     dialog = DialogExtractor().extract(dlg_path, dlg_data)
@@ -217,10 +216,11 @@ def test_per_file_rows_carry_speakers_for_dialog_lines_only(tmp_path: Path) -> N
     translations = {line.key: "Привет." for line in dialog.items}
     translations[("a.uti", "a:name")] = "Меч"
 
-    state._log_per_file_translations(
+    stages._log_editor_rows(
+        state,
         {dlg_path: (dlg_data, dialog, ".dlg"), uti_path: ({}, item, ".uti")},
         translations,
-        manager,
+        set(),
     )
 
     rows = {entry["item_id"]: entry for entry in writer.entries}

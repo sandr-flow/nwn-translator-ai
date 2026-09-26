@@ -21,13 +21,14 @@ from typing import Any, Dict, Iterable, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from dotenv import load_dotenv
+
 from nwn_translator.ai_providers import TranslationItem, TranslationProvider, TranslationResult
-from nwn_translator.ai_providers import create_provider
 from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.base import ExtractedContent
 from nwn_translator.formats.erf import ERFReader
 from nwn_translator.main import load_parsed_and_extracted
-from nwn_translator.telemetry import RunMetricsRecorder
+from nwn_translator.pipeline.stages import PipelineState
 from nwn_translator.translators.translation_manager import TranslationManager
 
 logger = logging.getLogger(__name__)
@@ -98,21 +99,6 @@ class CountingProvider:
 
     async def close_async_client(self) -> None:
         await self.wrapped.close_async_client()
-
-
-def _load_env_file(path: Optional[Path]) -> None:
-    """Load simple KEY=VALUE pairs from *path* without overriding existing env."""
-    if path is None or not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
 
 
 def _prepare_input(input_path: Path, keep_extract: bool) -> Path:
@@ -238,16 +224,9 @@ def _run_mode(
     """Run one real NCS translation mode and write per-item results."""
     config = _build_config(args, mode, output_dir)
     config.get_api_key()
-    metrics = RunMetricsRecorder()
-    provider = CountingProvider(
-        create_provider(
-            config.api_key,
-            config.model,
-            reasoning_effort=config.reasoning_effort,
-            player_gender=config.player_gender,
-            metrics_recorder=metrics,
-        )
-    )
+    state = PipelineState.create(config)
+    metrics = state.metrics_recorder
+    provider = CountingProvider(state.provider)
     manager = TranslationManager(config, provider)
     if mode == "single":
         # No script string fits a batch: every approved one gets its own request.
@@ -407,7 +386,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    _load_env_file(args.env_file)
+    # Variables already set in the environment win over the file.
+    load_dotenv(args.env_file)
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 

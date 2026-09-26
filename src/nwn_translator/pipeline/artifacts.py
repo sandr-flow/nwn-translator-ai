@@ -25,7 +25,14 @@ from ..extractors.base import ExtractedContent, TranslatableItem, Translations
 from ..glossary import Glossary
 
 
-def _write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
+def write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
+    """Write *data* as indented UTF-8 JSON, creating the parent directory.
+
+    Args:
+        path: Target file.
+        data: JSON-serializable value.
+        sort_keys: Sort object keys.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2, sort_keys=sort_keys),
@@ -34,6 +41,7 @@ def _write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
 
 
 def _read_json(path: Path) -> Any:
+    """Read a UTF-8 JSON file."""
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
@@ -128,7 +136,7 @@ def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, An
 
 def dump_world_context(path: Path, world_context: Optional[WorldContext]) -> None:
     """Write ``world_context.json``."""
-    _write_json(Path(path), world_context_to_dict(world_context))
+    write_json(Path(path), world_context_to_dict(world_context))
 
 
 def load_world_context(path: Path) -> WorldContext:
@@ -176,7 +184,7 @@ def candidate_to_dict(candidate: EntityCandidate) -> Dict[str, Any]:
 def dump_candidates(path: Path, registry: Optional[EntityCandidateRegistry]) -> None:
     """Write ``candidates.json`` from a candidate registry."""
     values = registry.values() if registry is not None else []
-    _write_json(Path(path), [candidate_to_dict(c) for c in values])
+    write_json(Path(path), [candidate_to_dict(c) for c in values])
 
 
 def load_candidates(path: Path) -> EntityCandidateRegistry:
@@ -212,7 +220,7 @@ def load_candidates(path: Path) -> EntityCandidateRegistry:
 def dump_glossary(path: Path, glossary: Optional[Glossary]) -> None:
     """Write ``glossary.json`` (canonical English -> translated entries)."""
     entries = glossary.entries if glossary is not None else {}
-    _write_json(
+    write_json(
         Path(path),
         {"version": 2, "entries": entries, "aliases": glossary.aliases if glossary else {}},
         sort_keys=True,
@@ -232,7 +240,7 @@ def load_glossary(path: Path) -> Glossary:
 
 def dump_translations(path: Path, translations: Translations) -> None:
     """Persist occurrence-addressed results without a parallel NCS artifact."""
-    _write_json(
+    write_json(
         path,
         {
             "version": 2,

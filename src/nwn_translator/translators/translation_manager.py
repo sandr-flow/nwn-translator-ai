@@ -11,7 +11,6 @@ last answer is finally cleaned up.
 import logging
 from dataclasses import replace
 from typing import (
-    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -33,9 +32,6 @@ from .ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
 from .script_gate import ScriptGate, add_script_context
 from .token_handler import sanitize_text
 from .work_plan import BatchLimits, WorkItem, dedup_key, plan_work
-
-if TYPE_CHECKING:
-    from ..context.dialog_speakers import DialogSpeaker
 
 logger = logging.getLogger(__name__)
 
@@ -184,41 +180,6 @@ class TranslationManager:
                     self.failed_items.add(duplicate.key)
                 bump(duplicate.key[0])
         return translations
-
-    def log_per_file_item(
-        self,
-        *,
-        original: str,
-        translated: str,
-        context: Optional[str],
-        source_filename: str,
-        item_id: Optional[str] = None,
-        success: bool = True,
-        speaker: Optional["DialogSpeaker"] = None,
-    ) -> None:
-        """Write one translation log row for the web editor.
-
-        Args:
-            original: Source text.
-            translated: Translation (the source text for a failed item).
-            context: Prompt context of the occurrence.
-            source_filename: Resource file name.
-            item_id: Occurrence id within the resource.
-            success: False for an occurrence whose translation was rejected.
-            speaker: Speaker of a dialog line; other rows carry no speaker.
-        """
-        entry: Dict[str, Any] = {
-            "original": original,
-            "translated": translated,
-            "context": context,
-            "model": self.config.model,
-            "file": source_filename,
-            "item_id": item_id,
-            "success": success,
-        }
-        if speaker is not None:
-            entry["speaker"] = speaker
-        write_trace(self._log_writer, entry)
 
     def get_statistics(self) -> Dict[str, Any]:
         """Return :attr:`stats` plus ``total_errors``."""

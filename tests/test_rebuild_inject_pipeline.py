@@ -1,4 +1,4 @@
-"""Unified load + inject path used by rebuild and Phase C."""
+"""Unified load + inject path used by rebuild and the inject stage."""
 
 from __future__ import annotations
 
@@ -6,12 +6,16 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from nwn_translator.config import TranslationConfig
+from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
 from nwn_translator.formats.ncs import parse_ncs
+from nwn_translator.injectors.base import InjectedContent
 from nwn_translator.main import (
     ModuleTranslator,
     inject_translations_into_file,
     load_parsed_and_extracted,
 )
+from nwn_translator.pipeline import stages
+from nwn_translator.pipeline.stages import PipelineState, stage_inject
 
 from tests.test_ncs import _consts, _retn, _write_ncs
 
@@ -25,7 +29,7 @@ class CapturingWriter:
 
 
 def test_load_and_inject_ncs_from_text_translation_map(tmp_path: Path) -> None:
-    """Rebuild-style: ``translations`` keyed by original text derives NCS item map."""
+    """Rebuild-style: a translation addressed by occurrence is patched into the script."""
     path = _write_ncs(tmp_path, "s.ncs", _consts("Hello world!"), _retn())
     loaded = load_parsed_and_extracted(path, ".ncs", None)
     assert loaded is not None
@@ -57,9 +61,10 @@ def test_load_and_inject_ncs_prefers_explicit_item_id_map(tmp_path: Path) -> Non
     assert any(i.string_value == "ZZ" for i in ncs2.string_constants)
 
 
-def test_module_translator_records_ncs_patch_failure_stats(tmp_path: Path, monkeypatch) -> None:
+def test_inject_records_ncs_patch_failure_stats(tmp_path: Path, monkeypatch) -> None:
+    """A script whose patch failed is counted, sampled and logged by the inject stage."""
     writer = CapturingWriter()
-    monkeypatch.setattr("nwn_translator.main.create_provider", lambda *args, **kwargs: Mock())
+    monkeypatch.setattr(stages, "create_provider", lambda *args, **kwargs: Mock())
     translator = ModuleTranslator(
         TranslationConfig(
             api_key="test-key",
@@ -70,13 +75,23 @@ def test_module_translator_records_ncs_patch_failure_stats(tmp_path: Path, monke
             translation_log_writer=writer,
         )
     )
+    script = tmp_path / "s.ncs"
+    failure = {"type": "ncs_script", "ncs_patch_failed": True, "error": "validation failed"}
+    monkeypatch.setattr(
+        stages,
+        "inject_translations_into_file",
+        lambda *args, **kwargs: InjectedContent(script, False, 0, failure),
+    )
+    translator.state.extract_dir = tmp_path
+    content = ExtractedContent(content_type="ncs_script", items=[], source_file=script)
 
-    translator._record_ncs_patch_failure(tmp_path / "s.ncs", "validation failed")
+    stage_inject(translator.state, {script: ({}, content, ".ncs")}, {})
 
     stats = translator.stats["ncs_diagnostics"]
     assert stats["patch_failed"] == 1
     assert stats["samples"][0]["reason"] == "patch_failed"
-    assert writer.entries == [
+    assert translator.stats["files_processed"] == 1
+    assert writer.entries[1:] == [
         {
             "event": "ncs_diagnostic",
             "file": "s.ncs",
@@ -93,12 +108,6 @@ def test_log_per_file_emits_failed_originals(tmp_path: Path) -> None:
         input_file=tmp_path / "m.mod",
         translation_log_writer=writer,
     )
-    from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-    from nwn_translator.pipeline.stages import PipelineState
-    from nwn_translator.translators.translation_manager import TranslationManager
-
-    manager = TranslationManager(config, Mock())
-    manager.failed_items.add(("a.uti", "x:0"))
     src = tmp_path / "a.uti"
     extracted = ExtractedContent(
         content_type="item",
@@ -111,11 +120,8 @@ def test_log_per_file_emits_failed_originals(tmp_path: Path) -> None:
         source_file=src,
     )
     state = PipelineState(config=config, provider=Mock())
-    state._log_per_file_translations(
-        {src: ({}, extracted, ".uti")},
-        {},
-        manager,
-    )
+    failed = {("a.uti", "x:0")}
+    stages._log_editor_rows(state, {src: ({}, extracted, ".uti")}, {}, failed)
     failed_rows = [e for e in writer.entries if e.get("success") is False]
     assert len(failed_rows) == 1
     assert failed_rows[0]["original"] == "Boom"
@@ -125,11 +131,7 @@ def test_log_per_file_emits_failed_originals(tmp_path: Path) -> None:
 
     writer.entries.clear()
     other = tmp_path / "b.uti"
-    state._log_per_file_translations(
-        {other: ({}, skipped, ".uti")},
-        {},
-        manager,
-    )
+    stages._log_editor_rows(state, {other: ({}, skipped, ".uti")}, {}, failed)
     assert writer.entries == []
 
 

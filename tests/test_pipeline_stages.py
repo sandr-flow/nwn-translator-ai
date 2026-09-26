@@ -14,7 +14,12 @@ from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
 from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.glossary import Glossary
 from nwn_translator.pipeline import artifacts, stages
-from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_inject
+from nwn_translator.pipeline.stages import (
+    PipelineState,
+    find_translatable_files,
+    stage_extract,
+    stage_inject,
+)
 from nwn_translator.translators.ncs_diagnostics import new_ncs_diagnostics
 
 from tests.test_ncs import _consts, _retn, _write_ncs
@@ -174,7 +179,7 @@ def test_extract_then_inject_stage_isolated(tmp_path: Path) -> None:
     state = _det_state(tmp_path)
     state.extract_dir = extract_dir
 
-    files = state._find_translatable_files(extract_dir)
+    files = find_translatable_files(extract_dir)
     extracted_map = stage_extract(state, files)
     assert len(extracted_map) == 1
 
@@ -198,7 +203,7 @@ def test_only_ext_filter_isolates_file_type(tmp_path: Path) -> None:
     state = _det_state(tmp_path)
     state.extract_dir = extract_dir
 
-    all_files = state._find_translatable_files(extract_dir)
+    all_files = find_translatable_files(extract_dir)
     ncs_only = [f for f in all_files if f.suffix.lower() == ".ncs"]
     extracted_map = stage_extract(state, ncs_only)
 
@@ -208,24 +213,20 @@ def test_only_ext_filter_isolates_file_type(tmp_path: Path) -> None:
 def test_cancel_during_extract_drops_queued_futures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Cancellation must not wait for every queued extraction to finish.
-
-    Before the fix the executor's __exit__ ran all submitted futures to
-    completion, so cancelling during extract still parsed the whole module.
-    """
+    """Cancellation drops the queued extractions instead of running them all first."""
     total_files = 40
     sleep_per_file = 0.1
     started_lock = threading.Lock()
     started_count = 0
 
-    def slow_extract(self, file_path):
+    def slow_extract(file_path, *_args, **_kwargs):
         nonlocal started_count
         with started_lock:
             started_count += 1
         time.sleep(sleep_per_file)
         return None
 
-    monkeypatch.setattr(PipelineState, "_extract_file", slow_extract)
+    monkeypatch.setattr(stages, "load_parsed_and_extracted", slow_extract)
 
     config = TranslationConfig(
         api_key="test-key",
@@ -244,8 +245,7 @@ def test_cancel_during_extract_drops_queued_futures(
         stage_extract(state, files)
     elapsed = time.monotonic() - begun
 
-    # Old behaviour: all 40 futures run (~2s with 2 workers). New behaviour:
-    # only the few already started when the cancel fired.
+    # All 40 files would take ~2 s on 2 workers; only those already started may run.
     assert started_count < total_files / 2
     assert elapsed < total_files * sleep_per_file / 2 / 2
 
@@ -256,12 +256,12 @@ def test_extract_keeps_input_order_regardless_of_completion_order(
     """Items reach batching in file order even when workers finish out of order."""
     files = [tmp_path / f"f{i}.uti" for i in range(8)]
 
-    def reversed_speed_extract(self, file_path):
+    def reversed_speed_extract(file_path, *_args, **_kwargs):
         # Earlier files take longer, so completion order is the reverse of input order.
         time.sleep(0.02 * (len(files) - files.index(file_path)))
-        return {}, ExtractedContent(content_type="item", items=[], source_file=file_path), ".uti"
+        return {}, ExtractedContent(content_type="item", items=[], source_file=file_path)
 
-    monkeypatch.setattr(PipelineState, "_extract_file", reversed_speed_extract)
+    monkeypatch.setattr(stages, "load_parsed_and_extracted", reversed_speed_extract)
     config = TranslationConfig(
         api_key="test-key",
         model="test-model",

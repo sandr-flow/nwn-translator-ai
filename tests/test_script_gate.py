@@ -128,6 +128,7 @@ def test_script_context_quotes_nearest_approved_lines_by_offset():
     by_offset = {item.metadata["offset"]: item for item in items}
     first = by_offset[10]
     assert first.metadata["translation_group"] == "script"
+    assert first.metadata["batch_resource"] == "s.ncs"
     assert first.metadata["batch_context"] == "NCS string"
     assert first.metadata["approved_neighbors"] == [by_offset[o].text for o in (20, 30, 40)]
     assert first.context.split("\n")[:2] == [

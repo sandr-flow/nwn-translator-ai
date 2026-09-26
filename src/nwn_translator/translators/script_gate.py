@@ -175,7 +175,8 @@ def add_script_context(approved: Sequence[TranslatableItem]) -> None:
 
     Each string gets its source excerpt and the neighbouring approved strings of
     the same script (by bytecode offset) as prompt context, and joins its script's
-    batch group. Gate decisions are not affected. Items are updated in place.
+    batch group (``translation_group`` within its ``batch_resource``). Gate
+    decisions are not affected. Items are updated in place.
 
     Args:
         approved: Approved script strings.
@@ -189,6 +190,7 @@ def add_script_context(approved: Sequence[TranslatableItem]) -> None:
             item.metadata = {
                 **item.metadata,
                 "translation_group": "script",
+                "batch_resource": item.key[0],
                 "batch_context": item.context or "",
             }
             context = [item.context or ""]

@@ -427,6 +427,53 @@ def test_failing_pending_retry_still_retries_lines_one_by_one():
     assert manager.failed_items == set()
 
 
+def _three_lines() -> DialogNode:
+    return DialogNode(
+        node_id=1,
+        text="Hello there",
+        is_entry=True,
+        replies=[
+            DialogNode(node_id=2, text="Who are you?", is_entry=False),
+            DialogNode(node_id=3, text="Goodbye.", is_entry=False),
+        ],
+    )
+
+
+def test_rate_limit_in_a_chunk_stops_the_file(monkeypatch, caplog):
+    monkeypatch.setattr(dialog_plan, "CHUNK_MAX_KEYS", 1)
+    provider = _FakeProvider(['{"E1":"Привет"}', RateLimitError("402 budget")])
+    manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+    progress = _CountingProgress()
+
+    caplog.set_level(logging.ERROR)
+    translations, errors = manager.translate_dialogs(
+        [(Path("test.dlg"), _dlg(_three_lines()), 3)], item_progress=progress
+    )
+
+    assert errors == []
+    assert translations == {("test.dlg", "test:entry:1"): "Привет"}
+    assert manager.failed_items == {("test.dlg", "test:reply:2"), ("test.dlg", "test:reply:3")}
+    assert len(provider.calls) == 2  # the third chunk was never requested
+    assert progress.total == 3
+    assert "Contextual translation failed for test.dlg: 402 budget" in caplog.text
+
+
+def test_rate_limit_in_the_pending_retry_skips_the_line_retries():
+    tree = DialogNode(node_id=1, text="Hello <FirstName>.", is_entry=True)
+    provider = _LineRetryFake(
+        ['{"E1":"Привет."}', RateLimitError("402 budget")],
+        lambda text: text.replace("Hello", "Привет"),
+    )
+    manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+
+    translations, errors = manager.translate_dialogs([(Path("test.dlg"), _dlg(tree), 1)])
+
+    assert (translations, errors) == ({}, [])
+    assert manager.failed_items == {("test.dlg", "test:entry:1")}
+    assert len(provider.calls) == 2
+    assert provider.line_calls == []
+
+
 class _KeyedFakeProvider(_FakeProvider):
     """Return the response whose marker substring appears in the user prompt.
 

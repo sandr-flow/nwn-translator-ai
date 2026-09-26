@@ -545,12 +545,24 @@ class ContextualTranslationManager:
 
         A failing request (a provider error after its own retries, a
         timeout) costs only this chunk: its lines stay unaccepted and are
-        reported as failed, while the other chunks are still requested.
+        reported as failed, while the other chunks are still requested. A
+        rate or budget limit error stops the file instead, since every
+        further request would meet the same limit.
+
+        Args:
+            run: The file's state.
+            chunk: The lines to request and their script.
+            index: 1-based position of the chunk, for log messages.
+            total: Number of chunks of the file.
 
         Returns:
             Keys of the chunk that are missing from the answer or were
             rejected, to be retried; all of them when the answer never
             parsed, none when the request failed.
+
+        Raises:
+            RateLimitError: When the provider reports a rate or budget limit.
+            TranslationCancelled: When the run is cancelled.
         """
         dialog = run.dialog
         name = dialog.file_path.name
@@ -572,7 +584,7 @@ class ContextualTranslationManager:
                 trace={"file": name},
                 label=name,
             )
-        except TranslationCancelled:
+        except (TranslationCancelled, RateLimitError):
             raise
         except Exception as exc:
             logger.error("%s: dialog chunk %d/%d request failed: %s", name, index, total, exc)
@@ -594,7 +606,9 @@ class ContextualTranslationManager:
         """Request the pending lines again in one token-preserving request.
 
         A failing request is treated like an unusable answer, so the lines
-        still get their single-line retries and cleanup.
+        still get their single-line retries and cleanup. A rate or budget
+        limit error is raised instead: one more request per line would only
+        meet the same limit.
 
         Args:
             run: The file's state.
@@ -602,6 +616,10 @@ class ContextualTranslationManager:
 
         Returns:
             Keys still pending afterwards, sorted.
+
+        Raises:
+            RateLimitError: When the provider reports a rate or budget limit.
+            TranslationCancelled: When the run is cancelled.
         """
         dialog = run.dialog
         name = dialog.file_path.name
@@ -628,7 +646,7 @@ class ContextualTranslationManager:
                 trace={"file": name},
                 label=name,
             )
-        except TranslationCancelled:
+        except (TranslationCancelled, RateLimitError):
             raise
         except Exception as exc:
             logger.error("%s: pending dialog retry request failed: %s", name, exc)

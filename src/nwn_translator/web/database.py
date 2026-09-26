@@ -16,7 +16,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from ..translation_logging import translation_log_writer_for_config
+from ..translation_logging import FileTranslationLogWriter
 
 logger = logging.getLogger(__name__)
 
@@ -529,7 +529,7 @@ class SqliteTranslationLogWriter:
             trace_path: JSONL file for diagnostic events; ``None`` discards them.
         """
         self.task_id = task_id
-        self._trace_writer = translation_log_writer_for_config(trace_path)
+        self._trace_file = FileTranslationLogWriter(trace_path) if trace_path is not None else None
 
     def write(self, entry: Dict[str, Any]) -> None:
         """Store one log entry.
@@ -542,7 +542,8 @@ class SqliteTranslationLogWriter:
             entry: Translation log record.
         """
         if entry.get("event"):
-            self._trace_writer.write(entry)
+            if self._trace_file is not None:
+                self._trace_file.write(entry)
             return
         original = entry.get("original", "")
         if not original:
@@ -563,3 +564,11 @@ class SqliteTranslationLogWriter:
             logger.debug("Dropped translation row of task %s: %s", self.task_id, e)
         except Exception as e:
             logger.warning("Failed to store translation row of task %s: %s", self.task_id, e)
+
+    def close(self) -> None:
+        """Release the trace file, so the task workspace can be removed.
+
+        A later diagnostic event opens the file again.
+        """
+        if self._trace_file is not None:
+            self._trace_file.close()

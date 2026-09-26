@@ -1,0 +1,177 @@
+"""Tests for the isolated stage runner ``scripts/stage.py``."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from nwn_translator.formats.erf import ERFReader, ERFWriter
+from nwn_translator.pipeline import artifacts
+from scripts import stage
+
+from tests.support.gff_writer import write_gff_bytes
+from tests.test_ncs import _consts, _retn, _write_ncs
+
+
+def _module(tmp_path: Path) -> Path:
+    """Write a module with one script string and one dialog line."""
+    script = _write_ncs(tmp_path, "greet.ncs", _consts("Hello world!"), _retn()).read_bytes()
+    dialog = write_gff_bytes(
+        {
+            "StartingList": [{"Index": 0}],
+            "EntryList": [{"Text": {"StrRef": -1, "Value": "Good day."}, "RepliesList": []}],
+            "ReplyList": [],
+        },
+        file_type="DLG",
+    )
+    path = tmp_path / "my_mod.mod"
+    writer = ERFWriter(path)
+    writer.add_resource("greet", ".ncs", script)
+    writer.add_resource("talk", ".dlg", dialog)
+    writer.write()
+    return path
+
+
+def _run(*args: str, tmp_path: Path) -> None:
+    # A missing env file keeps the developer's .env out of the test.
+    assert stage.main([*args, "--env-file", str(tmp_path / "missing.env")]) == 0
+
+
+def test_repack_writes_the_module_into_out(tmp_path: Path) -> None:
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+
+    _run(
+        "repack",
+        str(module),
+        "--extract-dir",
+        str(work / "extract"),
+        "--out",
+        str(work),
+        tmp_path=tmp_path,
+    )
+
+    repacked = work / "my-mod-rus.mod"
+    reader = ERFReader(repacked)
+    assert sorted(entry.res_ref for entry in reader.read_entries()) == ["greet", "talk"]
+    assert not (tmp_path / "my-mod-rus.mod").exists()
+
+
+def test_temp_dir_is_still_accepted_and_ignored(tmp_path: Path) -> None:
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    temp_dir = str(tmp_path / "unused")
+
+    _run("unpack", str(module), "--out", str(work), "--temp-dir", temp_dir, tmp_path=tmp_path)
+
+    assert sorted(path.name for path in (work / "extract").iterdir()) == ["greet.ncs", "talk.dlg"]
+    assert not (tmp_path / "unused").exists()
+
+
+def test_repack_without_the_archive_stops_with_a_message(tmp_path: Path) -> None:
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+
+    with pytest.raises(SystemExit, match="repack requires the original archive"):
+        _run(
+            "repack", "--extract-dir", str(work / "extract"), "--out", str(work), tmp_path=tmp_path
+        )
+
+
+def test_worldscan_also_saves_the_scan_candidates(tmp_path: Path) -> None:
+    """'entities --from' needs the creature names the scan found."""
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+    creature = {
+        "Tag": "MARTA",
+        "FirstName": {"StrRef": -1, "Value": "Marta"},
+        "Conversation": "talk",
+        "ScriptSpawn": "greet",
+    }
+    (work / "extract" / "marta.utc").write_bytes(write_gff_bytes(creature, file_type="UTC"))
+
+    _run("worldscan", "--extract-dir", str(work / "extract"), "--out", str(work), tmp_path=tmp_path)
+
+    candidates = artifacts.load_candidates(work / "candidates.json")
+    assert [c.name for c in candidates.values()] == ["Marta"]
+    world = artifacts.load_world_context(work / "world_context.json")
+    assert [owner.tag for owner in world.script_owners["greet"]] == ["MARTA"]
+
+
+def _record_llm_stages(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Replace the model stages by stubs that record their calls."""
+    calls = []
+
+    def collect_entities(state, extracted_map) -> None:
+        calls.append("collect_entities")
+        state.world_context.extracted_names = [("Marta", "character")]
+
+    monkeypatch.setattr(stage, "stage_collect_entities", collect_entities)
+    monkeypatch.setattr(stage, "stage_build_glossary", lambda state: calls.append("build_glossary"))
+    return calls
+
+
+def test_glossary_after_worldscan_collects_the_entities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scan's own candidates do not replace the entity stage."""
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+    creature = {"Tag": "MARTA", "FirstName": {"StrRef": -1, "Value": "Marta"}}
+    (work / "extract" / "marta.utc").write_bytes(write_gff_bytes(creature, file_type="UTC"))
+    extract = ["--extract-dir", str(work / "extract"), "--out", str(work)]
+    _run("worldscan", *extract, tmp_path=tmp_path)
+    calls = _record_llm_stages(monkeypatch)
+
+    _run("glossary", *extract, tmp_path=tmp_path)
+
+    assert calls == ["collect_entities", "build_glossary"]
+
+
+def test_glossary_after_entities_reuses_the_saved_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+    extract = ["--extract-dir", str(work / "extract"), "--out", str(work)]
+    calls = _record_llm_stages(monkeypatch)
+    _run("entities", *extract, tmp_path=tmp_path)
+    calls.clear()
+
+    _run("glossary", *extract, tmp_path=tmp_path)
+
+    assert calls == ["build_glossary"]
+
+
+def test_only_ext_restricts_extraction_to_one_file_type(tmp_path: Path) -> None:
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+
+    _run("extract", "--extract-dir", str(work / "extract"), "--out", str(work), tmp_path=tmp_path)
+    all_types = {
+        json.loads(line)["ext"]
+        for line in (work / "items.jsonl").read_text(encoding="utf-8").splitlines()
+    }
+    _run(
+        "extract",
+        "--extract-dir",
+        str(work / "extract"),
+        "--out",
+        str(work),
+        "--only-ext",
+        "ncs",
+        tmp_path=tmp_path,
+    )
+    ncs_types = {
+        json.loads(line)["ext"]
+        for line in (work / "items.jsonl").read_text(encoding="utf-8").splitlines()
+    }
+
+    assert all_types == {".dlg", ".ncs"}
+    assert ncs_types == {".ncs"}

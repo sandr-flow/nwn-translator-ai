@@ -1,39 +1,24 @@
-"""Main orchestration for NWN module translation.
+"""Library entry points of the NWN module translator.
 
-This module handles the complete workflow of translating a Neverwinter Nights module:
-1. Extract .mod file
-2. Parse all translatable resources
-3. Translate content using AI
-4. Inject translations back into GFF files
-5. Create new .mod file
-
-The per-stage logic lives in :mod:`nwn_translator.pipeline.stages`; this module
-keeps the public entrypoints (:class:`ModuleTranslator`, :func:`rebuild_module`,
-:func:`translate_module`, :func:`run_translation_pipeline`) and the offline
-rebuild path.
+:func:`translate_module` translates a module end to end;
+:func:`run_translation_pipeline` does the same and also returns the
+:class:`ModuleTranslator` with the statistics of the run. :func:`rebuild_module`
+writes edited translations into the unpacked files of a finished run without
+model requests. The stages themselves live in :mod:`nwn_translator.pipeline.stages`.
 """
 
 import logging
 from pathlib import Path
-from .extractors.base import occurrence_key
 from typing import Any, Dict, Optional, Tuple
 
-from tqdm import tqdm  # noqa: F401  (kept: pre-existing import)
-
-from .config import (
-    TranslationConfig,
-    create_output_path,
-    module_string_encoding_for_target_lang,
-)
-from .formats.erf import create_mod_from_directory
-from .resources import TRANSLATABLE_TYPES
-from .extractors.base import ExtractedContent
+from .config import TranslationConfig, module_string_encoding_for_target_lang
 from .context.world_context import WorldContext
+from .extractors.base import occurrence_key
+from .formats.erf import create_mod_from_directory
 from .glossary import Glossary
-from .ai_providers import create_provider
-from .telemetry import RunMetricsRecorder
 from .pipeline.stages import (
     PipelineState,
+    find_translatable_files,
     inject_translations_into_file,
     load_parsed_and_extracted,
     run_pipeline,
@@ -50,73 +35,62 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+#: Archive kinds a run accepts.
+_ARCHIVE_SUFFIXES = (".mod", ".erf", ".hak")
+
 
 class ModuleTranslator:
-    """Main translator for NWN modules.
+    """One translation run: a pipeline state with the provider for its API key.
 
-    Thin facade over :class:`~nwn_translator.pipeline.stages.PipelineState`:
-    builds the AI provider and run state, then runs the full pipeline via
-    :func:`~nwn_translator.pipeline.stages.run_pipeline`.
+    Attributes:
+        config: Run settings.
+        state: Pipeline state of the run.
+        provider: Model provider of the run.
+        metrics_recorder: Request metrics of the run.
     """
 
     def __init__(self, config: TranslationConfig):
-        """Initialize the translator.
+        """Create the provider and the pipeline state of a run.
 
         Args:
-            config: Translation configuration
+            config: Run settings.
         """
         self.config = config
-        self.metrics_recorder = RunMetricsRecorder()
-
-        # Create AI provider
-        self.provider = create_provider(
-            config.api_key,
-            config.model,
-            player_gender=config.player_gender,
-            reasoning_effort=config.reasoning_effort,
-            metrics_recorder=self.metrics_recorder,
-        )
-
-        self.state = PipelineState(
-            config=config,
-            provider=self.provider,
-            metrics_recorder=self.metrics_recorder,
-        )
+        self.state = PipelineState.create(config)
+        self.provider = self.state.provider
+        self.metrics_recorder = self.state.metrics_recorder
 
     def translate(self) -> Path:
-        """Translate the module.
+        """Run every stage.
 
         Returns:
-            Path to translated .mod file
-
-        Raises:
-            Exception: If translation fails
+            The translated module.
         """
         return run_pipeline(self.state)
 
-    # ── delegations preserved for external callers (web, tests) ─────────
     @property
     def extract_dir(self) -> Optional[Path]:
+        """Unpacked module; kept after the run only with ``config.skip_cleanup``."""
         return self.state.extract_dir
 
     @property
     def stats(self) -> Dict[str, Any]:
+        """Run statistics as the stages fill them in."""
         return self.state.stats
 
     @property
     def world_context(self) -> Optional[WorldContext]:
+        """Scanned module objects (context mode)."""
         return self.state.world_context
 
     @property
     def glossary(self) -> Optional[Glossary]:
+        """Proper-name glossary of the run (context mode)."""
         return self.state.glossary
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Get translation statistics."""
+        """Return the run statistics; see :meth:`PipelineState.get_statistics`."""
         return self.state.get_statistics()
-
-    def _record_ncs_patch_failure(self, file_path: Path, error: str) -> None:
-        self.state._record_ncs_patch_failure(file_path, error)
 
 
 def rebuild_module(
@@ -129,8 +103,10 @@ def rebuild_module(
     """Re-inject translations and reassemble a .mod without LLM calls.
 
     Translations are addressed by ``item_id``, not by original text: the
-    extracted files on disk already hold the first-pass translation. Re-extraction
-    supplies the current field offsets; only explicitly addressed edits are patched.
+    extracted files on disk already hold the first-pass translation. Only files
+    with an addressed translation are re-extracted, for their current field
+    offsets, and patched; the others are packed as they are. The web passes
+    every stored translation of the task, so it re-extracts each file that has one.
 
     Args:
         extract_dir: Directory with previously extracted files.
@@ -142,28 +118,23 @@ def rebuild_module(
     Returns:
         Path to the rebuilt .mod file.
     """
-    gff_cache: Dict[Path, Dict[str, Any]] = {}
-    text_enc = module_string_encoding_for_target_lang(target_lang)
-    # The extracted files on disk already hold first-pass translations, so both
-    # re-extraction and injector-side re-reads decode with the target code page.
-    read_enc = text_enc
-
+    # The files already hold first-pass translations, so both re-extraction and
+    # the injectors' re-reads decode with the target code page.
+    encoding = module_string_encoding_for_target_lang(target_lang)
     translations = {
         occurrence_key(filename, item_id): text
         for filename, per_file in translations_by_item_id.items()
         for item_id, text in per_file.items()
     }
-
-    # Inject translations into each translatable file
-    for file_path in extract_dir.rglob("*"):
-        if not file_path.is_file():
+    addressed_files = {resource for resource, _item_id in translations}
+    gff_cache: Dict[Path, Dict[str, Any]] = {}
+    for file_path in find_translatable_files(extract_dir):
+        if file_path.name not in addressed_files:
             continue
-        ext = file_path.suffix.lower()
-        if ext not in TRANSLATABLE_TYPES:
-            continue
-
         try:
-            loaded = load_parsed_and_extracted(file_path, ext, gff_cache, source_encoding=read_enc)
+            loaded = load_parsed_and_extracted(
+                file_path, file_path.suffix.lower(), gff_cache, source_encoding=encoding
+            )
         except Exception as e:
             logger.warning("Failed to read %s during rebuild: %s", file_path.name, e)
             continue
@@ -175,12 +146,10 @@ def rebuild_module(
             parsed_data,
             extracted,
             translations,
-            log_updates=False,
             target_lang=target_lang,
-            source_encoding=read_enc,
+            source_encoding=encoding,
         )
 
-    # Reassemble .mod
     create_mod_from_directory(extract_dir, output_path, original_mod_path)
     logger.info("Rebuild complete: %s", output_path)
     return output_path
@@ -190,36 +159,40 @@ def translate_module(config: TranslationConfig) -> Path:
     """Translate a NWN module.
 
     Args:
-        config: Translation configuration
+        config: Run settings.
 
     Returns:
-        Path to translated module file
+        The translated module.
 
     Raises:
-        ValueError: If configuration is invalid
-        Exception: If translation fails
+        ValueError: If the input is missing or not an archive, or no API key is set.
+        TranslationCancelled: If the run is cancelled.
     """
     result_path, _translator = run_translation_pipeline(config)
     return result_path
 
 
 def run_translation_pipeline(config: TranslationConfig) -> Tuple[Path, ModuleTranslator]:
-    """Validate config, run the translation pipeline, and return the translator.
+    """Validate *config*, translate the module and return the translator too.
 
-    Shared by the public library entrypoint and the web task runner so the
-    validation / startup path stays in one place.
+    The library entry point and the web task runner share this startup path.
+
+    Args:
+        config: Run settings.
+
+    Returns:
+        The translated module and the :class:`ModuleTranslator` of the run
+        (statistics, unpacked module).
+
+    Raises:
+        ValueError: If the input is missing or not an archive, or no API key is set.
+        TranslationCancelled: If the run is cancelled.
     """
-    # Validate configuration
     if not config.input_file.exists():
         raise ValueError(f"Input file not found: {config.input_file}")
+    if config.input_file.suffix.lower() not in _ARCHIVE_SUFFIXES:
+        raise ValueError("Input file must be a .mod, .erf, or .hak file")
+    config.get_api_key()  # raises ValueError without a key, before any work
 
-    if config.input_file.suffix.lower() not in [".mod", ".erf", ".hak"]:
-        raise ValueError(f"Input file must be a .mod, .erf, or .hak file")
-
-    # Get API key
-    config.api_key = config.get_api_key()
-
-    # Create translator and translate
     translator = ModuleTranslator(config)
-    result_path = translator.translate()
-    return result_path, translator
+    return translator.translate(), translator

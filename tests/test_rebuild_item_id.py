@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from nwn_translator import main
 from nwn_translator.formats.gff import read_gff
 from tests.support.gff_writer import write_gff
 from nwn_translator.main import rebuild_module
@@ -187,6 +188,37 @@ def test_rebuild_is_idempotent_without_edits(tmp_path: Path) -> None:
         target_lang="russian",
     )
     assert (extract_dir / "a.utc").read_bytes() == before
+
+
+def test_rebuild_reads_only_files_with_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Files without an addressed edit are neither re-extracted nor rewritten."""
+    extract_dir = tmp_path / "extract"
+    extract_dir.mkdir()
+    _write_creature(extract_dir / "a.utc", "GOBLIN", "Гоблин")
+    _write_creature(extract_dir / "b.utc", "ORC", "Орк")
+    untouched = (extract_dir / "b.utc").read_bytes()
+    loaded = []
+    real_load = main.load_parsed_and_extracted
+
+    def counting_load(file_path, *args, **kwargs):
+        loaded.append(file_path.name)
+        return real_load(file_path, *args, **kwargs)
+
+    monkeypatch.setattr(main, "load_parsed_and_extracted", counting_load)
+
+    rebuild_module(
+        extract_dir,
+        {"a.utc": {"GOBLIN_first_name": "Гоблин-А"}},
+        tmp_path / "out.mod",
+        original_mod_path=tmp_path / "missing.mod",
+        target_lang="russian",
+    )
+
+    assert loaded == ["a.utc"]
+    assert _first_name(extract_dir / "a.utc") == "Гоблин-А"
+    assert (extract_dir / "b.utc").read_bytes() == untouched
 
 
 # ---------------------------------------------------------------------------

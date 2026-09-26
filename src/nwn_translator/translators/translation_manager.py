@@ -11,7 +11,6 @@ last answer is finally cleaned up.
 import logging
 from dataclasses import replace
 from typing import (
-    TYPE_CHECKING,
     Any,
     Callable,
     Dict,
@@ -27,15 +26,16 @@ from ..ai_providers import TranslationProvider, TranslationResult
 from ..config import TranslationConfig
 from ..extractors.base import ExtractedContent, Occurrence, TranslatableItem, Translations
 from ..glossary import Glossary, restore_wrapping_quotes, terminology_block
-from ..translation_logging import translation_log_writer_for_config, write_trace
+from ..translation_logging import (
+    TranslationLogWriter,
+    translation_log_writer_for_config,
+    write_trace,
+)
 from .model_calls import CallLimits, ModelCaller
 from .ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
 from .script_gate import ScriptGate, add_script_context
 from .token_handler import sanitize_text
 from .work_plan import BatchLimits, WorkItem, dedup_key, plan_work
-
-if TYPE_CHECKING:
-    from ..context.dialog_speakers import DialogSpeaker
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,7 @@ class TranslationManager:
         config: TranslationConfig,
         provider: TranslationProvider,
         glossary: Optional[Glossary] = None,
+        log_writer: Optional[TranslationLogWriter] = None,
     ):
         """Create a manager for one run.
 
@@ -98,16 +99,19 @@ class TranslationManager:
             config: Run settings.
             provider: Model provider.
             glossary: Proper-name glossary offered to the model, if any.
+            log_writer: Log writer of the run; by default the one *config*
+                names.
         """
         self.config = config
         self.provider = provider
         self.glossary = glossary
         self.batch_limits = BatchLimits()
         self.call_limits = CallLimits()
-        self._log_writer = translation_log_writer_for_config(
-            config.translation_log,
-            config.translation_log_writer,
-        )
+        if log_writer is None:
+            log_writer = translation_log_writer_for_config(
+                config.translation_log, config.translation_log_writer
+            )
+        self._log_writer = log_writer
         self.stats: Dict[str, Any] = {
             "items_translated": 0,
             "errors": [],
@@ -184,41 +188,6 @@ class TranslationManager:
                     self.failed_items.add(duplicate.key)
                 bump(duplicate.key[0])
         return translations
-
-    def log_per_file_item(
-        self,
-        *,
-        original: str,
-        translated: str,
-        context: Optional[str],
-        source_filename: str,
-        item_id: Optional[str] = None,
-        success: bool = True,
-        speaker: Optional["DialogSpeaker"] = None,
-    ) -> None:
-        """Write one translation log row for the web editor.
-
-        Args:
-            original: Source text.
-            translated: Translation (the source text for a failed item).
-            context: Prompt context of the occurrence.
-            source_filename: Resource file name.
-            item_id: Occurrence id within the resource.
-            success: False for an occurrence whose translation was rejected.
-            speaker: Speaker of a dialog line; other rows carry no speaker.
-        """
-        entry: Dict[str, Any] = {
-            "original": original,
-            "translated": translated,
-            "context": context,
-            "model": self.config.model,
-            "file": source_filename,
-            "item_id": item_id,
-            "success": success,
-        }
-        if speaker is not None:
-            entry["speaker"] = speaker
-        write_trace(self._log_writer, entry)
 
     def get_statistics(self) -> Dict[str, Any]:
         """Return :attr:`stats` plus ``total_errors``."""

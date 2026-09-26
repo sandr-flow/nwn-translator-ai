@@ -8,6 +8,8 @@ same default and popular models.
 
 from typing import Any, Dict, Optional, Type
 
+from ..config import TranslationConfig
+from ..telemetry import RunMetricsRecorder
 from .base import (
     ProviderError,
     RateLimitError,
@@ -78,6 +80,27 @@ def create_provider(api_key: str, model: Optional[str] = None, **kwargs: Any) ->
     return _provider_class_for_key(api_key)(api_key, model, **kwargs)
 
 
+def create_provider_for_config(
+    config: TranslationConfig, metrics_recorder: Optional[RunMetricsRecorder] = None
+) -> OpenRouterProvider:
+    """Create the provider for the API key, model and prompt settings of a run.
+
+    Args:
+        config: Run settings (API key, model, player gender, reasoning effort).
+        metrics_recorder: Receives one metric per request attempt, if set.
+
+    Returns:
+        The provider :func:`create_provider` picks for ``config.api_key``.
+    """
+    return create_provider(
+        config.api_key,
+        config.model,
+        player_gender=config.player_gender,
+        reasoning_effort=config.reasoning_effort,
+        metrics_recorder=metrics_recorder,
+    )
+
+
 __all__ = [
     "TranslationProvider",
     "TranslationItem",
@@ -87,6 +110,7 @@ __all__ = [
     "OpenRouterProvider",
     "PolzaProvider",
     "create_provider",
+    "create_provider_for_config",
     "detect_provider_from_key",
     "provider_label",
 ]

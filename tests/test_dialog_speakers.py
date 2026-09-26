@@ -19,11 +19,11 @@ from nwn_translator.formats.gff import read_gff
 from tests.support.gff_writer import write_gff
 from nwn_translator.main import rebuild_module
 from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_translate
-from nwn_translator.translators.translation_manager import TranslationManager
 from nwn_translator.web import database as db
 from nwn_translator.web.app import create_app
 from nwn_translator.web.task_manager import TaskManager, set_task_manager
 
+from tests.support.stub_managers import stub_translation_managers
 from tests.test_context_translation import _FakeProvider
 
 PLAYER = {"kind": "player", "name": "", "tag": ""}
@@ -194,12 +194,13 @@ def _severina_dlg() -> dict:
     }
 
 
-def test_per_file_rows_carry_speakers_for_dialog_lines_only(tmp_path: Path) -> None:
+def test_per_file_rows_carry_speakers_for_dialog_lines_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     writer = _CapturingWriter()
     config = TranslationConfig(
         api_key="k", input_file=tmp_path / "m.mod", translation_log_writer=writer
     )
-    manager = TranslationManager(config, Mock())
     dlg_path = tmp_path / "severina.dlg"
     dlg_data = _severina_dlg()
     dialog = DialogExtractor().extract(dlg_path, dlg_data)
@@ -210,18 +211,18 @@ def test_per_file_rows_carry_speakers_for_dialog_lines_only(tmp_path: Path) -> N
         source_file=uti_path,
     )
     state = PipelineState(config=config, provider=Mock())
+    state.extract_dir = tmp_path
     state.world_context = _world(
         _npc("sev_tag", "Severina", conversation="severina"),
         _npc("stumpy_tag", "Stumpy", conversation="stumpy"),
     )
-    translations = {line.key: "Привет." for line in dialog.items}
-    translations[("a.uti", "a:name")] = "Меч"
-
-    state._log_per_file_translations(
-        {dlg_path: (dlg_data, dialog, ".dlg"), uti_path: ({}, item, ".uti")},
-        translations,
-        manager,
+    stub_translation_managers(
+        monkeypatch,
+        batch=({("a.uti", "a:name"): "Меч"}, set()),
+        dialogs=({line.key: "Привет." for line in dialog.items}, set()),
     )
+
+    stage_translate(state, {dlg_path: (dlg_data, dialog, ".dlg"), uti_path: ({}, item, ".uti")})
 
     rows = {entry["item_id"]: entry for entry in writer.entries}
     assert rows["severina:entry:0"]["speaker"] == {

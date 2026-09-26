@@ -5,6 +5,7 @@ the input) instead of returning a path that was never written.
 """
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from nwn_translator.config import TranslationConfig
 from nwn_translator.formats.erf import ERFReader, ERFWriter
@@ -30,8 +31,8 @@ def test_no_translatable_files_outputs_copy_of_input(tmp_path: Path) -> None:
         temp_dir=tmp_path / "temp",
         quiet=True,
     )
-    # The provider is never touched on this path.
-    state = PipelineState(config=config, provider=None)  # type: ignore[arg-type]
+    # No request is sent on this path; the run only closes the client.
+    state = PipelineState(config=config, provider=AsyncMock())
 
     result = run_pipeline(state)
 
@@ -43,3 +44,25 @@ def test_no_translatable_files_outputs_copy_of_input(tmp_path: Path) -> None:
     reader.read_header()
     entries = reader.read_entries()
     assert [e.res_ref for e in entries] == ["cleanup"]
+
+
+def test_run_closes_the_log_file_it_opened(tmp_path: Path, opened_files) -> None:
+    input_mod = tmp_path / "empty.mod"
+    _build_mod_without_translatables(input_mod)
+    log = tmp_path / "log.jsonl"
+    config = TranslationConfig(
+        api_key="unused",
+        input_file=input_mod,
+        output_file=tmp_path / "out.mod",
+        translation_log=log,
+        target_lang="russian",
+        temp_dir=tmp_path / "temp",
+        quiet=True,
+    )
+    state = PipelineState(config=config, provider=AsyncMock())
+    state.trace.write({"event": "started"})
+
+    run_pipeline(state)
+
+    assert [handle.closed for handle in opened_files(log)] == [True]
+    log.rename(tmp_path / "moved.jsonl")  # fails on Windows while a handle is open

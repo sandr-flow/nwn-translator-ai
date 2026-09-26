@@ -153,6 +153,8 @@ def test_deleting_a_running_task_cancels_it_and_frees_the_slot(
     cancel_seen: dict[str, bool] = {}
 
     def blocking_translate(self):
+        # A running job holds its trace file open; the removal must still get it.
+        self.config.translation_log_writer.write({"event": "model_request"})
         started.set()
         release.wait(timeout=10)
         cancel_seen[self.config.input_file.parent.name] = self.config.cancel_check()

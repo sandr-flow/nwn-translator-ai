@@ -1,5 +1,6 @@
 """Tests for pipeline seam (de)serialization and isolated stage execution."""
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -7,15 +8,25 @@ from unittest.mock import Mock
 
 import pytest
 
+from nwn_translator.ai_providers import TranslationResult
 from nwn_translator.config import TranslationCancelled, TranslationConfig
 from nwn_translator.context.entity_candidates import EntityCandidateRegistry
 from nwn_translator.context.world_context import NPCInfo, WorldContext
 from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.glossary import Glossary
-from nwn_translator.pipeline import artifacts
-from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_inject
+from nwn_translator.pipeline import artifacts, stages
+from nwn_translator.pipeline.stages import (
+    PipelineState,
+    find_translatable_files,
+    stage_extract,
+    stage_inject,
+    stage_translate,
+)
+from nwn_translator.translators.ncs_diagnostics import new_ncs_diagnostics
 
+from tests.test_context_translation import _FakeProvider
 from tests.test_ncs import _consts, _retn, _write_ncs
 
 # ── artifact roundtrips (synthetic data) ────────────────────────────────
@@ -49,6 +60,22 @@ def test_items_roundtrip(tmp_path: Path) -> None:
     assert [i.text for i in loaded[0].items] == ["Sword of Truth", "A sharp blade."]
     assert loaded[0].items[0].metadata == {"type": "item_name", "tag": "sword"}
     assert loaded[0].items[0].item_id == "sword_name"
+
+
+def test_items_roundtrip_keeps_unicode_line_separators(tmp_path: Path) -> None:
+    """U+2028 and U+0085 stay unescaped in JSONL; they are not line breaks."""
+    text = "First\u2028second\u0085third\r\nfourth"
+    contents = [
+        ExtractedContent(
+            content_type="item",
+            items=[TranslatableItem(text=text, item_id="a:0")],
+            source_file=tmp_path / "a.uti",
+        )
+    ]
+    path = tmp_path / "items.jsonl"
+    artifacts.dump_items(path, contents)
+
+    assert [item.text for item in artifacts.load_items(path)[0].items] == [text]
 
 
 def test_world_context_roundtrip(tmp_path: Path) -> None:
@@ -98,7 +125,7 @@ def test_world_context_roundtrip_keeps_dialog_actors(tmp_path: Path) -> None:
 
 
 def test_world_context_without_dialog_actors_still_loads(tmp_path: Path) -> None:
-    """Artifacts written before dialog actors were saved load with empty registries."""
+    """Artifacts written before dialog actors and script owners were saved still load."""
     path = tmp_path / "world_context.json"
     path.write_text('{"npcs": {}, "areas": {}}', encoding="utf-8")
 
@@ -106,6 +133,25 @@ def test_world_context_without_dialog_actors_still_loads(tmp_path: Path) -> None
 
     assert loaded.dialog_actors_by_conversation == {}
     assert loaded.dialog_actors_by_tag == {}
+    assert loaded.script_owners == {}
+
+
+def test_world_context_roundtrip_keeps_script_owners(tmp_path: Path) -> None:
+    """Script strings get the same speaker hint from a reloaded world context."""
+    wc = WorldContext()
+    marta = NPCInfo("MARTA", "Marta", "", "", "Human", "Female", "marta_talk")
+    goblins = [NPCInfo(f"GOB{i}", "", "", "", "Goblin", "Male", "") for i in range(2)]
+    wc.register_script_owner("marta_spawn", marta)
+    for goblin in goblins:
+        wc.register_script_owner("gob_bark", goblin)
+
+    path = tmp_path / "world_context.json"
+    artifacts.dump_world_context(path, wc)
+    loaded = artifacts.load_world_context(path)
+
+    assert loaded.script_owners == wc.script_owners
+    for script in ("marta_spawn", "gob_bark"):
+        assert loaded.speaker_hint_for_script(script) == wc.speaker_hint_for_script(script)
 
 
 def test_candidates_roundtrip_preserves_curation(tmp_path: Path) -> None:
@@ -173,7 +219,7 @@ def test_extract_then_inject_stage_isolated(tmp_path: Path) -> None:
     state = _det_state(tmp_path)
     state.extract_dir = extract_dir
 
-    files = state._find_translatable_files(extract_dir)
+    files = find_translatable_files(extract_dir)
     extracted_map = stage_extract(state, files)
     assert len(extracted_map) == 1
 
@@ -187,44 +233,23 @@ def test_extract_then_inject_stage_isolated(tmp_path: Path) -> None:
     assert any((c.string_value or "") == "Hi there all!" for c in patched.string_constants)
 
 
-def test_only_ext_filter_isolates_file_type(tmp_path: Path) -> None:
-    """A type filter restricts extraction/injection to one extension."""
-    extract_dir = tmp_path / "extract"
-    extract_dir.mkdir()
-    _write_ncs(extract_dir, "a.ncs", _consts("Greetings!"), _retn())
-    (extract_dir / "note.txt").write_text("ignored", encoding="utf-8")
-
-    state = _det_state(tmp_path)
-    state.extract_dir = extract_dir
-
-    all_files = state._find_translatable_files(extract_dir)
-    ncs_only = [f for f in all_files if f.suffix.lower() == ".ncs"]
-    extracted_map = stage_extract(state, ncs_only)
-
-    assert {p.suffix.lower() for p in extracted_map} == {".ncs"}
-
-
 def test_cancel_during_extract_drops_queued_futures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Cancellation must not wait for every queued extraction to finish.
-
-    Before the fix the executor's __exit__ ran all submitted futures to
-    completion, so cancelling during extract still parsed the whole module.
-    """
+    """Cancellation drops the queued extractions instead of running them all first."""
     total_files = 40
     sleep_per_file = 0.1
     started_lock = threading.Lock()
     started_count = 0
 
-    def slow_extract(self, file_path):
+    def slow_extract(file_path, *_args, **_kwargs):
         nonlocal started_count
         with started_lock:
             started_count += 1
         time.sleep(sleep_per_file)
         return None
 
-    monkeypatch.setattr(PipelineState, "_extract_file", slow_extract)
+    monkeypatch.setattr(stages, "load_parsed_and_extracted", slow_extract)
 
     config = TranslationConfig(
         api_key="test-key",
@@ -243,10 +268,39 @@ def test_cancel_during_extract_drops_queued_futures(
         stage_extract(state, files)
     elapsed = time.monotonic() - begun
 
-    # Old behaviour: all 40 futures run (~2s with 2 workers). New behaviour:
-    # only the few already started when the cancel fired.
+    # All 40 files would take ~2 s on 2 workers; only those already started may run.
     assert started_count < total_files / 2
     assert elapsed < total_files * sleep_per_file / 2 / 2
+
+
+@pytest.mark.parametrize(
+    "run_stage",
+    [
+        lambda state, extracted: stages.stage_worldscan(state),
+        stages.stage_collect_entities,
+        lambda state, extracted: stages.stage_build_glossary(state),
+        stages.stage_translate,
+        lambda state, extracted: stage_inject(state, extracted, {("s.ncs", "s:c0"): "Bye all!"}),
+    ],
+    ids=["worldscan", "entities", "glossary", "translate", "inject"],
+)
+def test_stages_stop_before_their_work_when_the_run_is_cancelled(tmp_path: Path, run_stage) -> None:
+    """A cancel requested between stages stops the run before the next stage's requests."""
+    extract_dir = tmp_path / "extract"
+    extract_dir.mkdir()
+    script = _write_ncs(extract_dir, "s.ncs", _consts("Hello world!"), _retn())
+    original = script.read_bytes()
+    state = _det_state(tmp_path)
+    state.extract_dir = extract_dir
+    extracted = stage_extract(state, [script])
+    state.world_context = WorldContext()
+    state.config.cancel_check = lambda: True
+
+    with pytest.raises(TranslationCancelled):
+        run_stage(state, extracted)
+
+    assert state.provider.mock_calls == []
+    assert script.read_bytes() == original
 
 
 def test_extract_keeps_input_order_regardless_of_completion_order(
@@ -255,12 +309,12 @@ def test_extract_keeps_input_order_regardless_of_completion_order(
     """Items reach batching in file order even when workers finish out of order."""
     files = [tmp_path / f"f{i}.uti" for i in range(8)]
 
-    def reversed_speed_extract(self, file_path):
+    def reversed_speed_extract(file_path, *_args, **_kwargs):
         # Earlier files take longer, so completion order is the reverse of input order.
         time.sleep(0.02 * (len(files) - files.index(file_path)))
-        return {}, ExtractedContent(content_type="item", items=[], source_file=file_path), ".uti"
+        return {}, ExtractedContent(content_type="item", items=[], source_file=file_path)
 
-    monkeypatch.setattr(PipelineState, "_extract_file", reversed_speed_extract)
+    monkeypatch.setattr(stages, "load_parsed_and_extracted", reversed_speed_extract)
     config = TranslationConfig(
         api_key="test-key",
         model="test-model",
@@ -270,3 +324,129 @@ def test_extract_keeps_input_order_regardless_of_completion_order(
     state = PipelineState(config=config, provider=Mock())
 
     assert list(stage_extract(state, files)) == files
+
+
+def test_inject_handles_results_in_file_order_regardless_of_completion_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injection events, errors and counts follow the file order, not thread timing."""
+    files = [tmp_path / f"f{i}.uti" for i in range(8)]
+    events: list = []
+
+    class Writer:
+        def write(self, entry):
+            events.append(entry)
+
+    def reversed_speed_inject(file_path, *_args, **_kwargs):
+        # Earlier files take longer, so completion order is the reverse of input order.
+        time.sleep(0.02 * (len(files) - files.index(file_path)))
+        if files.index(file_path) % 2:
+            raise ValueError(f"broken {file_path.name}")
+        return None
+
+    monkeypatch.setattr(stages, "inject_translations_into_file", reversed_speed_inject)
+    config = TranslationConfig(
+        api_key="test-key",
+        input_file=tmp_path / "m.mod",
+        max_concurrent_requests=8,
+        translation_log_writer=Writer(),
+    )
+    state = PipelineState(config=config, provider=Mock())
+    empty = ExtractedContent(content_type="item", items=[], source_file=tmp_path)
+
+    stage_inject(state, {path: ({}, empty, ".uti") for path in files}, {})
+
+    assert [event["file"] for event in events] == [path.name for path in files]
+    assert state.stats["errors"] == [
+        f"Error injecting {path.name}: broken {path.name}" for path in files[1::2]
+    ]
+    assert state.stats["files_processed"] == 4
+
+
+def test_translatable_files_come_in_ntfs_order_on_every_file_system(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Upper-cased names sort '_' after letters and '.' before '_', as NTFS lists them."""
+    names = ["_x.ncs", "b.dlg", "a_b.utc", "A.uti", "a.dlg", "a-b.dlg", "a1.jrl", "note.txt"]
+    for name in names:
+        (tmp_path / name).write_bytes(b"")
+    real_rglob = Path.rglob
+
+    def other_file_system_order(self: Path, pattern: str):
+        # NTFS itself lists the NTFS order; reverse code-point order stands
+        # for any other file system.
+        return sorted(real_rglob(self, pattern), key=lambda path: path.name, reverse=True)
+
+    monkeypatch.setattr(Path, "rglob", other_file_system_order)
+
+    found = [path.name for path in find_translatable_files(tmp_path)]
+
+    assert found == ["a-b.dlg", "a.dlg", "A.uti", "a1.jrl", "a_b.utc", "b.dlg", "_x.ncs"]
+
+
+def test_manager_statistics_are_merged_once_per_manager(tmp_path: Path) -> None:
+    """Every manager adds all its counters; a second manager is not offset by the first."""
+
+    def manager_stats(items: int, error: str, ncs_total: int, sample: dict) -> dict:
+        ncs = new_ncs_diagnostics()
+        ncs["total"] = ncs["translated"] = ncs_total
+        ncs["samples"].append(sample)
+        return {"items_translated": items, "errors": [error], "ncs_diagnostics": ncs}
+
+    state = _det_state(tmp_path)
+    state.merge_manager_stats(manager_stats(3, "first", 2, {"file": "a.ncs"}))
+    state.merge_manager_stats(manager_stats(1, "second", 5, {"file": "b.ncs"}))
+
+    assert state.stats["items_translated"] == 4
+    assert state.stats["errors"] == ["first", "second"]
+    ncs = state.stats["ncs_diagnostics"]
+    assert (ncs["total"], ncs["translated"], ncs["failed"]) == (7, 7, 0)
+    assert ncs["samples"] == [{"file": "a.ncs"}, {"file": "b.ncs"}]
+
+
+class _BatchAndDialogProvider(_FakeProvider):
+    """Answers dialog chats from a queue and translates every batch item as "Меч"."""
+
+    async def translate_batch_async(self, items, **kwargs):
+        return [TranslationResult(original=item.original, translated="Меч") for item in items]
+
+
+def test_translate_stage_writes_its_log_through_one_handle(tmp_path: Path, opened_files) -> None:
+    """The stage's editor rows and the requests of both managers share the run's writer."""
+    log = tmp_path / "log.jsonl"
+    config = TranslationConfig(api_key="k", input_file=tmp_path / "m.mod", translation_log=log)
+    state = PipelineState(config=config, provider=_BatchAndDialogProvider(['{"E0": "Привет."}']))
+    state.extract_dir = tmp_path
+    state.world_context = WorldContext()
+    dlg_data = {
+        "StructType": "DLG",
+        "StartingList": [{"Index": 0}],
+        "EntryList": [{"Text": {"StrRef": -1, "Value": "Hello."}, "RepliesList": []}],
+        "ReplyList": [],
+    }
+    dlg_path = tmp_path / "talk.dlg"
+    uti_path = tmp_path / "sword.uti"
+    item = ExtractedContent(
+        content_type="item",
+        items=[TranslatableItem(text="Sword", item_id="sword:name", location=str(uti_path))],
+        source_file=uti_path,
+    )
+
+    stage_translate(
+        state,
+        {
+            dlg_path: (dlg_data, DialogExtractor().extract(dlg_path, dlg_data), ".dlg"),
+            uti_path: ({}, item, ".uti"),
+        },
+    )
+    state.close_log()
+
+    lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    requests = [line["method"] for line in lines if line.get("event") == "model_request"]
+    assert sorted(requests) == ["complete_json_chat_async", "translate_batch_async"]
+    assert {line["item_id"] for line in lines if "original" in line} >= {
+        "sword:name",
+        "talk:entry:0",
+    }
+    appends = [handle for handle in opened_files(log) if handle.mode == "a"]
+    assert [handle.closed for handle in appends] == [True]

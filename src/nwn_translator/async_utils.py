@@ -6,7 +6,10 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Coroutine, Optional, TypeVar
+from typing import TYPE_CHECKING, Coroutine, Optional, TypeVar
+
+if TYPE_CHECKING:
+    from .ai_providers.base import TranslationProvider
 
 T = TypeVar("T")
 
@@ -51,7 +54,7 @@ def shutdown_thread_loop() -> None:
     asyncio.set_event_loop(None)
 
 
-def close_thread_resources(provider: object) -> None:
+def close_thread_resources(provider: TranslationProvider) -> None:
     """Close *provider*'s HTTP client on this thread's loop, then the loop.
 
     Call it when a thread has finished its ``run_async`` work: the loop, and
@@ -60,13 +63,10 @@ def close_thread_resources(provider: object) -> None:
     closed anyway.
 
     Args:
-        provider: Model provider; its ``close_async_client`` coroutine is
-            awaited when it has one.
+        provider: Model provider whose requests ran on this thread.
     """
-    close = getattr(provider, "close_async_client", None)
     try:
-        if close is not None:
-            run_async(close(), timeout=CLOSE_CLIENT_TIMEOUT)
+        run_async(provider.close_async_client(), timeout=CLOSE_CLIENT_TIMEOUT)
     except Exception:
         logger.debug("Closing the provider's HTTP client failed", exc_info=True)
     finally:

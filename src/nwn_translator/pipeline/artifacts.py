@@ -10,7 +10,6 @@ rebuilt from ``extract_dir`` by :func:`nwn_translator.main.rebuild_module`.
 from __future__ import annotations
 
 import json
-from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -25,7 +24,14 @@ from ..extractors.base import ExtractedContent, TranslatableItem, Translations
 from ..glossary import Glossary
 
 
-def _write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
+def write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
+    """Write *data* as indented UTF-8 JSON, creating the parent directory.
+
+    Args:
+        path: Target file.
+        data: JSON-serializable value.
+        sort_keys: Sort object keys.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2, sort_keys=sort_keys),
@@ -34,6 +40,14 @@ def _write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
 
 
 def _read_json(path: Path) -> Any:
+    """Read a UTF-8 JSON file.
+
+    Args:
+        path: The file.
+
+    Returns:
+        The decoded value.
+    """
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
@@ -41,7 +55,12 @@ def _read_json(path: Path) -> Any:
 
 
 def dump_items(path: Path, contents: List[ExtractedContent]) -> None:
-    """Write extracted content as JSONL (one row per translatable item)."""
+    """Write extracted content as ``items.jsonl``, one row per translatable item.
+
+    Args:
+        path: Target file.
+        contents: Extracted files, in pipeline order.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
@@ -64,9 +83,17 @@ def dump_items(path: Path, contents: List[ExtractedContent]) -> None:
 
 
 def load_items(path: Path) -> List[ExtractedContent]:
-    """Read JSONL written by :func:`dump_items` back into ExtractedContent list."""
-    groups: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    """Read ``items.jsonl`` written by :func:`dump_items`.
+
+    Args:
+        path: The artifact.
+
+    Returns:
+        One :class:`ExtractedContent` per source file, in file order.
+    """
+    groups: Dict[str, Dict[str, Any]] = {}
+    # JSON leaves U+2028 and U+0085 unescaped, and splitlines() would split on them.
+    for line in Path(path).read_text(encoding="utf-8").split("\n"):
         if not line.strip():
             continue
         row = json.loads(line)
@@ -103,7 +130,15 @@ def load_items(path: Path) -> List[ExtractedContent]:
 
 
 def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, Any]:
-    """Serialize the world context registry (candidates are dumped separately)."""
+    """Serialize the world context registry (candidates are dumped separately).
+
+    Args:
+        world_context: Scanned module objects, or None.
+
+    Returns:
+        JSON-ready registries (empty for None). Script owners keep their order:
+        it decides the speaker hint of a script.
+    """
     if world_context is None:
         return {}
     # An actor is indexed by Conversation and by tag; store each once.
@@ -123,19 +158,35 @@ def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, An
         "items": dict(sorted(world_context.items.items())),
         "extracted_names": list(world_context.extracted_names),
         "dialog_actors": [actors[key] for key in sorted(actors)],
+        "script_owners": {
+            script: [asdict(owner) for owner in owners]
+            for script, owners in sorted(world_context.script_owners.items())
+        },
     }
 
 
 def dump_world_context(path: Path, world_context: Optional[WorldContext]) -> None:
-    """Write ``world_context.json``."""
-    _write_json(Path(path), world_context_to_dict(world_context))
+    """Write ``world_context.json`` (see :func:`world_context_to_dict`).
+
+    Args:
+        path: Target file.
+        world_context: Scanned module objects, or None.
+    """
+    write_json(Path(path), world_context_to_dict(world_context))
 
 
 def load_world_context(path: Path) -> WorldContext:
     """Read ``world_context.json`` back into a :class:`WorldContext`.
 
     Candidates are not part of this artifact; attach them separately via
-    :func:`load_candidates` when needed.
+    :func:`load_candidates` when needed. Registries missing from older
+    artifacts (dialog actors, script owners) load empty.
+
+    Args:
+        path: ``world_context.json``.
+
+    Returns:
+        The world context without candidates.
     """
     data = _read_json(path)
     wc = WorldContext()
@@ -147,6 +198,10 @@ def load_world_context(path: Path) -> WorldContext:
     wc.extracted_names = [tuple(pair) for pair in data.get("extracted_names", [])]
     for actor in data.get("dialog_actors", []):
         wc.register_dialog_actor(NPCInfo(**actor))
+    wc.script_owners = {
+        script: [NPCInfo(**owner) for owner in owners]
+        for script, owners in data.get("script_owners", {}).items()
+    }
     return wc
 
 
@@ -154,7 +209,14 @@ def load_world_context(path: Path) -> WorldContext:
 
 
 def candidate_to_dict(candidate: EntityCandidate) -> Dict[str, Any]:
-    """Serialize an :class:`EntityCandidate` to JSON-friendly data."""
+    """Serialize an entity candidate with its curation and evidence.
+
+    Args:
+        candidate: The candidate.
+
+    Returns:
+        JSON-ready fields of the candidate.
+    """
     return {
         "name": candidate.name,
         "normalized_name": candidate.normalized_name,
@@ -174,16 +236,27 @@ def candidate_to_dict(candidate: EntityCandidate) -> Dict[str, Any]:
 
 
 def dump_candidates(path: Path, registry: Optional[EntityCandidateRegistry]) -> None:
-    """Write ``candidates.json`` from a candidate registry."""
+    """Write ``candidates.json``.
+
+    Args:
+        path: Target file.
+        registry: Candidates, or None for an empty list.
+    """
     values = registry.values() if registry is not None else []
-    _write_json(Path(path), [candidate_to_dict(c) for c in values])
+    write_json(Path(path), [candidate_to_dict(c) for c in values])
 
 
 def load_candidates(path: Path) -> EntityCandidateRegistry:
-    """Reconstruct an :class:`EntityCandidateRegistry` from ``candidates.json``.
+    """Read ``candidates.json`` back into a registry.
 
     The curated fields (decision, priority, score) are restored exactly, not
     recomputed from the evidence.
+
+    Args:
+        path: The artifact.
+
+    Returns:
+        The candidate registry.
     """
     registry = EntityCandidateRegistry()
     registry.restore(
@@ -210,9 +283,14 @@ def load_candidates(path: Path) -> EntityCandidateRegistry:
 
 
 def dump_glossary(path: Path, glossary: Optional[Glossary]) -> None:
-    """Write ``glossary.json`` (canonical English -> translated entries)."""
+    """Write ``glossary.json``: version 2 with entries and aliases, keys sorted.
+
+    Args:
+        path: Target file.
+        glossary: The glossary, or None for an empty one.
+    """
     entries = glossary.entries if glossary is not None else {}
-    _write_json(
+    write_json(
         Path(path),
         {"version": 2, "entries": entries, "aliases": glossary.aliases if glossary else {}},
         sort_keys=True,
@@ -220,7 +298,14 @@ def dump_glossary(path: Path, glossary: Optional[Glossary]) -> None:
 
 
 def load_glossary(path: Path) -> Glossary:
-    """Read ``glossary.json`` back into a :class:`Glossary`."""
+    """Read ``glossary.json``; a file without a version holds only the entries.
+
+    Args:
+        path: The artifact.
+
+    Returns:
+        The glossary.
+    """
     data = _read_json(path)
     if data.get("version") == 2:
         return Glossary(entries=data["entries"], aliases=data["aliases"])
@@ -231,8 +316,13 @@ def load_glossary(path: Path) -> Glossary:
 
 
 def dump_translations(path: Path, translations: Translations) -> None:
-    """Persist occurrence-addressed results without a parallel NCS artifact."""
-    _write_json(
+    """Write ``translations.json``: one row per occurrence, sorted by address.
+
+    Args:
+        path: Target file.
+        translations: Translation per occurrence.
+    """
+    write_json(
         path,
         {
             "version": 2,
@@ -245,7 +335,18 @@ def dump_translations(path: Path, translations: Translations) -> None:
 
 
 def load_translations(path: Path) -> Translations:
-    """Read addressed results; old text-only maps cannot identify occurrences."""
+    """Read ``translations.json`` written by :func:`dump_translations`.
+
+    Args:
+        path: The artifact.
+
+    Returns:
+        Translation per occurrence.
+
+    Raises:
+        ValueError: For a text-only artifact of an older version (it cannot
+            address occurrences) or an occurrence listed twice.
+    """
     data = _read_json(path)
     if data.get("version") != 2:
         raise ValueError("Text-only translation artifacts are ambiguous; rerun the translate stage")

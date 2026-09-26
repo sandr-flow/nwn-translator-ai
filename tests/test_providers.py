@@ -9,9 +9,12 @@ from src.nwn_translator.ai_providers import openrouter_provider
 from src.nwn_translator.ai_providers.base import TranslationItem, TranslationResult
 from src.nwn_translator.ai_providers import (
     create_provider,
+    create_provider_for_config,
     detect_provider_from_key,
     provider_label,
 )
+from src.nwn_translator.config import TranslationConfig
+from src.nwn_translator.telemetry import RunMetricsRecorder
 from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from src.nwn_translator.ai_providers.polza_provider import PolzaProvider
 
@@ -50,6 +53,21 @@ class TestCreateProvider:
     def test_unknown_keyword_is_rejected(self):
         with pytest.raises(TypeError):
             create_provider("sk-or-test", site_name="typo")
+
+    def test_for_config_takes_the_key_model_and_prompt_settings_of_the_run(self, tmp_path):
+        config = TranslationConfig(
+            api_key="pza-abcdef1234567890",
+            model="openai/gpt-4o",
+            input_file=tmp_path / "m.mod",
+            player_gender="female",
+        )
+        recorder = RunMetricsRecorder()
+
+        p = create_provider_for_config(config, recorder)
+
+        assert isinstance(p, PolzaProvider)
+        assert (p.model, p.player_gender) == ("openai/gpt-4o", "female")
+        assert p.metrics_recorder is recorder
 
 
 class TestProviderLabel:

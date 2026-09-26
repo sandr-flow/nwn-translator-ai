@@ -61,7 +61,12 @@ from ..prompts.dialog import (
     token_retry_prompt,
 )
 from ..telemetry import llm_phase
-from ..translation_logging import logged_model_call, translation_log_writer_for_config, write_trace
+from ..translation_logging import (
+    TranslationLogWriter,
+    logged_model_call,
+    translation_log_writer_for_config,
+    write_trace,
+)
 from .dialog_plan import Chunk, PreparedDialog, plan_chunks, plan_requests, prepare_dialog
 from .token_handler import TokenMismatchReport
 
@@ -334,6 +339,7 @@ class ContextualTranslationManager:
         provider: TranslationProvider,
         world_context: WorldContext,
         glossary: Optional["Glossary"] = None,
+        log_writer: Optional[TranslationLogWriter] = None,
     ) -> None:
         """Create a manager for one run.
 
@@ -342,15 +348,18 @@ class ContextualTranslationManager:
             provider: Model provider.
             world_context: Scanned module objects.
             glossary: Canonical translations of proper names, if built.
+            log_writer: Log writer of the run; by default the one *config*
+                names.
         """
         self.config = config
         self.provider = provider
         self.world_context = world_context
         self.glossary = glossary
-        self._log_writer = translation_log_writer_for_config(
-            config.translation_log,
-            config.translation_log_writer,
-        )
+        if log_writer is None:
+            log_writer = translation_log_writer_for_config(
+                config.translation_log, config.translation_log_writer
+            )
+        self._log_writer = log_writer
         self.failed_items: Set[Occurrence] = set()
 
     def translate_dialogs(

@@ -3,10 +3,11 @@
 import json
 import logging
 import threading
+import weakref
 from dataclasses import asdict, is_dataclass
 from uuid import uuid4
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Optional, Protocol, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Optional, Protocol, TextIO, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +22,27 @@ class TranslationLogWriter(Protocol):
 
 
 class FileTranslationLogWriter:
-    """Append JSONL lines to a file."""
+    """Append JSONL lines to a file through one handle kept open.
+
+    Opening the file for every entry costs milliseconds on Windows, and a run
+    writes tens of thousands of entries. Each entry is flushed at once, so the
+    file is complete while the run goes on.
+
+    Attributes:
+        path: The log file.
+    """
 
     def __init__(self, path: Path) -> None:
+        """Create a writer; the file is opened by the first entry.
+
+        Args:
+            path: Log file; entries are appended to its current content.
+        """
         self.path = Path(path)
         # Dialog files are translated from worker threads sharing one writer.
         self._lock = threading.Lock()
+        self._file: Optional[TextIO] = None
+        self._finalizer: Optional[weakref.finalize] = None
 
     def write(self, entry: Dict[str, Any]) -> None:
         """Serialize *entry* as JSON and append one line to the log file.
@@ -35,10 +51,23 @@ class FileTranslationLogWriter:
             entry: JSON-serializable dict (e.g. original/translated pair).
         """
         try:
-            with self._lock, open(self.path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            with self._lock:
+                if self._file is None:
+                    self._file = open(self.path, "a", encoding="utf-8")
+                    # A writer that is never closed still releases its handle.
+                    self._finalizer = weakref.finalize(self, self._file.close)
+                self._file.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                self._file.flush()
         except OSError as e:
             logger.debug("Failed to write translation log: %s", e)
+
+    def close(self) -> None:
+        """Close the file; a later entry opens it again."""
+        with self._lock:
+            if self._finalizer is not None:
+                self._finalizer()
+            self._file = None
+            self._finalizer = None
 
 
 class NullTranslationLogWriter:

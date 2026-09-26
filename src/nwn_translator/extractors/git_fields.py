@@ -13,6 +13,7 @@ and resrefs often sit in them. The blueprint-name oracle
 """
 
 import logging
+import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -88,16 +89,15 @@ def npc_possessive_hint(text: str, npc_index: NpcIndex) -> str:
 
     Returns:
         ``" (contains possessive of NPC '<name>', gender: <gender>)"`` for the
-        first indexed NPC found, or ``""``.
+        first indexed NPC whose name starts a word followed by ``'s``, with
+        the name as written in *text*; ``""`` when there is none.
     """
     if not npc_index or "'s" not in text:
         return ""
-    lowered = text.lower()
     for name_lower, gender in npc_index.items():
-        if name_lower + "'s" in lowered:
-            start = lowered.index(name_lower)
-            original_name = text[start : start + len(name_lower)]
-            return f" (contains possessive of NPC '{original_name}', gender: {gender})"
+        match = re.search(rf"(?<!\w){re.escape(name_lower)}(?='s)", text, re.IGNORECASE)
+        if match:
+            return f" (contains possessive of NPC '{match.group()}', gender: {gender})"
     return ""
 
 

@@ -1147,7 +1147,7 @@
    [
     "tavern_Placeable List_1_LocName",
     "Joanna's Box",
-    "Placeable name (area instance) (contains possessive of NPC 'anna', gender: Female)",
+    "Placeable name (area instance)",
     {
      "type": "placeable_name",
      "git_field": "LocName",

@@ -543,3 +543,28 @@ def test_git_filter_rescues_names_known_to_the_oracle():
 
     assert not should_translate_git_string("McGee", "creature_first_name")
     assert should_translate_git_string("McGee", "creature_first_name", frozenset({"mcgee"}))
+
+
+def test_possessive_hint_requires_the_name_to_start_a_word():
+    """``Joanna's`` is not a possessive of ``Anna``."""
+    from src.nwn_translator.extractors.git_fields import npc_possessive_hint
+
+    npcs = {"anna": "Female"}
+    assert npc_possessive_hint("Joanna's Box", npcs) == ""
+    assert npc_possessive_hint("Anna's Box", npcs) == (
+        " (contains possessive of NPC 'Anna', gender: Female)"
+    )
+
+
+def test_possessive_hint_quotes_the_possessive_as_written():
+    """The quoted name is the possessive occurrence, even after case-changing text."""
+    from src.nwn_translator.extractors.git_fields import npc_possessive_hint
+
+    npcs = {"joann": "Male", "anna": "Female"}
+    assert npc_possessive_hint("ANNA met Anna's aunt", npcs) == (
+        " (contains possessive of NPC 'Anna', gender: Female)"
+    )
+    # "İ".lower() is two characters: indices into the lowered text are off by one.
+    assert npc_possessive_hint("İstanbul is Anna's home", npcs) == (
+        " (contains possessive of NPC 'Anna', gender: Female)"
+    )

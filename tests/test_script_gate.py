@@ -78,6 +78,27 @@ def test_candidates_are_asked_in_chunks_with_local_keys():
     assert requests[1]["context"] == {"occurrences": [list(item.key) for item in items[20:40]]}
 
 
+def test_failed_chunk_rejects_only_its_own_candidates():
+    items = [_line(i) for i in range(45)]
+
+    async def classify(entries, *, source_lang):
+        if entries[0]["text"] == items[20].text:
+            raise RuntimeError("provider down")
+        return {e["key"]: {"translate": True, "reason": "ok"} for e in entries}
+
+    provider = Mock()
+    provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=classify)
+    gate, diagnostics, _writer = _gate(provider, max_concurrent_requests=1)
+
+    approvals = gate.decide(items)
+
+    assert [approvals[item.key] for item in items] == [True] * 20 + [False] * 20 + [True] * 5
+    reasons = [sample["reason"] for sample in diagnostics.block["samples"]]
+    assert reasons[19:21] == ["gate_approved:ok", "gate_rejected:gate_unavailable"]
+    assert reasons[40] == "gate_approved:ok"
+    assert diagnostics.block["skipped_fail_closed"] == 20
+
+
 def test_vetoed_and_bypassed_literals_never_reach_the_model():
     vetoed = _line(0)
     vetoed.text = "DetermineClassToUse: This character is invalid."

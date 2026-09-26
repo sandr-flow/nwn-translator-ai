@@ -98,17 +98,9 @@ class ScriptGate:
         if not pending:
             return approvals
 
-        verdicts: List[Dict[str, Any]] = [_UNAVAILABLE_VERDICT] * len(pending)
-        try:
-            # No overall timeout: a large module may need many minutes to gate;
-            # per-call timeouts and retries live in the provider.
-            verdicts = run_async(self._ask_all(pending), timeout=None)
-        except Exception as exc:
-            logger.warning(
-                "NCS LLM gate failed for %d item(s): %s — defaulting to reject.",
-                len(pending),
-                exc,
-            )
+        # No overall timeout: a large module may need many minutes to gate;
+        # per-call timeouts and retries live in the provider.
+        verdicts = run_async(self._ask_all(pending), timeout=None)
         for item, cell in zip(pending, verdicts):
             approved = cell.get("translate") is True
             approvals[item.key] = approved
@@ -121,20 +113,31 @@ class ScriptGate:
         return approvals
 
     async def _ask_all(self, pending: List[TranslatableItem]) -> List[Dict[str, Any]]:
-        """Ask the model about *pending* in concurrent chunks; one verdict per item."""
+        """Ask the model about *pending* in concurrent chunks; one verdict per item.
+
+        A chunk whose request fails rejects only its own candidates.
+        """
         sem = asyncio.Semaphore(max(1, int(self.config.max_concurrent_requests)))
 
         async def ask(chunk: List[TranslatableItem]) -> List[Dict[str, Any]]:
             entries = [_gate_entry(str(index), item) for index, item in enumerate(chunk)]
             async with sem:
-                result = await logged_model_call(
-                    self.log_writer,
-                    self.provider.classify_ncs_translate_gate_batch_async,
-                    trace_context={"occurrences": [item.key for item in chunk]},
-                    entries=entries,
-                    source_lang=self.config.source_lang,
-                )
-            return [result.get(str(index), _MISSING_VERDICT) for index in range(len(chunk))]
+                try:
+                    result = await logged_model_call(
+                        self.log_writer,
+                        self.provider.classify_ncs_translate_gate_batch_async,
+                        trace_context={"occurrences": [item.key for item in chunk]},
+                        entries=entries,
+                        source_lang=self.config.source_lang,
+                    )
+                    return [result.get(str(i), _MISSING_VERDICT) for i in range(len(chunk))]
+                except Exception as exc:
+                    logger.warning(
+                        "NCS LLM gate failed for %d item(s): %s — defaulting to reject.",
+                        len(chunk),
+                        exc,
+                    )
+                    return [_UNAVAILABLE_VERDICT] * len(chunk)
 
         chunks = [
             pending[start : start + GATE_CHUNK_SIZE]

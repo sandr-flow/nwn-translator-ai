@@ -164,7 +164,7 @@ def test_task_routes_allow_owner(isolated_app) -> None:
 
 def test_downloads_allow_owner_token_via_query_param(isolated_app) -> None:
     """Plain <a href> download links cannot send headers, so /download and /log
-    accept ?client_token= like SSE does (regression: the UI links 403'd)."""
+    accept ?client_token= as a fallback (otherwise the UI links get 403)."""
     with isolated_app() as client:
         task_id = _seed_task(owner="owner-tok")
         for kind in ("download", "log"):
@@ -199,7 +199,7 @@ def test_ownerless_task_is_accessible_without_token(isolated_app) -> None:
 
 
 def test_cancel_and_delete_reject_empty_or_foreign_token(isolated_app) -> None:
-    """An empty token must not bypass the owner check on cancel/delete (H2)."""
+    """An empty token must not bypass the owner check on cancel/delete."""
     with isolated_app() as client:
         task_id = _seed_task(owner="owner-tok")
         assert client.post(f"/api/tasks/{task_id}/cancel").status_code == 403

@@ -141,9 +141,9 @@ def test_deleting_a_running_task_cancels_it_and_frees_the_slot(
 ) -> None:
     """Delete must stop the job, free the IP slot, and leave the workspace to the worker.
 
-    The worker used to keep translating (and spending the client's budget)
-    against a removed workspace, while its IP could already start another job
-    and the deploy gate no longer counted it.
+    Otherwise the worker keeps translating (and spending the client's budget)
+    against a removed workspace while the deploy gate no longer counts it. The
+    slot is freed at once, as on cancel.
     """
     started = threading.Event()
     release = threading.Event()

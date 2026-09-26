@@ -299,7 +299,7 @@ class OpenRouterProvider:
             self._reasoning_unsupported = True
             return await self.async_client.chat.completions.create(**kwargs)
 
-    async def _complete(
+    async def _complete_once(
         self,
         system: SystemContent,
         user: str,
@@ -315,6 +315,7 @@ class OpenRouterProvider:
         """Send one JSON-mode chat request and return the stripped reply text.
 
         Every attempt, failed or not, is recorded as one request metric.
+        :meth:`_complete` is the same request retried on transient errors.
 
         Args:
             system: System message content.
@@ -370,6 +371,11 @@ class OpenRouterProvider:
         except Exception as exc:  # a reply without choices
             raise map_api_error(exc, self.PROVIDER_LABEL) from exc
 
+    #: :meth:`_complete_once` retried on transient errors. The retry repeats only the
+    #: failed request, never the requests a task already completed (JSON attempts,
+    #: NCS gate halves).
+    _complete = TRANSIENT_RETRY(_complete_once)
+
     def _record_metric(
         self,
         *,
@@ -421,7 +427,6 @@ class OpenRouterProvider:
             )
         )
 
-    @TRANSIENT_RETRY
     async def translate_async(
         self,
         text: str,
@@ -495,7 +500,6 @@ class OpenRouterProvider:
             metadata={"model": self.model},
         )
 
-    @TRANSIENT_RETRY
     async def translate_batch_async(
         self,
         items: List[TranslationItem],
@@ -546,7 +550,6 @@ class OpenRouterProvider:
         )
         return parse_batch_results(raw, items, self.model)
 
-    @TRANSIENT_RETRY
     async def complete_json_chat_async(
         self,
         system_prompt: SystemContent,
@@ -610,8 +613,10 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout.
+            InternalServerError: HTTP >= 500.
         """
-        return await self._complete(
+        return await self._complete_once(
             system_prompt,
             user_prompt,
             max_tokens=max_tokens,
@@ -621,7 +626,6 @@ class OpenRouterProvider:
             use_reasoning=False,
         )
 
-    @TRANSIENT_RETRY
     async def classify_ncs_translate_gate_batch_async(
         self,
         entries: List[Dict[str, Any]],

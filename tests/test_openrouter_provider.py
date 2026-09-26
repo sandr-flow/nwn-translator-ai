@@ -394,6 +394,70 @@ class TestTranslateAsyncJsonRetry:
         assert len(api.calls) == 2
 
 
+class TestTransientRetryScope:
+    """A transient error repeats only the failed request, not the whole task."""
+
+    @pytest.fixture(autouse=True)
+    def _no_backoff(self, no_backoff):
+        return None
+
+    def test_gate_retries_only_the_failed_sub_request(self, api):
+        api.replies.extend(
+            [
+                "not json",  # whole batch, first budget
+                "not json",  # whole batch, doubled budget
+                '{"0": {"translate": true, "reason": "left"}}',
+                _status_error(InternalServerError, 502),  # right half
+                '{"0": {"translate": false, "reason": "right"}}',
+            ]
+        )
+        entries = [{"key": "0", "text": "A"}, {"key": "1", "text": "B"}]
+        verdicts = run_async(
+            OpenRouterProvider(api_key=FAKE_KEY).classify_ncs_translate_gate_batch_async(
+                entries, source_lang="english"
+            ),
+            timeout=5.0,
+        )
+        assert verdicts == {
+            "0": {"translate": True, "reason": "left"},
+            "1": {"translate": False, "reason": "right"},
+        }
+        assert [call["max_tokens"] for call in api.calls] == [8192, 16384, 8192, 8192, 8192]
+
+    def test_transient_error_does_not_reset_the_json_attempts(self, api):
+        api.replies.extend(["no json", _status_error(InternalServerError, 502), "no json"])
+        result = _translate(OpenRouterProvider(api_key=FAKE_KEY))
+        assert result.error == "Model returned empty or unparseable JSON"
+        assert len(api.calls) == 3
+
+    def test_glossary_requests_are_not_retried(self, api):
+        api.replies.append(_status_error(InternalServerError, 502))
+        with pytest.raises(InternalServerError):
+            run_async(
+                OpenRouterProvider(api_key=FAKE_KEY).complete_glossary_chat_async(
+                    "S", "U", glossary_keys=["A"], max_tokens=10, temperature=0.3
+                ),
+                timeout=5.0,
+            )
+        assert len(api.calls) == 1
+
+    def test_task_methods_keep_their_names(self):
+        names = [
+            OpenRouterProvider.translate_async.__name__,
+            OpenRouterProvider.translate_batch_async.__name__,
+            OpenRouterProvider.complete_json_chat_async.__name__,
+            OpenRouterProvider.complete_glossary_chat_async.__name__,
+            OpenRouterProvider.classify_ncs_translate_gate_batch_async.__name__,
+        ]
+        assert names == [
+            "translate_async",
+            "translate_batch_async",
+            "complete_json_chat_async",
+            "complete_glossary_chat_async",
+            "classify_ncs_translate_gate_batch_async",
+        ]
+
+
 class TestBatchErrorMapping:
     def test_api_error_is_prefixed_once(self, api):
         denied = _status_error(AuthenticationError, 401, "denied")

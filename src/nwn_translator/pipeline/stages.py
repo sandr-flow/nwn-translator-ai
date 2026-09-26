@@ -449,8 +449,12 @@ def stage_worldscan(state: PipelineState) -> None:
 
     Args:
         state: Run state with an unpacked module.
+
+    Raises:
+        TranslationCancelled: If the run was cancelled.
     """
     assert state.extract_dir is not None
+    state.config.raise_if_cancelled()
     if not state.config.use_context:
         return
     state.progress("scanning", 0, 1, "Building world context...")
@@ -518,7 +522,11 @@ def stage_collect_entities(state: PipelineState, extracted_map: ExtractedMap) ->
     Args:
         state: Run state; nothing happens without a world context.
         extracted_map: Extracted files.
+
+    Raises:
+        TranslationCancelled: If the run was cancelled.
     """
+    state.config.raise_if_cancelled()
     if state.world_context is None or not extracted_map:
         return
 
@@ -554,7 +562,11 @@ def stage_build_glossary(state: PipelineState) -> None:
     Args:
         state: Run state; nothing happens outside context mode or without a
             world context.
+
+    Raises:
+        TranslationCancelled: If the run was cancelled.
     """
+    state.config.raise_if_cancelled()
     if not (state.config.use_context and state.world_context is not None):
         return
 
@@ -619,6 +631,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
         TranslationCancelled: If the run is cancelled.
     """
     assert state.extract_dir is not None
+    state.config.raise_if_cancelled()
     use_dialog_manager = state.config.use_context and state.world_context is not None
     dialog_files = [
         path
@@ -763,8 +776,13 @@ def stage_inject(
         state: Run state.
         extracted_map: Extracted files.
         translations: Translation per occurrence.
+
+    Raises:
+        TranslationCancelled: If the run was cancelled before injection began;
+            once files are being patched, the stage runs to its end.
     """
     assert state.extract_dir is not None
+    state.config.raise_if_cancelled()
     logger.info("Injecting translations...")
     for file_path, result, error in _run_pool(
         state,

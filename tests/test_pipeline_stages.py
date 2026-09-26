@@ -268,6 +268,36 @@ def test_cancel_during_extract_drops_queued_futures(
     assert elapsed < total_files * sleep_per_file / 2 / 2
 
 
+@pytest.mark.parametrize(
+    "run_stage",
+    [
+        lambda state, extracted: stages.stage_worldscan(state),
+        stages.stage_collect_entities,
+        lambda state, extracted: stages.stage_build_glossary(state),
+        stages.stage_translate,
+        lambda state, extracted: stage_inject(state, extracted, {("s.ncs", "s:c0"): "Bye all!"}),
+    ],
+    ids=["worldscan", "entities", "glossary", "translate", "inject"],
+)
+def test_stages_stop_before_their_work_when_the_run_is_cancelled(tmp_path: Path, run_stage) -> None:
+    """A cancel requested between stages stops the run before the next stage's requests."""
+    extract_dir = tmp_path / "extract"
+    extract_dir.mkdir()
+    script = _write_ncs(extract_dir, "s.ncs", _consts("Hello world!"), _retn())
+    original = script.read_bytes()
+    state = _det_state(tmp_path)
+    state.extract_dir = extract_dir
+    extracted = stage_extract(state, [script])
+    state.world_context = WorldContext()
+    state.config.cancel_check = lambda: True
+
+    with pytest.raises(TranslationCancelled):
+        run_stage(state, extracted)
+
+    assert state.provider.mock_calls == []
+    assert script.read_bytes() == original
+
+
 def test_extract_keeps_input_order_regardless_of_completion_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

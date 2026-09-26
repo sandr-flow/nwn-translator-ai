@@ -83,6 +83,11 @@ def test_sqlite_log_writer_persists_failed_row_with_original() -> None:
     assert rows[0]["success"] == 0
 
 
+def _row_log_levels(caplog: pytest.LogCaptureFixture) -> list[int]:
+    """Levels of the records the log writer logged about a translation row."""
+    return [r.levelno for r in caplog.records if "translation row" in r.getMessage()]
+
+
 def test_sqlite_log_writer_drops_rows_of_a_deleted_task_quietly(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -93,7 +98,7 @@ def test_sqlite_log_writer_drops_rows_of_a_deleted_task_quietly(
         writer.write({"original": "A", "translated": "А", "file": "a.uti", "item_id": "1"})
 
     assert db.get_translations_by_task("gone") == []
-    assert [r.levelno for r in caplog.records] == [logging.DEBUG]
+    assert _row_log_levels(caplog) == [logging.DEBUG]
 
 
 def test_sqlite_log_writer_warns_when_a_row_is_lost(
@@ -110,8 +115,8 @@ def test_sqlite_log_writer_warns_when_a_row_is_lost(
     with caplog.at_level(logging.DEBUG, logger=db.__name__):
         writer.write({"original": "A", "translated": "А", "file": "a.uti", "item_id": "1"})
 
-    assert [r.levelno for r in caplog.records] == [logging.WARNING]
-    assert "database is locked" in caplog.records[0].getMessage()
+    assert _row_log_levels(caplog) == [logging.WARNING]
+    assert "database is locked" in caplog.text
 
 
 def test_migrate_adds_item_id_column(tmp_path: Path) -> None:

@@ -22,11 +22,17 @@ from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
 from src.nwn_translator.prompts.dialog import speakers_block
 from src.nwn_translator.translators import context_translator as context_module
 from src.nwn_translator.translators import dialog_plan
-from src.nwn_translator.translators.context_translator import (
-    ContextualTranslationManager,
-    _RECOVERY_MAX_TOKENS,
-)
+from src.nwn_translator.translators.context_translator import ContextualTranslationManager
 from src.nwn_translator.translators.dialog_plan import PreparedDialog, pack_groups
+
+#: Recovery budget used by these tests. The real one equals
+#: ``TRANSLATION_MAX_TOKENS``, which would hide the budget a request was sent with.
+_RECOVERY_BUDGET = TRANSLATION_MAX_TOKENS + 1000
+
+
+@pytest.fixture(autouse=True)
+def _distinct_recovery_budget(monkeypatch):
+    monkeypatch.setattr(context_module, "_RECOVERY_MAX_TOKENS", _RECOVERY_BUDGET)
 
 
 class _NullWriter:
@@ -179,7 +185,7 @@ def test_initial_invalid_json_truncation_retries_original_prompt_first(caplog):
     assert result == {("test.dlg", "test:entry:1"): "Привет"}
     assert len(provider.calls) == 2
     assert provider.calls[0]["max_tokens"] == TRANSLATION_MAX_TOKENS
-    assert provider.calls[1]["max_tokens"] == _RECOVERY_MAX_TOKENS
+    assert provider.calls[1]["max_tokens"] == _RECOVERY_BUDGET
     assert provider.calls[0]["user_prompt"] == provider.calls[1]["user_prompt"]
     assert "was not valid JSON or was truncated" not in provider.calls[1]["user_prompt"]
     assert "truncation-like invalid JSON" in caplog.text
@@ -195,8 +201,8 @@ def test_truncated_answers_end_with_a_repair_of_the_second_answer():
     assert result == {("test.dlg", "test:entry:1"): "Привет"}
     assert [call["max_tokens"] for call in provider.calls] == [
         TRANSLATION_MAX_TOKENS,
-        _RECOVERY_MAX_TOKENS,
-        _RECOVERY_MAX_TOKENS,
+        _RECOVERY_BUDGET,
+        _RECOVERY_BUDGET,
     ]
     repair = provider.calls[2]["user_prompt"]
     assert "The previous answer for test.dlg was not valid JSON or was truncated." in repair
@@ -234,7 +240,7 @@ def test_failed_repair_is_sent_again_with_the_recovery_budget():
     assert [call["max_tokens"] for call in provider.calls] == [
         TRANSLATION_MAX_TOKENS,
         TRANSLATION_MAX_TOKENS,
-        _RECOVERY_MAX_TOKENS,
+        _RECOVERY_BUDGET,
     ]
     # The repair prompt quotes the first answer and is not rebuilt.
     assert provider.calls[1]["user_prompt"] == provider.calls[2]["user_prompt"]
@@ -266,7 +272,7 @@ def test_pending_keys_truncation_retries_same_retry_prompt_with_higher_tokens(ca
     }
     assert len(provider.calls) == 3
     assert provider.calls[1]["max_tokens"] == TRANSLATION_MAX_TOKENS
-    assert provider.calls[2]["max_tokens"] == _RECOVERY_MAX_TOKENS
+    assert provider.calls[2]["max_tokens"] == _RECOVERY_BUDGET
     assert provider.calls[1]["user_prompt"] == provider.calls[2]["user_prompt"]
     assert (
         "changed, dropped, or omitted preserved NWN tags/tokens" in provider.calls[1]["user_prompt"]
@@ -897,7 +903,7 @@ class TestDialogGrouping:
         assert errors == []
         assert translations == _expected_dialog(files, {"Hello": "Привет", "Goodbye": "Прощай"})
         assert provider.calls[0]["user_prompt"] == provider.calls[1]["user_prompt"]
-        assert provider.calls[1]["max_tokens"] == _RECOVERY_MAX_TOKENS
+        assert provider.calls[1]["max_tokens"] == _RECOVERY_BUDGET
         assert provider.calls[1]["system_prompt"] == provider.calls[0]["system_prompt"]
 
     def test_group_rate_limit_marks_files_failed_without_fallback(self):

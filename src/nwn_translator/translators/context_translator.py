@@ -92,12 +92,14 @@ class _Step(NamedTuple):
     Attributes:
         repair: Send the repair prompt instead of the original one. The repair
             prompt is built once, from the answer before the first repair step.
-        max_tokens: Output budget of the request.
+        recovery_budget: Send it with :data:`_RECOVERY_MAX_TOKENS` rather than
+            ``TRANSLATION_MAX_TOKENS``; the value is read when the request is
+            sent.
         warning: Message logged before the request; ``%s`` is the request label.
     """
 
     repair: bool
-    max_tokens: int
+    recovery_budget: bool
     warning: str
 
 
@@ -107,29 +109,29 @@ _Recovery = Dict[bool, Tuple[_Step, ...]]
 _CHUNK_RECOVERY: _Recovery = {
     True: (
         _Step(
-            False,
-            _RECOVERY_MAX_TOKENS,
-            "%s: dialog JSON parse failed with truncation-like invalid JSON; "
+            repair=False,
+            recovery_budget=True,
+            warning="%s: dialog JSON parse failed with truncation-like invalid JSON; "
             "retrying original prompt with higher max_tokens...",
         ),
         _Step(
-            True,
-            _RECOVERY_MAX_TOKENS,
-            "%s: high-token original prompt retry still returned invalid JSON; "
+            repair=True,
+            recovery_budget=True,
+            warning="%s: high-token original prompt retry still returned invalid JSON; "
             "retrying repair prompt with higher max_tokens as final fallback...",
         ),
     ),
     False: (
         _Step(
-            True,
-            TRANSLATION_MAX_TOKENS,
-            "%s: dialog JSON parse failed with non-truncation invalid JSON; "
+            repair=True,
+            recovery_budget=False,
+            warning="%s: dialog JSON parse failed with non-truncation invalid JSON; "
             "retrying with repair prompt...",
         ),
         _Step(
-            True,
-            _RECOVERY_MAX_TOKENS,
-            "%s: repair prompt still returned invalid JSON; "
+            repair=True,
+            recovery_budget=True,
+            warning="%s: repair prompt still returned invalid JSON; "
             "retrying repair prompt with higher max_tokens as final fallback...",
         ),
     ),
@@ -137,25 +139,25 @@ _CHUNK_RECOVERY: _Recovery = {
 _GROUP_RECOVERY: _Recovery = {
     True: (
         _Step(
-            False,
-            _RECOVERY_MAX_TOKENS,
-            "Dialog group %s: JSON looks truncated; retrying with higher max_tokens...",
+            repair=False,
+            recovery_budget=True,
+            warning="Dialog group %s: JSON looks truncated; retrying with higher max_tokens...",
         ),
     ),
     False: (
         _Step(
-            True,
-            TRANSLATION_MAX_TOKENS,
-            "Dialog group %s: invalid JSON; retrying with repair prompt...",
+            repair=True,
+            recovery_budget=False,
+            warning="Dialog group %s: invalid JSON; retrying with repair prompt...",
         ),
     ),
 }
 _PENDING_RECOVERY: _Recovery = {
     True: (
         _Step(
-            False,
-            _RECOVERY_MAX_TOKENS,
-            "%s: pending dialog retry JSON looks truncated; "
+            repair=False,
+            recovery_budget=True,
+            warning="%s: pending dialog retry JSON looks truncated; "
             "retrying the same JSON retry prompt with higher max_tokens...",
         ),
     ),
@@ -839,7 +841,8 @@ class ContextualTranslationManager:
                 if repaired is None:
                     repaired = repair(raw)
                 prompt = repaired
-            raw = self._call_json(system, prompt, step.max_tokens, trace)
+            budget = _RECOVERY_MAX_TOKENS if step.recovery_budget else TRANSLATION_MAX_TOKENS
+            raw = self._call_json(system, prompt, budget, trace)
             parsed = _parse_answer(raw, label)
             if parsed is not None:
                 break

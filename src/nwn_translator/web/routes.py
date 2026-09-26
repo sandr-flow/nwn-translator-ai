@@ -360,13 +360,11 @@ async def rebuild_task(
     """
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="Задача ещё не завершена")
-    if not task.extract_dir or not task.extract_dir.is_dir():
+    if task.result_path is None or not task.extract_dir or not task.extract_dir.is_dir():
         raise HTTPException(
             status_code=400,
             detail="Извлечённые файлы модуля недоступны (возможно, были очищены)",
         )
-    if task.result_path is None:
-        raise HTTPException(status_code=400, detail="Task has no result path")
 
     target_lang = (body.target_lang or "").strip() or task.target_lang
     try:
@@ -433,10 +431,10 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
     text = "Hello, welcome to my module!"
     provider_name = detect_provider_from_key(body.api_key)
     try:
-        try:
-            reff = parse_reasoning_effort(body.reasoning_effort)
-        except ValueError as e:
-            return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
+        reff = parse_reasoning_effort(body.reasoning_effort)
+    except ValueError as e:
+        return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
+    try:
         provider = create_provider(body.api_key.strip(), body.model, reasoning_effort=reff)
         try:
             result = await provider.translate_async(text, "english", body.target_lang)

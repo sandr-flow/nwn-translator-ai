@@ -456,6 +456,20 @@ def test_status_reports_a_full_snapshot(client: TestClient) -> None:
     assert "current_file" in payload
 
 
+def test_rebuild_without_a_result_path_reports_unavailable_files(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A completed row that lost its result path cannot be rebuilt."""
+    task_id = "0d6f1c3e-5b7a-4c2d-9e8f-1a2b3c4d5e6f"
+    db.create_task_row(task_id, "", "1.1.1.1", 1.0, "m.mod", target_lang="russian")
+    db.update_task_row(task_id, status="completed", extract_dir=str(tmp_path))
+
+    r = client.post(f"/api/tasks/{task_id}/rebuild", json={"edits": []})
+
+    assert r.status_code == 400
+    assert r.json() == {"detail": "Извлечённые файлы модуля недоступны (возможно, были очищены)"}
+
+
 def test_reject_wrong_extension(client: TestClient) -> None:
     files = {"file": ("x.txt", b"hello", "text/plain")}
     data = {"api_key": "sk-z", "target_lang": "russian"}

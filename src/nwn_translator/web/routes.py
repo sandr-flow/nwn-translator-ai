@@ -471,7 +471,9 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
     try:
         provider = create_provider(body.api_key.strip(), body.model, reasoning_effort=reff)
         try:
-            result = await provider.translate_async(text, "english", body.target_lang)
+            result = await provider.translate_async(
+                text, "english", body.target_lang, json_attempts=1
+            )
         finally:
             await provider.close_async_client()
         model = provider.model

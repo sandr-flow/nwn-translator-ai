@@ -296,7 +296,7 @@ def test_test_connection_mocked(client: TestClient, monkeypatch: pytest.MonkeyPa
         model = "fake/model"
         closed = False
 
-        async def translate_async(self, text, source_lang, target_lang):
+        async def translate_async(self, text, source_lang, target_lang, json_attempts=2):
             return TranslationResult(
                 translated="тест",
                 original=text,
@@ -352,7 +352,7 @@ def test_test_connection_failure_closes_the_client(
     class FakeProvider:
         model = "fake/model"
 
-        async def translate_async(self, text, source_lang, target_lang):
+        async def translate_async(self, text, source_lang, target_lang, json_attempts=2):
             if outcome == "raises":
                 raise RuntimeError("boom")
             return TranslationResult(translated="", original=text, success=False, error="bad reply")
@@ -372,6 +372,34 @@ def test_test_connection_failure_closes_the_client(
 
     assert r.json() == {**expected, "provider": "openrouter"}
     assert closed == [True]
+
+
+def test_test_connection_sends_one_request_for_an_unparseable_reply(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key check must not pay for a second request when the reply does not parse."""
+    from nwn_translator.ai_providers import create_provider as real_create_provider
+
+    calls: list[str] = []
+
+    async def unparseable(self, system, user, **kwargs):
+        calls.append(user)
+        return "not json"
+
+    monkeypatch.setattr(
+        "nwn_translator.ai_providers.openrouter_provider.OpenRouterProvider._complete",
+        unparseable,
+    )
+    monkeypatch.setattr(
+        "nwn_translator.web.routes.create_provider",
+        lambda api_key, model=None, **kw: real_create_provider(api_key, model, **kw),
+    )
+
+    r = client.post("/api/test-connection", json={"api_key": "sk-or-test"})
+
+    assert r.json()["ok"] is False
+    assert r.json()["error"] == "Model returned empty or unparseable JSON"
+    assert len(calls) == 1
 
 
 def test_test_connection_rejects_an_unknown_reasoning_effort(client: TestClient) -> None:

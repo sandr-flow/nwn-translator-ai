@@ -440,11 +440,14 @@ class OpenRouterProvider:
         context: Optional[str] = None,
         glossary_block: Optional[str] = None,
         content_profile: Optional[str] = None,
+        *,
+        json_attempts: int = _SINGLE_JSON_ATTEMPTS,
     ) -> TranslationResult:
         """Translate one string.
 
         Race terms found in *text* are added to the prompt when no glossary block
-        is given. An unparseable reply is requested once more.
+        is given. An unparseable reply is requested again, up to *json_attempts*
+        requests in total.
 
         Args:
             text: Text to translate; blank text returns an empty success.
@@ -454,6 +457,8 @@ class OpenRouterProvider:
             glossary_block: GLOSSARY section for the variable prompt half.
             content_profile: Prompt profile (``default``, ``short_label``,
                 ``script_message``).
+            json_attempts: Requests to send until a reply parses. The web
+                connection check sends one, so a bad key costs one request.
 
         Returns:
             The translation, or a failed result when no reply parses.
@@ -475,7 +480,7 @@ class OpenRouterProvider:
         )
         system = self.make_system_message_content(stable, variable)
         user = build_single_user_prompt(text, source_lang, context)
-        for attempt in range(_SINGLE_JSON_ATTEMPTS):
+        for attempt in range(json_attempts):
             raw = await self._complete(
                 system,
                 user,
@@ -493,7 +498,7 @@ class OpenRouterProvider:
                     success=True,
                     metadata={"model": self.model},
                 )
-            if attempt == 0:
+            if attempt + 1 < json_attempts:
                 logger.warning(
                     "Unparseable or empty JSON from model, retrying once. "
                     "Raw (first 200 chars): %s",

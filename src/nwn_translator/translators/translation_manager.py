@@ -25,12 +25,18 @@ from typing import (
 
 from tqdm import tqdm
 
-from ..config import TranslationCancelled, TranslationConfig
+from ..config import TranslationConfig
 from ..glossary import GLOSSARY_MAX_CHARS, GlossaryBuilder, terminology_block
 from ..prompts._builder import (
     CONTENT_PROFILE_DEFAULT,
     CONTENT_PROFILE_SCRIPT_MESSAGE,
     CONTENT_PROFILE_SHORT_LABEL,
+)
+from ..prompts.token_retry import (
+    PRESERVE_INLINE_MARKUP,
+    PRESERVE_PLACEHOLDERS,
+    expected_artifacts_line,
+    previous_mismatch_lines,
 )
 from ..translation_logging import logged_model_call, translation_log_writer_for_config, write_trace
 from ..extractors.ncs_extractor import ncs_hard_veto_reason
@@ -694,11 +700,6 @@ class TranslationManager:
         slack = max(5.0, min(60.0, per_call_timeout * 0.5))
         return waves * per_call_timeout + slack
 
-    def _raise_if_cancelled(self) -> None:
-        cb = self.config.cancel_check
-        if cb is not None and cb():
-            raise TranslationCancelled("Translation cancelled by user")
-
     async def _translate_one_async(
         self,
         sem: asyncio.Semaphore,
@@ -711,7 +712,7 @@ class TranslationManager:
         glossary_block = self._glossary_block_for_texts([sanitized, item.context])
         content_profile = self._content_profile_for_item(item_data)
         async with sem:
-            self._raise_if_cancelled()
+            self.config.raise_if_cancelled()
             try:
                 result = await asyncio.wait_for(
                     logged_model_call(
@@ -880,36 +881,21 @@ class TranslationManager:
         parts: List[str] = []
         if item.context:
             parts.append(item.context)
-        parts.append(
-            "TOKEN/TAG PRESERVATION RETRY: preserve every placeholder and helper token "
-            "surrogate exactly as it appears in the source text. Do not rename, reorder, "
-            "delete, duplicate, or replace any placeholder."
-        )
-        parts.append(
-            "If the line contains NWN inline markup such as StartAction, StartCheck, "
-            "StartHighlight, or </Start>, preserve that markup exactly after restoration. "
-            "Translate only normal prose and text inside square brackets."
-        )
+        parts.append(PRESERVE_PLACEHOLDERS)
+        parts.append(PRESERVE_INLINE_MARKUP)
         parts.append(
             "If the line contains dialog action markers like <<...>> or -...-, preserve "
             "the surrounding markers exactly and translate only the inner text. Do not "
             "invent new angle-bracket pseudo-tags such as <sir/madam>."
         )
-        if expected:
-            parts.append("Expected preserved artifacts after restoration: " + " | ".join(expected))
+        parts.extend(expected_artifacts_line(expected))
         if mismatch_report is not None and mismatch_report.mismatch_type == "foreign_script":
             parts.append(
                 "Your previous answer contained characters from a foreign script "
                 f"(such as Chinese). Write the translation in {self.config.target_lang} "
                 "using only that language's alphabet."
             )
-        if mismatch_report is not None and not mismatch_report.is_exact_match:
-            parts.append(f"Previous mismatch type: {mismatch_report.mismatch_type}.")
-            if mismatch_report.actual_sequence:
-                parts.append(
-                    "Previous restored artifact sequence: "
-                    + " | ".join(mismatch_report.actual_sequence)
-                )
+        parts.extend(previous_mismatch_lines(mismatch_report))
         parts.append(f"Retry attempt {attempt} of {self._TOKEN_RETRY_BUDGET}.")
         return "\n".join(parts)
 
@@ -1152,7 +1138,7 @@ class TranslationManager:
                 )
                 content_profile = self._content_profile_for_batch(batch)
                 async with sem:
-                    self._raise_if_cancelled()
+                    self.config.raise_if_cancelled()
                     try:
                         unique_results = await asyncio.wait_for(
                             logged_model_call(
@@ -1304,7 +1290,7 @@ class TranslationManager:
         item = item_data["item"]
         sanitized = item_data["sanitized"]
         async with sem:
-            self._raise_if_cancelled()
+            self.config.raise_if_cancelled()
             try:
                 return await asyncio.wait_for(
                     logged_model_call(

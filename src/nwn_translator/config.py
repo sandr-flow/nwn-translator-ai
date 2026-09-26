@@ -204,6 +204,15 @@ class TranslationConfig:
 
         self.reasoning_effort = parse_reasoning_effort(self.reasoning_effort)
 
+    def raise_if_cancelled(self) -> None:
+        """Stop the run when :attr:`cancel_check` asks for it.
+
+        Raises:
+            TranslationCancelled: If ``cancel_check`` returns ``True``.
+        """
+        if self.cancel_check is not None and self.cancel_check():
+            raise TranslationCancelled("Translation cancelled by user")
+
     def get_api_key(self) -> str:
         """Return the API key.
 

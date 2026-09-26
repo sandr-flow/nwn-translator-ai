@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..config import (
-    TranslationCancelled,
     TranslationConfig,
     create_output_path,
     module_string_encoding_for_target_lang,
@@ -202,12 +201,6 @@ class PipelineState:
     def _source_encoding(self) -> Optional[str]:
         """Declared code page for reading module strings (``None`` = detect)."""
         return source_string_encoding(self.config.source_lang)
-
-    def _check_cancel(self) -> None:
-        """Raise :class:`TranslationCancelled` if the config's cancel check fires."""
-        cb = self.config.cancel_check
-        if cb is not None and cb():
-            raise TranslationCancelled("Translation cancelled by user")
 
     def _extract_module(self) -> Path:
         """Extract the .mod file to a temporary directory and record it."""
@@ -452,7 +445,7 @@ def stage_unpack(state: PipelineState) -> List[Path]:
     extract_dir = state._extract_module()
     if state.config.progress_callback:
         state.config.progress_callback("extracting", 1, 1, "done")
-    state._check_cancel()
+    state.config.raise_if_cancelled()
 
     logger.info("Finding translatable files...")
     translatable_files = state._find_translatable_files(extract_dir)
@@ -500,7 +493,7 @@ def stage_extract(state: PipelineState, translatable_files: List[Path]) -> Extra
                     state.config.progress_callback(
                         "extracting_content", completed_count, total_files, file_path.name
                     )
-                state._check_cancel()
+                state.config.raise_if_cancelled()
                 try:
                     result = future.result()
                     if result is not None:
@@ -680,7 +673,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
 
     # B-2: Translate dialog files (contextual, concurrent across files)
     if dialog_files:
-        state._check_cancel()
+        state.config.raise_if_cancelled()
         assert context_manager is not None
         dialog_jobs = [
             (file_path, extracted_map[file_path][0], len(extracted_map[file_path][1].items))

@@ -25,6 +25,12 @@ from ..context.dialog_speakers import dialog_owners, speaker_description, tagged
 from ..context.world_context import WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode, dialog_item_id
 from ..json_utils import json_extract_first_object, strip_json_markdown_fences
+from ..prompts.token_retry import (
+    PRESERVE_INLINE_MARKUP,
+    PRESERVE_PLACEHOLDERS,
+    expected_artifacts_line,
+    previous_mismatch_lines,
+)
 from ..telemetry import llm_phase
 from ..glossary import GLOSSARY_MAX_CHARS, terminology_block
 from ..translation_logging import logged_model_call, translation_log_writer_for_config
@@ -122,12 +128,6 @@ class ContextualTranslationManager:
             address = self._node_address(file_path, key)
             if original and address not in translations:
                 self.failed_items.add(address)
-
-    def _raise_if_cancelled(self) -> None:
-        """Raise :class:`TranslationCancelled` when the config's cancel check fires."""
-        cb = self.config.cancel_check
-        if cb is not None and cb():
-            raise TranslationCancelled("Translation cancelled by user")
 
     def translate_dialog(
         self,
@@ -255,7 +255,7 @@ class ContextualTranslationManager:
             latest_invalid: Dict[str, Dict[str, Any]] = {}
 
             for chunk_index, (chunk_keys, script) in enumerate(dialog_chunks, 1):
-                self._raise_if_cancelled()
+                self.config.raise_if_cancelled()
                 chunk_translations, chunk_pending, chunk_invalid = self._translate_dialog_chunk(
                     file_path,
                     file_path.stem,
@@ -278,7 +278,7 @@ class ContextualTranslationManager:
             pending_keys = sorted(set(pending_keys))
 
             if pending_keys:
-                self._raise_if_cancelled()
+                self.config.raise_if_cancelled()
                 logger.warning(
                     "%s: retrying %d dialog nodes with missing or invalid preserved artifacts...",
                     file_path.name,
@@ -366,7 +366,7 @@ class ContextualTranslationManager:
                         [sanitized_by_key[key] for key in pending_after_json]
                     )
                     for key in pending_after_json:
-                        self._raise_if_cancelled()
+                        self.config.raise_if_cancelled()
                         context = self._build_dialog_retry_context(
                             key,
                             node_map,
@@ -488,7 +488,7 @@ class ContextualTranslationManager:
         small: List[_SmallDialog] = []
         can_group = isinstance(self.provider, OpenRouterProvider)
         for file_path, parsed_data, item_budget in dialog_files:
-            self._raise_if_cancelled()
+            self.config.raise_if_cancelled()
             if not can_group:
                 singles.append((file_path, parsed_data, item_budget))
                 continue
@@ -527,7 +527,7 @@ class ContextualTranslationManager:
         def translate_one(
             file_path: Path, parsed_data: Dict[str, Any], item_budget: int
         ) -> Translations:
-            self._raise_if_cancelled()
+            self.config.raise_if_cancelled()
             return self.translate_dialog(
                 file_path,
                 parsed_data,
@@ -683,7 +683,7 @@ class ContextualTranslationManager:
         """
         translations: Translations = {}
         errors: List[tuple[Path, Exception]] = []
-        self._raise_if_cancelled()
+        self.config.raise_if_cancelled()
         label = f"{group[0].file_path.name}+{len(group) - 1}"
         try:
             parsed_group = self._request_group_translation(group, label)
@@ -717,7 +717,7 @@ class ContextualTranslationManager:
             parsed_group = None
 
         for entry in group:
-            self._raise_if_cancelled()
+            self.config.raise_if_cancelled()
             if parsed_group is not None:
                 sub = self._resolve_group_file(parsed_group, entry.file_path)
             else:
@@ -1107,26 +1107,10 @@ class ContextualTranslationManager:
         if node is not None:
             speaker = node.speaker or ("NPC" if node.is_entry else "Player")
             parts.append(f"Speaker: {speaker}.")
-        parts.append(
-            "TOKEN/TAG PRESERVATION RETRY: preserve every placeholder and helper token "
-            "surrogate exactly as it appears in the source text. Do not rename, reorder, "
-            "delete, duplicate, or replace any placeholder."
-        )
-        parts.append(
-            "If the line contains NWN inline markup such as StartAction, StartCheck, "
-            "StartHighlight, or </Start>, preserve that markup exactly after restoration. "
-            "Translate only normal prose and text inside square brackets."
-        )
-        expected = handlers[key].get_expected_artifact_sequence()
-        if expected:
-            parts.append("Expected preserved artifacts after restoration: " + " | ".join(expected))
-        if mismatch_report is not None and not mismatch_report.is_exact_match:
-            parts.append(f"Previous mismatch type: {mismatch_report.mismatch_type}.")
-            if mismatch_report.actual_sequence:
-                parts.append(
-                    "Previous restored artifact sequence: "
-                    + " | ".join(mismatch_report.actual_sequence)
-                )
+        parts.append(PRESERVE_PLACEHOLDERS)
+        parts.append(PRESERVE_INLINE_MARKUP)
+        parts.extend(expected_artifacts_line(handlers[key].get_expected_artifact_sequence()))
+        parts.extend(previous_mismatch_lines(mismatch_report))
         parts.append(f"Retry attempt {attempt} of {self._TOKEN_RETRY_BUDGET}.")
         return "\n".join(parts)
 

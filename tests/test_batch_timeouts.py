@@ -98,10 +98,10 @@ class TestGlossaryPartialFailure:
 
         result = parse_glossary_json(
             '{"Kit": "\\u041d\\u0430\\u0431\\u043e\\u0440"}',
-            {"Kit​ (item)"},
+            {"Kit\u200b (item)"},
         )
 
-        assert result == {"Kit​ (item)": "Набор"}
+        assert result == {"Kit\u200b (item)": "Набор"}
 
     def test_parse_glossary_json_uses_first_valid_object(self):
         """Trailing prose/examples after JSON must not poison parsing."""

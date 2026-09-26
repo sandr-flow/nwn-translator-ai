@@ -52,7 +52,7 @@ _STAGE = LlmStage(
 #: Keys a model may nest the whole name map under.
 _WRAPPER_KEYS = ("glossary", "translations", "entries", "names", "result", "data")
 
-_ZERO_WIDTH_RE = re.compile(r"[​‌‍﻿]")
+_ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 _SPACE_RUN_RE = re.compile(r"\s+")
 _CATEGORY_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
@@ -214,7 +214,7 @@ class _NameHints:
         self._candidates = {c.name: c for c in world_context.candidates.values()}
         self._npcs: Dict[str, List["NPCInfo"]] = {}
         for npc in world_context.npcs.values():
-            for key in {npc.first_name, npc.last_name, npc.display_name}:
+            for key in dict.fromkeys((npc.first_name, npc.last_name, npc.display_name)):
                 self._npcs.setdefault(key, []).append(npc)
 
     def line(self, name: str, category: str) -> str:

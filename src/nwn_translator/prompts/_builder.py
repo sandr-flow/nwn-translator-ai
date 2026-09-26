@@ -8,7 +8,7 @@ demonstrations match the target language.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from .examples import get_examples
 

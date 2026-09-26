@@ -10,7 +10,7 @@ renders only the terms the source text mentions.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 # ---------------------------------------------------------------------------
 # Data: {target_lang: {english_form_lowercase: canonical_translation}}

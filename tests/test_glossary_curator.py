@@ -117,3 +117,46 @@ def test_overall_timeout_keeps_decisions_of_finished_batches(monkeypatch):
 
     reasons = [candidate.curation_reason for candidate in registry.values()]
     assert reasons == ["llm"] * 80 + [""]
+
+
+def test_infinite_priority_reads_as_no_priority():
+    from src.nwn_translator.glossary_curator import _parse_curator_json
+
+    parsed = _parse_curator_json(
+        '{"Auren Society": {"decision": "keep", "reason": "faction", "priority": Infinity}}',
+        {"Auren Society"},
+    )
+
+    assert parsed == {
+        "Auren Society": {"decision": "keep", "reason": "faction", "priority": 0, "alias_of": None}
+    }
+
+
+def test_batch_that_raises_keeps_the_decisions_of_the_other_batches(monkeypatch):
+    import json
+    from itertools import product
+
+    import src.nwn_translator.glossary_curator as module
+
+    parse = module._parse_curator_json
+
+    def parse_or_fail(raw, expected_keys):
+        if "boom" in raw:
+            raise RuntimeError("parser bug")
+        return parse(raw, expected_keys)
+
+    monkeypatch.setattr(module, "_parse_curator_json", parse_or_fail)
+    registry = EntityCandidateRegistry()
+    for a, b in list(product("abcdefghi", repeat=2))[:81]:
+        registry.add(f"Guild of {a.upper()}{b}", category="term", source="entity_extractor")
+
+    class _SecondBatchBreaksTheParser(_CuratorProvider):
+        async def complete_json_chat_async(self, system_prompt, user_prompt, **kwargs):
+            records = json.loads(user_prompt[user_prompt.index("{") :])
+            reason = "llm" if len(records) == 80 else "boom"
+            return json.dumps({name: {"decision": "keep", "reason": reason} for name in records})
+
+    GlossaryCurator().curate(registry, _SecondBatchBreaksTheParser([]), _config())
+
+    reasons = [candidate.curation_reason for candidate in registry.values()]
+    assert reasons == ["llm"] * 80 + [""]

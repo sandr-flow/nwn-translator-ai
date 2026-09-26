@@ -58,8 +58,9 @@ class GlossaryCurator:
             progress_callback: Optional progress reporter.
 
         Returns:
-            *registry*. Candidates of failed batches, and of batches unfinished
-            when the overall budget runs out, keep their deterministic decisions.
+            *registry*. Candidates of a batch that raised, or was unfinished
+            when the overall budget ran out, keep their deterministic
+            decisions; the other batches' decisions still apply.
         """
         candidates = registry.values()
         if not candidates:
@@ -186,10 +187,13 @@ def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str
 
 
 def _optional_int(value: Any) -> Optional[int]:
-    """Return *value* as ``int``, or ``None`` when it does not convert."""
+    """Return *value* as ``int``, or ``None`` when it does not convert.
+
+    ``json.loads`` reads ``Infinity`` and ``NaN``, which ``int`` rejects.
+    """
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 

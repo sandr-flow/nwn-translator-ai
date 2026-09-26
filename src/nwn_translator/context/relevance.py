@@ -1,13 +1,12 @@
-"""Token-based relevance filter for context/glossary entries.
+"""Token-based relevance filter for world-context entries.
 
-Used by :meth:`Glossary.to_prompt_block` and
-:meth:`WorldContext.to_prompt_block` to keep only entries actually mentioned
-in the source text of a translation batch.
+:meth:`~nwn_translator.context.world_context.WorldContext.to_prompt_block` uses
+it to keep only the entities a dialog batch actually mentions.
 
 Matching is deliberately conservative:
 
-* single-token names match exact source tokens, simple plural/possessive
-  variants, or Damerau-Levenshtein <= 1 for long tokens;
+* single-token names match exact source tokens; distinctive (long, non-magnet)
+  tokens also match simple plural/possessive variants or Damerau-Levenshtein <= 1;
 * multi-token names need at least two meaningful token hits, except for a
   distinctive long surname/title token such as ``Winters`` vs. ``Winter's``;
 * common prompt/routing/game tokens (``player``, ``reply``, ``ravenloft``,
@@ -21,7 +20,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from functools import lru_cache
-from typing import Dict, FrozenSet, Iterable, List, Literal, Optional, Set, Tuple, Union
+from typing import Dict, FrozenSet, Iterable, List, Optional, Set, Tuple, Union
 
 # Unicode letters only (no digits, no underscore). Works for Latin, Cyrillic,
 # Turkish, Polish, Czech and the like under Python 3's default re.UNICODE.
@@ -62,8 +61,6 @@ _MAGNET_TOKENS = frozenset(
     }
 )
 
-_MatchKind = Literal["none", "exact", "variant", "fuzzy"]
-
 
 def tokenize(text: str) -> Set[str]:
     """Normalize *text* and return its set of letter-token strings."""
@@ -80,14 +77,18 @@ def _entity_tokens_cached(text: str) -> FrozenSet[str]:
 
 
 class SourceTokenIndex:
-    """Lookup structures for one source-token set (fast is_relevant matching)."""
+    """Lookup structures for one source-token set (fast :func:`is_relevant` matching).
+
+    Attributes:
+        tokens: The source tokens.
+        by_len: Fuzzy-eligible tokens (length >= 6) bucketed by length, so a
+            Damerau-Levenshtein <= 1 probe only scans lengths within +/- 1.
+    """
 
     __slots__ = ("tokens", "by_len")
 
     def __init__(self, tokens: Set[str]):
         self.tokens = tokens
-        #: Fuzzy-eligible tokens (len >= _FUZZY_MIN) bucketed by length so a
-        #: Damerau-Levenshtein <= 1 probe only scans lengths within +/- 1.
         self.by_len: Dict[int, List[str]] = {}
         for token in tokens:
             if len(token) >= _FUZZY_MIN:
@@ -95,7 +96,7 @@ class SourceTokenIndex:
 
 
 def _variant_in_tokens(token: str, tokens: Set[str]) -> bool:
-    """Set-lookup equivalent of `_simple_plural_or_possessive_variant` scans."""
+    """Whether a plural/possessive-style variant (+s, +es, -s, -es) of *token* is a source token."""
     if len(token) < _PREFIX_MIN:
         return False
     if token + "s" in tokens or token + "es" in tokens:
@@ -108,6 +109,7 @@ def _variant_in_tokens(token: str, tokens: Set[str]) -> bool:
 
 
 def _fuzzy_in_index(token: str, index: SourceTokenIndex) -> bool:
+    """Whether a source token is within Damerau-Levenshtein distance 1 of a long *token*."""
     if len(token) < _FUZZY_MIN:
         return False
     for length in (len(token) - 1, len(token), len(token) + 1):
@@ -179,52 +181,13 @@ def is_relevant(entity_text: str, source_tokens: Union[Set[str], SourceTokenInde
     return False
 
 
-def _tokens_match(a: str, b: str) -> bool:
-    return _token_match_kind(a, b) != "none"
-
-
-def _single_token_relevant(entity_token: str, source_tokens: Set[str]) -> bool:
-    for source_token in source_tokens:
-        kind = _token_match_kind(entity_token, source_token)
-        if kind == "exact":
-            return True
-        if kind == "variant" and _is_distinctive_token(entity_token):
-            return True
-        if kind == "fuzzy" and _is_distinctive_token(entity_token):
-            return True
-    return False
-
-
-def _token_match_kind(a: str, b: str) -> _MatchKind:
-    if a == b:
-        return "exact"
-    if _simple_plural_or_possessive_variant(a, b):
-        return "variant"
-    if len(a) >= _FUZZY_MIN and len(b) >= _FUZZY_MIN:
-        if _damerau_levenshtein_le_1(a, b):
-            return "fuzzy"
-    return "none"
-
-
-def _simple_plural_or_possessive_variant(a: str, b: str) -> bool:
-    if len(a) < _PREFIX_MIN or len(b) < _PREFIX_MIN:
-        return False
-    if a.endswith("s") and a[:-1] == b:
-        return True
-    if b.endswith("s") and b[:-1] == a:
-        return True
-    if a.endswith("es") and a[:-2] == b:
-        return True
-    if b.endswith("es") and b[:-2] == a:
-        return True
-    return False
-
-
 def _is_distinctive_token(token: str) -> bool:
+    """Long enough and not a magnet token, so a near match counts as evidence."""
     return len(token) >= _DISTINCTIVE_MIN and not _is_magnet_token(token)
 
 
 def _is_magnet_token(token: str) -> bool:
+    """Common prompt/game word that never counts as evidence on its own."""
     return token in _MAGNET_TOKENS
 
 
@@ -281,20 +244,9 @@ _HIERARCHY_SPLIT_RE = re.compile(r"\s+(?:[-|/>])\s+")
 _COMPOUND_FREQUENCY_THRESHOLD = 3
 
 
-def split_hierarchical(name: str) -> Optional[List[str]]:
-    """Return component parts of a hierarchical name like ``A - B - C``.
-
-    Returns ``None`` for names that are not hierarchical: single-component
-    names, compound nouns joined without surrounding spaces (``street-side``,
-    ``cul-de-sac``), or names whose components do not all start with an
-    uppercase letter.
-    """
-    parts = _split_hierarchical_cached(str(name)) if name else None
-    return list(parts) if parts is not None else None
-
-
 @lru_cache(maxsize=16384)
 def _split_hierarchical_cached(name: str) -> Optional[Tuple[str, ...]]:
+    """Split ``A - B - C`` into its parts; ``None`` unless every part starts upper-case."""
     parts = tuple(p.strip() for p in _HIERARCHY_SPLIT_RE.split(name))
     if len(parts) < 2:
         return None
@@ -326,7 +278,6 @@ def common_hierarchy_components(
 def hierarchical_entry_passes(
     name: str,
     source_joined: str,
-    source_tokens: Set[str],
     common: Set[str],
 ) -> bool:
     """Return True if a hierarchical *name* is evidenced by the source corpus.

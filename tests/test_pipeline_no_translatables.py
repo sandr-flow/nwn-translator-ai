@@ -5,6 +5,7 @@ the input) instead of returning a path that was never written.
 """
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from nwn_translator.config import TranslationConfig
 from nwn_translator.formats.erf import ERFReader, ERFWriter
@@ -30,8 +31,8 @@ def test_no_translatable_files_outputs_copy_of_input(tmp_path: Path) -> None:
         temp_dir=tmp_path / "temp",
         quiet=True,
     )
-    # The provider is never touched on this path.
-    state = PipelineState(config=config, provider=None)  # type: ignore[arg-type]
+    # No request is sent on this path; the run only closes the client.
+    state = PipelineState(config=config, provider=AsyncMock())
 
     result = run_pipeline(state)
 

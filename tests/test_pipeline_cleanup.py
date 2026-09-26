@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import List
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -36,8 +37,8 @@ def _make_state(tmp_path: Path, *, skip_cleanup: bool = False) -> PipelineState:
         skip_cleanup=skip_cleanup,
         quiet=True,
     )
-    # The provider is never reached: the test stage raises first.
-    return PipelineState(config=config, provider=None)  # type: ignore[arg-type]
+    # The test stage raises before any request; the run only closes the client.
+    return PipelineState(config=config, provider=AsyncMock())
 
 
 def _boom(_state: PipelineState) -> None:
@@ -55,6 +56,7 @@ def test_stage_failure_still_cleans_temp_dir(
 
     assert _leftover_temp_dirs(tmp_path / "temp") == []
     assert state.temp_dir is None
+    state.provider.close_async_client.assert_awaited_once()
 
 
 def test_stage_failure_keeps_temp_dir_with_skip_cleanup(

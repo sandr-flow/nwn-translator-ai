@@ -369,7 +369,10 @@ def run_one(scenario: str, module: Path, out_dir: Path, concurrency: int = 1) ->
 
         log_lines = [
             json.loads(line)
-            for line in (work / "log.jsonl").read_text(encoding="utf-8").splitlines()
+            # JSONL keeps U+2028/U+0085 unescaped, so split on "
+" only.
+            for line in (work / "log.jsonl").read_text(encoding="utf-8").split("
+")
             if line.strip()
         ]
         t1 = time.perf_counter()
@@ -477,7 +480,8 @@ def record(args: argparse.Namespace) -> int:
 
 
 def _read_lines(path: Path) -> List[str]:
-    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    return path.read_text(encoding="utf-8").split("
+") if path.exists() else []
 
 
 def _diff_multiset(a: List[str], b: List[str]) -> Tuple[int, int]:

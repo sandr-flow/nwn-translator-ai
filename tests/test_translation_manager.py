@@ -983,6 +983,26 @@ class TestPassthroughEmptyAfterSanitize:
         provider.translate_async.assert_not_called()
 
 
+class TestPassthroughRejection:
+    """A passthrough string that does not survive acceptance is a failure, not a gap."""
+
+    def test_unrestorable_passthrough_is_recorded_as_failed(self):
+        # A lone combining mark has nothing to translate; normalization drops it.
+        item = TranslatableItem(text="́", item_id="mark", location="a.uti")
+        provider = _make_provider({})
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(ExtractedContent("combined", [item], Path("m")))
+
+        assert result == {}
+        assert manager.failed_items == {item.key}
+        assert manager.get_statistics()["errors"] == [
+            "Translation failed for mark: text without translatable content was rejected"
+        ]
+        provider.translate_async.assert_not_called()
+        provider.translate_batch_async.assert_not_called()
+
+
 class TestBatchEligibility:
     """Strings within the text budget share requests; longer ones go individually."""
 

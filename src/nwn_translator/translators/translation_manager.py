@@ -159,7 +159,7 @@ class TranslationManager:
             groups.setdefault(dedup_key(w, self._terminology), []).append(w)
         if not groups:
             return {}
-        translations =self._translate_distinct(
+        translations = self._translate_distinct(
             [group[0] for group in groups.values()], lambda w: bump(w.key[0])
         )
         for group in groups.values():
@@ -269,7 +269,10 @@ class TranslationManager:
             )
         for w in plan.passthrough:
             # The sanitized form restores to the source itself.
-            self._keep(translations, w, self._accept(w, w.sanitized))
+            translated = self._accept(w, w.sanitized)
+            if translated is None:
+                self._record_rejected(w, "text without translatable content was rejected")
+            self._keep(translations, w, translated)
             done(w)
 
         single_results, batch_results = caller.run_main_pass(plan.singles, plan.batches, done)

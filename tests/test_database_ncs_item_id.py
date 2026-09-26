@@ -189,6 +189,23 @@ def test_startup_reconciles_unfinished_tasks(isolated_db: None, tmp_path: Path) 
     assert tm.get("alive") is None
 
 
+def test_count_translations_counts_every_row_under_the_lock(isolated_db: None) -> None:
+    """Job threads count rows on the connection route threads share, so under its lock."""
+    db.create_task_row("t1", "tok", "127.0.0.1", 1.0, "m.mod")
+    db.insert_translation("t1", "A", "А", file="a.uti", item_id="1")
+    db.insert_translation("t1", "B", "B", file="a.uti", item_id="2", success=False)
+    counted: list[int] = []
+
+    with db._lock:
+        reader = threading.Thread(target=lambda: counted.append(db.count_translations("t1")))
+        reader.start()
+        reader.join(timeout=0.3)
+        assert reader.is_alive(), "count ran without the connection lock"
+    reader.join(timeout=5)
+
+    assert counted == [2]  # rejected lines are editor rows too
+
+
 def test_update_task_row_rejects_unknown_columns(isolated_db: None) -> None:
     """Column names are interpolated into SQL, so only real task columns may pass."""
     db.create_task_row("t1", "tok", "127.0.0.1", 1.0, "m.mod")

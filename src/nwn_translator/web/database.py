@@ -472,6 +472,12 @@ def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
     return rows
 
 
+def count_translations(task_id: str) -> int:
+    """Return how many translation rows the task has, rejected lines included."""
+    rows = _query("SELECT COUNT(*) AS n FROM translations WHERE task_id = ?", (task_id,))
+    return int(rows[0]["n"])
+
+
 def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
     """Return ``{file: {item_id: translated}}`` for rows that carry an ``item_id``.
 

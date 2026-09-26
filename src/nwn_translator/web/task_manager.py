@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import shutil
-import sqlite3
 import threading
 import time
 import uuid
@@ -26,9 +25,9 @@ from ..main import ModuleTranslator, run_translation_pipeline
 from .database import (
     TERMINAL_STATUSES,
     SqliteTranslationLogWriter,
+    count_translations,
     create_task_row,
     delete_task_row,
-    get_db,
     get_finished_task_ids_older_than,
     get_unfinished_task_rows,
     update_task_row,
@@ -97,13 +96,11 @@ class TaskManager:
         self,
         workspace_root: Optional[Path] = None,
         task_ttl_seconds: float = DEFAULT_TASK_TTL_SECONDS,
-        db_connection: Optional[sqlite3.Connection] = None,
     ) -> None:
         self.workspace_root = (
             Path(workspace_root) if workspace_root is not None else Path("workspace") / "web"
         )
         self.task_ttl_seconds = task_ttl_seconds
-        self._db_connection = db_connection
         self._tasks: Dict[str, TranslationTask] = {}
         self._lock = threading.Lock()
         #: IP -> task_id while job is running (not completed/failed)
@@ -431,16 +428,9 @@ class TaskManager:
             task.result_path = Path(result_path)
             task.extract_dir = translator.extract_dir
             task.stats = translator.get_statistics()
-            # Replace opaque "items_translated" with actual per-file count from DB
-            try:
-                db = self._db_connection or get_db()
-                row = db.execute(
-                    "SELECT COUNT(*) FROM translations WHERE task_id = ?",
-                    (task.task_id,),
-                ).fetchone()
-                task.stats["texts_translated"] = row[0] if row else 0
-            except Exception:
-                pass
+            # Editor rows of every file, dialogs included; ``items_translated``
+            # counts only accepted non-dialog answers.
+            task.stats["texts_translated"] = count_translations(task.task_id)
             task.progress = 1.0
             task.phase = None
             task.current_file = None
@@ -537,7 +527,7 @@ def get_task_manager() -> TaskManager:
     if _manager is None:
         root_env = os.environ.get("NWN_WEB_TASK_ROOT", "").strip()
         root = Path(root_env) if root_env else None
-        _manager = TaskManager(workspace_root=root, db_connection=get_db())
+        _manager = TaskManager(workspace_root=root)
     return _manager
 
 

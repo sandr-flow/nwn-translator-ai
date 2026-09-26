@@ -226,6 +226,47 @@ def test_translate_status_download(client: TestClient) -> None:
     assert d.content == b"FAKE_MOD"
 
 
+def _wait_for_status(client: TestClient, task_id: str, status: str) -> dict:
+    """Poll the status endpoint until the task reaches *status* (or 5 s pass)."""
+    deadline = time.time() + 5.0
+    payload: dict = {}
+    while time.time() < deadline:
+        payload = client.get(f"/api/tasks/{task_id}/status").json()
+        if payload["status"] == status:
+            break
+        time.sleep(0.05)
+    return payload
+
+
+def test_texts_translated_counts_every_editor_row(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``texts_translated`` is the number of stored rows, rejected lines included."""
+
+    def translate_with_rows(self):
+        writer = self.config.translation_log_writer
+        writer.write({"original": "A", "translated": "А", "file": "a.uti", "item_id": "1"})
+        writer.write(
+            {"original": "B", "translated": "B", "file": "a.uti", "item_id": "2", "success": False}
+        )
+        out = self.config.output_file
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"MOD")
+        return out
+
+    monkeypatch.setattr(
+        "nwn_translator.web.task_manager.ModuleTranslator.translate", translate_with_rows
+    )
+    files = {"file": ("rows.mod", b"\x04" * 200, "application/octet-stream")}
+    r = client.post(
+        "/api/translate", files=files, data={"api_key": "sk-x", "target_lang": "english"}
+    )
+    payload = _wait_for_status(client, r.json()["task_id"], "completed")
+
+    assert payload["status"] == "completed", payload
+    assert payload["stats"]["texts_translated"] == 2
+
+
 def test_translate_rate_limit_second_request(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

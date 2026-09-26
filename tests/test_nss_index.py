@@ -2,7 +2,7 @@
 
 import pytest
 
-from nwn_translator.extractors.nss_index import classify_engine_arg, snippet_for_text
+from nwn_translator.extractors.nss_index import classify_engine_arg, snippet_with_position
 from tests.test_ncs_context import _extract
 from tests.test_ncs import _consts, _consti, _consto, _action, _retn
 
@@ -36,8 +36,10 @@ class TestEngineArgTable:
 
 def test_snippet_found_and_missing():
     source = 'line one\nSpeakString("Hello!");\nline three'
-    assert "SpeakString" in snippet_for_text("Hello!", source)
-    assert snippet_for_text("absent", source) is None
+    snippet, start = snippet_with_position("Hello!", source)
+    assert "SpeakString" in snippet
+    assert start == 0
+    assert snippet_with_position("absent", source) == (None, None)
 
 
 @pytest.mark.parametrize(

@@ -178,12 +178,8 @@ def test_git_extractor_translates_non_trap_triggers():
     assert "tr_vico" not in texts
 
 
-def test_git_fields_collects_non_trap_trigger_strings():
-    """Injector string collector must mirror the extractor for non-trap triggers."""
-    from src.nwn_translator.extractors.git_fields import (
-        collect_git_strings_missing_from_translations,
-    )
-
+def test_git_extractor_extracts_non_trap_trigger_thoughts():
+    """Bracketed narrator thoughts in non-trap trigger names are extracted."""
     gff = {
         "TriggerList": [
             {
@@ -198,7 +194,7 @@ def test_git_fields_collects_non_trap_trigger_strings():
             }
         ]
     }
-    found = collect_git_strings_missing_from_translations(gff, {})
+    found = {item.text for item in GitExtractor().extract(Path("area.git"), gff).items}
     assert any("eye reflected" in s for s in found)
 
 
@@ -239,12 +235,8 @@ def test_git_extractor_collects_area_floor_items():
     assert "" not in by_text
 
 
-def test_git_fields_collects_area_floor_item_strings():
-    """Injector string collector must mirror the extractor for area floor items."""
-    from src.nwn_translator.extractors.git_fields import (
-        collect_git_strings_missing_from_translations,
-    )
-
+def test_git_extractor_extracts_area_floor_item_descriptions():
+    """Area floor items without a base item still yield name and description."""
     gff = {
         "List": [
             {
@@ -254,7 +246,7 @@ def test_git_fields_collects_area_floor_item_strings():
             }
         ]
     }
-    found = collect_git_strings_missing_from_translations(gff, {})
+    found = {item.text for item in GitExtractor().extract(Path("area.git"), gff).items}
     assert "Silver Nuggets" in found
     assert "Raw silver ore." in found
 
@@ -279,12 +271,8 @@ def test_git_extractor_collects_encounter_instance_names():
     assert "enc_internal_tag" not in texts
 
 
-def test_git_filter_skips_code_like_trigger_route_labels_in_extractor_and_collector():
-    """Extractor and injector fallback must reject toolset route labels equally."""
-    from src.nwn_translator.extractors.git_fields import (
-        collect_git_strings_missing_from_translations,
-    )
-
+def test_git_filter_skips_code_like_trigger_route_labels():
+    """The extractor rejects toolset route labels."""
     extractor = GitExtractor()
     path = Path("routes.git")
     blocked = [
@@ -306,19 +294,13 @@ def test_git_filter_skips_code_like_trigger_route_labels_in_extractor_and_collec
     }
 
     extracted = {item.text for item in extractor.extract(path, gff).items}
-    collected = collect_git_strings_missing_from_translations(gff, {})
 
     for value in blocked:
         assert value not in extracted
-        assert value not in collected
 
 
-def test_git_filter_skips_code_like_item_names_in_extractor_and_collector():
+def test_git_filter_skips_code_like_item_names():
     """Inventory and area-floor item labels that look like resrefs stay untranslated."""
-    from src.nwn_translator.extractors.git_fields import (
-        collect_git_strings_missing_from_translations,
-    )
-
     extractor = GitExtractor()
     path = Path("items.git")
     blocked = ["WWBite1d6", "WWBiteWolfForm", "WILL_O_WISP"]
@@ -350,19 +332,13 @@ def test_git_filter_skips_code_like_item_names_in_extractor_and_collector():
     }
 
     extracted = {item.text for item in extractor.extract(path, gff).items}
-    collected = collect_git_strings_missing_from_translations(gff, {})
 
     for value in blocked:
         assert value not in extracted
-        assert value not in collected
 
 
 def test_git_filter_keeps_player_visible_trigger_and_item_strings():
     """Natural-language .git labels stay eligible for translation."""
-    from src.nwn_translator.extractors.git_fields import (
-        collect_git_strings_missing_from_translations,
-    )
-
     extractor = GitExtractor()
     path = Path("visible.git")
     gff = {
@@ -415,7 +391,6 @@ def test_git_filter_keeps_player_visible_trigger_and_item_strings():
     }
 
     extracted = {item.text for item in extractor.extract(path, gff).items}
-    collected = collect_git_strings_missing_from_translations(gff, {})
     expected = {
         "To the Sewers",
         '"My lovely boots are getting mud on them!"',
@@ -426,7 +401,6 @@ def test_git_filter_keeps_player_visible_trigger_and_item_strings():
     }
 
     assert expected <= extracted
-    assert expected <= collected
 
 
 def test_git_extractor_extracts_emote_trigger_texts():
@@ -510,9 +484,9 @@ def test_git_extractor_blocks_camel_names_without_blueprints(tmp_path):
 
 
 def test_creature_name_oracle_survives_blueprint_patching(tmp_path, monkeypatch):
-    """Injection-time lookups reuse the oracle built from the original names.
+    """Later lookups reuse the oracle built from the original names.
 
-    By injection time the .utc files on disk may already carry translated
+    By rebuild time the .utc files on disk may already carry translated
     names; rebuilding the oracle then would break original-text matching.
     """
     from src.nwn_translator.extractors import git_fields
@@ -563,13 +537,34 @@ def test_creature_name_oracle_is_built_once_under_concurrency(tmp_path, monkeypa
     assert results[0] == frozenset({"mcgee"})
 
 
-def test_git_collector_rescues_blueprint_names_symmetrically():
-    """The fallback string collector honors the same oracle as the extractor."""
-    from src.nwn_translator.extractors.git_fields import (
-        collect_git_strings_missing_from_translations,
+def test_git_filter_rescues_names_known_to_the_oracle():
+    """A code-like creature name passes the filter only when a blueprint knows it."""
+    from src.nwn_translator.extractors.git_fields import should_translate_git_string
+
+    assert not should_translate_git_string("McGee", "creature_first_name")
+    assert should_translate_git_string("McGee", "creature_first_name", frozenset({"mcgee"}))
+
+
+def test_possessive_hint_requires_the_name_to_start_a_word():
+    """``Joanna's`` is not a possessive of ``Anna``."""
+    from src.nwn_translator.extractors.git_fields import npc_possessive_hint
+
+    npcs = {"anna": "Female"}
+    assert npc_possessive_hint("Joanna's Box", npcs) == ""
+    assert npc_possessive_hint("Anna's Box", npcs) == (
+        " (contains possessive of NPC 'Anna', gender: Female)"
     )
 
-    gff = {"Creature List": [{"FirstName": {"StrRef": -1, "Value": "McGee"}}]}
-    assert collect_git_strings_missing_from_translations(gff, {}) == set()
-    rescued = collect_git_strings_missing_from_translations(gff, {}, frozenset({"mcgee"}))
-    assert rescued == {"McGee"}
+
+def test_possessive_hint_quotes_the_possessive_as_written():
+    """The quoted name is the possessive occurrence, even after case-changing text."""
+    from src.nwn_translator.extractors.git_fields import npc_possessive_hint
+
+    npcs = {"joann": "Male", "anna": "Female"}
+    assert npc_possessive_hint("ANNA met Anna's aunt", npcs) == (
+        " (contains possessive of NPC 'Anna', gender: Female)"
+    )
+    # "İ".lower() is two characters: indices into the lowered text are off by one.
+    assert npc_possessive_hint("İstanbul is Anna's home", npcs) == (
+        " (contains possessive of NPC 'Anna', gender: Female)"
+    )

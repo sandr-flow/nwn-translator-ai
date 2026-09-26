@@ -1,125 +1,281 @@
-"""GIT field definitions and extraction filters for NWN area instances.
+"""Translatable fields of area instance files (``.git``) and their filters.
 
-This module identifies visible CExoLocString fields in .git (Game Instance Data).
-.git files contain placed object instances (creatures, doors, placeables, etc.)
-whose names may differ from the blueprint templates (.utc, .utd, .utp, …).
+A ``.git`` holds the instances placed in an area (creatures, placeables, doors,
+…). Their names may differ from the blueprints (``.utc``, ``.utp``, …), so each
+instance list declares its visible CExoLocString fields in
+:data:`INSTANCE_FIELDS`, with the metadata type and prompt context of each.
+Inventory rows and items dropped on the area floor share
+:data:`ITEM_INVENTORY_FIELDS`.
+
+Instance names are filtered harder than blueprint text: toolset route labels
+and resrefs often sit in them. The blueprint-name oracle
+(:func:`get_module_creature_names`) rescues real names that look code-like.
 """
 
 import logging
+import re
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 from ..context.string_filters import should_skip_entity_source_text
 from ..file_handlers.gff_handler import read_gff
+from ..nwn_constants import base_item_label, gender_label
+from .base import extract_local_string, list_field
+from .creature_extractor import creature_name_context, creature_traits
+from .item_extractor import item_description_context
 
 logger = logging.getLogger(__name__)
 
-# Mapping: GFF list key -> list of CExoLocString field names to translate
-INSTANCE_LISTS = {
-    "Creature List": ["FirstName", "LastName", "Description"],
-    "Placeable List": ["LocName", "Description"],
-    # Door instances carry their name in ``LocName`` (the .utd label);
-    # ``LocalizedName`` is only a fallback for toolsets that write it instead.
-    "Door List": ["LocName", "LocalizedName", "Description"],
-    # GFF label is ``TriggerList`` (no space); ``Trigger List`` would never match.
-    "TriggerList": ["LocalizedName", "Description"],
-    # Only MapNote is player-visible (minimap/automap label).
-    # LocalizedName and Description are toolset-only — not translated.
-    "WaypointList": ["MapNote"],
-    # Encounter instance LocalizedName may surface via GetLocalizedName in scripts.
-    "Encounter List": ["LocalizedName"],
-    "StoreList": ["LocName", "LocalizedName", "Description"],
+#: ``{lowercased first name: gender label}`` of the creatures placed in an area.
+NpcIndex = Dict[str, str]
+GitContext = Callable[[Dict[str, Any], NpcIndex], str]
+
+_AREA_INSTANCE = "area instance"
+
+
+@dataclass(frozen=True)
+class GitField:
+    """A translatable CExoLocString of an instance struct.
+
+    Attributes:
+        name: GFF field label.
+        item_type: Metadata ``type`` of the extracted item.
+        context: Fixed prompt context, or a function of the instance struct and
+            the area's NPC index.
+    """
+
+    name: str
+    item_type: str
+    context: Union[str, GitContext]
+
+    def context_for(self, instance: Dict[str, Any], npc_index: NpcIndex) -> str:
+        """Return the prompt context of this field on *instance*."""
+        if isinstance(self.context, str):
+            return self.context
+        return self.context(instance, npc_index)
+
+
+def build_npc_index(parsed_data: Dict[str, Any]) -> NpcIndex:
+    """Map the area's NPC first names to their gender.
+
+    Args:
+        parsed_data: Parsed ``.git`` root struct.
+
+    Returns:
+        ``{lowercased first name: gender label}`` for creatures with a
+        non-blank first name and a known gender.
+    """
+    index: NpcIndex = {}
+    for creature in list_field(parsed_data, "Creature List"):
+        if not isinstance(creature, dict):
+            continue
+        first = (extract_local_string(creature.get("FirstName", {})) or "").strip()
+        gender = gender_label(creature.get("Gender", -1))
+        if first and gender:
+            index[first.lower()] = gender
+    return index
+
+
+def npc_possessive_hint(text: str, npc_index: NpcIndex) -> str:
+    """Return a gender hint when *text* contains an NPC's possessive (``Anna's``).
+
+    Args:
+        text: Placeable name or description.
+        npc_index: Result of :func:`build_npc_index`.
+
+    Returns:
+        ``" (contains possessive of NPC '<name>', gender: <gender>)"`` for the
+        first indexed NPC whose name starts a word followed by ``'s``, with
+        the name as written in *text*; ``""`` when there is none.
+    """
+    if not npc_index or "'s" not in text:
+        return ""
+    for name_lower, gender in npc_index.items():
+        match = re.search(rf"(?<!\w){re.escape(name_lower)}(?='s)", text, re.IGNORECASE)
+        if match:
+            return f" (contains possessive of NPC '{match.group()}', gender: {gender})"
+    return ""
+
+
+def _creature_name_context(field_name: str, instance: Dict[str, Any], _npcs: NpcIndex) -> str:
+    """Context of a placed creature's first or last name."""
+    qualifier = ", ".join(filter(None, [creature_traits(instance), _AREA_INSTANCE]))
+    return creature_name_context(field_name, qualifier)
+
+
+def _creature_description_context(instance: Dict[str, Any], _npcs: NpcIndex) -> str:
+    """Context of a placed creature's description."""
+    full_name = " ".join(
+        filter(
+            None,
+            (extract_local_string(instance.get(field, {})) for field in ("FirstName", "LastName")),
+        )
+    )
+    detail = ", ".join(
+        filter(None, [f"name: {full_name}" if full_name else "", creature_traits(instance)])
+    )
+    if detail:
+        return f"Creature description ({detail}, {_AREA_INSTANCE})"
+    return f"Creature description ({_AREA_INSTANCE})"
+
+
+def _placeable_name_context(instance: Dict[str, Any], npc_index: NpcIndex) -> str:
+    """Context of a placed placeable's name, with an NPC possessive hint."""
+    name = extract_local_string(instance.get("LocName", {})) or ""
+    return f"Placeable name ({_AREA_INSTANCE}){npc_possessive_hint(name, npc_index)}"
+
+
+def _placeable_description_context(instance: Dict[str, Any], npc_index: NpcIndex) -> str:
+    """Context of a placed placeable's description, naming the placeable."""
+    name = extract_local_string(instance.get("LocName", {})) or ""
+    if not name:
+        return f"Placeable description ({_AREA_INSTANCE})"
+    description = extract_local_string(instance.get("Description", {})) or ""
+    return f"Description of placeable '{name}'{npc_possessive_hint(description, npc_index)}"
+
+
+def _trigger_name_context(instance: Dict[str, Any], _npcs: NpcIndex) -> str:
+    """Context of a trigger name, by trigger type."""
+    trigger_type = instance.get("Type", 0)
+    if trigger_type == 1:
+        return (
+            "Area transition tooltip, shown when the player hovers over "
+            f"the transition ({_AREA_INSTANCE})"
+        )
+    if trigger_type == 2 or instance.get("TrapFlag"):
+        return f"Trap name, shown when the trap is detected ({_AREA_INSTANCE})"
+    return (
+        "Generic trigger name. Often retrieved by scripts via "
+        "GetLocalizedName() and shown to the player as floating text / "
+        'SpeakString when crossing the trigger. Quoted text in "…" is an '
+        "NPC one-liner; bracketed text in […] is an internal thought / "
+        "narrator comment — preserve the surrounding punctuation."
+    )
+
+
+#: GFF instance list label -> translatable fields, in extraction order.
+#: Door and store instances carry their name in ``LocName`` (the blueprint
+#: label); ``LocalizedName`` is extracted too for toolsets that write it.
+INSTANCE_FIELDS: Dict[str, Tuple[GitField, ...]] = {
+    "Creature List": (
+        GitField("FirstName", "creature_first_name", partial(_creature_name_context, "FirstName")),
+        GitField("LastName", "creature_last_name", partial(_creature_name_context, "LastName")),
+        GitField("Description", "creature_description", _creature_description_context),
+    ),
+    "Placeable List": (
+        GitField("LocName", "placeable_name", _placeable_name_context),
+        GitField("Description", "placeable_description", _placeable_description_context),
+    ),
+    "Door List": (
+        GitField("LocName", "door_name", f"Door name ({_AREA_INSTANCE})"),
+        GitField("LocalizedName", "door_name", f"Door name ({_AREA_INSTANCE})"),
+        GitField("Description", "door_description", f"Door description ({_AREA_INSTANCE})"),
+    ),
+    # The GFF label has no space, unlike the other lists.
+    "TriggerList": (
+        GitField("LocalizedName", "trigger_name", _trigger_name_context),
+        GitField("Description", "trigger_description", f"Trigger description ({_AREA_INSTANCE})"),
+    ),
+    # Only the map note is player-visible (automap label); waypoint names and
+    # descriptions are toolset-only.
+    "WaypointList": (
+        GitField("MapNote", "waypoint_map_note", f"Waypoint map note label ({_AREA_INSTANCE})"),
+    ),
+    # Scripts may show an encounter's name through GetLocalizedName().
+    "Encounter List": (
+        GitField(
+            "LocalizedName",
+            "encounter_name",
+            f"Encounter group label ({_AREA_INSTANCE}). Often a toolset-style "
+            "classifier (e.g. 'Orc, Low Group') — translate as a short "
+            "label, not a sentence.",
+        ),
+    ),
+    "StoreList": (
+        GitField("LocName", "store_name", f"Store name ({_AREA_INSTANCE})"),
+        GitField("LocalizedName", "store_name", f"Store name ({_AREA_INSTANCE})"),
+        GitField("Description", "store_description", f"Store description ({_AREA_INSTANCE})"),
+    ),
 }
 
-# Mapping: instance list key -> nested item list keys to process.
-# Creatures have both loose inventory (ItemList) and equipped gear
-# (Equip_ItemList); placeables/stores only carry inventory.
+#: GFF instance list label -> translatable field labels.
+INSTANCE_LISTS: Dict[str, List[str]] = {
+    list_key: [field.name for field in fields] for list_key, fields in INSTANCE_FIELDS.items()
+}
+
+#: Instance list label -> nested item lists (loose inventory, equipped gear).
+#: Store instances instead nest their stock in ``ItemList`` rows of recursive
+#: ``StoreList`` shelves.
 INSTANCE_NESTED_ITEM_LISTS: Dict[str, List[str]] = {
     "Creature List": ["ItemList", "Equip_ItemList"],
     "Placeable List": ["ItemList"],
-    "StoreList": ["ItemList"],
 }
 
-# CExoLocString fields on each entry inside ItemList / Equip_ItemList
-ITEM_INVENTORY_FIELDS = ["LocalizedName", "Description", "DescIdentified"]
+#: Item row field label -> metadata ``type``; also the field order.
+_ITEM_TYPES = {
+    "LocalizedName": "item_name",
+    "Description": "item_description",
+    "DescIdentified": "item_identified_description",
+}
 
-# Top-level list of items dropped directly onto the area floor in the toolset.
-# Unlike named instance lists, its GFF label is the bare word "List"; each entry
-# carries the same CExoLocString fields as an inventory row. Visited areas bake
-# these into the save, so only unvisited areas will pick up retranslations.
+#: CExoLocString fields of an inventory row or an item on the area floor.
+ITEM_INVENTORY_FIELDS: Tuple[str, ...] = tuple(_ITEM_TYPES)
+
+#: Top-level list of items dropped on the area floor in the toolset. Visited
+#: areas bake these into the save, so only unvisited areas pick up changes.
 AREA_ITEM_LIST_KEY = "List"
-AREA_ITEM_FIELDS = ITEM_INVENTORY_FIELDS
 
 
-def _meta_type_for_instance_field(list_key: str, field_name: str) -> str:
-    """Return metadata ``type`` string for .git filtering decisions."""
-    if list_key == "Creature List":
-        if field_name == "FirstName":
-            return "creature_first_name"
-        if field_name == "LastName":
-            return "creature_last_name"
-        if field_name == "Description":
-            return "creature_description"
-    if list_key == "Placeable List":
-        if field_name == "LocName":
-            return "placeable_name"
-        if field_name == "Description":
-            return "placeable_description"
-    if list_key == "Door List":
-        if field_name in ("LocName", "LocalizedName"):
-            return "door_name"
-        if field_name == "Description":
-            return "door_description"
-    if list_key == "TriggerList":
-        if field_name == "LocalizedName":
-            return "trigger_name"
-        if field_name == "Description":
-            return "trigger_description"
-    if list_key == "WaypointList":
-        if field_name == "LocalizedName":
-            return "waypoint_name"
-        if field_name == "Description":
-            return "waypoint_description"
-        if field_name == "MapNote":
-            return "waypoint_map_note"
-    if list_key == "Encounter List":
-        if field_name == "LocalizedName":
-            return "encounter_name"
-    if list_key == "StoreList":
-        if field_name in ("LocName", "LocalizedName"):
-            return "store_name"
-        if field_name == "Description":
-            return "store_description"
-    return "git_instance_string"
+def item_fields(row: Dict[str, Any], where: str) -> List[Tuple[str, str, str]]:
+    """Return ``(field, metadata type, context)`` for each field of an item row.
 
+    Args:
+        row: Inventory row or area floor item struct.
+        where: Placement shown in the context (``inventory instance`` or
+            ``placed on the area floor``).
 
-def _meta_type_for_inventory_field(field_name: str) -> str:
-    """Return metadata ``type`` for a .git inventory/equipped item field."""
-    if field_name == "LocalizedName":
-        return "item_name"
-    if field_name == "Description":
-        return "item_description"
-    if field_name == "DescIdentified":
-        return "item_identified_description"
-    return "git_instance_string"
+    Returns:
+        One entry per :data:`ITEM_INVENTORY_FIELDS` label, in that order.
+    """
+    base_item = base_item_label(row.get("BaseItem", -1))
+    name = extract_local_string(row.get("LocalizedName", {})) or ""
+    name_context = f"Item name ({', '.join(filter(None, [base_item, where]))})"
+    return [
+        (
+            field,
+            item_type,
+            (
+                name_context
+                if field == "LocalizedName"
+                else f"{item_description_context(field, base_item, name)} ({where})"
+            ),
+        )
+        for field, item_type in _ITEM_TYPES.items()
+    ]
 
 
 def should_translate_git_string(
     text: object,
-    meta_type: str = "git_instance_string",
+    meta_type: str,
     known_names: Optional[FrozenSet[str]] = None,
 ) -> bool:
-    """Return True when a .git locstring is suitable for translation.
+    """Return True when a ``.git`` string is suitable for translation.
 
-    This is shared by extraction and fallback string collection so code-like
-    route labels, resrefs, placeholders, and toolset/system terms are filtered
-    consistently before they can reach the translator. *known_names* is the
-    module's blueprint-name oracle (see :func:`get_module_creature_names`):
-    a code-like string matching a blueprint creature name is a real name
-    (``McGee``, ``DeVir``) and passes.
+    Code-like route labels, resrefs, placeholders and toolset terms are
+    rejected. A code-like string matching a blueprint creature name is a real
+    name (``McGee``, ``DeVir``) and passes.
+
+    Args:
+        text: Embedded CExoLocString value.
+        meta_type: Metadata ``type`` of the field.
+        known_names: Blueprint-name oracle (see :func:`get_module_creature_names`).
+
+    Returns:
+        Whether the string should be extracted.
     """
     if not isinstance(text, str):
         return False
@@ -130,14 +286,20 @@ def should_translate_git_string(
 
 
 def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
-    """Collect casefolded FirstName/LastName values of every .utc under *root*.
+    """Collect casefolded FirstName/LastName values of every ``.utc`` under *root*.
 
-    Blueprint names are the translatability oracle for .git creature names:
-    the .utc extractor translates them unfiltered, so any .git occurrence of
-    the same text must be translatable too, however code-like it looks.
-    Encoding does not matter here — the oracle is only consulted for strings
-    whose code-like shape is pure ASCII, which decodes identically in every
-    supported code page.
+    Blueprint names are the translatability oracle for ``.git`` creature
+    names: the ``.utc`` extractor translates them unfiltered, so any ``.git``
+    occurrence of the same text must be translatable too, however code-like
+    it looks. Encoding does not matter here: the oracle is only consulted for
+    strings whose code-like shape is pure ASCII, which decodes identically in
+    every supported code page.
+
+    Args:
+        root: Module extraction directory.
+
+    Returns:
+        The casefolded, stripped names.
     """
     names: Set[str] = set()
     try:
@@ -169,6 +331,7 @@ _creature_name_build_locks: Dict[Path, threading.Lock] = {}
 
 
 def _cached_creature_names(key: Path) -> Optional[FrozenSet[str]]:
+    """Return the cached oracle for *key* and mark it recently used."""
     with _creature_name_cache_lock:
         cached = _creature_name_cache.get(key)
         if cached is not None:
@@ -177,13 +340,19 @@ def _cached_creature_names(key: Path) -> Optional[FrozenSet[str]]:
 
 
 def get_module_creature_names(root: Path) -> FrozenSet[str]:
-    """Return the (cached) blueprint creature-name oracle for a module dir.
+    """Return the blueprint creature-name oracle of a module directory.
 
-    The entry built during extraction is deliberately reused at any later
-    lookup for the same directory: by injection time the on-disk .utc files
-    may already be patched with translated names, and rebuilding would break
-    original-text matching. The oracle is built once per directory even when
-    extraction workers ask for it concurrently.
+    The oracle is cached for the process and built once per directory, even
+    when extraction workers ask for it concurrently. The cached entry is
+    deliberately reused by later lookups: rebuild re-extracts ``.git`` files
+    after the ``.utc`` files on disk were patched with translated names, and a
+    fresh oracle would no longer match the original ``.git`` text.
+
+    Args:
+        root: Module extraction directory.
+
+    Returns:
+        The casefolded blueprint first and last names.
     """
     key = root.resolve()
     cached = _cached_creature_names(key)
@@ -206,149 +375,6 @@ def get_module_creature_names(root: Path) -> FrozenSet[str]:
 
 
 def clear_creature_name_cache() -> None:
-    """Drop all cached name oracles (tests / long-lived processes)."""
+    """Drop every cached blueprint-name oracle."""
     with _creature_name_cache_lock:
         _creature_name_cache.clear()
-
-
-def _collect_strings_from_store_tree(
-    store_node: Dict[str, Any],
-    found: Set[str],
-    existing: Dict[str, str],
-    known_names: Optional[FrozenSet[str]] = None,
-) -> None:
-    """Gather locstrings from *store_node* ItemList and nested StoreList shelves."""
-    for inv_item in _iter_nested_item_entries(store_node, "ItemList"):
-        _add_string_values_from_fields(
-            inv_item,
-            ITEM_INVENTORY_FIELDS,
-            found,
-            existing,
-            _meta_type_for_inventory_field,
-            known_names,
-        )
-    children = store_node.get("StoreList", [])
-    if not isinstance(children, list):
-        return
-    for child in children:
-        if isinstance(child, dict):
-            _collect_strings_from_store_tree(child, found, existing, known_names)
-
-
-def _iter_nested_item_entries(instance: Dict[str, Any], nested_key: str) -> List[Dict[str, Any]]:
-    """Return dict entries from a nested item list field of an instance struct.
-
-    Args:
-        instance: Parsed GFF struct for a creature, placeable, or store instance.
-        nested_key: Name of the nested list (``"ItemList"`` or ``"Equip_ItemList"``).
-
-    Returns:
-        List of dict entries representing inventory/equipped items.
-    """
-    raw = instance.get(nested_key, [])
-    if not isinstance(raw, list):
-        return []
-    return [e for e in raw if isinstance(e, dict)]
-
-
-def _add_string_values_from_fields(
-    obj: Dict[str, Any],
-    field_names: List[str],
-    bucket: Set[str],
-    existing: Dict[str, str],
-    meta_type_for_field: Optional[Callable[[str], str]] = None,
-    known_names: Optional[FrozenSet[str]] = None,
-) -> None:
-    """Collect embedded CExoLocString Values not already present in *existing*.
-
-    Internal engine tags (waypoints, script markers) are skipped automatically.
-
-    Args:
-        obj: Parsed GFF struct containing CExoLocString fields.
-        field_names: Names of CExoLocString fields to inspect.
-        bucket: Mutable set to which discovered texts are added.
-        existing: Already-translated texts to skip.
-    """
-    for field_name in field_names:
-        field_obj = obj.get(field_name)
-        if not isinstance(field_obj, dict):
-            continue
-        original_text = field_obj.get("Value", "")
-        meta_type = (
-            meta_type_for_field(field_name)
-            if meta_type_for_field is not None
-            else "git_instance_string"
-        )
-        if (
-            original_text
-            and isinstance(original_text, str)
-            and original_text not in existing
-            and should_translate_git_string(original_text, meta_type, known_names)
-        ):
-            bucket.add(original_text)
-
-
-def collect_git_strings_missing_from_translations(
-    parsed_data: Dict[str, Any],
-    existing_translations: Dict[str, str],
-    known_names: Optional[FrozenSet[str]] = None,
-) -> Set[str]:
-    """Gather unique locstring texts from a parsed .git that need translation.
-
-    Walks the extracted GIT structure (instance lists + nested
-    ``ItemList``). Strings that already appear as keys in *existing_translations*
-    are skipped. Pass the same *known_names* oracle the extractor used so both
-    sides stay symmetric.
-    """
-    found: Set[str] = set()
-
-    for list_key, field_names in INSTANCE_LISTS.items():
-        instances = parsed_data.get(list_key, [])
-        if not isinstance(instances, list):
-            continue
-        for instance in instances:
-            if not isinstance(instance, dict):
-                continue
-            _add_string_values_from_fields(
-                instance,
-                field_names,
-                found,
-                existing_translations,
-                partial(_meta_type_for_instance_field, list_key),
-                known_names,
-            )
-            if list_key == "StoreList":
-                _collect_strings_from_store_tree(
-                    instance, found, existing_translations, known_names
-                )
-            else:
-                for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(list_key, []):
-                    for inv_item in _iter_nested_item_entries(instance, nested_key):
-                        _add_string_values_from_fields(
-                            inv_item,
-                            ITEM_INVENTORY_FIELDS,
-                            found,
-                            existing_translations,
-                            _meta_type_for_inventory_field,
-                            known_names,
-                        )
-
-    for area_item in _iter_area_item_entries(parsed_data):
-        _add_string_values_from_fields(
-            area_item,
-            AREA_ITEM_FIELDS,
-            found,
-            existing_translations,
-            _meta_type_for_inventory_field,
-            known_names,
-        )
-
-    return found
-
-
-def _iter_area_item_entries(parsed_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return dict entries from the top-level ``List`` (area floor items)."""
-    raw = parsed_data.get(AREA_ITEM_LIST_KEY, [])
-    if not isinstance(raw, list):
-        return []
-    return [e for e in raw if isinstance(e, dict)]

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nwn_translator.config import TRANSLATABLE_TYPES
+from nwn_translator.resources import TRANSLATABLE_TYPES
 from nwn_translator.pipeline.stages import (
     inject_translations_into_file,
     load_parsed_and_extracted,

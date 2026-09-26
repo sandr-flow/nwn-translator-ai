@@ -1,0 +1,1549 @@
+{
+ "area_full": {
+  "content_type": "area",
+  "metadata": {
+   "tag": "town01",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "town01_name",
+    "Market Town",
+    "Location/area name in game world",
+    {
+     "type": "area_name",
+     "tag": "town01",
+     "record_offset": 100
+    }
+   ],
+   [
+    "town01_description",
+    "A busy town.",
+    "Area description: town01",
+    {
+     "type": "area_description",
+     "tag": "town01",
+     "record_offset": 104
+    }
+   ]
+  ]
+ },
+ "area_no_tag": {
+  "content_type": "area",
+  "metadata": {
+   "tag": "cave",
+   "item_count": 1
+  },
+  "items": [
+   [
+    "cave_name",
+    "Dark Cave",
+    "Location/area name in game world",
+    {
+     "type": "area_name",
+     "tag": "cave",
+     "record_offset": 0
+    }
+   ]
+  ]
+ },
+ "area_empty_tag_strref_description": {
+  "content_type": "area",
+  "metadata": {
+   "tag": "",
+   "item_count": 1
+  },
+  "items": [
+   [
+    "_name",
+    "Field",
+    "Location/area name in game world",
+    {
+     "type": "area_name",
+     "tag": "",
+     "record_offset": 0
+    }
+   ]
+  ]
+ },
+ "area_raw_field": {
+  "content_type": "area",
+  "metadata": {
+   "tag": "raw",
+   "item_count": 0
+  },
+  "items": []
+ },
+ "trigger_trap": {
+  "content_type": "trigger",
+  "metadata": {
+   "tag": "spikes",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "spikes_name",
+    "Spike Trap",
+    "Trigger name in game (tag: spikes). Translate naturally.",
+    {
+     "type": "trigger_name",
+     "tag": "spikes",
+     "record_offset": 100
+    }
+   ],
+   [
+    "spikes_description",
+    "Sharp.",
+    "Trigger description: spikes",
+    {
+     "type": "trigger_description",
+     "tag": "spikes",
+     "record_offset": 104
+    }
+   ]
+  ]
+ },
+ "trigger_scripting": {
+  "content_type": "trigger",
+  "metadata": {
+   "tag": "zone",
+   "item_count": 0
+  },
+  "items": []
+ },
+ "placeable_locname_wins": {
+  "content_type": "placeable",
+  "metadata": {
+   "tag": "chest",
+   "item_count": 3
+  },
+  "items": [
+   [
+    "chest_name",
+    "Chest",
+    "Placeable name in game (tag: chest). Translate naturally.",
+    {
+     "type": "placeable_name",
+     "tag": "chest",
+     "record_offset": 100
+    }
+   ],
+   [
+    "chest_description",
+    "Old.",
+    "Placeable description: chest",
+    {
+     "type": "placeable_description",
+     "tag": "chest",
+     "record_offset": 112
+    }
+   ],
+   [
+    "chest_desc_identified",
+    "Old.",
+    "Placeable identified description: chest",
+    {
+     "type": "placeable_desc_identified",
+     "tag": "chest",
+     "record_offset": 0
+    }
+   ]
+  ]
+ },
+ "placeable_localizedname_fallback": {
+  "content_type": "placeable",
+  "metadata": {
+   "tag": "box",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "box_name",
+    "Box",
+    "Placeable name in game (tag: box). Translate naturally.",
+    {
+     "type": "placeable_name",
+     "tag": "box",
+     "record_offset": 104
+    }
+   ],
+   [
+    "box_description",
+    "   ",
+    "Placeable description: box",
+    {
+     "type": "placeable_description",
+     "tag": "box",
+     "record_offset": 108
+    }
+   ]
+  ]
+ },
+ "placeable_name_fallback": {
+  "content_type": "placeable",
+  "metadata": {
+   "tag": "barrel",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "barrel_name",
+    "Barrel",
+    "Placeable name in game (tag: barrel). Translate naturally.",
+    {
+     "type": "placeable_name",
+     "tag": "barrel",
+     "record_offset": 0
+    }
+   ],
+   [
+    "barrel_desc_identified",
+    "Full of ale.",
+    "Placeable identified description: barrel",
+    {
+     "type": "placeable_desc_identified",
+     "tag": "barrel",
+     "record_offset": 0
+    }
+   ]
+  ]
+ },
+ "door": {
+  "content_type": "door",
+  "metadata": {
+   "tag": "gate",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "gate_name",
+    "Iron Gate",
+    "Door name in game (tag: gate). Translate naturally.",
+    {
+     "type": "door_name",
+     "tag": "gate",
+     "record_offset": 100
+    }
+   ],
+   [
+    "gate_description",
+    "Locked.",
+    "Door description: gate",
+    {
+     "type": "door_description",
+     "tag": "gate",
+     "record_offset": 104
+    }
+   ]
+  ]
+ },
+ "encounter": {
+  "content_type": "encounter",
+  "metadata": {
+   "tag": "orcs",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "orcs_name",
+    "Orc Band",
+    "Encounter name in game (tag: orcs). Translate naturally.",
+    {
+     "type": "encounter_name",
+     "tag": "orcs",
+     "record_offset": 0
+    }
+   ],
+   [
+    "orcs_description",
+    "Loud.",
+    "Encounter description: orcs",
+    {
+     "type": "encounter_description",
+     "tag": "orcs",
+     "record_offset": 0
+    }
+   ]
+  ]
+ },
+ "store_locname_wins": {
+  "content_type": "store",
+  "metadata": {
+   "tag": "shop",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "shop_name",
+    "Shop",
+    "Store name in game (tag: shop). Translate naturally.",
+    {
+     "type": "store_name",
+     "tag": "shop",
+     "record_offset": 100
+    }
+   ],
+   [
+    "shop_description",
+    "Wares.",
+    "Store description: shop",
+    {
+     "type": "store_description",
+     "tag": "shop",
+     "record_offset": 108
+    }
+   ]
+  ]
+ },
+ "store_localizedname": {
+  "content_type": "store",
+  "metadata": {
+   "tag": "stall",
+   "item_count": 1
+  },
+  "items": [
+   [
+    "stall_name",
+    "Stall",
+    "Store name in game (tag: stall). Translate naturally.",
+    {
+     "type": "store_name",
+     "tag": "stall",
+     "record_offset": 0
+    }
+   ]
+  ]
+ },
+ "module": {
+  "content_type": "module",
+  "metadata": {
+   "tag": "MOD_TAG",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "MOD_TAG_mod_name",
+    "The Module",
+    "Module name: MOD_TAG",
+    {
+     "type": "module_name",
+     "tag": "MOD_TAG",
+     "record_offset": 100
+    }
+   ],
+   [
+    "MOD_TAG_mod_description",
+    "A story.",
+    "Module description: MOD_TAG",
+    {
+     "type": "module_description",
+     "tag": "MOD_TAG",
+     "record_offset": 104
+    }
+   ]
+  ]
+ },
+ "module_no_tag": {
+  "content_type": "module",
+  "metadata": {
+   "tag": "module",
+   "item_count": 1
+  },
+  "items": [
+   [
+    "module_mod_name",
+    "Untagged",
+    "Module name: module",
+    {
+     "type": "module_name",
+     "tag": "module",
+     "record_offset": 0
+    }
+   ]
+  ]
+ },
+ "creature_full": {
+  "content_type": "creature",
+  "metadata": {
+   "tag": "npc_anna",
+   "item_count": 3
+  },
+  "items": [
+   [
+    "npc_anna_first_name",
+    "Anna",
+    "NPC first name (Human, Female). Translate ONLY this name, do not add surname. NPC name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Шмидт\"}",
+    {
+     "type": "creature_first_name",
+     "name_fields": {
+      "FirstName": "Anna",
+      "LastName": "Шмидт"
+     },
+     "name_field": "FirstName",
+     "name_group": "root",
+     "gender": "Female",
+     "record_offset": 100,
+     "tag": "npc_anna",
+     "translation_group": "root",
+     "shared_context": "NPC (Human, Female). NPC name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Шмидт\"}",
+     "batch_context": ""
+    }
+   ],
+   [
+    "npc_anna_last_name",
+    "Шмидт",
+    "NPC last name or title (Human, Female). Translate ONLY this, do not prepend first name. NPC name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Шмидт\"}",
+    {
+     "type": "creature_last_name",
+     "name_fields": {
+      "FirstName": "Anna",
+      "LastName": "Шмидт"
+     },
+     "name_field": "LastName",
+     "name_group": "root",
+     "gender": "Female",
+     "record_offset": 104,
+     "tag": "npc_anna",
+     "translation_group": "root",
+     "shared_context": "NPC (Human, Female). NPC name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Шмидт\"}",
+     "batch_context": ""
+    }
+   ],
+   [
+    "npc_anna_description",
+    "A farmer.",
+    "NPC description (name: Anna Шмидт, Human, Female)",
+    {
+     "type": "creature_description",
+     "record_offset": 108,
+     "tag": "npc_anna",
+     "translation_group": "root",
+     "shared_context": "NPC (Human, Female). NPC name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Шмидт\"}",
+     "batch_context": ""
+    }
+   ]
+  ]
+ },
+ "creature_no_traits": {
+  "content_type": "creature",
+  "metadata": {
+   "tag": "npc_bob",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "npc_bob_first_name",
+    "Bob",
+    "NPC first name. Translate ONLY this name, do not add surname. NPC name fields: {\"FirstName\": \"Bob\", \"LastName\": \"\"}",
+    {
+     "type": "creature_first_name",
+     "name_fields": {
+      "FirstName": "Bob",
+      "LastName": ""
+     },
+     "name_field": "FirstName",
+     "name_group": "root",
+     "gender": "",
+     "record_offset": 0,
+     "tag": "npc_bob",
+     "translation_group": "root",
+     "shared_context": "NPC (). NPC name fields: {\"FirstName\": \"Bob\", \"LastName\": \"\"}",
+     "batch_context": ""
+    }
+   ],
+   [
+    "npc_bob_description",
+    "Quiet.",
+    "NPC description (name: Bob)",
+    {
+     "type": "creature_description",
+     "record_offset": 0,
+     "tag": "npc_bob",
+     "translation_group": "root",
+     "shared_context": "NPC (). NPC name fields: {\"FirstName\": \"Bob\", \"LastName\": \"\"}",
+     "batch_context": ""
+    }
+   ]
+  ]
+ },
+ "creature_race_only_last_name": {
+  "content_type": "creature",
+  "metadata": {
+   "tag": "elf",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "elf_last_name",
+    "the Wise",
+    "NPC last name or title (Elf). Translate ONLY this, do not prepend first name. NPC name fields: {\"FirstName\": \"\", \"LastName\": \"the Wise\"}",
+    {
+     "type": "creature_last_name",
+     "name_fields": {
+      "FirstName": "",
+      "LastName": "the Wise"
+     },
+     "name_field": "LastName",
+     "name_group": "root",
+     "gender": "",
+     "record_offset": 0,
+     "tag": "elf",
+     "translation_group": "root",
+     "shared_context": "NPC (Elf). NPC name fields: {\"FirstName\": \"\", \"LastName\": \"the Wise\"}",
+     "batch_context": ""
+    }
+   ],
+   [
+    "elf_description",
+    "Old elf.",
+    "NPC description (name: the Wise, Elf)",
+    {
+     "type": "creature_description",
+     "record_offset": 0,
+     "tag": "elf",
+     "translation_group": "root",
+     "shared_context": "NPC (Elf). NPC name fields: {\"FirstName\": \"\", \"LastName\": \"the Wise\"}",
+     "batch_context": ""
+    }
+   ]
+  ]
+ },
+ "creature_description_only": {
+  "content_type": "creature",
+  "metadata": {
+   "tag": "",
+   "item_count": 1
+  },
+  "items": [
+   [
+    "_description",
+    "Boo.",
+    "NPC description",
+    {
+     "type": "creature_description",
+     "record_offset": 0,
+     "tag": "",
+     "translation_group": "root",
+     "shared_context": "NPC (Undead, None). NPC name fields: {\"FirstName\": \"\", \"LastName\": \"\"}",
+     "batch_context": ""
+    }
+   ]
+  ]
+ },
+ "creature_empty": {
+  "content_type": "creature",
+  "metadata": {
+   "tag": "empty",
+   "item_count": 0
+  },
+  "items": []
+ },
+ "item_full": {
+  "content_type": "item",
+  "metadata": {
+   "tag": "sword",
+   "item_count": 3
+  },
+  "items": [
+   [
+    "sword_name",
+    "Flame Blade",
+    "Game item name (Longsword). Translate the name naturally.",
+    {
+     "type": "item_name",
+     "record_offset": 100,
+     "tag": "sword",
+     "translation_group": "root",
+     "shared_context": "Game item (name: Flame Blade, type: Longsword).",
+     "batch_context": ""
+    }
+   ],
+   [
+    "sword_description",
+    "Hot.",
+    "Description of Longsword 'Flame Blade'",
+    {
+     "type": "item_description",
+     "record_offset": 104,
+     "tag": "sword",
+     "translation_group": "root",
+     "shared_context": "Game item (name: Flame Blade, type: Longsword).",
+     "batch_context": ""
+    }
+   ],
+   [
+    "sword_identified_description",
+    "Very hot.",
+    "Identified description of Longsword 'Flame Blade'",
+    {
+     "type": "item_identified_description",
+     "record_offset": 108,
+     "tag": "sword",
+     "translation_group": "root",
+     "shared_context": "Game item (name: Flame Blade, type: Longsword).",
+     "batch_context": ""
+    }
+   ]
+  ]
+ },
+ "item_unknown_base": {
+  "content_type": "item",
+  "metadata": {
+   "tag": "thing",
+   "item_count": 3
+  },
+  "items": [
+   [
+    "thing_name",
+    "Thing",
+    "Game item name. Translate the name naturally.",
+    {
+     "type": "item_name",
+     "record_offset": 0,
+     "tag": "thing",
+     "translation_group": "root",
+     "shared_context": "Game item (name: Thing, type: ).",
+     "batch_context": ""
+    }
+   ],
+   [
+    "thing_description",
+    "Odd.",
+    "Item description for 'Thing'",
+    {
+     "type": "item_description",
+     "record_offset": 0,
+     "tag": "thing",
+     "translation_group": "root",
+     "shared_context": "Game item (name: Thing, type: ).",
+     "batch_context": ""
+    }
+   ],
+   [
+    "thing_identified_description",
+    "Odder.",
+    "Item identified description for 'Thing'",
+    {
+     "type": "item_identified_description",
+     "record_offset": 0,
+     "tag": "thing",
+     "translation_group": "root",
+     "shared_context": "Game item (name: Thing, type: ).",
+     "batch_context": ""
+    }
+   ]
+  ]
+ },
+ "item_no_name": {
+  "content_type": "item",
+  "metadata": {
+   "tag": "ring",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "ring_description",
+    "Plain.",
+    "Item description",
+    {
+     "type": "item_description",
+     "record_offset": 0,
+     "tag": "ring",
+     "translation_group": "root",
+     "shared_context": "Game item (name: , type: Short Spear).",
+     "batch_context": ""
+    }
+   ],
+   [
+    "ring_identified_description",
+    "Magic.",
+    "Item identified description",
+    {
+     "type": "item_identified_description",
+     "record_offset": 0,
+     "tag": "ring",
+     "translation_group": "root",
+     "shared_context": "Game item (name: , type: Short Spear).",
+     "batch_context": ""
+    }
+   ]
+  ]
+ },
+ "item_no_name_no_base": {
+  "content_type": "item",
+  "metadata": {
+   "tag": "junk",
+   "item_count": 2
+  },
+  "items": [
+   [
+    "junk_description",
+    "Junk.",
+    "Item description",
+    {
+     "type": "item_description",
+     "record_offset": 0,
+     "tag": "junk",
+     "translation_group": "root",
+     "shared_context": "Game item (name: , type: ).",
+     "batch_context": ""
+    }
+   ],
+   [
+    "junk_identified_description",
+    "Still junk.",
+    "Item identified description",
+    {
+     "type": "item_identified_description",
+     "record_offset": 0,
+     "tag": "junk",
+     "translation_group": "root",
+     "shared_context": "Game item (name: , type: ).",
+     "batch_context": ""
+    }
+   ]
+  ]
+ },
+ "journal": {
+  "content_type": "journal",
+  "metadata": {
+   "category_count": 4
+  },
+  "items": [
+   [
+    "category_0_name",
+    "Main Quest",
+    "Journal category name: q_main",
+    {
+     "type": "journal_category_name",
+     "translation_group": "category[0]",
+     "record_offset": 40,
+     "tag": "q_main",
+     "priority": 2,
+     "shared_context": "Journal quest: Main Quest.",
+     "batch_context": "Quest title."
+    }
+   ],
+   [
+    "entry_0_0",
+    "Start.",
+    "Journal entry (quest title: 'Main Quest'). The quest title is context only — do not substitute it into the entry text.",
+    {
+     "type": "journal_entry",
+     "record_offset": 60,
+     "category": 0,
+     "translation_group": "category[0]",
+     "entry_id": 10,
+     "shared_context": "Journal quest: Main Quest.",
+     "batch_context": "Journal entry, state ID 10. The quest title is context only; do not substitute it into the entry."
+    }
+   ],
+   [
+    "entry_0_3",
+    "No id.",
+    "Journal entry (quest title: 'Main Quest'). The quest title is context only — do not substitute it into the entry text.",
+    {
+     "type": "journal_entry",
+     "record_offset": 0,
+     "category": 0,
+     "translation_group": "category[0]",
+     "entry_id": 0,
+     "shared_context": "Journal quest: Main Quest.",
+     "batch_context": "Journal entry, state ID 0. The quest title is context only; do not substitute it into the entry."
+    }
+   ],
+   [
+    "category_1_name",
+    "Untagged Quest",
+    "Journal category name",
+    {
+     "type": "journal_category_name",
+     "translation_group": "category[1]",
+     "record_offset": 0,
+     "tag": "",
+     "priority": 0,
+     "shared_context": "Journal quest: Untagged Quest.",
+     "batch_context": "Quest title."
+    }
+   ],
+   [
+    "entry_1_0",
+    "Only entry.",
+    "Journal entry (quest title: 'Untagged Quest'). The quest title is context only — do not substitute it into the entry text.",
+    {
+     "type": "journal_entry",
+     "record_offset": 0,
+     "category": 1,
+     "translation_group": "category[1]",
+     "entry_id": 1,
+     "shared_context": "Journal quest: Untagged Quest.",
+     "batch_context": "Journal entry, state ID 1. The quest title is context only; do not substitute it into the entry."
+    }
+   ],
+   [
+    "entry_2_0",
+    "Nameless entry.",
+    "Journal entry in category 2",
+    {
+     "type": "journal_entry",
+     "record_offset": 0,
+     "category": 2,
+     "translation_group": "category[2]",
+     "entry_id": 5,
+     "shared_context": "Journal quest: .",
+     "batch_context": "Journal entry, state ID 5. The quest title is context only; do not substitute it into the entry."
+    }
+   ],
+   [
+    "category_3_name",
+    "  ",
+    "Journal category name: q_empty",
+    {
+     "type": "journal_category_name",
+     "translation_group": "category[3]",
+     "record_offset": 0,
+     "tag": "q_empty",
+     "priority": 0,
+     "shared_context": "Journal quest:   .",
+     "batch_context": "Quest title."
+    }
+   ]
+  ]
+ },
+ "dialog": {
+  "content_type": "dialog",
+  "metadata": {
+   "entry_count": 5,
+   "reply_count": 4,
+   "text_node_count": 5
+  },
+  "items": [
+   [
+    "npc_talk:entry:0",
+    "Halt!",
+    "Dialog line in npc_talk.dlg (speaker: guard)",
+    {
+     "type": "entry",
+     "index": 0,
+     "speaker": "guard",
+     "record_offset": 12
+    }
+   ],
+   [
+    "npc_talk:entry:1",
+    "Who goes there?",
+    "NPC dialog line in npc_talk.dlg",
+    {
+     "type": "entry",
+     "index": 1,
+     "speaker": "",
+     "record_offset": 0
+    }
+   ],
+   [
+    "npc_talk:entry:4",
+    "No speaker key.",
+    "NPC dialog line in npc_talk.dlg",
+    {
+     "type": "entry",
+     "index": 4,
+     "speaker": "",
+     "record_offset": 99
+    }
+   ],
+   [
+    "npc_talk:reply:0",
+    "A friend.",
+    "Player reply in npc_talk.dlg",
+    {
+     "type": "reply",
+     "index": 0,
+     "record_offset": 24
+    }
+   ],
+   [
+    "npc_talk:reply:3",
+    "[Leave]",
+    "Player reply in npc_talk.dlg",
+    {
+     "type": "reply",
+     "index": 3,
+     "record_offset": 0
+    }
+   ]
+  ]
+ },
+ "git": {
+  "content_type": "git_instance",
+  "metadata": {
+   "type": "git_instance",
+   "area_tag": "area_tag",
+   "item_count": 46
+  },
+  "items": [
+   [
+    "tavern_Creature List_0_FirstName",
+    "Anna",
+    "NPC first name (Human, Female, area instance). Translate ONLY this name, do not add surname. NPC name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Smith\"}",
+    {
+     "type": "creature_first_name",
+     "git_field": "FirstName",
+     "translation_group": "Creature List[0]",
+     "name_fields": {
+      "FirstName": "Anna",
+      "LastName": "Smith"
+     },
+     "name_field": "FirstName",
+     "name_group": "Creature List[0]",
+     "gender": "Female",
+     "shared_context": "NPC area instance (Human, Female). Name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Smith\"}",
+     "batch_context": "",
+     "record_offset": 100
+    }
+   ],
+   [
+    "tavern_Creature List_0_LastName",
+    "Smith",
+    "NPC last name or title (Human, Female, area instance). Translate ONLY this, do not prepend first name. NPC name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Smith\"}",
+    {
+     "type": "creature_last_name",
+     "git_field": "LastName",
+     "translation_group": "Creature List[0]",
+     "name_fields": {
+      "FirstName": "Anna",
+      "LastName": "Smith"
+     },
+     "name_field": "LastName",
+     "name_group": "Creature List[0]",
+     "gender": "Female",
+     "shared_context": "NPC area instance (Human, Female). Name fields: {\"FirstName\": \"Anna\", \"LastName\": \"Smith\"}",
+     "batch_context": "",
+     "record_offset": 104
+    }
+   ],
+   [
+    "tavern_Creature List_0_Description",
+    "A farmer.",
+    "Creature description (name: Anna Smith, Human, Female, area instance)",
+    {
+     "type": "creature_description",
+     "git_field": "Description",
+     "translation_group": "Creature List[0]",
+     "record_offset": 108
+    }
+   ],
+   [
+    "tavern_Creature List_0_ItemList_0_LocalizedName",
+    "Hoe",
+    "Item name (Longsword, inventory instance)",
+    {
+     "type": "item_name",
+     "git_field": "LocalizedName",
+     "translation_group": "Creature List[0].ItemList[0]",
+     "record_offset": 200
+    }
+   ],
+   [
+    "tavern_Creature List_0_ItemList_0_Description",
+    "Rusty.",
+    "Description of Longsword 'Hoe' (inventory instance)",
+    {
+     "type": "item_description",
+     "git_field": "Description",
+     "translation_group": "Creature List[0].ItemList[0]",
+     "record_offset": 204
+    }
+   ],
+   [
+    "tavern_Creature List_0_ItemList_0_DescIdentified",
+    "A fine hoe.",
+    "Identified description of Longsword 'Hoe' (inventory instance)",
+    {
+     "type": "item_identified_description",
+     "git_field": "DescIdentified",
+     "translation_group": "Creature List[0].ItemList[0]",
+     "record_offset": 208
+    }
+   ],
+   [
+    "tavern_Creature List_0_ItemList_1_Description",
+    "Nameless.",
+    "Item description (inventory instance)",
+    {
+     "type": "item_description",
+     "git_field": "Description",
+     "translation_group": "Creature List[0].ItemList[1]",
+     "record_offset": 224
+    }
+   ],
+   [
+    "tavern_Creature List_0_Equip_ItemList_0_LocalizedName",
+    "Straw Hat",
+    "Item name (inventory instance)",
+    {
+     "type": "item_name",
+     "git_field": "LocalizedName",
+     "translation_group": "Creature List[0].Equip_ItemList[0]",
+     "record_offset": 240
+    }
+   ],
+   [
+    "tavern_Creature List_1_FirstName",
+    "Bob",
+    "NPC first name (area instance). Translate ONLY this name, do not add surname. NPC name fields: {\"FirstName\": \"Bob\", \"LastName\": \"\"}",
+    {
+     "type": "creature_first_name",
+     "git_field": "FirstName",
+     "translation_group": "Creature List[1]",
+     "name_fields": {
+      "FirstName": "Bob",
+      "LastName": ""
+     },
+     "name_field": "FirstName",
+     "name_group": "Creature List[1]",
+     "gender": "",
+     "shared_context": "NPC area instance (, ). Name fields: {\"FirstName\": \"Bob\", \"LastName\": \"\"}",
+     "batch_context": "",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Creature List_1_Description",
+    "Quiet.",
+    "Creature description (name: Bob, area instance)",
+    {
+     "type": "creature_description",
+     "git_field": "Description",
+     "translation_group": "Creature List[1]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Creature List_2_Description",
+    "Stern.",
+    "Creature description (Human, Male, area instance)",
+    {
+     "type": "creature_description",
+     "git_field": "Description",
+     "translation_group": "Creature List[2]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Creature List_3_Description",
+    "Faceless.",
+    "Creature description (area instance)",
+    {
+     "type": "creature_description",
+     "git_field": "Description",
+     "translation_group": "Creature List[3]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Creature List_4_FirstName",
+    "McGee",
+    "NPC first name (area instance). Translate ONLY this name, do not add surname. NPC name fields: {\"FirstName\": \"McGee\", \"LastName\": \"WorkBench\"}",
+    {
+     "type": "creature_first_name",
+     "git_field": "FirstName",
+     "translation_group": "Creature List[4]",
+     "name_fields": {
+      "FirstName": "McGee",
+      "LastName": "WorkBench"
+     },
+     "name_field": "FirstName",
+     "name_group": "Creature List[4]",
+     "gender": "",
+     "shared_context": "NPC area instance (, ). Name fields: {\"FirstName\": \"McGee\", \"LastName\": \"WorkBench\"}",
+     "batch_context": "",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Creature List_5_LastName",
+    "Мельник",
+    "NPC last name or title (area instance). Translate ONLY this, do not prepend first name. NPC name fields: {\"FirstName\": \"NW_GUARD\", \"LastName\": \"Мельник\"}",
+    {
+     "type": "creature_last_name",
+     "git_field": "LastName",
+     "translation_group": "Creature List[5]",
+     "name_fields": {
+      "FirstName": "NW_GUARD",
+      "LastName": "Мельник"
+     },
+     "name_field": "LastName",
+     "name_group": "Creature List[5]",
+     "gender": "",
+     "shared_context": "NPC area instance (, ). Name fields: {\"FirstName\": \"NW_GUARD\", \"LastName\": \"Мельник\"}",
+     "batch_context": "",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Creature List_7_FirstName",
+    "Joann",
+    "NPC first name (Male, area instance). Translate ONLY this name, do not add surname. NPC name fields: {\"FirstName\": \"Joann\", \"LastName\": \"   \"}",
+    {
+     "type": "creature_first_name",
+     "git_field": "FirstName",
+     "translation_group": "Creature List[7]",
+     "name_fields": {
+      "FirstName": "Joann",
+      "LastName": "   "
+     },
+     "name_field": "FirstName",
+     "name_group": "Creature List[7]",
+     "gender": "Male",
+     "shared_context": "NPC area instance (, Male). Name fields: {\"FirstName\": \"Joann\", \"LastName\": \"   \"}",
+     "batch_context": "",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Placeable List_0_LocName",
+    "Anna's Chest",
+    "Placeable name (area instance) (contains possessive of NPC 'Anna', gender: Female)",
+    {
+     "type": "placeable_name",
+     "git_field": "LocName",
+     "translation_group": "Placeable List[0]",
+     "record_offset": 300
+    }
+   ],
+   [
+    "tavern_Placeable List_0_Description",
+    "Bob's gift to ANNA's family.",
+    "Description of placeable 'Anna's Chest' (contains possessive of NPC 'ANNA', gender: Female)",
+    {
+     "type": "placeable_description",
+     "git_field": "Description",
+     "translation_group": "Placeable List[0]",
+     "record_offset": 304
+    }
+   ],
+   [
+    "tavern_Placeable List_0_ItemList_0_LocalizedName",
+    "Scroll",
+    "Item name (Scroll, inventory instance)",
+    {
+     "type": "item_name",
+     "git_field": "LocalizedName",
+     "translation_group": "Placeable List[0].ItemList[0]",
+     "record_offset": 320
+    }
+   ],
+   [
+    "tavern_Placeable List_0_ItemList_0_Description",
+    "Old paper.",
+    "Description of Scroll 'Scroll' (inventory instance)",
+    {
+     "type": "item_description",
+     "git_field": "Description",
+     "translation_group": "Placeable List[0].ItemList[0]",
+     "record_offset": 324
+    }
+   ],
+   [
+    "tavern_Placeable List_1_LocName",
+    "Joanna's Box",
+    "Placeable name (area instance)",
+    {
+     "type": "placeable_name",
+     "git_field": "LocName",
+     "translation_group": "Placeable List[1]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Placeable List_1_Description",
+    "Plain box.",
+    "Description of placeable 'Joanna's Box'",
+    {
+     "type": "placeable_description",
+     "git_field": "Description",
+     "translation_group": "Placeable List[1]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Placeable List_2_Description",
+    "Nameless thing.",
+    "Placeable description (area instance)",
+    {
+     "type": "placeable_description",
+     "git_field": "Description",
+     "translation_group": "Placeable List[2]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Placeable List_3_Description",
+    "Raw name thing.",
+    "Placeable description (area instance)",
+    {
+     "type": "placeable_description",
+     "git_field": "Description",
+     "translation_group": "Placeable List[3]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Door List_0_LocName",
+    "Iron Gate",
+    "Door name (area instance)",
+    {
+     "type": "door_name",
+     "git_field": "LocName",
+     "translation_group": "Door List[0]",
+     "record_offset": 400
+    }
+   ],
+   [
+    "tavern_Door List_0_LocalizedName",
+    "Iron Gate (legacy)",
+    "Door name (area instance)",
+    {
+     "type": "door_name",
+     "git_field": "LocalizedName",
+     "translation_group": "Door List[0]",
+     "record_offset": 404
+    }
+   ],
+   [
+    "tavern_Door List_0_Description",
+    "Rusty.",
+    "Door description (area instance)",
+    {
+     "type": "door_description",
+     "git_field": "Description",
+     "translation_group": "Door List[0]",
+     "record_offset": 408
+    }
+   ],
+   [
+    "tavern_Door List_1_LocalizedName",
+    "Old Door",
+    "Door name (area instance)",
+    {
+     "type": "door_name",
+     "git_field": "LocalizedName",
+     "translation_group": "Door List[1]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_TriggerList_0_LocalizedName",
+    "To the Sewers",
+    "Area transition tooltip, shown when the player hovers over the transition (area instance)",
+    {
+     "type": "trigger_name",
+     "git_field": "LocalizedName",
+     "translation_group": "TriggerList[0]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_TriggerList_0_Description",
+    "Dark.",
+    "Trigger description (area instance)",
+    {
+     "type": "trigger_description",
+     "git_field": "Description",
+     "translation_group": "TriggerList[0]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_TriggerList_1_LocalizedName",
+    "Spike Trap",
+    "Trap name, shown when the trap is detected (area instance)",
+    {
+     "type": "trigger_name",
+     "git_field": "LocalizedName",
+     "translation_group": "TriggerList[1]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_TriggerList_2_LocalizedName",
+    "Hidden Pit",
+    "Trap name, shown when the trap is detected (area instance)",
+    {
+     "type": "trigger_name",
+     "git_field": "LocalizedName",
+     "translation_group": "TriggerList[2]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_TriggerList_3_LocalizedName",
+    "\"Watch your step!\"",
+    "Generic trigger name. Often retrieved by scripts via GetLocalizedName() and shown to the player as floating text / SpeakString when crossing the trigger. Quoted text in \"…\" is an NPC one-liner; bracketed text in […] is an internal thought / narrator comment — preserve the surrounding punctuation.",
+    {
+     "type": "trigger_name",
+     "git_field": "LocalizedName",
+     "translation_group": "TriggerList[3]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_WaypointList_0_MapNote",
+    "City Gate",
+    "Waypoint map note label (area instance)",
+    {
+     "type": "waypoint_map_note",
+     "git_field": "MapNote",
+     "translation_group": "WaypointList[0]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_Encounter List_0_LocalizedName",
+    "Orc, Low Group",
+    "Encounter group label (area instance). Often a toolset-style classifier (e.g. 'Orc, Low Group') — translate as a short label, not a sentence.",
+    {
+     "type": "encounter_name",
+     "git_field": "LocalizedName",
+     "translation_group": "Encounter List[0]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_StoreList_0_LocName",
+    "Bazaar",
+    "Store name (area instance)",
+    {
+     "type": "store_name",
+     "git_field": "LocName",
+     "translation_group": "StoreList[0]",
+     "record_offset": 500
+    }
+   ],
+   [
+    "tavern_StoreList_0_LocalizedName",
+    "Bazaar (legacy)",
+    "Store name (area instance)",
+    {
+     "type": "store_name",
+     "git_field": "LocalizedName",
+     "translation_group": "StoreList[0]",
+     "record_offset": 504
+    }
+   ],
+   [
+    "tavern_StoreList_0_Description",
+    "Everything.",
+    "Store description (area instance)",
+    {
+     "type": "store_description",
+     "git_field": "Description",
+     "translation_group": "StoreList[0]",
+     "record_offset": 508
+    }
+   ],
+   [
+    "tavern_StoreList_0__il0_LocalizedName",
+    "Rope",
+    "Item name (inventory instance)",
+    {
+     "type": "item_name",
+     "git_field": "LocalizedName",
+     "translation_group": "StoreList[0].ItemList[0]",
+     "record_offset": 520
+    }
+   ],
+   [
+    "tavern_StoreList_0_.StoreList[2]_il0_LocalizedName",
+    "Coffee",
+    "Item name (inventory instance)",
+    {
+     "type": "item_name",
+     "git_field": "LocalizedName",
+     "translation_group": "StoreList[0].StoreList[2].ItemList[0]",
+     "record_offset": 540
+    }
+   ],
+   [
+    "tavern_StoreList_0_.StoreList[2]_il0_Description",
+    "Hot drink.",
+    "Item description for 'Coffee' (inventory instance)",
+    {
+     "type": "item_description",
+     "git_field": "Description",
+     "translation_group": "StoreList[0].StoreList[2].ItemList[0]",
+     "record_offset": 544
+    }
+   ],
+   [
+    "tavern_StoreList_0_.StoreList[2].StoreList[0]_il0_LocalizedName",
+    "Tea",
+    "Item name (inventory instance)",
+    {
+     "type": "item_name",
+     "git_field": "LocalizedName",
+     "translation_group": "StoreList[0].StoreList[2].StoreList[0].ItemList[0]",
+     "record_offset": 560
+    }
+   ],
+   [
+    "tavern_StoreList_1_LocalizedName",
+    "Stall",
+    "Store name (area instance)",
+    {
+     "type": "store_name",
+     "git_field": "LocalizedName",
+     "translation_group": "StoreList[1]",
+     "record_offset": 0
+    }
+   ],
+   [
+    "tavern_List_0_LocalizedName",
+    "Dragon Bones",
+    "Item name (Longsword, placed on the area floor)",
+    {
+     "type": "item_name",
+     "git_field": "LocalizedName",
+     "translation_group": "List[0]",
+     "record_offset": 600
+    }
+   ],
+   [
+    "tavern_List_0_Description",
+    "Yellowed.",
+    "Description of Longsword 'Dragon Bones' (placed on the area floor)",
+    {
+     "type": "item_description",
+     "git_field": "Description",
+     "translation_group": "List[0]",
+     "record_offset": 604
+    }
+   ],
+   [
+    "tavern_List_0_DescIdentified",
+    "Ancient.",
+    "Identified description of Longsword 'Dragon Bones' (placed on the area floor)",
+    {
+     "type": "item_identified_description",
+     "git_field": "DescIdentified",
+     "translation_group": "List[0]",
+     "record_offset": 608
+    }
+   ],
+   [
+    "tavern_List_2_Description",
+    "Bite.",
+    "Item description for 'WWBite1d6' (placed on the area floor)",
+    {
+     "type": "item_description",
+     "git_field": "Description",
+     "translation_group": "List[2]",
+     "record_offset": 644
+    }
+   ]
+  ]
+ },
+ "ncs": {
+  "content_type": "ncs_script",
+  "metadata": {
+   "total_strings": 6,
+   "translatable_strings": 3
+  },
+  "items": [
+   [
+    "scene:c0",
+    "Welcome to the inn, friend!",
+    "Script string at offset 0x8 in scene.ncs. Consumer: SpeakString. Translate only player-visible natural language.",
+    {
+     "type": "ncs_string",
+     "offset": 8,
+     "confidence": "high",
+     "proven_player": true,
+     "player_candidate": true,
+     "needs_llm_gate": true,
+     "ncs_hint": "SpeakString",
+     "nss_snippet": "void main()\n{\n    SpeakString(\"Welcome to the inn, friend!\");\n    object o = GetObjectByTag(\"NW_INNKEEPER\");\n}",
+     "nss_start": 0,
+     "bytecode_context": {
+      "next_action": 221,
+      "next_action_name": "SpeakString",
+      "argument_index": 0,
+      "consumer_proven": true,
+      "compare_nearby": false,
+      "distance": 1,
+      "role": "player",
+      "player_use_seen": true,
+      "player_action_nearby": true
+     }
+    }
+   ],
+   [
+    "scene:c2",
+    "Congrats to ye, <VAR1>. How do ye feel?",
+    "Script string at offset 0x41 in scene.ncs. Consumer: SpeakString. Translate only player-visible natural language.",
+    {
+     "type": "ncs_string",
+     "offset": 65,
+     "confidence": "high",
+     "proven_player": true,
+     "player_candidate": true,
+     "needs_llm_gate": true,
+     "ncs_hint": "SpeakString",
+     "nss_snippet": null,
+     "nss_start": null,
+     "bytecode_context": {
+      "next_action": 221,
+      "next_action_name": "SpeakString",
+      "argument_index": 0,
+      "consumer_proven": true,
+      "compare_nearby": false,
+      "distance": 1,
+      "role": "player",
+      "player_use_seen": true,
+      "player_action_nearby": true
+     },
+     "concat_parts": [
+      {
+       "offset": 65,
+       "text": "Congrats to ye, "
+      },
+      {
+       "var": 1
+      },
+      {
+       "offset": 95,
+       "text": ". How do ye feel?"
+      }
+     ]
+    }
+   ],
+   [
+    "scene:c5",
+    "You look tired.",
+    "Script string at offset 0x82 in scene.ncs. Consumer: ambiguous_bytecode. Translate only player-visible natural language.",
+    {
+     "type": "ncs_string",
+     "offset": 130,
+     "confidence": "medium",
+     "proven_player": false,
+     "player_candidate": false,
+     "needs_llm_gate": true,
+     "ncs_hint": "ambiguous_bytecode",
+     "nss_snippet": null,
+     "nss_start": null,
+     "bytecode_context": {
+      "next_action": null,
+      "next_action_name": null,
+      "argument_index": null,
+      "consumer_proven": false,
+      "compare_nearby": false,
+      "distance": null,
+      "role": null,
+      "player_use_seen": false,
+      "player_action_nearby": false
+     }
+    }
+   ]
+  ]
+ }
+}

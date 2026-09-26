@@ -1,55 +1,52 @@
-"""Patch only the concrete GFF fields emitted by extraction."""
+"""Patch the GFF field records of extracted items."""
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import List, Optional, Sequence, Tuple
 
-from ..extractors.base import Translations
+from ..extractors.base import TranslatableItem, Translations
 from ..file_handlers.gff_patcher import GFFPatcher
-from .base import BaseInjector, InjectedContent
+from .base import InjectedContent, changed_translations
 
 
-class GffInjector(BaseInjector):
-    """All GFF resources share the same field-record patch contract."""
+def inject_gff(
+    file_path: Path,
+    items: Sequence[TranslatableItem],
+    translations: Translations,
+    *,
+    content_type: str,
+    text_encoding: str,
+    source_encoding: Optional[str] = None,
+) -> InjectedContent:
+    """Rewrite the CExoLocString of every translated item in one pass.
 
-    SUPPORTED_TYPES = [
-        "dialog",
-        "journal",
-        "item",
-        "creature",
-        "area",
-        "trigger",
-        "placeable",
-        "door",
-        "encounter",
-        "store",
-        "module",
-        "git_instance",
-    ]
+    Every GFF resource kind shares this contract: extraction records the
+    field record offset of each item, and only those fields are patched.
 
-    def inject(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any],
-        translations: Translations,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> InjectedContent:
-        metadata = metadata or {}
-        patches = []
-        for item in metadata["extracted_items"]:
-            translated = translations.get(item.key)
-            if translated is None or translated == item.text:
-                continue
-            offset = item.metadata.get("record_offset")
-            if not offset:
-                raise ValueError(f"Missing field record for {item.key}")
-            patches.append((offset, translated))
-        if patches:
-            GFFPatcher(
-                file_path, text_encoding=metadata.get("module_text_encoding", "cp1251")
-            ).patch_multiple(patches)
-        return InjectedContent(
-            source_file=file_path,
-            modified=bool(patches),
-            items_updated=len(patches),
-            metadata={"type": metadata.get("type", "gff")},
-        )
+    Args:
+        file_path: GFF resource to patch.
+        items: Items extracted from the file; their order is the patch order.
+        translations: Translated text by occurrence.
+        content_type: Content type of the extraction, reported back.
+        text_encoding: Code page of the written strings.
+        source_encoding: Unused: fields are addressed by offset, not by text.
+
+    Returns:
+        The injection result, with metadata ``{"type": content_type}``.
+
+    Raises:
+        ValueError: If a translated item has no field record offset.
+    """
+    patches: List[Tuple[int, str]] = []
+    for item, translated in changed_translations(items, translations):
+        offset = item.metadata.get("record_offset")
+        if not offset:
+            raise ValueError(f"Missing field record for {item.key}")
+        patches.append((offset, translated))
+    if patches:
+        GFFPatcher(file_path, text_encoding=text_encoding).patch_multiple(patches)
+    return InjectedContent(
+        source_file=file_path,
+        modified=bool(patches),
+        items_updated=len(patches),
+        metadata={"type": content_type},
+    )

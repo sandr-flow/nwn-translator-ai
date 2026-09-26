@@ -38,10 +38,9 @@ from ..extractors.ncs_extractor import ncs_hard_veto_reason
 if TYPE_CHECKING:
     from ..context.dialog_speakers import DialogSpeaker
     from ..glossary import Glossary
-from ..extractors import ExtractedContent
 from ..ai_providers import TranslationItem, TranslationProvider, TranslationResult
 from ..ai_providers.batch_payload import batch_payload_chars
-from ..extractors.base import Occurrence, Translations
+from ..extractors.base import ExtractedContent, Occurrence, Translations
 from .token_handler import TokenHandler, sanitize_text
 
 

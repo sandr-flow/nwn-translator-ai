@@ -13,11 +13,11 @@ import pytest
 
 from src.nwn_translator.extractors.base import extract_local_string
 from src.nwn_translator.file_handlers.gff_handler import read_gff
+from src.nwn_translator.extractors.git_extractor import GitExtractor
 from src.nwn_translator.extractors.git_fields import (
     INSTANCE_LISTS,
     INSTANCE_NESTED_ITEM_LISTS,
     ITEM_INVENTORY_FIELDS,
-    collect_git_strings_missing_from_translations,
 )
 
 
@@ -107,8 +107,8 @@ def test_real_git_nested_record_offsets_and_inventory_res_alignment():
     parsed = read_gff(git_path)
     _assert_nested_offsets(git_path, parsed)
 
-    found = collect_git_strings_missing_from_translations(parsed, {})
-    assert isinstance(found, set)
+    items = GitExtractor().extract(git_path, parsed).items
+    assert all(item.metadata["record_offset"] > 0 for item in items)
 
     extract_root = git_path.parent
     mismatches: list[str] = []

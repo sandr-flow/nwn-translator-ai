@@ -358,20 +358,3 @@ STANDARD_TOKENS = frozenset(
         "<Target>",
     }
 )
-
-# Translatable file extensions in NWN modules (only types with extractors)
-TRANSLATABLE_TYPES = {
-    ".dlg": "Dialog",
-    ".jrl": "Journal",
-    ".uti": "Item",
-    ".utc": "Creature",
-    ".are": "Area",
-    ".utt": "Trigger",
-    ".utp": "Placeable",
-    ".utd": "Door",
-    ".ute": "Encounter",
-    ".utm": "Store",
-    ".git": "Area Instance",
-    ".ifo": "Module Info",
-    ".ncs": "Script",
-}

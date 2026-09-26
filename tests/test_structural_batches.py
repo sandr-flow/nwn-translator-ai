@@ -16,7 +16,7 @@ from nwn_translator.extractors.creature_extractor import CreatureExtractor
 from nwn_translator.extractors.git_extractor import GitExtractor
 from nwn_translator.extractors.item_extractor import ItemExtractor
 from nwn_translator.extractors.journal_extractor import JournalExtractor
-from nwn_translator.extractors.nss_index import snippet_for_text, snippet_with_position
+from nwn_translator.extractors.nss_index import snippet_with_position
 from nwn_translator.translators.translation_manager import TranslationManager
 
 
@@ -29,7 +29,6 @@ def test_source_positions_recover_exact_capped_excerpt(newline):
     source = newline.join(["//" + "x" * 300] * 20 + ['SpeakString("Hello");'] + ["// tail"] * 8)
     text, start = snippet_with_position("Hello", source)
     normalized = source.replace("\r\n", "\n").replace("\r", "\n")
-    assert text == snippet_for_text("Hello", source)
     assert normalized[start : start + len(text)] == text
     assert snippet_with_position("Missing", source) == (None, None)
 

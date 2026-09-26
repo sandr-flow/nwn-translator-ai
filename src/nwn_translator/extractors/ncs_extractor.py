@@ -8,12 +8,12 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..context.string_filters import ENGINE_TAG_PREFIXES
+from ..file_handlers.ncs_concat import find_concat_chains, merged_text
+from ..file_handlers.ncs_parser import NCSFile
 from .base import BaseExtractor, ExtractedContent, TranslatableItem
 from .ncs_context import trace_string_consumer
 from .nss_index import read_script_source, snippet_with_position
-from ..context.string_filters import ENGINE_TAG_PREFIXES
-from ..file_handlers.ncs_parser import NCSFile
-from ..file_handlers.ncs_concat import find_concat_chains, merged_text
 
 # ---------------------------------------------------------------------------
 # Pattern-based heuristics
@@ -57,7 +57,20 @@ _DEBUG_PHRASES = (
 def _is_definitely_not_translatable(
     text: str, proven_player: bool = False, player_candidate: bool = False
 ) -> bool:
-    """Apply the shared veto, then cheap candidate heuristics without context."""
+    """Apply the shared veto, then cheap candidate heuristics without context.
+
+    The veto runs with ``is_concat=True`` for every literal, so sentence
+    fragments pass extraction; :func:`ncs_hard_veto_reason` rejects them at
+    the translation gate.
+
+    Args:
+        text: Literal or merged concat text.
+        proven_player: A player-facing engine argument provably consumes it.
+        player_candidate: A player-facing routine is nearby or was reached.
+
+    Returns:
+        True when the string must not become a candidate.
+    """
     if ncs_hard_veto_reason(
         text, proven_player=proven_player, player_candidate=player_candidate, is_concat=True
     ):
@@ -116,16 +129,19 @@ def ncs_hard_veto_reason(
     net before translation. NCS bytecode can contain script identifiers and
     technical literals that become invalid if localized.
 
-    ``proven_player=True`` permits natural words, including lowercase and
-    uppercase barks, instead of treating them as resrefs/constants when
-    a player-facing ACTION provably consumes it. Identifier shapes with digits,
-    underscores, or known prefixes stay vetoed regardless.
+    Args:
+        text: Literal or merged concat text.
+        proven_player: A player-facing ACTION provably consumes the string;
+            natural words, including lowercase and uppercase barks, are then
+            not treated as resrefs or constants. Identifier shapes with
+            digits, underscores or known prefixes stay vetoed regardless.
+        is_concat: Skip the sentence-fragment rule: concat units are merged
+            literals whose edges often carry spaces around ``<VARn>`` slots.
+        player_candidate: Let a natural single word reach the LLM gate
+            without claiming proof. Only use it when that gate is enabled.
 
-    ``is_concat=True`` skips the sentence-fragment rule: concat units are
-    merged literals whose edges often carry spaces around ``<VARn>`` slots.
-
-    ``player_candidate=True`` allows a natural single word to reach the LLM
-    gate without claiming proof. Only use it when that gate is enabled.
+    Returns:
+        The veto reason, or None when the string may be translated.
     """
     stripped = text.strip()
     if not stripped:
@@ -180,7 +196,15 @@ def ncs_hard_veto_reason(
 
 
 def _is_likely_translatable(text: str) -> bool:
-    """Positive heuristic: looks like a player-visible sentence or short bark."""
+    """Return whether *text* looks like a player-visible sentence or short bark.
+
+    Args:
+        text: Literal or merged concat text.
+
+    Returns:
+        True for punctuated sentences of three or more words and for short
+        barks ending in ``.``, ``!`` or ``?``.
+    """
     stripped = text.strip()
     words = stripped.split()
     has_punctuation = " " in text and any(ch in text for ch in ".!?,:;")
@@ -198,34 +222,30 @@ def _is_likely_translatable(text: str) -> bool:
 
 
 class NcsExtractor(BaseExtractor):
-    """Extractor for compiled NWScript (``.ncs``) files."""
-
-    SUPPORTED_TYPES = [".ncs"]
+    """Compiled NWScript (``.ncs``): string constants that may reach the player."""
 
     def extract(
         self,
         file_path: Path,
         parsed_data: Dict[str, Any],
     ) -> ExtractedContent:
-        """Extract translatable string constants from an NCS file.
+        """Extract candidate string constants from a compiled script.
 
         Args:
-            file_path: Path to the ``.ncs`` file.
-            parsed_data: Dict with ``_ncs_file`` key containing parsed NCSFile
-                      (NCS files are NOT GFF, so parsed_data is repurposed).
+            file_path: Path of the ``.ncs`` resource; a sibling ``.nss`` source,
+                when present, supplies prompt snippets.
+            parsed_data: Loaded script, not a GFF dict:
+                ``_ncs_file`` (:class:`NCSFile`, required),
+                ``_source_encoding`` (code page of the literals and the
+                ``.nss``; None reads the source as cp1252) and, optionally,
+                ``_ncs_selection_trace`` (a list that receives one record per
+                selection decision, for diagnostics).
 
         Returns:
-            ExtractedContent with translatable items.
+            One item per candidate literal or concat chain, in bytecode order.
+            Each item still needs the translation manager's safety gate.
         """
-        ncs_file: Optional[NCSFile] = parsed_data.get("_ncs_file")
-        if ncs_file is None:
-            return ExtractedContent(
-                content_type="ncs_script",
-                items=[],
-                source_file=file_path,
-                metadata={"error": "No parsed NCS data"},
-            )
-
+        ncs_file: NCSFile = parsed_data["_ncs_file"]
         instructions = ncs_file.instructions
         index_by_offset = {instr.offset: n for n, instr in enumerate(instructions)}
         items: List[TranslatableItem] = []

@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Dict
 
 from nwn_translator.extractors.git_extractor import GitExtractor
-from nwn_translator.extractors.git_fields import collect_git_strings_missing_from_translations
 from nwn_translator.file_handlers.gff_handler import read_gff
 from nwn_translator.file_handlers.gff_writer import write_gff
 from nwn_translator.main import rebuild_module
@@ -64,13 +63,7 @@ def test_door_instance_name_is_extracted_from_locname(tmp_path: Path) -> None:
     assert {item.text for item in items if item.metadata["type"] == "door_description"} == {
         "Rusty."
     }
-
-    assert collect_git_strings_missing_from_translations(parsed, {}) == {
-        "Iron Gate",
-        "Cellar Door",
-        "Old Door",
-        "Rusty.",
-    }
+    assert {item.text for item in items} == {"Iron Gate", "Cellar Door", "Old Door", "Rusty."}
 
 
 def test_door_instance_internal_tags_are_skipped(tmp_path: Path) -> None:
@@ -85,9 +78,8 @@ def test_door_instance_internal_tags_are_skipped(tmp_path: Path) -> None:
     parsed = read_gff(path)
 
     extracted = {item.text for item in GitExtractor().extract(path, parsed).items}
-    collected = collect_git_strings_missing_from_translations(parsed, {})
 
-    assert extracted == collected == {"Wooden Door"}
+    assert extracted == {"Wooden Door"}
 
 
 def test_door_instance_name_is_patched_and_rebuilt(tmp_path: Path) -> None:

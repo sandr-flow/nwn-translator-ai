@@ -54,7 +54,12 @@ from nwn_translator.extractors.ncs_extractor import (
     _contains_code_identifiers,
     ncs_hard_veto_reason,
 )
-from nwn_translator.injectors.ncs_injector import NcsInjector
+from nwn_translator.injectors.ncs_injector import inject_ncs
+from nwn_translator.resources import RESOURCE_KINDS
+
+#: Keyword arguments of :func:`inject_ncs` as the pipeline passes them for a
+#: Russian target and a detected source encoding.
+_INJECT_KW = {"content_type": "ncs_script", "text_encoding": "cp1251", "source_encoding": None}
 
 # ---------------------------------------------------------------------------
 # Bytecode builder helpers
@@ -827,12 +832,6 @@ class TestNcsExtractor:
         offs = {it.metadata["offset"] for it in result.items}
         assert len(offs) == 2
 
-    def test_no_ncs_data(self, tmp_path):
-        """Missing _ncs_file key should return empty result."""
-        extractor = NcsExtractor()
-        result = extractor.extract(tmp_path / "fake.ncs", {})
-        assert len(result.items) == 0
-
     def test_content_type(self, tmp_path):
         path = _write_ncs(tmp_path, "test.ncs", _retn())
         ncs = parse_ncs(path)
@@ -929,7 +928,7 @@ class TestNcsExtractor:
 
 
 class TestNcsInjector:
-    """Tests for NcsInjector."""
+    """Tests for inject_ncs."""
 
     def test_inject_success(self, tmp_path):
         path = _write_ncs(
@@ -949,15 +948,14 @@ class TestNcsInjector:
                 "offset": const_instr.offset,
             },
         )
-        injector = NcsInjector()
-        result = injector.inject(
+        result = inject_ncs(
             path,
-            {},
+            [item],
             {
                 (path.name, item_id): text
                 for item_id, text in ({item.item_id: "Привет, мир!"}).items()
             },
-            {"extracted_items": [item]},
+            **_INJECT_KW,
         )
         assert result.modified
         assert result.items_updated == 1
@@ -980,19 +978,18 @@ class TestNcsInjector:
                 "offset": const_instr.offset,
             },
         )
-        injector = NcsInjector()
         with patch(
             "nwn_translator.injectors.ncs_injector.patch_ncs_string_replacements",
             side_effect=NCSPatchError("validation failed"),
         ):
-            result = injector.inject(
+            result = inject_ncs(
                 path,
-                {},
+                [item],
                 {
                     (path.name, item_id): text
                     for item_id, text in ({item.item_id: "Translated text."}).items()
                 },
-                {"extracted_items": [item]},
+                **_INJECT_KW,
             )
 
         assert not result.modified
@@ -1008,15 +1005,16 @@ class TestNcsInjector:
             _consts("Hello"),
             _retn(),
         )
-        injector = NcsInjector()
-        result = injector.inject(path, {}, {"Goodbye": "Au revoir"}, None)
+        ncs = parse_ncs(path)
+        items = NcsExtractor().extract(path, {"_ncs_file": ncs}).items
+        result = inject_ncs(path, items, {(path.name, "other:c0"): "Au revoir"}, **_INJECT_KW)
         assert not result.modified
         assert result.items_updated == 0
+        assert result.metadata == {"type": "ncs_script"}
 
-    def test_supported_types(self):
-        injector = NcsInjector()
-        assert injector.can_inject("ncs_script")
-        assert not injector.can_inject("dialog")
+    def test_registered_for_scripts_only(self):
+        assert RESOURCE_KINDS[".ncs"].inject is inject_ncs
+        assert RESOURCE_KINDS[".dlg"].inject is not inject_ncs
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1076,12 +1074,11 @@ class TestNCSIntegration:
         by_item_id = {item.item_id: trans1 for item in extracted.items if item.text == str1}
         by_item_id.update({item.item_id: trans3 for item in extracted.items if item.text == str3})
         translations = {str1: trans1, str3: trans3}
-        injector = NcsInjector()
-        result = injector.inject(
+        result = inject_ncs(
             path,
-            {},
+            extracted.items,
             {(path.name, item_id): text for item_id, text in (by_item_id).items()},
-            {"extracted_items": extracted.items},
+            **_INJECT_KW,
         )
         assert result.modified
 
@@ -1108,6 +1105,18 @@ class TestNCSIntegration:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _internal_actions() -> set:
+    """Routine ids with at least one argument classified as internal."""
+    from nwn_translator.extractors.ncs_context import ACTION_SIGNATURES
+    from nwn_translator.extractors.nss_index import classify_engine_arg
+
+    return {
+        routine
+        for routine, (name, params, _) in ACTION_SIGNATURES.items()
+        if any(classify_engine_arg(name, arg) == "internal" for arg in range(len(params)))
+    }
+
+
 class TestRoutineTables:
     """Pin the key ACTION routine ids so a typo cannot silently reclassify."""
 
@@ -1117,24 +1126,19 @@ class TestRoutineTables:
         assert {39, 221, 284, 374, 526, 554, 820, 830, 837, 858, 860, 901} == PLAYER_FACING_ACTIONS
 
     def test_internal_ids_cover_local_variable_family(self):
-        from nwn_translator.extractors.ncs_context import NON_PLAYER_ACTIONS
-
         # GetLocal* 51-54, SetLocal* 55-58: the wrong old ids (13-17, 29-33)
         # made the classifier scan past variable reads into a later speech
         # call, flagging var names as player-facing.
-        assert {51, 52, 53, 54, 55, 56, 57, 58} <= NON_PLAYER_ACTIONS
-        assert 417 in NON_PLAYER_ACTIONS  # SpeakOneLinerConversation: resref arg
+        assert {51, 52, 53, 54, 55, 56, 57, 58} <= _internal_actions()
+        assert 417 in _internal_actions()  # SpeakOneLinerConversation: resref arg
 
     def test_wrong_legacy_ids_gone(self):
-        from nwn_translator.extractors.ncs_context import (
-            NON_PLAYER_ACTIONS,
-            PLAYER_FACING_ACTIONS,
-        )
+        from nwn_translator.extractors.ncs_context import PLAYER_FACING_ACTIONS
 
         # 468 is EffectBlindness, 525 is the StrRef variant with no string arg,
         # 761 is GetStoreMaxBuyPrice — none of them display a string.
         assert not {468, 525, 761} & PLAYER_FACING_ACTIONS
-        assert not {13, 14, 15, 16, 17, 29, 32, 33} & NON_PLAYER_ACTIONS
+        assert not {13, 14, 15, 16, 17, 29, 32, 33} & _internal_actions()
 
 
 class TestProvenPlayerFiltering:
@@ -1470,16 +1474,16 @@ class TestNcsConcat:
         ncs = parse_ncs(path)
         extracted = NcsExtractor().extract(path, {"_ncs_file": ncs})
         item = extracted.items[0]
-        result = NcsInjector().inject(
+        result = inject_ncs(
             path,
-            {},
+            extracted.items,
             {
                 (path.name, item_id): text
                 for item_id, text in (
                     {item.item_id: "Поздравляю тебя, <VAR1>. Как ты себя чувствуешь?"}
                 ).items()
             },
-            {"extracted_items": extracted.items},
+            **_INJECT_KW,
         )
         assert result.modified
         patched = parse_ncs(path)

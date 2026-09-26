@@ -1,138 +1,153 @@
-"""Creature extractor for NWN creature files.
+"""Extractor for creature blueprints (``.utc``) and shared NPC name contexts.
 
-This module handles extraction of creature names and descriptions from .utc GFF files.
+The name contexts and the name-fields suffix are also used for creature
+instances placed in areas (:mod:`~nwn_translator.extractors.git_fields`).
 """
 
-from pathlib import Path
 import json
+from pathlib import Path
 from typing import Any, Dict, List
 
-from ..nwn_constants import race_label, gender_label
-from .base import BaseExtractor, ExtractedContent, TranslatableItem
+from ..nwn_constants import gender_label, race_label
+from .base import (
+    BaseExtractor,
+    ExtractedContent,
+    TranslatableItem,
+    extract_local_string,
+    record_offset,
+)
+
+#: CExoLocString fields holding an NPC's name, in item order.
+NAME_FIELDS = ("FirstName", "LastName")
+
+#: Name field -> (prompt label, translation instruction).
+_NAME_CONTEXTS = {
+    "FirstName": ("NPC first name", "Translate ONLY this name, do not add surname."),
+    "LastName": ("NPC last name or title", "Translate ONLY this, do not prepend first name."),
+}
+
+
+def creature_traits(struct: Dict[str, Any]) -> str:
+    """Return ``"<race>, <gender>"`` of a creature, omitting unknown values.
+
+    Args:
+        struct: Creature blueprint or instance struct.
+
+    Returns:
+        The known traits joined by ``", "`` (empty when none is known).
+    """
+    race = race_label(struct.get("Race", -1))
+    gender = gender_label(struct.get("Gender", -1))
+    return ", ".join(filter(None, [race, gender]))
+
+
+def name_fields(struct: Dict[str, Any]) -> Dict[str, str]:
+    """Return the embedded first and last name of a creature.
+
+    Args:
+        struct: Creature blueprint or instance struct.
+
+    Returns:
+        ``{"FirstName": …, "LastName": …}``, empty strings for missing names.
+    """
+    return {field: extract_local_string(struct.get(field, {})) or "" for field in NAME_FIELDS}
+
+
+def name_fields_suffix(fields: Dict[str, str]) -> str:
+    """Return the context suffix that shows the model both name fields.
+
+    Args:
+        fields: Result of :func:`name_fields`.
+
+    Returns:
+        ``" NPC name fields: {json}"``.
+    """
+    return " NPC name fields: " + json.dumps(fields, ensure_ascii=False)
+
+
+def creature_name_context(field_name: str, qualifier: str) -> str:
+    """Return the prompt context of an NPC first or last name.
+
+    Args:
+        field_name: ``"FirstName"`` or ``"LastName"``.
+        qualifier: Parenthesised detail (traits, placement); omitted when empty.
+
+    Returns:
+        The context string, without the name-fields suffix.
+    """
+    label, instruction = _NAME_CONTEXTS[field_name]
+    if qualifier:
+        return f"{label} ({qualifier}). {instruction}"
+    return f"{label}. {instruction}"
 
 
 class CreatureExtractor(BaseExtractor):
-    """Extractor for creature (.utc) files."""
-
-    SUPPORTED_TYPES = [".utc"]
+    """Creature blueprint (``.utc``): first name, last name and description."""
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract creature content from a .utc file.
+        """Extract the names and description of a creature blueprint.
 
         Args:
-            file_path: Path to the .utc file
-            parsed_data: Parsed GFF data
+            file_path: Path of the ``.utc`` resource.
+            parsed_data: Parsed GFF root struct.
 
         Returns:
-            ExtractedContent with creature data
+            Up to three items (first name, last name, description) sharing one
+            translation group.
         """
-        items = []
-
-        # Get tag for reference
         tag = parsed_data.get("Tag", file_path.stem)
-
-        # Build traits string from GFF metadata (empty for custom/unknown IDs)
-        race = race_label(parsed_data.get("Race", -1))
+        traits = creature_traits(parsed_data)
         gender = gender_label(parsed_data.get("Gender", -1))
-        traits = ", ".join(filter(None, [race, gender]))
-        name_fields = {
-            field: self._extract_text_from_local_string(parsed_data.get(field, {})) or ""
-            for field in ("FirstName", "LastName")
-        }
-        name_context = " NPC name fields: " + json.dumps(name_fields, ensure_ascii=False)
+        names = name_fields(parsed_data)
+        suffix = name_fields_suffix(names)
+        items: List[TranslatableItem] = []
 
-        # Extract first name as separate item
-        name_obj = parsed_data.get("FirstName", {})
-        first_name = self._extract_text_from_local_string(name_obj)
-        if first_name:
-            name_ctx = (
-                f"NPC first name ({traits}). Translate ONLY this name, do not add surname."
-                if traits
-                else "NPC first name. Translate ONLY this name, do not add surname."
-            )
-            items.append(
-                TranslatableItem(
-                    text=first_name,
-                    context=name_ctx + name_context,
-                    item_id=f"{tag}_first_name",
-                    location=str(file_path),
-                    metadata={
-                        "type": "creature_first_name",
-                        "name_fields": name_fields,
-                        "name_field": "FirstName",
-                        "name_group": "root",
-                        "gender": gender,
-                        "record_offset": parsed_data.get("_record_offsets", {}).get("FirstName", 0),
-                        "tag": tag,
-                    },
+        for field_name, id_suffix in zip(NAME_FIELDS, ("first_name", "last_name")):
+            if names[field_name]:
+                items.append(
+                    TranslatableItem(
+                        text=names[field_name],
+                        context=creature_name_context(field_name, traits) + suffix,
+                        item_id=f"{tag}_{id_suffix}",
+                        metadata={
+                            "type": f"creature_{id_suffix}",
+                            "name_fields": names,
+                            "name_field": field_name,
+                            "name_group": "root",
+                            "gender": gender,
+                            "record_offset": record_offset(parsed_data, field_name),
+                            "tag": tag,
+                        },
+                    )
                 )
-            )
 
-        # Extract last name as separate item
-        last_name_obj = parsed_data.get("LastName", {})
-        last_name = self._extract_text_from_local_string(last_name_obj)
-        if last_name:
-            ln_ctx = (
-                f"NPC last name or title ({traits}). Translate ONLY this, do not prepend first name."
-                if traits
-                else "NPC last name or title. Translate ONLY this, do not prepend first name."
-            )
-            items.append(
-                TranslatableItem(
-                    text=last_name,
-                    context=ln_ctx + name_context,
-                    item_id=f"{tag}_last_name",
-                    location=str(file_path),
-                    metadata={
-                        "type": "creature_last_name",
-                        "name_fields": name_fields,
-                        "name_field": "LastName",
-                        "name_group": "root",
-                        "gender": gender,
-                        "record_offset": parsed_data.get("_record_offsets", {}).get("LastName", 0),
-                        "tag": tag,
-                    },
-                )
-            )
-
-        # Extract description as separate item
-        desc_obj = parsed_data.get("Description", {})
-        description = self._extract_text_from_local_string(desc_obj)
+        description = extract_local_string(parsed_data.get("Description", {}))
         if description:
-            full_name = " ".join(filter(None, [first_name, last_name]))
-            if full_name and traits:
-                desc_ctx = f"NPC description (name: {full_name}, {traits})"
-            elif full_name:
-                desc_ctx = f"NPC description (name: {full_name})"
-            else:
-                desc_ctx = "NPC description"
+            full_name = " ".join(filter(None, names.values()))
+            detail = ", ".join(filter(None, [f"name: {full_name}", traits])) if full_name else ""
             items.append(
                 TranslatableItem(
                     text=description,
-                    context=desc_ctx,
+                    context=f"NPC description ({detail})" if detail else "NPC description",
                     item_id=f"{tag}_description",
-                    location=str(file_path),
                     metadata={
                         "type": "creature_description",
-                        "record_offset": parsed_data.get("_record_offsets", {}).get(
-                            "Description", 0
-                        ),
+                        "record_offset": record_offset(parsed_data, "Description"),
                         "tag": tag,
                     },
                 )
             )
 
         for item in items:
-            item.metadata["translation_group"] = "root"
-            item.metadata["shared_context"] = f"NPC ({traits})." + name_context
-            item.metadata["batch_context"] = ""
+            item.metadata.update(
+                translation_group="root",
+                shared_context=f"NPC ({traits})." + suffix,
+                batch_context="",
+            )
 
         return ExtractedContent(
             content_type="creature",
             items=items,
             source_file=file_path,
-            metadata={
-                "tag": tag,
-                "item_count": len(items),
-            },
+            metadata={"tag": tag, "item_count": len(items)},
         )

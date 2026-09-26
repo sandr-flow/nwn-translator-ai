@@ -9,7 +9,7 @@ from nwn_translator.extractors.ncs_extractor import NcsExtractor
 from nwn_translator.file_handlers.ncs_concat import find_concat_chains, merged_text
 from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
 from nwn_translator.file_handlers.ncs_patcher import NCSPatchError, patch_ncs_string_replacements
-from nwn_translator.injectors.ncs_injector import NcsInjector
+from nwn_translator.injectors.ncs_injector import inject_ncs
 from tests.test_ncs import _action, _add_ss, _consti, _consto, _consts, _header, _retn
 from tests.test_translation_manager import _make_config, _make_provider
 from nwn_translator.translators.translation_manager import TranslationManager
@@ -60,11 +60,13 @@ def test_complete_path_patches_only_approved_occurrence(tmp_path, verdict):
     provider.classify_ncs_translate_gate_batch_async.side_effect = gate
     manager = TranslationManager(_make_config(target_lang="english"), provider)
     translations = manager.translate_content(content)
-    result = NcsInjector().inject(
+    result = inject_ncs(
         path,
-        {},
+        content.items,
         translations,
-        {"extracted_items": content.items, "module_text_encoding": "cp1252"},
+        content_type=content.content_type,
+        text_encoding="cp1252",
+        source_encoding=None,
     )
     assert result.modified is (verdict is True)
     values = [i.string_value for i in parse_ncs_bytes(path.read_bytes()).string_constants]

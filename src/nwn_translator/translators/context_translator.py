@@ -23,7 +23,7 @@ from ..config import (
 from ..context.dialog_formatter import DialogFormatter
 from ..context.dialog_speakers import dialog_owners, speaker_description, tagged_speakers
 from ..context.world_context import WorldContext
-from ..extractors.dialog_extractor import DialogExtractor, DialogNode
+from ..extractors.dialog_extractor import DialogExtractor, DialogNode, dialog_item_id
 from ..json_utils import json_extract_first_object, strip_json_markdown_fences
 from ..telemetry import llm_phase
 from ..glossary import GLOSSARY_MAX_CHARS, terminology_block
@@ -105,8 +105,9 @@ class ContextualTranslationManager:
 
     @staticmethod
     def _node_address(file_path: Path, key: str) -> Occurrence:
-        kind = "entry" if key.startswith("E") else "reply"
-        return occurrence_key(file_path, f"{file_path.stem}:{kind}:{key[1:]}")
+        return occurrence_key(
+            file_path, dialog_item_id(file_path.stem, key.startswith("E"), key[1:])
+        )
 
     def _mark_untranslated_api_keys(
         self,
@@ -1240,11 +1241,9 @@ class ContextualTranslationManager:
                     key,
                 )
 
-            # DialogExtractor item_ids are ``{stem}:entry:{i}`` / ``{stem}:reply:{i}``;
-            # tree keys are ``E{i}`` / ``R{i}`` with the same list index.
-            kind = "entry" if key.startswith("E") else "reply"
+            # Tree keys are ``E{i}`` / ``R{i}`` with the dialog list index.
             node_index = key[1:] if len(key) > 1 else key
-            item_id = f"{file_path.stem}:{kind}:{node_index}"
+            item_id = dialog_item_id(file_path.stem, key.startswith("E"), node_index)
             log_entry = {
                 "original": original_text,
                 "translated": final_translated,

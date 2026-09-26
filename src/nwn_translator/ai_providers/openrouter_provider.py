@@ -338,10 +338,10 @@ class OpenRouterProvider:
             The reply text, stripped.
 
         Raises:
-            RateLimitError: HTTP 429/402 or budget exhaustion.
-            OpenRouterError: Any other non-transient API error.
-            APIConnectionError: Connection failure or timeout (transient).
-            InternalServerError: HTTP >= 500 (transient).
+            RateLimitError: If the gateway reports a rate limit or an exhausted budget.
+            OpenRouterError: If any other non-transient API error occurs.
+            APIConnectionError: If the connection fails or times out (transient).
+            InternalServerError: If the gateway answers HTTP >= 500 (transient).
         """
         kwargs: Dict[str, Any] = {
             "model": self.model,
@@ -464,10 +464,10 @@ class OpenRouterProvider:
             The translation, or a failed result when no reply parses.
 
         Raises:
-            RateLimitError: Rate limit or budget exhausted after retries.
-            OpenRouterError: Non-transient API error.
-            APIConnectionError: Connection failure or timeout, after retries.
-            InternalServerError: HTTP >= 500, after retries.
+            RateLimitError: If a rate limit or the budget persists after retries.
+            OpenRouterError: If a non-transient API error occurs.
+            APIConnectionError: If the connection fails or times out after retries.
+            InternalServerError: If the gateway answers HTTP >= 500 after retries.
         """
         if not text or not text.strip():
             return TranslationResult(translated="", original=text, success=True)
@@ -536,10 +536,10 @@ class OpenRouterProvider:
             One result per item, in order (see :func:`parse_batch_results`).
 
         Raises:
-            RateLimitError: Rate limit or budget exhausted after retries.
-            OpenRouterError: Non-transient API error.
-            APIConnectionError: Connection failure or timeout, after retries.
-            InternalServerError: HTTP >= 500, after retries.
+            RateLimitError: If a rate limit or the budget persists after retries.
+            OpenRouterError: If a non-transient API error occurs.
+            APIConnectionError: If the connection fails or times out after retries.
+            InternalServerError: If the gateway answers HTTP >= 500 after retries.
         """
         if not items:
             return []
@@ -587,10 +587,10 @@ class OpenRouterProvider:
             The stripped reply text.
 
         Raises:
-            RateLimitError: Rate limit or budget exhausted after retries.
-            OpenRouterError: Non-transient API error.
-            APIConnectionError: Connection failure or timeout, after retries.
-            InternalServerError: HTTP >= 500, after retries.
+            RateLimitError: If a rate limit or the budget persists after retries.
+            OpenRouterError: If a non-transient API error occurs.
+            APIConnectionError: If the connection fails or times out after retries.
+            InternalServerError: If the gateway answers HTTP >= 500 after retries.
         """
         return await self._complete(
             system_prompt,
@@ -627,10 +627,10 @@ class OpenRouterProvider:
             The stripped reply text.
 
         Raises:
-            RateLimitError: Rate limit or budget exhausted.
-            OpenRouterError: Non-transient API error.
-            APIConnectionError: Connection failure or timeout.
-            InternalServerError: HTTP >= 500.
+            RateLimitError: If the gateway reports a rate limit or an exhausted budget.
+            OpenRouterError: If a non-transient API error occurs.
+            APIConnectionError: If the connection fails or times out.
+            InternalServerError: If the gateway answers HTTP >= 500.
         """
         return await self._complete_once(
             system_prompt,
@@ -660,10 +660,10 @@ class OpenRouterProvider:
             :func:`~nwn_translator.ai_providers.ncs_gate.classify_with_recovery`).
 
         Raises:
-            RateLimitError: Rate limit or budget exhausted after retries.
-            OpenRouterError: Non-transient API error.
-            APIConnectionError: Connection failure or timeout, after retries.
-            InternalServerError: HTTP >= 500, after retries.
+            RateLimitError: If a rate limit or the budget persists after retries.
+            OpenRouterError: If a non-transient API error occurs.
+            APIConnectionError: If the connection fails or times out after retries.
+            InternalServerError: If the gateway answers HTTP >= 500 after retries.
         """
 
         async def request(user_prompt: str, max_tokens: int, batch_size: int) -> str:

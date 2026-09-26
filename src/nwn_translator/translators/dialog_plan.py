@@ -170,9 +170,11 @@ def plan_chunks(
     """
 
     def script_of(chunk_keys: List[str]) -> str:
+        """Renders the selected nodes of *chunk_keys* with their neighbours."""
         return format_nodes(chunk_keys, dialog.node_map, dialog.sanitized)
 
     def fits(script: str) -> bool:
+        """Tells whether *script* and its glossary block stay within the limits."""
         return (
             len(script) <= CHUNK_TARGET_CHARS
             and _terms_chars([script], target_lang, glossary) <= GLOSSARY_MAX_CHARS

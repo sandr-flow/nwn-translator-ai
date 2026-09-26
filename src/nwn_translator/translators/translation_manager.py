@@ -139,15 +139,16 @@ class TranslationManager:
             Accepted translation per occurrence.
 
         Raises:
-            ValueError: An occurrence has no resource or item id.
-            TranslationCancelled: The run was cancelled.
-            TimeoutError: A pass exceeded its overall budget.
+            ValueError: If an occurrence has no resource or item id.
+            TranslationCancelled: If the run is cancelled.
+            TimeoutError: If a pass exceeds its overall budget.
         """
         work = [self._prepare(item) for item in content.items if item.has_text()]
         if not work:
             return {}
 
         def bump(filename: str) -> None:
+            """Counts one finished occurrence of *filename*."""
             if item_progress is not None:
                 item_progress.bump(filename=filename)
 
@@ -190,7 +191,11 @@ class TranslationManager:
         return translations
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Returns :attr:`stats` plus ``total_errors``."""
+        """Returns the statistics of the run.
+
+        Returns:
+            A copy of :attr:`stats` plus ``total_errors``.
+        """
         return {**self.stats, "total_errors": len(self.stats["errors"])}
 
     def _prepare(self, item: TranslatableItem) -> WorkItem:
@@ -203,8 +208,8 @@ class TranslationManager:
         """Returns the glossary block for *texts*, or None when no term matches.
 
         The provider treats None and an empty string alike (it falls back to the race
-        terms of the text); None is kept so that the logged request arguments stay
-        unchanged. Missing texts (an item without context) match nothing.
+        terms of the text); None is used because the request arguments are written to
+        the translation log. Missing texts (an item without context) match nothing.
 
         Args:
             texts: Texts of one request; None entries are skipped.

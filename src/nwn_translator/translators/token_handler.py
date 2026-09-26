@@ -18,10 +18,10 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-# Non-European scripts (CJK, Hebrew, Arabic, Devanagari, Thai). Target
-# languages are European, so a translation containing these characters when
-# the source does not is a model glitch: the injector would silently drop
-# them, garbling the text (observed: Chinese and Thai chars inside Russian).
+#: Non-European scripts (CJK, Hebrew, Arabic, Devanagari, Thai). Target
+#: languages are European, so a translation containing these characters when
+#: the source does not is a model glitch: the injector would silently drop
+#: them, garbling the text (observed: Chinese and Thai chars inside Russian).
 FOREIGN_SCRIPT_PATTERN = re.compile(
     "[\\u0590-\\u06ff\\u0900-\\u097f\\u0e00-\\u0e7f"
     "\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff]"
@@ -101,7 +101,7 @@ def normalize_translated_text(text: str) -> str:
 
 
 def has_translatable_content(sanitized: str) -> bool:
-    """Returns whether a sanitized string holds anything to translate.
+    """Tells whether a sanitized string holds anything to translate.
 
     Placeholders written by :meth:`TokenHandler.sanitize` are removed first;
     whitespace, punctuation and underscores do not count.
@@ -110,7 +110,7 @@ def has_translatable_content(sanitized: str) -> bool:
         sanitized: Output of :func:`sanitize_text`.
 
     Returns:
-        True when a Unicode letter or digit remains.
+        ``True`` when a Unicode letter or digit remains.
     """
     if not sanitized:
         return False
@@ -251,7 +251,7 @@ def _strip_placeholder_noise(text: str) -> str:
 
 
 def _has_unbalanced_action_tags(text: str) -> bool:
-    """Returns True when ``<Start…>``/``</Start>`` tags do not nest properly."""
+    """Tells whether the ``<Start…>``/``</Start>`` tags of *text* fail to nest properly."""
     depth = 0
     for tag in _INLINE_TAG_RE.findall(text):
         depth += -1 if tag.startswith("</") else 1
@@ -261,7 +261,7 @@ def _has_unbalanced_action_tags(text: str) -> bool:
 
 
 def _normalize_cleanup_whitespace(text: str) -> str:
-    """Minimally normalize whitespace left behind by removed artifacts."""
+    """Minimally normalizes the whitespace left behind by removed artifacts."""
     normalized = re.sub(r"[ \t]+\n", "\n", text)
     normalized = re.sub(r"\n[ \t]+", "\n", normalized)
     normalized = re.sub(r"[ \t]{2,}", " ", normalized)
@@ -429,7 +429,11 @@ class TokenHandler:
         return _normalize_cleanup_whitespace(self._drop_deviating_action_tags(cleaned))
 
     def get_expected_artifact_sequence(self) -> List[str]:
-        """Returns the source's artifacts, in order, as written in the source."""
+        """Returns the artifacts the restored answer must carry.
+
+        Returns:
+            The source's artifacts, in order, as written in the source.
+        """
         return [artifact.original for artifact in self.artifacts]
 
     def _protect(self, original: str, kind: str) -> str:

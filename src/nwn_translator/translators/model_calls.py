@@ -285,7 +285,7 @@ class ModelCaller:
             The result of the request or of its timeout retry.
 
         Raises:
-            TranslationCancelled: The run was cancelled before the request.
+            TranslationCancelled: If the run is cancelled before the request.
         """
         request = self.plain_request(work)
         async with sem:
@@ -348,7 +348,7 @@ class ModelCaller:
             The result; a timeout or error becomes an unsuccessful result.
 
         Raises:
-            TranslationCancelled: The run was cancelled before the request.
+            TranslationCancelled: If the run is cancelled before the request.
         """
         async with sem:
             self.config.raise_if_cancelled()
@@ -373,6 +373,7 @@ class ModelCaller:
         request = self.token_retry_request(work, attempt)
 
         async def call() -> TranslationResult:
+            """Sends the retry request."""
             return await self._call(work, request)
 
         try:
@@ -399,7 +400,7 @@ class ModelCaller:
             One result per item, in batch order.
 
         Raises:
-            TranslationCancelled: The run was cancelled before a request.
+            TranslationCancelled: If the run is cancelled before a request.
         """
         results = await self._ask_batch(sem, batch)
         failed = [index for index, result in enumerate(results) if not result.success]
@@ -467,11 +468,12 @@ class ModelCaller:
             flattened batch order.
 
         Raises:
-            TranslationCancelled: The run was cancelled.
-            TimeoutError: The pass exceeded its overall budget.
+            TranslationCancelled: If the run is cancelled.
+            TimeoutError: If the pass exceeds its overall budget.
         """
 
         async def run_all() -> Tuple[List[TranslationResult], List[List[TranslationResult]]]:
+            """Runs the singles and the batches under one semaphore."""
             sem = asyncio.Semaphore(self.concurrency)
             single_results, batch_results = await asyncio.gather(
                 asyncio.gather(*[self.translate_one(sem, work, done) for work in singles]),
@@ -503,11 +505,12 @@ class ModelCaller:
             One result per item, in order.
 
         Raises:
-            TranslationCancelled: The run was cancelled.
-            TimeoutError: The pass exceeded its overall budget.
+            TranslationCancelled: If the run is cancelled.
+            TimeoutError: If the pass exceeds its overall budget.
         """
 
         async def run_all() -> List[TranslationResult]:
+            """Runs one request per item under one semaphore."""
             sem = asyncio.Semaphore(self.concurrency)
             if scripts:
                 calls = [self.translate_ncs_fallback(sem, w) for w in work]
@@ -553,8 +556,8 @@ class ModelCaller:
             What the pass returns.
 
         Raises:
-            TranslationCancelled: The run was cancelled.
-            TimeoutError: The pass exceeded its budget.
+            TranslationCancelled: If the run is cancelled.
+            TimeoutError: If the pass exceeds its budget.
         """
         queue = (
             queued_timeout(singles, single_slot, self.concurrency)

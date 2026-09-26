@@ -21,6 +21,7 @@ from ..config import REASONING_EFFORTS
 
 logger = logging.getLogger(__name__)
 
+#: Public model catalog endpoint.
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _CATALOG_TTL_SECONDS = 6 * 3600
 _FETCH_TIMEOUT_SECONDS = 15.0
@@ -142,7 +143,8 @@ def refresh_catalog(*, force: bool = False) -> Dict[str, ModelReasoning]:
         force: Fetch even when a live catalog younger than the TTL is cached.
 
     Returns:
-        The live catalog, or :data:`FALLBACK` when no fetch has succeeded yet.
+        The live catalog; after a failed fetch the cached catalog, or a copy of
+        :data:`FALLBACK` when none is cached.
     """
     global _catalog, _catalog_at, _catalog_live
     now = time.monotonic()

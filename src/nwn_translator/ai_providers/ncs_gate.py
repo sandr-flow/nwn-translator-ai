@@ -75,7 +75,7 @@ def parse_gate_verdicts(raw: str, entries: List[Dict[str, Any]]) -> Dict[str, Ve
         ``key -> {"translate": bool, "reason": str}`` for every entry.
 
     Raises:
-        json.JSONDecodeError: When the reply is not exactly one JSON object.
+        json.JSONDecodeError: If the reply is not exactly one JSON object.
     """
     cleaned = strip_json_markdown_fences(raw)
     parsed = json.loads(cleaned)

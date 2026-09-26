@@ -1,4 +1,4 @@
-"""Decision which string literals of compiled scripts may be translated.
+"""Decision on which string literals of compiled scripts may be translated.
 
 A script literal is patched only when it is player-visible text. Hard vetoes
 (code identifiers, sentence fragments, …) always reject. Every other candidate
@@ -128,6 +128,7 @@ class ScriptGate:
         sem = asyncio.Semaphore(max(1, int(self.config.max_concurrent_requests)))
 
         async def ask(chunk: List[TranslatableItem]) -> List[Dict[str, Any]]:
+            """Sends one gate request; a failed request rejects the whole chunk."""
             entries = [_gate_entry(str(index), item) for index, item in enumerate(chunk)]
             async with sem:
                 try:

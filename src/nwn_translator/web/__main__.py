@@ -29,7 +29,7 @@ def main() -> None:
     ``NWN_WEB_RELOAD`` configure the server.
 
     Raises:
-        SystemExit: When uvicorn is not installed.
+        SystemExit: If uvicorn is not installed.
     """
     load_dotenv()
     try:

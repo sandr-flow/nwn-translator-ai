@@ -76,8 +76,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Output budget of the recovery requests. It equals ``TRANSLATION_MAX_TOKENS``,
-#: so a step that re-sends the prompt repeats the first request unchanged; the
-#: step stays because it is one of the run's requests.
+#: so a "higher max_tokens" step that re-sends the original prompt asks the
+#: model the first request again.
 _RECOVERY_MAX_TOKENS = 32768
 
 #: Result of one pool job: its translations and ``(file, error)`` pairs.
@@ -288,7 +288,7 @@ def _looks_truncated(raw: str) -> bool:
         raw: An answer that did not parse.
 
     Returns:
-        Whether it looks cut off.
+        ``True`` when it looks cut off.
     """
     cleaned = strip_json_markdown_fences(raw)
     start = cleaned.find("{")
@@ -322,7 +322,7 @@ def _group_part(answer: Dict[str, Any], file_path: Path) -> Any:
 
 
 class ContextualTranslationManager:
-    """Translate dialog files with their conversation tree as context.
+    """Translator of dialog files, with their conversation tree as context.
 
     Attributes:
         config: Run configuration.
@@ -393,7 +393,7 @@ class ContextualTranslationManager:
               every file of a job that an exception escaped.
 
         Raises:
-            TranslationCancelled: When the run is cancelled; queued files are
+            TranslationCancelled: If the run is cancelled; queued files are
                 dropped.
         """
         translations: Translations = {}
@@ -465,7 +465,7 @@ class ContextualTranslationManager:
         return translations, errors
 
     def _work(self, queue: Deque[Tuple[Callable[[], _JobResult], Future[_JobResult]]]) -> None:
-        """Worker thread: run queued jobs in order, then release the thread's resources.
+        """Runs queued jobs in order on a worker thread, then releases its resources.
 
         ``run_async`` keeps one event loop per thread, and the provider one
         HTTP client per loop, so a worker reuses them for all its jobs. They
@@ -493,7 +493,7 @@ class ContextualTranslationManager:
     def _translate_single(
         self, dialog: PreparedDialog, item_progress: Optional[ProgressSink]
     ) -> _JobResult:
-        """Pool job: translate one dialog on its own.
+        """Translates one dialog on its own (a pool job).
 
         Args:
             dialog: The prepared dialog.
@@ -503,7 +503,7 @@ class ContextualTranslationManager:
             The file's translations and no errors.
 
         Raises:
-            TranslationCancelled: When the run is cancelled.
+            TranslationCancelled: If the run is cancelled.
         """
         self.config.raise_if_cancelled()
         return self._translate_file(dialog, item_progress), []
@@ -531,7 +531,7 @@ class ContextualTranslationManager:
             The file's accepted translations, including those from *accepted*.
 
         Raises:
-            TranslationCancelled: When the run is cancelled.
+            TranslationCancelled: If the run is cancelled.
         """
         name = dialog.file_path.name
         progress = _FileProgress(item_progress, dialog.item_budget, name)
@@ -575,9 +575,9 @@ class ContextualTranslationManager:
             keys: Keys of the lines to request, in walk order.
 
         Raises:
-            RateLimitError: When a chunk or the pending retry hits a rate or
+            RateLimitError: If a chunk or the pending retry hits a rate or
                 budget limit.
-            TranslationCancelled: When the run is cancelled.
+            TranslationCancelled: If the run is cancelled.
         """
         dialog = run.dialog
         name = dialog.file_path.name
@@ -628,8 +628,8 @@ class ContextualTranslationManager:
             parsed, none when the request failed.
 
         Raises:
-            RateLimitError: When the provider reports a rate or budget limit.
-            TranslationCancelled: When the run is cancelled.
+            RateLimitError: If the provider reports a rate or budget limit.
+            TranslationCancelled: If the run is cancelled.
         """
         dialog = run.dialog
         name = dialog.file_path.name
@@ -685,8 +685,8 @@ class ContextualTranslationManager:
             Keys still pending afterwards, sorted.
 
         Raises:
-            RateLimitError: When the provider reports a rate or budget limit.
-            TranslationCancelled: When the run is cancelled.
+            RateLimitError: If the provider reports a rate or budget limit.
+            TranslationCancelled: If the run is cancelled.
         """
         dialog = run.dialog
         name = dialog.file_path.name
@@ -737,7 +737,7 @@ class ContextualTranslationManager:
             keys: Keys still pending after the pending retry, sorted.
 
         Raises:
-            TranslationCancelled: When the run is cancelled.
+            TranslationCancelled: If the run is cancelled.
         """
         dialog = run.dialog
         logger.warning(
@@ -772,8 +772,8 @@ class ContextualTranslationManager:
                 lines, or ``None``.
 
         Returns:
-            Whether the answer was accepted. A rejected answer replaces the
-            line's candidate for cleanup.
+            ``True`` when the answer was accepted. A rejected answer replaces
+            the line's candidate for cleanup.
         """
         dialog = run.dialog
         name = dialog.file_path.name
@@ -819,7 +819,7 @@ class ContextualTranslationManager:
     def _translate_group(
         self, group: List[PreparedDialog], item_progress: Optional[ProgressSink]
     ) -> _JobResult:
-        """Pool job: translate small dialogs in one request, then split the answer.
+        """Translates small dialogs in one request and splits the answer (a pool job).
 
         A file whose part of the answer is missing, incomplete or has a
         rejected line falls back to its own requests; the lines accepted from
@@ -835,7 +835,7 @@ class ContextualTranslationManager:
             that failed on a rate or budget limit or whose fallback raised.
 
         Raises:
-            TranslationCancelled: When the run is cancelled.
+            TranslationCancelled: If the run is cancelled.
         """
         translations: Translations = {}
         errors: List[Tuple[Path, Exception]] = []
@@ -985,6 +985,7 @@ class ContextualTranslationManager:
         """
 
         async def call() -> str:
+            """Sends the request tagged with the ``dialog`` metrics phase."""
             with llm_phase("dialog"):
                 return await logged_model_call(
                     self._log_writer,

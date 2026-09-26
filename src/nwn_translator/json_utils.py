@@ -53,7 +53,7 @@ def load_first_json_object(raw: str) -> Dict[str, Any]:
         The decoded object.
 
     Raises:
-        json.JSONDecodeError: When the reply has no ``{`` ("No JSON object found")
+        json.JSONDecodeError: If the reply has no ``{`` ("No JSON object found")
             or the object is malformed or truncated. Positions in the message refer
             to the fence-stripped text; they reach translation results verbatim.
     """
@@ -93,7 +93,7 @@ def load_brace_span(raw: str) -> Any:
         The decoded value; *raw* is decoded whole when it has no ``{ … }`` span.
 
     Raises:
-        json.JSONDecodeError: When the span (or *raw*) is not valid JSON.
+        json.JSONDecodeError: If the span (or *raw*) is not valid JSON.
     """
     match = _BRACE_SPAN.search(raw)
     return json.loads(match.group(0) if match else raw)
@@ -114,7 +114,7 @@ def scan_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
         decodes whole to a non-object value.
 
     Raises:
-        json.JSONDecodeError: The last decoding error, when no object decodes.
+        json.JSONDecodeError: If no object decodes (the last decoding error).
     """
     decoder = json.JSONDecoder(strict=False)
     last_error: Optional[json.JSONDecodeError] = None

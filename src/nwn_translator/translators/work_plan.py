@@ -43,13 +43,13 @@ SHORT_LABEL_TYPES = frozenset(
 
 
 def is_ncs_item(item: TranslatableItem) -> bool:
-    """Returns whether *item* is a string literal of a compiled script.
+    """Tells whether *item* is a string literal of a compiled script.
 
     Args:
         item: Extracted occurrence.
 
     Returns:
-        True for the ``ncs_string`` items of the script extractor.
+        ``True`` for the ``ncs_string`` items of the script extractor.
     """
     return item.metadata.get("type") == "ncs_string"
 
@@ -110,7 +110,11 @@ class WorkItem:
         return content_profile([self])
 
     def translation_item(self) -> TranslationItem:
-        """Returns the batch entry for this item."""
+        """Returns the batch entry for this item.
+
+        Returns:
+            The sanitized text with the item's context and metadata.
+        """
         return TranslationItem(self.sanitized, self.item.context, self.item.metadata)
 
 
@@ -174,14 +178,14 @@ def dedup_key(work: WorkItem, terminology: Terminology) -> Tuple[Hashable, ...]:
 
 
 def is_batchable(work: WorkItem, limits: BatchLimits) -> bool:
-    """Returns whether *work* is short enough to share a batch request.
+    """Tells whether *work* is short enough to share a batch request.
 
     Args:
         work: Prepared item.
         limits: Batch budgets.
 
     Returns:
-        True when the sanitized text is within the item limit of its kind.
+        ``True`` when the sanitized text is within the item limit of its kind.
     """
     limit = limits.ncs_item_chars if work.is_ncs else limits.text_chars
     return len(work.sanitized) <= limit
@@ -258,6 +262,7 @@ def pack_groups(
     """
 
     def fits(batch: List[WorkItem]) -> bool:
+        """Tells whether *batch* stays within every budget of *limits*."""
         return (
             len(batch) <= limits.max_items
             and sum(len(w.sanitized) for w in batch) <= limits.text_chars

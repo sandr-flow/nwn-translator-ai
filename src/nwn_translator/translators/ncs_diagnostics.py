@@ -32,7 +32,11 @@ _TEXT_PREFIX_CHARS = 120
 
 
 def new_ncs_diagnostics() -> Dict[str, Any]:
-    """Returns a diagnostics block with zero counters and no samples."""
+    """Returns an empty diagnostics block.
+
+    Returns:
+        Every counter of :data:`NCS_COUNTERS` at zero and an empty ``samples`` list.
+    """
     return {**{name: 0 for name in NCS_COUNTERS}, "samples": []}
 
 
@@ -62,7 +66,7 @@ class NcsDiagnostics:
     """
 
     def __init__(self, block: Dict[str, Any], log_writer: TranslationLogWriter):
-        """Records into *block* and logs every sample to *log_writer*.
+        """Creates a recorder that fills *block* and logs every sample to *log_writer*.
 
         Args:
             block: Block from :func:`new_ncs_diagnostics`.

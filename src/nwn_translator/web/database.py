@@ -205,7 +205,15 @@ def close_db() -> None:
 
 
 def _query(sql: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
-    """Run a SELECT under the connection lock and return the rows as dicts."""
+    """Run a SELECT under the connection lock.
+
+    Args:
+        sql: Statement with ``?`` placeholders.
+        params: Placeholder values.
+
+    Returns:
+        The rows as dicts.
+    """
     db = get_db()
     with _lock:
         cur = db.execute(sql, params)
@@ -213,17 +221,17 @@ def _query(sql: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
         return [dict(row) for row in cur.fetchall()]
 
 
-def _execute(sql: str, params: Sequence[Any] = ()) -> int:
+def _execute(sql: str, params: Sequence[Any] = ()) -> None:
     """Run one write statement under the connection lock and commit it.
 
-    Returns:
-        Number of rows the statement changed.
+    Args:
+        sql: Statement with ``?`` placeholders.
+        params: Placeholder values.
     """
     db = get_db()
     with _lock:
-        cur = db.execute(sql, params)
+        db.execute(sql, params)
         db.commit()
-        return cur.rowcount
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +258,7 @@ def create_task_row(
         created_at: Unix timestamp of creation.
         input_filename: Name of the uploaded module.
         target_lang: Target language.
-        source_lang: Source language (``"auto"`` when unspecified).
+        source_lang: Source language, ``"auto"`` to detect; ``None`` stores NULL.
         model: Model slug requested by the client.
     """
     _execute(
@@ -272,12 +280,12 @@ def create_task_row(
 def update_task_row(task_id: str, **fields: Any) -> None:
     """Set columns of a task row; a missing row is left alone.
 
-    ``stats`` dicts are stored as JSON and paths as strings.
+    A ``stats`` dict is stored as JSON.
 
     Args:
         task_id: Task UUID.
         **fields: Column values; names must be columns of ``tasks`` other than
-            ``task_id``.
+            ``task_id``. Path columns take strings.
 
     Raises:
         ValueError: If a field is not a task column.
@@ -287,17 +295,17 @@ def update_task_row(task_id: str, **fields: Any) -> None:
     unknown = fields.keys() - _TASK_COLUMNS
     if unknown:
         raise ValueError(f"Unknown task columns: {sorted(unknown)}")
-    if fields.get("stats") is not None and not isinstance(fields["stats"], str):
+    if fields.get("stats") is not None:
         fields["stats"] = json.dumps(fields["stats"], ensure_ascii=False)
-    for key in ("result_path", "extract_dir", "input_path"):
-        if fields.get(key) is not None:
-            fields[key] = str(fields[key])
     assignments = ", ".join(f"{column} = ?" for column in fields)
     _execute(f"UPDATE tasks SET {assignments} WHERE task_id = ?", [*fields.values(), task_id])
 
 
 def decode_stats(raw: Optional[str]) -> Optional[Dict[str, Any]]:
     """Parse a stored ``tasks.stats`` value.
+
+    Args:
+        raw: Column value.
 
     Returns:
         The stats dict, or ``None`` when the column is empty or not valid JSON.
@@ -390,13 +398,13 @@ def get_finished_task_ids_older_than(cutoff: float) -> List[str]:
     return [row["task_id"] for row in rows]
 
 
-def delete_task_row(task_id: str) -> bool:
+def delete_task_row(task_id: str) -> None:
     """Delete a task; the foreign key cascades to its translation rows.
 
-    Returns:
-        ``True`` if the row existed.
+    Args:
+        task_id: Task UUID.
     """
-    return _execute("DELETE FROM tasks WHERE task_id = ?", (task_id,)) > 0
+    _execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
 
 
 # ---------------------------------------------------------------------------
@@ -450,9 +458,15 @@ def insert_translation(
 def update_translation_text(task_id: str, file: str, item_id: str, translated: str) -> None:
     """Persist an editor edit: set ``translated`` for one ``(task_id, file, item_id)``.
 
-    The row already exists (the editor loads originals from this table), so this
-    is an in-place update that preserves the original text and the row identity.
-    An edited line counts as translated: the user has reviewed it.
+    The original text and the row identity are kept, and the line counts as
+    translated (the user has reviewed it). An edit of an item with no stored
+    row changes nothing.
+
+    Args:
+        task_id: Owning task.
+        file: Resource file name.
+        item_id: Per-file item identifier.
+        translated: New translation.
     """
     _execute(
         "UPDATE translations SET translated = ?, success = 1 "

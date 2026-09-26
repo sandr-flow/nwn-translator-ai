@@ -510,6 +510,13 @@ class TestAtomicWrite:
 
 # Canonical Aurora IDs (nwn.h / xoreos) for the game resource types we touch.
 _CANONICAL_IDS = {
+    1: ".bmp",
+    3: ".tga",
+    4: ".wav",
+    6: ".plt",
+    7: ".ini",
+    10: ".txt",
+    2002: ".mdl",
     2010: ".ncs",
     2012: ".are",
     2014: ".ifo",
@@ -534,13 +541,18 @@ class TestCanonicalResourceTypes:
     def test_reader_table_matches_canonical(self, res_id, ext):
         assert RESOURCE_TYPES.get(res_id) == ext
 
-    def test_no_duplicate_extension_in_canonical_range(self):
-        """Within the 20xx range each extension maps to exactly one ID."""
-        canonical = {rid: ext for rid, ext in RESOURCE_TYPES.items() if rid >= 2000}
+    def test_no_duplicate_extension(self):
+        """Each extension maps to exactly one ID, so the writer's inverse is exact."""
         seen: dict = {}
-        for rid, ext in canonical.items():
+        for rid, ext in RESOURCE_TYPES.items():
             assert ext not in seen, f"{ext} duplicated: {seen.get(ext)} and {rid}"
             seen[ext] = rid
+        assert TYPE_ID_BY_EXTENSION == seen
+
+    @pytest.mark.parametrize("res_id", [0, 2, 5, 14, 27, 79])
+    def test_non_aurora_low_ids_are_unknown(self, res_id):
+        """Low ids that are not Aurora types keep a numeric extension."""
+        assert res_id not in RESOURCE_TYPES
 
     @pytest.mark.parametrize("ext", sorted(TRANSLATABLE_TYPES))
     def test_translatable_ext_round_trips_to_canonical_id(self, ext):
@@ -560,4 +572,13 @@ class TestCanonicalResourceTypes:
     def test_writer_emits_canonical_id_without_overrides(self, signature, ext, expected_id):
         """Writing a translatable resource without overrides yields the canonical ID."""
         entries = _write_and_read({f"blueprint{ext}": signature + b"V3.2" + b"\x00" * 8})
+        assert entries[0].res_type == expected_id
+
+    @pytest.mark.parametrize(
+        "ext, expected_id",
+        [(".tga", 3), (".bmp", 1), (".wav", 4), (".txt", 10), (".mdl", 2002), (".xyz", 0)],
+    )
+    def test_writer_ids_for_hak_content(self, ext, expected_id):
+        """Textures, sounds, text and models get their Aurora ids; unknown types get 0."""
+        entries = _write_and_read({f"asset{ext}": b"data"})
         assert entries[0].res_type == expected_id

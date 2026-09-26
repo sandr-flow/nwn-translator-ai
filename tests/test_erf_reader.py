@@ -182,6 +182,27 @@ class TestExtraction:
         out = ERFReader(mod).extract_all(tmp_path / "out")
         assert [p.name for p in out.iterdir()] == ["npc.6789"]
 
+    @pytest.mark.parametrize(
+        "type_id, ext",
+        [
+            (1, ".bmp"),
+            (3, ".tga"),
+            (4, ".wav"),
+            (6, ".plt"),
+            (7, ".ini"),
+            (10, ".txt"),
+            (2002, ".mdl"),
+        ],
+    )
+    def test_hak_content_types_get_their_extensions(self, tmp_path, type_id, ext):
+        """Low Aurora ids are not GFF types: a text file must not become a ``.git``."""
+        mod = tmp_path / "content.hak"
+        writer = ERFWriter(mod, type_overrides={"asset.bin": type_id})
+        writer.add_resource("asset", ".bin", b"plain content")
+        writer.write()
+        out = ERFReader(mod).extract_all(tmp_path / "out")
+        assert [p.name for p in out.iterdir()] == [f"asset{ext}"]
+
     def test_characters_forbidden_on_windows_become_underscores(self, tmp_path):
         mod = _write_valid_mod(tmp_path / "odd.mod", [("a?b*c", ".dlg", b"DLG DATA")])
         reader = ERFReader(mod)

@@ -51,89 +51,16 @@ FILE_TYPES = {".mod": b"MOD ", ".erf": b"ERF ", ".hak": b"HAK "}
 
 _COPY_CHUNK = 1024 * 1024
 
-#: Resource type id -> file extension.
+#: Resource type id -> file extension: the Aurora ids of BioWare's Key/BIF
+#: specification plus the NWN blueprint, palette and save-game types.
 RESOURCE_TYPES: Dict[int, str] = {
-    0: ".bmp",
-    1: ".tga",
-    2: ".wav",
-    3: ".plt",
-    4: ".ini",
-    5: ".txt",
-    6: ".mdl",
-    7: ".thg",
-    8: ".fxt",
-    9: ".txi",
-    10: ".git",
-    11: ".uti",
-    12: ".ptc",
-    13: ".sst",
-    14: ".ncs",
-    15: ".mod",
-    16: ".are",
-    17: ".set",
-    18: ".ifo",
-    19: ".bic",
-    20: ".wok",
-    21: ".2da",
-    22: ".tlk",
-    23: ".txi",
-    24: ".git",
-    25: ".bti",
-    26: ".utc",
-    27: ".dlg",
-    28: ".itp",
-    29: ".btt",
-    30: ".utt",
-    31: ".btc",
-    32: ".uts",
-    33: ".utr",
-    34: ".btd",
-    35: ".btp",
-    36: ".ptm",
-    37: ".ptt",
-    38: ".ncs",
-    39: ".bfx",
-    40: ".bte",
-    41: ".css",
-    42: ".fs",
-    43: ".jrl",
-    44: ".sec",
-    45: ".ifo",
-    46: ".bio",
-    47: ".spe",
-    48: ".sem",
-    49: ".lus",
-    50: ".gor",
-    51: ".fxs",
-    52: ".wmp",
-    53: ".fac",
-    54: ".gff",
-    55: ".gam",
-    56: ".gui",
-    57: ".ute",
-    58: ".utp",
-    59: ".utm",
-    60: ".utw",
-    61: ".uts",
-    62: ".utr",
-    63: ".utf",
-    64: ".utd",
-    65: ".utn",
-    66: ".pal",
-    67: ".pdf",
-    68: ".gic",
-    69: ".fxe",
-    70: ".ptx",
-    71: ".png",
-    72: ".ltx",
-    73: ".utx",
-    74: ".gff",
-    75: ".xml",
-    76: ".xba",
-    77: ".ids",
-    78: ".bwd",
-    79: ".bwm",
-    2002: ".res",
+    1: ".bmp",
+    3: ".tga",
+    4: ".wav",
+    6: ".plt",
+    7: ".ini",
+    10: ".txt",
+    2002: ".mdl",
     2009: ".nss",
     2010: ".ncs",
     2011: ".mod",
@@ -187,18 +114,8 @@ RESOURCE_TYPES: Dict[int, str] = {
     2066: ".ptt",
 }
 
-
-def _type_ids_by_extension() -> Dict[str, int]:
-    """Invert :data:`RESOURCE_TYPES`, preferring the 20xx id of a repeated extension."""
-    ids: Dict[str, int] = {}
-    for type_id, ext in sorted(RESOURCE_TYPES.items()):
-        if ext not in ids or (type_id >= 2000 and ids[ext] < 2000):
-            ids[ext] = type_id
-    return ids
-
-
 #: File extension -> resource type id written for files without a source type.
-TYPE_ID_BY_EXTENSION = _type_ids_by_extension()
+TYPE_ID_BY_EXTENSION = {ext: type_id for type_id, ext in RESOURCE_TYPES.items()}
 
 # Third-party archives sometimes store resources under custom type ids; the
 # 4-byte signature at the start of a GFF (or NCS) resource names its real type.

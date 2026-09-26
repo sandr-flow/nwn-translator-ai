@@ -1369,7 +1369,7 @@ class TestProgressBumps:
         result = manager.translate_content(content, item_progress=progress)
 
         assert len(result) == 4
-        assert progress.files[:2] == ["combined", "c.uti"]
+        assert progress.files[:2] == ["s.ncs", "c.uti"]
         assert sorted(progress.files[2:4]) == ["a.uti", "d.utp"]
         assert progress.files[4:] == ["b.uti"]
 

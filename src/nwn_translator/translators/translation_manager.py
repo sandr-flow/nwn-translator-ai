@@ -152,7 +152,7 @@ class TranslationManager:
         add_script_context([w.item for w in approved if w.is_ncs])
         for w in work:
             if w.is_ncs and not approvals.get(w.key, False):
-                bump(content.content_type)
+                bump(w.key[0])
 
         groups: Dict[Hashable, List[WorkItem]] = {}
         for w in approved:

@@ -9,13 +9,12 @@ import pytest
 
 from src.nwn_translator.context.entity_extractor import (
     EntityExtractor,
-    _batch_texts,
     _coerce_category,
-    _format_user_prompt,
     _parse_entities_json,
     _select_texts,
 )
 from src.nwn_translator.extractors.base import TranslatableItem
+from src.nwn_translator.prompts.terminology import build_entity_extraction_user_prompt
 
 
 def _item(text: str, metadata=None) -> TranslatableItem:
@@ -82,22 +81,6 @@ class TestTextSelection:
         assert _select_texts(items) == ["This trigger says Madam Eva waits in Barovia."]
 
 
-class TestBatching:
-    def test_exact_multiple(self):
-        texts = [f"t{i}" for i in range(50)]
-        batches = _batch_texts(texts, 25)
-        assert len(batches) == 2
-        assert len(batches[0]) == 25 and len(batches[1]) == 25
-
-    def test_remainder(self):
-        texts = [f"t{i}" for i in range(30)]
-        batches = _batch_texts(texts, 25)
-        assert [len(b) for b in batches] == [25, 5]
-
-    def test_empty(self):
-        assert _batch_texts([], 25) == []
-
-
 class TestCategoryCoercion:
     @pytest.mark.parametrize(
         "value,expected",
@@ -153,13 +136,13 @@ class TestJsonParsing:
 
 class TestUserPrompt:
     def test_format(self):
-        out = _format_user_prompt(["Hello world.", "Goodbye."])
+        out = build_entity_extraction_user_prompt(["Hello world.", "Goodbye."])
         assert "[0]" in out and "[1]" in out
         assert "Hello world." in out
         assert "Goodbye." in out
 
     def test_newlines_flattened_and_quotes_escaped(self):
-        out = _format_user_prompt(['line1\nline2 "quoted"'])
+        out = build_entity_extraction_user_prompt(['line1\nline2 "quoted"'])
         assert "\n" in out  # between list items
         assert '"quoted"' not in out
         assert "'quoted'" in out
@@ -281,9 +264,7 @@ class TestExtractIntegration:
         assert "English" in system_prompt
 
     def test_dedup_across_batches(self):
-        texts = [
-            f"Sentence number {i} that is well over forty chars long here." * 1 for i in range(30)
-        ]
+        texts = [f"Sentence number {i} that is well over forty chars long here." for i in range(60)]
         items = [_item(t) for t in texts]
         payload_a = '{"entities": [{"name": "Dup", "type": "location"}]}'
         payload_b = '{"entities": [{"name": "dup", "type": "character"}]}'
@@ -294,6 +275,7 @@ class TestExtractIntegration:
             _config(),
             known_names=set(),
         )
-        # Two batches (25 + 5), both return a name collapsing to same key.
+        # Two batches (50 + 10), both return a name collapsing to same key.
+        assert len(provider.calls) == 2
         assert len(result) == 1
         assert result[0][0] == "Dup"

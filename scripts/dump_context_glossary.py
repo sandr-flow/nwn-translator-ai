@@ -30,7 +30,8 @@ from nwn_translator.context.entity_candidates import EntityCandidateRegistry
 from nwn_translator.context.entity_extractor import EntityExtractor
 from nwn_translator.context.world_context import WorldContext, WorldScanner
 from nwn_translator.extractors.base import ExtractedContent
-from nwn_translator.glossary import Glossary, GlossaryBuilder
+from nwn_translator.glossary import Glossary
+from nwn_translator.glossary_builder import GlossaryBuilder
 from nwn_translator.glossary_curator import GlossaryCurator
 from nwn_translator.main import ModuleTranslator
 from nwn_translator.pipeline.artifacts import candidate_to_dict, world_context_to_dict

@@ -16,7 +16,7 @@ from nwn_translator.context.entity_candidates import EntityCandidateRegistry
 from nwn_translator.context.entity_extractor import EntityExtractor
 from nwn_translator.context.world_context import NPCInfo, WorldContext
 from nwn_translator.extractors.base import TranslatableItem
-from nwn_translator.glossary import GlossaryBuilder
+from nwn_translator.glossary_builder import GlossaryBuilder
 from nwn_translator.glossary_curator import GlossaryCurator
 from nwn_translator.prompts import (
     build_entity_extraction_system_prompt,

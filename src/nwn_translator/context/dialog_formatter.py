@@ -16,12 +16,26 @@ _CONTEXT_PREVIEW_CHARS = 600
 
 
 def node_key(node: DialogNode) -> str:
-    """Return the script key of *node*: ``E3`` for entry 3, ``R0`` for reply 0."""
+    """Return the script key of a node: ``E3`` for entry 3, ``R0`` for reply 0.
+
+    Args:
+        node: A dialog node.
+
+    Returns:
+        The key.
+    """
     return f"{'E' if node.is_entry else 'R'}{node.node_id}"
 
 
 def speaker_label(node: DialogNode) -> str:
-    """Return the speaker shown for *node*: its tag, else ``NPC`` or ``Player``."""
+    """Return the speaker shown for a node: its tag, else ``NPC`` or ``Player``.
+
+    Args:
+        node: A dialog node.
+
+    Returns:
+        The label.
+    """
     return node.speaker or ("NPC" if node.is_entry else "Player")
 
 
@@ -56,7 +70,15 @@ def iter_nodes(tree: List[DialogNode]) -> Iterator[Tuple[str, DialogNode]]:
 def _render_blocks(
     nodes: Iterable[Tuple[str, DialogNode]], overrides: Mapping[str, str]
 ) -> List[str]:
-    """Render one block per node: header, text and the keys the node leads to."""
+    """Render one block per node: header, text and the keys the node leads to.
+
+    Args:
+        nodes: ``(key, node)`` pairs in output order.
+        overrides: Key to text used instead of ``node.text``.
+
+    Returns:
+        The script lines; each block ends with an empty line.
+    """
     lines: List[str] = []
     for key, node in nodes:
         lines.append(f"[{key}] [{speaker_label(node)}]:")

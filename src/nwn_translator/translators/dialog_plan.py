@@ -131,7 +131,16 @@ def prepare_dialog(
 
 
 def _terms_chars(texts: Sequence[str], target_lang: str, glossary: Optional["Glossary"]) -> int:
-    """Return the length of the glossary block a request with *texts* would carry."""
+    """Return the length of the glossary block a request with *texts* would carry.
+
+    Args:
+        texts: Texts of the request.
+        target_lang: Target language.
+        glossary: Run glossary, if any.
+
+    Returns:
+        Length of the block in characters; ``0`` without matching terms.
+    """
     return len(terminology_block(texts, target_lang, glossary))
 
 

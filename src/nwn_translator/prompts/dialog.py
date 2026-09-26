@@ -1,11 +1,12 @@
-"""User prompts of contextual dialog translation.
+"""Prompt texts of contextual dialog translation.
 
 The system prompt comes from
 :func:`~nwn_translator.prompts._builder.build_dialog_system_prompt_parts`;
-this module holds the user messages: the script of one dialog or of a group
-of small dialogs, the repair requests after an unparseable answer, the retry
-of lines whose NWN tokens or tags came back broken, and the context of a
-per-line retry.
+this module builds the ``DIALOG SPEAKERS`` block it embeds and the combined
+script of a group of small dialogs. It also holds the user messages: the
+script of one dialog or of a group, the repair requests after an
+unparseable answer, the retry of lines whose NWN tokens or tags came back
+broken, and the context of a per-line retry.
 """
 
 from typing import TYPE_CHECKING, List, Mapping, Optional, Sequence, Tuple
@@ -31,7 +32,14 @@ _LINE_RETRY_ATTEMPT = "Retry attempt 2 of 2."
 
 
 def _keys_exactly(keys: Sequence[str]) -> str:
-    """Return the sentence asking for exactly *keys* (sorted) as string values."""
+    """Return the sentence asking for exactly *keys* as string values.
+
+    Args:
+        keys: Keys the answer must have; they are listed sorted.
+
+    Returns:
+        The sentence.
+    """
     keys_csv = ", ".join(sorted(keys))
     return (
         f"Return ONLY one JSON object: keys exactly {keys_csv} "
@@ -40,7 +48,14 @@ def _keys_exactly(keys: Sequence[str]) -> str:
 
 
 def _bad_answer(bad_response: str) -> str:
-    """Return the quoted start of an unparseable answer."""
+    """Return the quoted start of an unparseable answer.
+
+    Args:
+        bad_response: The answer.
+
+    Returns:
+        A header line and the answer's first ``_BAD_ANSWER_CHARS`` characters.
+    """
     return "Invalid previous output (truncated for context):\n" + (
         (bad_response or "").strip()[:_BAD_ANSWER_CHARS]
     )

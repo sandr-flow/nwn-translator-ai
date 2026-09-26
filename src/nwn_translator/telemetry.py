@@ -76,7 +76,7 @@ class LLMRequestMetric:
         retry_count: Reserved; always 0.
         timeout: The attempt timed out.
         parse_recovery: Reserved; always ``None``.
-        success: The API returned a response.
+        success: The API returned a reply with a message.
         error: Error text of a failed attempt.
         created_at: Unix time of recording.
     """

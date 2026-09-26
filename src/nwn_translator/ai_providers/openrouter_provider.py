@@ -367,11 +367,13 @@ class OpenRouterProvider:
             if isinstance(exc, TRANSIENT_ERRORS):
                 raise
             raise map_api_error(exc, self.PROVIDER_LABEL) from exc
-        record(response=response)
         try:
-            return (response.choices[0].message.content or "").strip()
-        except Exception as exc:  # a reply without choices
+            reply = (response.choices[0].message.content or "").strip()
+        except (AttributeError, IndexError, TypeError) as exc:  # a reply without choices
+            record(response=response, error=exc)
             raise map_api_error(exc, self.PROVIDER_LABEL) from exc
+        record(response=response, reply=reply)
+        return reply
 
     #: :meth:`_complete_once` retried on transient errors. The retry repeats only the
     #: failed request, never the requests a task already completed (JSON attempts,
@@ -388,6 +390,7 @@ class OpenRouterProvider:
         glossary_chars: int,
         started: float,
         response: Any = None,
+        reply: str = "",
         error: Optional[BaseException] = None,
     ) -> None:
         """Record one request attempt when a metrics recorder is configured."""
@@ -398,10 +401,6 @@ class OpenRouterProvider:
         user_chars = len(user or "")
         prompt_chars = stable_chars + variable_chars + user_chars
         usage_in, usage_out = usage_tokens(response)
-        try:
-            reply = (response.choices[0].message.content or "").strip()
-        except Exception:
-            reply = ""
         recorder.record(
             LLMRequestMetric(
                 request_id=recorder.next_request_id(),

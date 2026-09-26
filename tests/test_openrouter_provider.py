@@ -34,8 +34,9 @@ def _status_error(cls, status: int, message: str = "boom"):
 class FakeAPI:
     """Stand-in for ``AsyncOpenAI``: records clients and requests, replays replies.
 
-    A reply is a string (the message content) or an exception to raise; once the
-    queue is empty every request gets ``{"translation": "ok"}``.
+    A reply is a string (the message content), an exception to raise or a ready
+    response object; once the queue is empty every request gets
+    ``{"translation": "ok"}``.
     """
 
     def __init__(self) -> None:
@@ -51,7 +52,7 @@ class FakeAPI:
             reply = self.replies.pop(0) if self.replies else '{"translation": "ok"}'
             if isinstance(reply, BaseException):
                 raise reply
-            return _response(reply)
+            return _response(reply) if isinstance(reply, str) else reply
 
         async def close():
             return None
@@ -512,6 +513,24 @@ class TestRequestMetrics:
             )
         (metric,) = recorder.requests
         assert (metric.success, metric.error, metric.batch_size) == (False, "denied", 1)
+
+    @pytest.mark.parametrize("choices", [[], None])
+    def test_reply_without_choices_is_a_failed_attempt(self, api, choices):
+        recorder = RunMetricsRecorder()
+        p = OpenRouterProvider(api_key=FAKE_KEY, metrics_recorder=recorder)
+        api.replies.append(SimpleNamespace(choices=choices, usage=None))
+        with pytest.raises(OpenRouterError, match="^OpenRouter translation failed: "):
+            run_async(
+                p.translate_batch_async([TranslationItem("A")], "english", "russian"),
+                timeout=5.0,
+            )
+        (metric,) = recorder.requests
+        assert (metric.success, metric.phase, metric.estimated_output_tokens) == (
+            False,
+            "generic_batch",
+            0,
+        )
+        assert metric.error
 
     def test_transient_batch_failure_is_recorded(self, api, no_backoff):
         recorder = RunMetricsRecorder()

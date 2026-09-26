@@ -135,6 +135,53 @@ def test_running_job_leaves_the_default_executor_free(
     assert _wait_for_status(client, r.json()["task_id"], "completed")["status"] == "completed"
 
 
+def test_deleting_a_running_task_cancels_it_and_frees_the_slot(
+    client: TestClient, task_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delete must stop the job, free the IP slot, and leave the workspace to the worker.
+
+    The worker used to keep translating (and spending the client's budget)
+    against a removed workspace, while its IP could already start another job
+    and the deploy gate no longer counted it.
+    """
+    started = threading.Event()
+    release = threading.Event()
+    cancel_seen: dict[str, bool] = {}
+
+    def blocking_translate(self):
+        started.set()
+        release.wait(timeout=10)
+        cancel_seen[self.config.input_file.parent.name] = self.config.cancel_check()
+        out = self.config.output_file
+        out.write_bytes(b"DONE")
+        return out
+
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", blocking_translate)
+    data = {"api_key": "sk-x", "target_lang": "english"}
+    files = {"file": ("run.mod", b"\x05" * 200, "application/octet-stream")}
+    task_id = client.post("/api/translate", files=files, data=data).json()["task_id"]
+    workspace = task_workspace / task_id
+    assert started.wait(timeout=5)
+
+    assert client.delete(f"/api/tasks/{task_id}").status_code == 200
+    assert client.get(f"/api/tasks/{task_id}/status").status_code == 404
+    assert client.get("/api/health").json()["active_tasks"] == 1  # the worker still runs
+    assert workspace.is_dir()
+    files = {"file": ("next.mod", b"\x06" * 200, "application/octet-stream")}
+    second = client.post("/api/translate", files=files, data=data)
+    assert second.status_code == 200, "the deleted job kept the IP slot"
+
+    release.set()
+    deadline = time.time() + 5.0
+    while client.get("/api/health").json()["active_tasks"] and time.time() < deadline:
+        time.sleep(0.05)
+    assert client.get("/api/health").json()["active_tasks"] == 0
+    assert cancel_seen[task_id] is True
+    assert cancel_seen[second.json()["task_id"]] is False
+    assert not workspace.exists()
+    assert (task_workspace / second.json()["task_id"]).is_dir()
+
+
 def test_health_ignores_tasks_interrupted_by_a_restart(
     task_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

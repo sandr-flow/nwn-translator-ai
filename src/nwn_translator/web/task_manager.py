@@ -17,7 +17,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 from ..config import (
     TranslationCancelled,
@@ -221,6 +221,8 @@ class TaskManager:
         self._active_by_ip: Dict[str, str] = {}
         #: task_id -> thread running that task's job.
         self._workers: Dict[str, threading.Thread] = {}
+        #: Deleted tasks whose worker is still winding down.
+        self._orphaned: Set[str] = set()
         self._reconcile_interrupted()
 
     def _reconcile_interrupted(self) -> None:
@@ -263,12 +265,14 @@ class TaskManager:
     def active_task_count(self) -> int:
         """Return how many tasks have not reached a terminal status.
 
-        Exposed via ``/api/health`` so the deploy can wait for an idle service
-        before recreating the container: a restart kills every worker thread,
-        and there is no resume.
+        Deleted tasks whose worker is still running count too. Exposed via
+        ``/api/health`` so the deploy can wait for an idle service before
+        recreating the container: a restart kills every worker thread, and there
+        is no resume.
         """
         with self._lock:
-            return sum(1 for t in self._tasks.values() if not t.is_finished())
+            unfinished = sum(1 for t in self._tasks.values() if not t.is_finished())
+            return unfinished + len(self._orphaned)
 
     def active_task_id_for_ip(self, ip: str) -> Optional[str]:
         """Return the unfinished task occupying *ip*'s slot, or ``None``."""
@@ -376,11 +380,24 @@ class TaskManager:
         self.release_active(task.client_ip, task.task_id)
 
     def delete(self, task_id: str) -> None:
-        """Delete a task with its workspace, database row and translations."""
-        shutil.rmtree(self.workspace_root / task_id, ignore_errors=True)
+        """Delete a task with its workspace, database row and translations.
+
+        A running job is cancelled and its client's slot freed at once. Its
+        workspace goes when the worker exits, because the job may still be
+        writing there; until then the worker counts as an active task.
+        """
         with self._lock:
-            self._tasks.pop(task_id, None)
+            task = self._tasks.pop(task_id, None)
+            if task is not None:
+                task.request_cancel()
+                if self._active_by_ip.get(task.client_ip) == task_id:
+                    del self._active_by_ip[task.client_ip]
+            worker_running = task_id in self._workers
+            if worker_running:
+                self._orphaned.add(task_id)
         delete_task_row(task_id)
+        if not worker_running:
+            shutil.rmtree(self.workspace_root / task_id, ignore_errors=True)
 
     def rebuild(
         self, task: TranslationTask, edits: Sequence[RebuildEdit], target_lang: Optional[str]
@@ -501,13 +518,12 @@ class TaskManager:
         The task ends ``completed``, ``cancelled`` or ``failed``, its IP slot is
         released and the worker is unregistered.
         """
-        base = self.workspace_for_task(task.task_id)
-        temp_dir = base / "temp"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        task.input_path = input_path
-        update_task_row(task.task_id, input_path=str(input_path))
-
         try:
+            base = self.workspace_for_task(task.task_id)
+            temp_dir = base / "temp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            task.input_path = input_path
+            update_task_row(task.task_id, input_path=str(input_path))
             logger.info(
                 "Task %s: target_lang=%r source_lang=%r module_encoding=%s",
                 task.task_id,
@@ -559,6 +575,10 @@ class TaskManager:
             self.release_active(task.client_ip, task.task_id)
             with self._lock:
                 del self._workers[task.task_id]
+                deleted = task.task_id in self._orphaned
+                self._orphaned.discard(task.task_id)
+            if deleted:
+                shutil.rmtree(self.workspace_root / task.task_id, ignore_errors=True)
 
     def _finish(self, task: TranslationTask, status: str, **fields: Any) -> None:
         """Move *task* to terminal *status* in memory and in SQLite.

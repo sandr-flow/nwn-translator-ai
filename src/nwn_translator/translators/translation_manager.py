@@ -1,4 +1,8 @@
-"""Batch translation of every non-dialog string of a module.
+"""Batch translation of the strings of a module.
+
+The manager translates every string except, in context mode, the ``.dlg``
+lines, which :mod:`.context_translator` translates as whole conversations;
+without context it takes the dialog lines too.
 
 :class:`TranslationManager` takes the extracted occurrences of a run, lets the
 script gate decide which script literals may change, sends each distinct request

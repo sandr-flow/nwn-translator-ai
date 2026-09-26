@@ -320,7 +320,8 @@ class PipelineState:
 
         Returns:
             ``files_processed`` (files injected without an error),
-            ``items_translated`` (accepted non-dialog requests), ``errors``,
+            ``items_translated`` (accepted requests of the batch pass, so no
+            contextual dialog lines), ``errors``,
             ``ncs_diagnostics``, ``metrics`` (the current request summary) and
             ``total_errors``, in this order.
         """
@@ -651,8 +652,9 @@ def stage_build_glossary(state: PipelineState) -> None:
 def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Translations:
     """Translates every extracted item.
 
-    Non-dialog items of all files go to one deduplicated batch pass; in context
-    mode the dialog files are translated as whole conversations afterwards.
+    The items of all files go to one deduplicated batch pass, except that in
+    context mode the dialog files are translated as whole conversations
+    afterwards.
     Rejected requests become errors and editor rows with ``success: False``.
 
     Args:

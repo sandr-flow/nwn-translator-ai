@@ -644,7 +644,7 @@ class TaskManager:
             task.extract_dir = translator.extract_dir
             task.stats = translator.get_statistics()
             # Editor rows of every file, dialogs and rejected lines included;
-            # ``items_translated`` counts only accepted non-dialog items.
+            # ``items_translated`` counts only accepted batch-pass requests.
             try:
                 task.stats["texts_translated"] = count_translations(task.task_id)
             except sqlite3.Error as e:

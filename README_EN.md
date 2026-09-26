@@ -14,7 +14,7 @@ Translation runs as a pipeline of sequential stages:
 2. **World context** — scan NPCs, areas, quests, and proper nouns for consistent translation; creatures, placeables, and doors placed in areas tell who speaks each dialog line.
 3. **Extract** the strings embedded in each resource; StrRef-only fields stay with the player's `dialog.tlk`.
 4. **Glossary** — collect name candidates (from name fields and from the texts), curate them and translate the canonical forms that are then injected into prompts.
-5. **Translate** — dialogs are translated contextually (aware of branching), other strings in batches; NWN tokens and inline tags (`<FirstName>`, `<CustomToken:123>`, `<StartAction>`) are protected with placeholders.
+5. **Translate** — with world context, dialogs are translated as whole conversations (aware of branching) and other strings in batches; without it, dialog lines go in batches too; NWN tokens and inline tags (`<FirstName>`, `<CustomToken:123>`, `<StartAction>`) are protected with placeholders.
 6. **Inject** — byte-level patching of strings back into GFF/NCS without fully rewriting binary resources.
 7. **Repack** the new archive.
 

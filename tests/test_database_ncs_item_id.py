@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -86,6 +88,37 @@ def test_sqlite_log_writer_persists_failed_row_with_original(isolated_db: None) 
     assert rows[0]["original"] == "Boom"
     assert rows[0]["translated"] == "Boom"
     assert rows[0]["success"] == 0
+
+
+def test_sqlite_log_writer_drops_rows_of_a_deleted_task_quietly(
+    isolated_db: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A job may still log rows after its task was deleted; that is not a failure."""
+    writer = db.SqliteTranslationLogWriter("gone")
+
+    with caplog.at_level(logging.DEBUG, logger=db.__name__):
+        writer.write({"original": "A", "translated": "А", "file": "a.uti", "item_id": "1"})
+
+    assert db.get_translations_by_task("gone") == []
+    assert [r.levelno for r in caplog.records] == [logging.DEBUG]
+
+
+def test_sqlite_log_writer_warns_when_a_row_is_lost(
+    isolated_db: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Any other failure loses an editor row that rebuild relies on, so it must be visible."""
+
+    def locked(**_: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(db, "insert_translation", locked)
+    writer = db.SqliteTranslationLogWriter("t1")
+
+    with caplog.at_level(logging.DEBUG, logger=db.__name__):
+        writer.write({"original": "A", "translated": "А", "file": "a.uti", "item_id": "1"})
+
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+    assert "database is locked" in caplog.records[0].getMessage()
 
 
 def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

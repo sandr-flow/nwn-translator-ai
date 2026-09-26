@@ -534,8 +534,9 @@ class SqliteTranslationLogWriter:
     def write(self, entry: Dict[str, Any]) -> None:
         """Store one log entry.
 
-        A failed insert (e.g. the task was deleted meanwhile) is logged at debug
-        level and never interrupts the translation.
+        A failed insert never interrupts the translation. A row of a task
+        deleted meanwhile (a foreign key violation) is dropped quietly; any
+        other failure loses an editor row and is logged as a warning.
 
         Args:
             entry: Translation log record.
@@ -558,5 +559,7 @@ class SqliteTranslationLogWriter:
                 success=entry.get("success", True) not in (False, 0, "0"),
                 speaker=entry.get("speaker"),
             )
+        except sqlite3.IntegrityError as e:
+            logger.debug("Dropped translation row of task %s: %s", self.task_id, e)
         except Exception as e:
-            logger.debug("Failed to write translation to SQLite: %s", e)
+            logger.warning("Failed to store translation row of task %s: %s", self.task_id, e)

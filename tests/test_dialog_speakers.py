@@ -15,8 +15,8 @@ from nwn_translator.context.dialog_speakers import dialog_line_speaker
 from nwn_translator.context.world_context import NPCInfo, WorldContext, WorldScanner
 from nwn_translator.extractors.base import DialogNode, ExtractedContent, TranslatableItem
 from nwn_translator.extractors.dialog_extractor import DialogExtractor
-from nwn_translator.file_handlers.gff_handler import read_gff
-from nwn_translator.file_handlers.gff_writer import write_gff
+from nwn_translator.formats.gff import read_gff
+from tests.support.gff_writer import write_gff
 from nwn_translator.main import rebuild_module
 from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_translate
 from nwn_translator.translators import context_translator as context_module

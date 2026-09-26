@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nwn_translator.file_handlers.ncs_concat import (
+from nwn_translator.extractors.ncs_concat import (
     ConcatLit,
     ConcatVar,
     TYPE_ADD_STRING_STRING,
@@ -15,7 +15,7 @@ from nwn_translator.file_handlers.ncs_concat import (
     merged_text,
     split_concat_translation,
 )
-from nwn_translator.file_handlers.ncs_parser import (
+from nwn_translator.formats.ncs import (
     NCS_HEADER,
     NCSFile,
     NCSInstruction,
@@ -37,13 +37,10 @@ from nwn_translator.file_handlers.ncs_parser import (
     OP_NEQUAL,
     TYPE_INT,
     TYPE_STRING,
+    NCSPatchError,
     parse_ncs,
     parse_ncs_bytes,
-)
-from nwn_translator.file_handlers.ncs_patcher import (
-    NCSPatchError,
     patch_ncs_string_replacements,
-    patch_ncs_strings,
 )
 from nwn_translator.extractors.base import TranslatableItem
 from nwn_translator.extractors.ncs_context import TYPE_STRING_STRING
@@ -143,13 +140,23 @@ def _write_ncs(tmp_dir: Path, name: str, *parts: bytes) -> Path:
     return path
 
 
+def _patch_texts(path: Path, translations: dict) -> int:
+    """Patch every string constant whose text is a key of *translations*."""
+    replacements = [
+        (instr.offset, instr.string_value, translations[instr.string_value])
+        for instr in parse_ncs(path).string_constants
+        if instr.string_value in translations
+    ]
+    return patch_ncs_string_replacements(path, replacements)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Parser tests
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestNCSParser:
-    """Tests for ncs_parser.py."""
+    """Tests for the NCS parser."""
 
     def test_valid_header(self):
         data = _header() + _retn()
@@ -245,7 +252,7 @@ class TestNCSParser:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Opcode argument sizes (C1 regression)
+# Opcode argument sizes
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -260,7 +267,7 @@ def _eq_struct(opcode: int, size: int) -> bytes:
 
 
 class TestNCSOpcodeArgSizes:
-    """C1: copy opcodes carry int32+uint16 (6 bytes); struct compares carry +2."""
+    """Copy opcodes carry int32+uint16 (6 bytes); struct compares carry +2."""
 
     def test_cpdownsp_canonical_sequence(self):
         """``01 01 FF FF FF FC 00 04`` is one CPDOWNSP, not CPDOWNSP + garbage."""
@@ -321,16 +328,16 @@ class TestNCSOpcodeArgSizes:
 
 
 class TestNCSPatcher:
-    """Tests for ncs_patcher.py."""
+    """Tests for the NCS patcher."""
 
     def test_no_matching_strings(self, tmp_path):
         path = _write_ncs(tmp_path, "test.ncs", _consts("Hello"), _retn())
-        count = patch_ncs_strings(path, {"Goodbye": "Au revoir"})
+        count = _patch_texts(path, {"Goodbye": "Au revoir"})
         assert count == 0
 
     def test_same_length_replacement(self, tmp_path):
         path = _write_ncs(tmp_path, "test.ncs", _consts("AAAA"), _retn())
-        count = patch_ncs_strings(path, {"AAAA": "BBBB"})
+        count = _patch_texts(path, {"AAAA": "BBBB"})
         assert count == 1
         ncs = parse_ncs(path)
         assert ncs.instructions[0].string_value == "BBBB"
@@ -338,7 +345,7 @@ class TestNCSPatcher:
     def test_longer_replacement(self, tmp_path):
         path = _write_ncs(tmp_path, "test.ncs", _consts("Hi"), _retn())
         original_size = path.stat().st_size
-        count = patch_ncs_strings(path, {"Hi": "Hello there!"})
+        count = _patch_texts(path, {"Hi": "Hello there!"})
         assert count == 1
         ncs = parse_ncs(path)
         assert ncs.instructions[0].string_value == "Hello there!"
@@ -346,7 +353,7 @@ class TestNCSPatcher:
 
     def test_shorter_replacement(self, tmp_path):
         path = _write_ncs(tmp_path, "test.ncs", _consts("Hello there!"), _retn())
-        count = patch_ncs_strings(path, {"Hello there!": "Hi"})
+        count = _patch_texts(path, {"Hello there!": "Hi"})
         assert count == 1
         ncs = parse_ncs(path)
         assert ncs.instructions[0].string_value == "Hi"
@@ -366,7 +373,7 @@ class TestNCSPatcher:
             _retn(),
         )
         # Replace "AB" with "ABCDEF" (+4 bytes)
-        count = patch_ncs_strings(path, {"AB": "ABCDEF"})
+        count = _patch_texts(path, {"AB": "ABCDEF"})
         assert count == 1
         ncs = parse_ncs(path)
         # JMP should now have offset increased by 4
@@ -392,7 +399,7 @@ class TestNCSPatcher:
             _jmp(jmp_target_offset),
         )
         # Replace "AB" with "ABCDEF" (+4 bytes)
-        count = patch_ncs_strings(path, {"AB": "ABCDEF"})
+        count = _patch_texts(path, {"AB": "ABCDEF"})
         assert count == 1
         ncs = parse_ncs(path)
         jmp_instr = ncs.instructions[2]
@@ -415,7 +422,7 @@ class TestNCSPatcher:
         ncs_before = parse_ncs(path)
         jmp_before = ncs_before.instructions[0].jump_offset
 
-        count = patch_ncs_strings(path, {"AB": "ABCDEF"})
+        count = _patch_texts(path, {"AB": "ABCDEF"})
         assert count == 1
         ncs_after = parse_ncs(path)
         # JMP offset should be unchanged (both source and target before CONSTS)
@@ -430,7 +437,7 @@ class TestNCSPatcher:
             _consts("Second"),
             _retn(),
         )
-        count = patch_ncs_strings(
+        count = _patch_texts(
             path,
             {
                 "First": "Eerste",
@@ -445,7 +452,7 @@ class TestNCSPatcher:
     def test_identity_replacement_skipped(self, tmp_path):
         """Replacing string with itself should be a no-op."""
         path = _write_ncs(tmp_path, "test.ncs", _consts("Same"), _retn())
-        count = patch_ncs_strings(path, {"Same": "Same"})
+        count = _patch_texts(path, {"Same": "Same"})
         assert count == 0
 
     def test_complex_jump_scenario(self, tmp_path):
@@ -492,7 +499,7 @@ class TestNCSPatcher:
         assert jsr_instr.offset + jsr_instr.jump_offset == sub_instr.offset
 
         # Patch both strings (longer replacements)
-        count = patch_ncs_strings(
+        count = _patch_texts(
             path,
             {
                 "msg1": "translated message one",
@@ -531,9 +538,25 @@ class TestNCSPatcher:
         assert vals.count("FirstOnly") == 1
         assert vals.count("Same") == 1
 
+    def test_consts_bytes_use_the_module_codec(self, tmp_path):
+        """CONSTS carry a BE length and the text encoded like GFF strings (dash -> '-')."""
+        path = _write_ncs(tmp_path, "enc.ncs", _consts("Hi"), _retn())
+        patch_ncs_string_replacements(path, [(8, "Hi", "Да — нет")], text_encoding="cp1251")
+        encoded = "Да - нет".encode("cp1251")
+        expected = struct.pack(">BBH", OP_CONST, TYPE_STRING, len(encoded)) + encoded + _retn()
+        assert path.read_bytes() == _header() + expected
+
+    def test_unsupported_encoding_rejected(self, tmp_path):
+        """Only the module code pages are writable, as for GFF strings."""
+        path = _write_ncs(tmp_path, "enc.ncs", _consts("Hi"), _retn())
+        before = path.read_bytes()
+        with pytest.raises(NCSPatchError, match="Unsupported module text encoding: 'utf-8'"):
+            patch_ncs_string_replacements(path, [(8, "Hi", "Hello")], text_encoding="utf-8")
+        assert path.read_bytes() == before
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Patcher: NWN:EE size field (C2 regression)
+# Patcher: preamble size field
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -549,7 +572,7 @@ def _read_size_field(data: bytes) -> int:
 
 
 class TestNCSPatcherSizeField:
-    """C2: the NWN:EE preamble size field ``T`` must track the patched length."""
+    """The preamble size field ``T`` must track the patched length."""
 
     def test_lengthening_updates_size_field(self, tmp_path):
         path = tmp_path / "ee.ncs"

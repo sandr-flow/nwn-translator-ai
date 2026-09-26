@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Tuple
 import pytest
 
 from nwn_translator.extractors import git_fields
-from nwn_translator.file_handlers.ncs_parser import parse_ncs
+from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.pipeline.stages import load_parsed_and_extracted
 from nwn_translator.resources import RESOURCE_KINDS
 from tests.test_ncs import _action, _add_ss, _consts, _cptopsp, _retn, _write_ncs

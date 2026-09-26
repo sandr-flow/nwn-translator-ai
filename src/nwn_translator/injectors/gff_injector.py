@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from ..extractors.base import TranslatableItem, Translations
-from ..file_handlers.gff_patcher import GFFPatcher
+from ..formats.gff import GFFPatcher
 from .base import InjectedContent, changed_translations
 
 

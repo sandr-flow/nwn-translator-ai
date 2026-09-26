@@ -5,8 +5,8 @@ import struct
 import pytest
 
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
-from nwn_translator.file_handlers.erf_reader import ERFReader
-from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
+from nwn_translator.formats.erf import ERFReader, extension_for_type
+from nwn_translator.formats.ncs import parse_ncs_bytes
 from nwn_translator.config import TranslationConfig
 from nwn_translator.injectors.ncs_injector import inject_ncs
 from nwn_translator.translators.translation_manager import TranslationManager
@@ -64,12 +64,12 @@ def test_ncs_selection_and_patch(corpus_module, tmp_path, with_sources):
     sources = {
         entry.res_ref: entry
         for entry in all_entries
-        if reader.get_resource_type(entry.res_type) == ".nss"
+        if extension_for_type(entry.res_type) == ".nss"
     }
     entries = {
         entry.res_ref: entry
         for entry in all_entries
-        if reader.get_resource_type(entry.res_type) == ".ncs"
+        if extension_for_type(entry.res_type) == ".ncs"
     }
     with corpus_module.open("rb") as archive:
         for resource, wanted, forbidden in cases:
@@ -134,4 +134,3 @@ def test_ncs_selection_and_patch(corpus_module, tmp_path, with_sources):
                     assert before.args == after.args
             if raw[8] == 0x42:
                 assert struct.unpack_from(">I", patched_raw, 9)[0] == len(patched_raw)
-    reader.cleanup()

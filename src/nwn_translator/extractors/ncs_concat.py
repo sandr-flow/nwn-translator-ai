@@ -17,7 +17,7 @@ import struct
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-from .ncs_parser import (
+from ..formats.ncs import (
     NCSFile,
     OP_ACTION,
     OP_ADD,
@@ -26,6 +26,7 @@ from .ncs_parser import (
     OP_CPTOPBP,
     OP_RSADD,
 )
+from .ncs_context import ACTION_SIGNATURES
 
 # ADD type qualifier for string+string (community / Torlack SS).
 TYPE_ADD_STRING_STRING = 0x23
@@ -53,7 +54,13 @@ ConcatPart = Union[ConcatLit, ConcatVar]
 
 @dataclass(frozen=True)
 class ConcatChain:
-    """One concat expression: literals plus runtime slots, left to right."""
+    """One concat expression: literals plus runtime slots, left to right.
+
+    Attributes:
+        parts: Literals and numbered runtime slots in source order.
+        first_offset: Byte offset of the first literal; the chain's key.
+        last_instr_index: Index of the instruction that completed the chain.
+    """
 
     parts: Tuple[ConcatPart, ...]
     first_offset: int
@@ -76,10 +83,13 @@ class ConcatChain:
 
 @dataclass
 class _Cat:
+    """A partial concat result on the simulated stack."""
+
     parts: List[Union[ConcatLit, object]]
     end_index: int
 
 
+# Stack slot holding a runtime value.
 _VAR = object()
 
 
@@ -106,6 +116,7 @@ def parts_from_metadata(raw: Sequence[Mapping[str, Any]]) -> List[ConcatPart]:
 
 
 def _finalize(parts: Sequence[Union[ConcatLit, object]], end_index: int) -> Optional[ConcatChain]:
+    """Number the runtime slots of *parts*; ``None`` unless a literal and 2+ parts."""
     numbered: List[ConcatPart] = []
     var_n = 0
     has_lit = False
@@ -123,6 +134,7 @@ def _finalize(parts: Sequence[Union[ConcatLit, object]], end_index: int) -> Opti
 
 
 def _flatten(node: Union[_Cat, ConcatLit, object]) -> List[Union[ConcatLit, object]]:
+    """Return the parts a stack node contributes to an enclosing concat."""
     if isinstance(node, _Cat):
         return list(node.parts)
     return [node]
@@ -133,9 +145,13 @@ def find_concat_chains(ncs: NCSFile) -> Dict[int, ConcatChain]:
 
     Calls use the same signatures as consumer tracing. Unknown instructions
     end a chain; stack copies of literals must not become runtime placeholders.
-    """
-    from ..extractors.ncs_context import ACTION_SIGNATURES
 
+    Args:
+        ncs: The parsed script.
+
+    Returns:
+        First literal offset -> chain.
+    """
     chains: Dict[int, ConcatChain] = {}
     stack: List[Union[_Cat, ConcatLit, object]] = []
 
@@ -215,8 +231,14 @@ def split_concat_translation(
     the run gets the segment, the rest get ``""``. A slot with no CONSTS
     (leading/trailing/adjacent Vars) requires an empty segment.
 
-    Returns ``None`` when placeholders are missing, reordered, duplicated, or
-    a no-lit slot received non-empty text.
+    Args:
+        parts: The chain's parts (see :func:`parts_from_metadata`).
+        translated: Translation of :func:`merged_text` of the chain.
+
+    Returns:
+        ``(offset, original_text, new_text)`` per literal, or ``None`` when
+        placeholders are missing, reordered or duplicated, or a slot without
+        literals received non-empty text.
     """
     expected_vars = [p.index for p in parts if isinstance(p, ConcatVar)]
     found = list(_VAR_RE.finditer(translated))

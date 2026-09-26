@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
 
-from ..file_handlers import read_gff
+from ..formats.gff import read_gff
 from ..extractors.base import extract_local_string
 from ..nwn_constants import race_label, gender_label
 from .entity_candidates import EntityCandidateRegistry

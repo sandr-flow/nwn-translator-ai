@@ -1,9 +1,9 @@
 """Tests for GFF header block validation against the file size.
 
-A corrupt or non-GFF header can declare billions of labels/fields; before the
-validation the label loop allocated one placeholder per declared label (memory
-blowup) and the field loop spun through every declared index (minutes of busy
-work). A header block that lies outside the file must fail fast instead.
+A corrupt or non-GFF header can declare billions of labels/fields; a parser
+that trusted the counts would allocate one placeholder per declared label
+(memory blowup) or spin through every declared index (minutes of busy work).
+A header block that lies outside the file must fail fast instead.
 
 Fixtures are built by writing a valid GFF and corrupting one header DWORD.
 """
@@ -13,8 +13,8 @@ import time
 
 import pytest
 
-from src.nwn_translator.file_handlers.gff_handler import read_gff, write_gff
-from src.nwn_translator.file_handlers.gff_parser import GFFParseError, GFFParser
+from nwn_translator.formats.gff import HEADER, GFFHeader, GFFParseError, parse_gff, read_gff
+from tests.support.gff_writer import write_gff
 
 # Header DWORD offsets (GFF v3.2).
 _STRUCT_COUNT = 12
@@ -46,7 +46,7 @@ def _corrupt_header_dword(path, offset, value):
 def _assert_fails_fast(path, expected_block):
     started = time.monotonic()
     with pytest.raises(GFFParseError) as exc_info:
-        GFFParser(path).parse()
+        parse_gff(path)
     elapsed = time.monotonic() - started
     assert expected_block in str(exc_info.value)
     assert "outside the file" in str(exc_info.value)
@@ -63,13 +63,13 @@ class TestHeaderBlockValidation:
         assert parsed["LocalizedName"]["Value"] == "Plain Dagger"
 
     def test_huge_label_count_fails_fast(self, tmp_path):
-        """The pre-fix OOM scenario: billions of labels declared in a tiny file."""
+        """The OOM scenario: billions of labels declared in a tiny file."""
         path = _make_valid_gff(tmp_path)
         _corrupt_header_dword(path, _LABEL_COUNT, 4_294_902_017)
         _assert_fails_fast(path, "labels")
 
     def test_huge_field_count_fails_fast(self, tmp_path):
-        """The pre-fix busy-spin scenario: tens of millions of declared fields."""
+        """The busy-spin scenario: tens of millions of declared fields."""
         path = _make_valid_gff(tmp_path)
         _corrupt_header_dword(path, _FIELD_COUNT, 84_279_808)
         _assert_fails_fast(path, "fields")
@@ -91,7 +91,7 @@ class TestHeaderBlockValidation:
         truncated = tmp_path / "truncated.uti"
         truncated.write_bytes(data[: max(160, len(data) // 2)])
         with pytest.raises(GFFParseError) as exc_info:
-            GFFParser(truncated).parse()
+            parse_gff(truncated)
         assert "outside the file" in str(exc_info.value)
 
     def test_real_garbage_header_rejected(self, tmp_path):
@@ -99,4 +99,66 @@ class TestHeaderBlockValidation:
         garbage = tmp_path / "script.ncs"
         garbage.write_bytes(b"NCS V1.0B" + bytes(range(256)) * 4)
         with pytest.raises(GFFParseError):
-            GFFParser(garbage).parse()
+            parse_gff(garbage)
+
+
+class TestReadGffErrors:
+    """read_gff() names the file in every failure; these texts reach run statistics."""
+
+    def test_missing_file(self, tmp_path):
+        with pytest.raises(GFFParseError, match="File not found: .*absent.uti"):
+            read_gff(tmp_path / "absent.uti")
+
+    def test_corrupt_file(self, tmp_path):
+        path = _make_valid_gff(tmp_path)
+        _corrupt_header_dword(path, _LABEL_COUNT, 4_294_902_017)
+        with pytest.raises(GFFParseError) as exc_info:
+            read_gff(path)
+        message = str(exc_info.value)
+        assert message.startswith(f"Failed to parse GFF file {path.resolve()}: ")
+        assert "labels block outside the file" in message
+
+    def test_cache_returns_the_same_object(self, tmp_path):
+        path = _make_valid_gff(tmp_path)
+        cache = {}
+        first = read_gff(path, cache=cache)
+        assert read_gff(path, cache=cache) is first
+        assert list(cache) == [path.resolve()]
+
+
+class TestCompactHeader:
+    """The header is 56 bytes; nothing requires padding after it."""
+
+    @staticmethod
+    def _compact(path):
+        """Drop the fixture writer's header padding and move every block up."""
+        data = path.read_bytes()
+        header = GFFHeader.read(data)
+        pad = 160 - HEADER.size
+        compact = header._replace(
+            struct_offset=header.struct_offset - pad,
+            field_offset=header.field_offset - pad,
+            label_offset=header.label_offset - pad,
+            field_data_offset=header.field_data_offset - pad,
+            field_indices_offset=header.field_indices_offset - pad,
+            list_indices_offset=header.list_indices_offset - pad,
+        )
+        path.write_bytes(HEADER.pack(*compact) + data[160:])
+
+    def test_gff_smaller_than_160_bytes_parses(self, tmp_path):
+        path = tmp_path / "tiny.uti"
+        write_gff(path, {"StructType": "UTI", "Tag": "x", "LocalizedName": {"StrRef": 5}})
+        padded = read_gff(path)
+        self._compact(path)
+        assert path.stat().st_size < 160
+
+        compact = read_gff(path)
+        assert compact["Tag"] == padded["Tag"] == "x"
+        assert compact["LocalizedName"] == {"StrRef": 5, "Value": ""}
+        assert compact["_record_offsets"]["Tag"] == padded["_record_offsets"]["Tag"] - 104
+
+    def test_file_shorter_than_header_is_rejected(self, tmp_path):
+        path = tmp_path / "stub.uti"
+        path.write_bytes(b"UTI V3.2" + bytes(40))
+        with pytest.raises(GFFParseError, match="File too small to be valid GFF"):
+            parse_gff(path)

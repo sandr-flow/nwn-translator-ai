@@ -1,44 +1,25 @@
-"""GFF v3.2 binary writer for Neverwinter Nights: Enhanced Edition.
+"""GFF V3.2 serialiser for building test fixtures.
 
-This module serialises the dictionary produced by ``gff_to_dict`` /
-``GFFHandler.read`` back into a valid GFF v3.2 binary file, following the
-same layout as the NWN:EE engine expects.
+Turns a dict shaped like the output of
+:func:`nwn_translator.formats.gff.gff_to_dict` back into a GFF binary. The
+translator itself never rewrites a GFF (it byte-patches fields), so this lives
+with the tests.
 
-GFF v3.2 binary layout (header at offset 0, 56 bytes):
-    file_type           [0:4]   4-char type tag, e.g. b"DLG "
-    version             [4:8]   always b"V3.2"
-    StructOffset        [8:12]
-    StructCount         [12:16]
-    FieldOffset         [16:20]
-    FieldCount          [20:24]
-    LabelOffset         [24:28]
-    LabelCount          [28:32]
-    FieldDataOffset     [32:36]
-    FieldDataByteSize   [36:40]
-    FieldIndicesOffset  [40:44]
-    FieldIndicesByteSize[44:48]
-    ListIndicesOffset   [48:52]
-    ListIndicesByteSize [52:56]
-    [padding to 160 bytes]
-
-struct record  — 12 bytes: StructID(4) | DataOrDataOffset(4) | FieldCount(4)
-field record   — 12 bytes: Type(4) | LabelIndex(4) | DataOrDataOffset(4)
-label record   — 16 bytes: null-padded ASCII string
-field data     — raw bytes for complex types
-field indices  — DWORD[] mapping struct → field entries
-list indices   — DWORD[]: Count followed by struct indices
+Layout written: the header, padded to 160 bytes, then structs, fields, labels,
+field data, field indices and list indices, in that order. Strings are written
+as UTF-8.
 """
 
-import struct as _struct
 import logging
+import struct as _struct
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .gff_parser import GFFType
+from nwn_translator.formats.gff import HEADER, GFFType
 
 logger = logging.getLogger(__name__)
 
-# Number of bytes before the first actual section (header is 160 bytes)
+# The header is 56 bytes; fixtures reserve 160 bytes for it, zero-padded.
 _HEADER_SIZE = 160
 
 
@@ -49,7 +30,7 @@ class GFFWriteError(Exception):
 
 
 class GFFWriter:
-    """Serialises a GFF dict (as produced by gff_to_dict) to GFF v3.2 bytes.
+    """Serialises a GFF dict (as produced by gff_to_dict) to GFF V3.2 bytes.
 
     Usage::
 
@@ -57,33 +38,11 @@ class GFFWriter:
         writer.write(Path("output.dlg"))
     """
 
-    # Types stored inline (4-byte field DataOrDataOffset carries the value).
-    _INLINE_TYPES = {
-        GFFType.BYTE,
-        GFFType.CHAR,
-        GFFType.WORD,
-        GFFType.SHORT,
-        GFFType.DWORD,
-        GFFType.INT,
-        GFFType.FLOAT,
-    }
-
-    # Types stored in the Field Data block (DataOrDataOffset = byte offset).
-    _FIELDDATA_TYPES = {
-        GFFType.DWORD64,
-        GFFType.INT64,
-        GFFType.DOUBLE,
-        GFFType.CExoString,
-        GFFType.CResRef,
-        GFFType.CExoLocString,
-        GFFType.VOID,
-    }
-
     def __init__(self, data: Dict[str, Any], file_type: Optional[str] = None):
         """Initialise the writer.
 
         Args:
-            data: Dict as returned by GFFHandler.read() / gff_to_dict().
+            data: Dict as returned by read_gff() / gff_to_dict().
             file_type: 4-char GFF type tag (e.g. ``"DLG"``).  If *None*,
                 taken from ``data["StructType"]``.
         """
@@ -169,23 +128,26 @@ class GFFWriter:
         field_indices_offset = field_data_offset + fd_size
         list_indices_offset = field_indices_offset + fi_size
 
-        # Step 3: assemble header.
+        # Step 3: assemble header; bytes 56-159 stay zero.
         header = bytearray(_HEADER_SIZE)
-        header[0:4] = self._file_type
-        header[4:8] = b"V3.2"
-        _wi(header, 8, struct_offset)
-        _wi(header, 12, struct_count)
-        _wi(header, 16, field_offset)
-        _wi(header, 20, field_count)
-        _wi(header, 24, label_offset)
-        _wi(header, 28, label_count)
-        _wi(header, 32, field_data_offset)
-        _wi(header, 36, fd_size)
-        _wi(header, 40, field_indices_offset)
-        _wi(header, 44, fi_size)
-        _wi(header, 48, list_indices_offset)
-        _wi(header, 52, li_size)
-        # Bytes 56–159 remain zero (unused header fields).
+        HEADER.pack_into(
+            header,
+            0,
+            self._file_type,
+            b"V3.2",
+            struct_offset,
+            struct_count,
+            field_offset,
+            field_count,
+            label_offset,
+            label_count,
+            field_data_offset,
+            fd_size,
+            field_indices_offset,
+            fi_size,
+            list_indices_offset,
+            li_size,
+        )
 
         # Step 4: concatenate all sections.
         parts: List[bytes] = [
@@ -536,17 +498,6 @@ class GFFWriter:
 # ---------------------------------------------------------------------------
 
 
-def _wi(buf: bytearray, offset: int, value: int) -> None:
-    """Write a little-endian DWORD into *buf* at *offset* in-place.
-
-    Args:
-        buf: Mutable bytearray to write into.
-        offset: Byte offset.
-        value: Unsigned 32-bit value.
-    """
-    _struct.pack_into("<I", buf, offset, value & 0xFFFFFFFF)
-
-
 def _pack_struct(struct_id: int, data_or_offset: int, field_count: int) -> bytes:
     """Pack a 12-byte struct record.
 
@@ -589,7 +540,7 @@ def write_gff_bytes(data: Dict[str, Any], file_type: Optional[str] = None) -> by
     """Serialise *data* to GFF v3.2 bytes without writing to disk.
 
     Args:
-        data: Dict as returned by ``GFFHandler.read()`` / ``gff_to_dict()``.
+        data: Dict as returned by ``read_gff()`` / ``gff_to_dict()``.
         file_type: Optional 4-char type tag override.
 
     Returns:
@@ -606,7 +557,7 @@ def write_gff(file_path: Path, data: Dict[str, Any], file_type: Optional[str] = 
 
     Args:
         file_path: Destination path.
-        data: Dict as returned by ``GFFHandler.read()`` / ``gff_to_dict()``.
+        data: Dict as returned by ``read_gff()`` / ``gff_to_dict()``.
         file_type: Optional 4-char type tag override.
 
     Raises:

@@ -25,10 +25,8 @@ from .config import (
     create_output_path,
     module_string_encoding_for_target_lang,
 )
+from .formats.erf import create_mod_from_directory
 from .resources import TRANSLATABLE_TYPES
-from .file_handlers import (
-    create_mod_from_directory,
-)
 from .extractors.base import ExtractedContent
 from .context.world_context import WorldContext
 from .glossary import Glossary

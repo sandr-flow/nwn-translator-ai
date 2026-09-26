@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..context.string_filters import ENGINE_TAG_PREFIXES
-from ..file_handlers.ncs_concat import find_concat_chains, merged_text
-from ..file_handlers.ncs_parser import NCSFile
+from ..formats.ncs import NCSFile
 from .base import BaseExtractor, ExtractedContent, TranslatableItem
+from .ncs_concat import find_concat_chains, merged_text
 from .ncs_context import trace_string_consumer
 from .nss_index import read_script_source, snippet_with_position
 

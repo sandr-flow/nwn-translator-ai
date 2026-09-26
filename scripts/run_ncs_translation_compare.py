@@ -24,7 +24,7 @@ from nwn_translator.ai_providers import TranslationItem, TranslationProvider, Tr
 from nwn_translator.ai_providers import create_provider
 from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.base import ExtractedContent
-from nwn_translator.file_handlers.erf_reader import ERFReader
+from nwn_translator.formats.erf import ERFReader
 from nwn_translator.main import load_parsed_and_extracted
 from nwn_translator.telemetry import RunMetricsRecorder
 from nwn_translator.translators.translation_manager import TranslationManager

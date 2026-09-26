@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 from ..context.string_filters import should_skip_entity_source_text
-from ..file_handlers.gff_handler import read_gff
+from ..formats.gff import read_gff
 from ..nwn_constants import base_item_label, gender_label
 from .base import extract_local_string, list_field
 from .creature_extractor import creature_name_context, creature_traits

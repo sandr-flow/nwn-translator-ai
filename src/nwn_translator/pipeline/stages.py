@@ -22,10 +22,7 @@ from ..config import (
     module_string_encoding_for_target_lang,
     source_string_encoding,
 )
-from ..file_handlers import (
-    ERFReader,
-    create_mod_from_directory,
-)
+from ..formats.erf import ERFReader, create_mod_from_directory
 from ..injectors.base import InjectedContent
 from ..extractors.base import ExtractedContent, TranslatableItem
 from ..resources import RESOURCE_KINDS, TRANSLATABLE_TYPES

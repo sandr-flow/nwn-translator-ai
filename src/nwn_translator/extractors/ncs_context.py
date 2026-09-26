@@ -11,7 +11,7 @@ import struct
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .nss_index import classify_engine_arg
-from ..file_handlers.ncs_parser import (
+from ..formats.ncs import (
     NCSInstruction,
     OP_ADD,
     OP_COMP,

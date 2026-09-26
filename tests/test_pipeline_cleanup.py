@@ -6,7 +6,7 @@ from typing import List
 import pytest
 
 from nwn_translator.config import TranslationConfig
-from nwn_translator.file_handlers.erf_writer import ERFWriter
+from nwn_translator.formats.erf import ERFWriter
 from nwn_translator.pipeline import stages
 from nwn_translator.pipeline.stages import PipelineState, run_pipeline
 

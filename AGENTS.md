@@ -97,14 +97,14 @@ docker compose -f docker/docker-compose.yml up --build   # http://127.0.0.1:8080
 
 `translate_module` / `run_translation_pipeline` in `main.py` build `PipelineState` and call `run_pipeline` in `pipeline/stages.py`. Isolated stages: `scripts/stage.py`. Artifacts: `pipeline/artifacts.py`.
 
-1. **Unpack** — `file_handlers/erf_reader.py`
+1. **Unpack** — `formats/erf.py`
 2. **World scan** — `context/world_context.py` (when `use_context`)
-3. **Extract** — `extractors/` (GFF/NCS parse: `gff_parser.py`, `gff_handler.py`, `ncs_parser.py`). Only embedded strings; StrRef-only fields are left for the player's `dialog.tlk`.
+3. **Extract** — `extractors/` (GFF/NCS parse: `formats/gff.py`, `formats/ncs.py`). Only embedded strings; StrRef-only fields are left for the player's `dialog.tlk`.
 4. **Entities** — `context/entity_extractor.py`
 5. **Glossary** — `glossary_curator.py`, then `glossary.py` / `race_dictionary.py`
 6. **Translate** — `translators/translation_manager.py` (batches) and `context_translator.py` (dialogs). `token_handler.py` protects NWN tokens and inline tags.
-7. **Inject** — `injectors/` + `gff_patcher.py` / `ncs_patcher.py` (byte-patch, not a full GFF rewrite)
-8. **Repack** — `file_handlers/erf_writer.py`
+7. **Inject** — `injectors/` + the patchers in `formats/gff.py` / `formats/ncs.py` (byte-patch, not a full GFF rewrite)
+8. **Repack** — `formats/erf.py`
 
 Extractors copy each selected field record offset into item metadata. GFF injection patches these extracted occurrences by `(resource, item_id)`; rebuild re-extracts offsets from the current file.
 

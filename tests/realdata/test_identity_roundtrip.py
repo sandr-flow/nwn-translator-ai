@@ -14,8 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Tuple
 
-from nwn_translator.file_handlers.erf_reader import ERFReader
-from nwn_translator.file_handlers.erf_writer import create_mod_from_directory
+from nwn_translator.formats.erf import ERFReader, create_mod_from_directory
 
 from ._corpus import extract_module, read_raw_resources
 
@@ -25,7 +24,6 @@ def _description_fields(mod_path: Path) -> Tuple[int, bytes, int]:
     reader = ERFReader(mod_path)
     header = reader.read_header()
     block = reader.read_localized_strings_block()
-    reader.cleanup()
     return header.language_count, block, header.description_strref
 
 
@@ -35,9 +33,8 @@ def _type_ids_by_resource(mod_path: Path) -> Dict[Tuple[str, str], int]:
     entries = reader.read_entries()
     result: Dict[Tuple[str, str], int] = {}
     for entry in entries:
-        ext = reader.detect_type_from_header(entry)
+        ext = reader.extension_for(entry)
         result[(entry.res_ref.lower(), ext)] = entry.res_type
-    reader.cleanup()
     return result
 
 

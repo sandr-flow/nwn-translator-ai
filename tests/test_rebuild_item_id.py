@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from nwn_translator.file_handlers.gff_handler import read_gff
-from nwn_translator.file_handlers.gff_writer import write_gff
+from nwn_translator.formats.gff import read_gff
+from tests.support.gff_writer import write_gff
 from nwn_translator.main import rebuild_module
 from nwn_translator.web import database as db
 from nwn_translator.web.app import create_app

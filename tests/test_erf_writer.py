@@ -10,13 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from src.nwn_translator.file_handlers.erf_writer import (
+from nwn_translator.formats import erf
+from nwn_translator.resources import TRANSLATABLE_TYPES
+from nwn_translator.formats.erf import (
+    RESOURCE_TYPES,
+    TYPE_ID_BY_EXTENSION,
+    ERFError,
+    ERFHeader,
+    ERFReader,
     ERFWriter,
-    ERFWriterError,
     create_mod_from_directory,
 )
-from src.nwn_translator.file_handlers.erf_reader import ERFEntry, ERFReader, ERFHeader
-from src.nwn_translator.resources import TRANSLATABLE_TYPES
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -179,19 +183,19 @@ class TestERFWriterRoundTrip:
         assert "sword_fire" in names
 
     def test_resource_type_id_dlg(self):
-        """Dialog resources use NWN:EE-style type IDs from ERFWriter map."""
+        """Dialog resources get the type id of their extension."""
         entries = _write_and_read({"x.dlg": b"content"})
-        assert entries[0].res_type == ERFWriter.RESOURCE_TYPE_IDS[".dlg"]
+        assert entries[0].res_type == TYPE_ID_BY_EXTENSION[".dlg"]
 
     def test_resource_type_id_uti(self):
-        """Item resources use NWN:EE-style type IDs from ERFWriter map."""
+        """Item resources get the type id of their extension."""
         entries = _write_and_read({"x.uti": b"content"})
-        assert entries[0].res_type == ERFWriter.RESOURCE_TYPE_IDS[".uti"]
+        assert entries[0].res_type == TYPE_ID_BY_EXTENSION[".uti"]
 
     def test_resource_type_id_jrl(self):
-        """Journal resources use NWN:EE-style type IDs from ERFWriter map."""
+        """Journal resources get the type id of their extension."""
         entries = _write_and_read({"x.jrl": b"content"})
-        assert entries[0].res_type == ERFWriter.RESOURCE_TYPE_IDS[".jrl"]
+        assert entries[0].res_type == TYPE_ID_BY_EXTENSION[".jrl"]
 
     def test_resource_size_correct(self):
         """Resource size in Resource List must match actual data length."""
@@ -244,7 +248,7 @@ class TestERFWriterRoundTrip:
         out = tmp_path / "long_name.mod"
         writer = ERFWriter(out)
         writer.add_resource("a_very_long_resref", ".dlg", b"data")
-        with pytest.raises(ERFWriterError, match="limited to 16"):
+        with pytest.raises(ERFError, match="limited to 16"):
             writer.write()
 
     def test_resref_exactly_16_chars_accepted(self, tmp_path):
@@ -266,7 +270,7 @@ class TestERFWriterRoundTrip:
         assert out.exists()
 
         # ERFHeader must parse without error
-        header = ERFHeader(out.read_bytes()[:160])
+        header = ERFHeader.from_bytes(out.read_bytes()[:160])
         assert header.entry_count == 0
 
     def test_add_file_roundtrip(self, tmp_path):
@@ -304,15 +308,18 @@ class TestERFWriterRoundTrip:
             (b"NCS ", ".ncs"),
         ],
     )
-    def test_detect_type_from_header_maps_known_signatures(self, tmp_path, signature, expected_ext):
+    def test_known_signature_overrides_unknown_type_id(self, tmp_path, signature, expected_ext):
         """Known file signatures must override unknown numeric resource type IDs."""
-        raw = tmp_path / f"{expected_ext[1:]}_blob.bin"
-        raw.write_bytes(signature + b"\x00" * 8)
+        out = tmp_path / "custom.mod"
+        writer = ERFWriter(out, type_overrides={"resource.bin": 6789})
+        writer.add_resource("resource", ".bin", signature + b"\x00" * 8)
+        writer.write()
 
-        reader = ERFReader(raw)
-        entry = ERFEntry("resource", 0, 6789, 0, 12)
-
-        assert reader.detect_type_from_header(entry) == expected_ext
+        reader = ERFReader(out)
+        (entry,) = reader.read_entries()
+        assert entry.res_type == 6789
+        assert reader.extension_for(entry) == expected_ext
+        assert reader.filename_for(entry) == f"resource{expected_ext}"
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +430,7 @@ class TestAtomicWrite:
             out_fp.write(b"PARTIAL")
             raise OSError("disk full")
 
-        monkeypatch.setattr(ERFWriter, "_write_resource_data", staticmethod(broken_write))
+        monkeypatch.setattr(erf, "_copy_into", broken_write)
         with pytest.raises(OSError, match="disk full"):
             writer2.write()
         monkeypatch.undo()
@@ -447,15 +454,15 @@ class TestAtomicWrite:
         writer2 = ERFWriter(out)
         writer2.add_file(src)
 
-        original = ERFWriter._write_resource_data
+        original = erf._copy_into
 
         def shrink_then_write(out_fp, source):
             if isinstance(source, Path):
                 source.write_bytes(b"A" * 10)
             return original(out_fp, source)
 
-        monkeypatch.setattr(ERFWriter, "_write_resource_data", staticmethod(shrink_then_write))
-        with pytest.raises(ERFWriterError, match="changed size"):
+        monkeypatch.setattr(erf, "_copy_into", shrink_then_write)
+        with pytest.raises(ERFError, match="changed size"):
             writer2.write()
         monkeypatch.undo()
 
@@ -502,8 +509,14 @@ class TestAtomicWrite:
 # ---------------------------------------------------------------------------
 
 # Canonical Aurora IDs (nwn.h / xoreos) for the game resource types we touch.
-# These were historically wrong (.uts duplicated, .utt/.utd/.utm absent).
 _CANONICAL_IDS = {
+    1: ".bmp",
+    3: ".tga",
+    4: ".wav",
+    6: ".plt",
+    7: ".ini",
+    10: ".txt",
+    2002: ".mdl",
     2010: ".ncs",
     2012: ".are",
     2014: ".ifo",
@@ -522,26 +535,31 @@ _CANONICAL_IDS = {
 
 
 class TestCanonicalResourceTypes:
-    """C-spec: ERFReader.RESOURCE_TYPES must match canonical Aurora IDs."""
+    """RESOURCE_TYPES must match canonical Aurora IDs."""
 
     @pytest.mark.parametrize("res_id, ext", sorted(_CANONICAL_IDS.items()))
     def test_reader_table_matches_canonical(self, res_id, ext):
-        assert ERFReader.RESOURCE_TYPES.get(res_id) == ext
+        assert RESOURCE_TYPES.get(res_id) == ext
 
-    def test_no_duplicate_extension_in_canonical_range(self):
-        """Within the 20xx range each extension maps to exactly one ID."""
-        canonical = {rid: ext for rid, ext in ERFReader.RESOURCE_TYPES.items() if rid >= 2000}
+    def test_no_duplicate_extension(self):
+        """Each extension maps to exactly one ID, so the writer's inverse is exact."""
         seen: dict = {}
-        for rid, ext in canonical.items():
+        for rid, ext in RESOURCE_TYPES.items():
             assert ext not in seen, f"{ext} duplicated: {seen.get(ext)} and {rid}"
             seen[ext] = rid
+        assert TYPE_ID_BY_EXTENSION == seen
+
+    @pytest.mark.parametrize("res_id", [0, 2, 5, 14, 27, 79])
+    def test_non_aurora_low_ids_are_unknown(self, res_id):
+        """Low ids that are not Aurora types keep a numeric extension."""
+        assert res_id not in RESOURCE_TYPES
 
     @pytest.mark.parametrize("ext", sorted(TRANSLATABLE_TYPES))
     def test_translatable_ext_round_trips_to_canonical_id(self, ext):
         """Each translatable ext inverts to a 20xx ID that maps back to the ext."""
-        res_id = ERFWriter.RESOURCE_TYPE_IDS.get(ext)
+        res_id = TYPE_ID_BY_EXTENSION.get(ext)
         assert res_id is not None and res_id >= 2000
-        assert ERFReader.RESOURCE_TYPES[res_id] == ext
+        assert RESOURCE_TYPES[res_id] == ext
 
     @pytest.mark.parametrize(
         "signature, ext, expected_id",
@@ -554,4 +572,13 @@ class TestCanonicalResourceTypes:
     def test_writer_emits_canonical_id_without_overrides(self, signature, ext, expected_id):
         """Writing a translatable resource without overrides yields the canonical ID."""
         entries = _write_and_read({f"blueprint{ext}": signature + b"V3.2" + b"\x00" * 8})
+        assert entries[0].res_type == expected_id
+
+    @pytest.mark.parametrize(
+        "ext, expected_id",
+        [(".tga", 3), (".bmp", 1), (".wav", 4), (".txt", 10), (".mdl", 2002), (".xyz", 0)],
+    )
+    def test_writer_ids_for_hak_content(self, ext, expected_id):
+        """Textures, sounds, text and models get their Aurora ids; unknown types get 0."""
+        entries = _write_and_read({f"asset{ext}": b"data"})
         assert entries[0].res_type == expected_id

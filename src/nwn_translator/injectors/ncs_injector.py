@@ -1,7 +1,6 @@
 """Patch translated string constants into compiled scripts (``.ncs``).
 
-The binary patching itself is done by
-:mod:`~nwn_translator.file_handlers.ncs_patcher`.
+Delegates the actual binary patching to :mod:`~nwn_translator.formats.ncs`.
 """
 
 import logging
@@ -9,8 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..extractors.base import TranslatableItem, Translations
-from ..file_handlers.ncs_concat import parts_from_metadata, split_concat_translation
-from ..file_handlers.ncs_patcher import NCSPatchError, patch_ncs_string_replacements
+from ..extractors.ncs_concat import parts_from_metadata, split_concat_translation
+from ..formats.ncs import NCSPatchError, patch_ncs_string_replacements
 from .base import InjectedContent, changed_translations
 
 logger = logging.getLogger(__name__)

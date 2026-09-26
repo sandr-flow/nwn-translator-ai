@@ -26,8 +26,8 @@ from .extractors.simple_extractors import (
     StoreExtractor,
     TriggerExtractor,
 )
-from .file_handlers.gff_handler import read_gff
-from .file_handlers.ncs_parser import NCSParseError, parse_ncs
+from .formats.gff import read_gff
+from .formats.ncs import NCSParseError, parse_ncs
 from .injectors.base import Injector
 from .injectors.gff_injector import inject_gff
 from .injectors.ncs_injector import inject_ncs

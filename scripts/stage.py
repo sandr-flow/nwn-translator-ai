@@ -211,16 +211,23 @@ def cmd_entities(
 def cmd_glossary(
     args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path
 ) -> None:
-    """Curate the candidates and build ``glossary.json`` (model requests)."""
+    """Curate the candidates and build ``glossary.json`` (model requests).
+
+    The entity candidates are collected first unless the entities stage has
+    run; the world context is saved again with what that collection found.
+    """
     _resolve_extract_dir(args, state, do_extract=False)
     _maybe_load_world_context(state, art_in)
     if state.world_context is None:
         stage_worldscan(state)
-    if not state.world_context.candidates:
+    # Only the entities stage fills extracted_names. The scan fills the
+    # candidates too, and 'worldscan' saves them.
+    if not state.world_context.extracted_names:
         stage_collect_entities(state, _build_extracted_map(args, state))
     stage_build_glossary(state)
     artifacts.dump_glossary(art_out / "glossary.json", state.glossary)
     artifacts.dump_candidates(art_out / "candidates.json", state.world_context.candidates)
+    artifacts.dump_world_context(art_out / "world_context.json", state.world_context)
     logger.info(
         "Wrote %s (%d entries)",
         art_out / "glossary.json",
@@ -270,12 +277,13 @@ def cmd_all(args: argparse.Namespace, state: PipelineState, art_in: Path, art_ou
     _require_archive(args, "all")
     extract_dir = _resolve_extract_dir(args, state, do_extract=True)
     stage_worldscan(state)
-    artifacts.dump_world_context(art_out / "world_context.json", state.world_context)
     extracted_map = _build_extracted_map(args, state)
     artifacts.dump_items(
         art_out / "items.jsonl", [ec for (_pd, ec, _ext) in extracted_map.values()]
     )
     stage_collect_entities(state, extracted_map)
+    # Saved after the collection, with its extracted names, as 'entities' does.
+    artifacts.dump_world_context(art_out / "world_context.json", state.world_context)
     artifacts.dump_candidates(art_out / "candidates.json", state.world_context.candidates)
     stage_build_glossary(state)
     artifacts.dump_glossary(art_out / "glossary.json", state.glossary)

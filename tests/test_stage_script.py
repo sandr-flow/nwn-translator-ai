@@ -90,6 +90,53 @@ def test_worldscan_also_saves_the_scan_candidates(tmp_path: Path) -> None:
     assert [owner.tag for owner in world.script_owners["greet"]] == ["MARTA"]
 
 
+def _record_llm_stages(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Replace the model stages by stubs that record their calls."""
+    calls = []
+
+    def collect_entities(state, extracted_map) -> None:
+        calls.append("collect_entities")
+        state.world_context.extracted_names = [("Marta", "character")]
+
+    monkeypatch.setattr(stage, "stage_collect_entities", collect_entities)
+    monkeypatch.setattr(stage, "stage_build_glossary", lambda state: calls.append("build_glossary"))
+    return calls
+
+
+def test_glossary_after_worldscan_collects_the_entities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scan's own candidates do not replace the entity stage."""
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+    creature = {"Tag": "MARTA", "FirstName": {"StrRef": -1, "Value": "Marta"}}
+    (work / "extract" / "marta.utc").write_bytes(write_gff_bytes(creature, file_type="UTC"))
+    extract = ["--extract-dir", str(work / "extract"), "--out", str(work)]
+    _run("worldscan", *extract, tmp_path=tmp_path)
+    calls = _record_llm_stages(monkeypatch)
+
+    _run("glossary", *extract, tmp_path=tmp_path)
+
+    assert calls == ["collect_entities", "build_glossary"]
+
+
+def test_glossary_after_entities_reuses_the_saved_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+    extract = ["--extract-dir", str(work / "extract"), "--out", str(work)]
+    calls = _record_llm_stages(monkeypatch)
+    _run("entities", *extract, tmp_path=tmp_path)
+    calls.clear()
+
+    _run("glossary", *extract, tmp_path=tmp_path)
+
+    assert calls == ["build_glossary"]
+
+
 def test_only_ext_restricts_extraction_to_one_file_type(tmp_path: Path) -> None:
     module = _module(tmp_path)
     work = tmp_path / "work"

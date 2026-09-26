@@ -19,7 +19,7 @@ from nwn_translator.formats.gff import HEADER, GFFType
 
 logger = logging.getLogger(__name__)
 
-# The header is 56 bytes; fixtures pad it to 160, the minimum the parser accepts.
+# The header is 56 bytes; fixtures reserve 160 bytes for it, zero-padded.
 _HEADER_SIZE = 160
 
 

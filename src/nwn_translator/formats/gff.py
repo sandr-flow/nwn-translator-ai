@@ -178,7 +178,7 @@ def parse_gff(file_path: Path, source_encoding: Optional[str] = None) -> GFFFile
     """
     data = Path(file_path).read_bytes()
     size = len(data)
-    if size < 160:
+    if size < HEADER.size:
         raise GFFParseError("File too small to be valid GFF")
     header = GFFHeader.read(data)
     for block_name, block_offset, block_bytes in (

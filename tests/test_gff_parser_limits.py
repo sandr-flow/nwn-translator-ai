@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from nwn_translator.formats.gff import GFFParseError, parse_gff, read_gff
+from nwn_translator.formats.gff import HEADER, GFFHeader, GFFParseError, parse_gff, read_gff
 from tests.support.gff_writer import write_gff
 
 # Header DWORD offsets (GFF v3.2).
@@ -124,3 +124,41 @@ class TestReadGffErrors:
         first = read_gff(path, cache=cache)
         assert read_gff(path, cache=cache) is first
         assert list(cache) == [path.resolve()]
+
+
+class TestCompactHeader:
+    """The header is 56 bytes; nothing requires padding after it."""
+
+    @staticmethod
+    def _compact(path):
+        """Drop the fixture writer's header padding and move every block up."""
+        data = path.read_bytes()
+        header = GFFHeader.read(data)
+        pad = 160 - HEADER.size
+        compact = header._replace(
+            struct_offset=header.struct_offset - pad,
+            field_offset=header.field_offset - pad,
+            label_offset=header.label_offset - pad,
+            field_data_offset=header.field_data_offset - pad,
+            field_indices_offset=header.field_indices_offset - pad,
+            list_indices_offset=header.list_indices_offset - pad,
+        )
+        path.write_bytes(HEADER.pack(*compact) + data[160:])
+
+    def test_gff_smaller_than_160_bytes_parses(self, tmp_path):
+        path = tmp_path / "tiny.uti"
+        write_gff(path, {"StructType": "UTI", "Tag": "x", "LocalizedName": {"StrRef": 5}})
+        padded = read_gff(path)
+        self._compact(path)
+        assert path.stat().st_size < 160
+
+        compact = read_gff(path)
+        assert compact["Tag"] == padded["Tag"] == "x"
+        assert compact["LocalizedName"] == {"StrRef": 5, "Value": ""}
+        assert compact["_record_offsets"]["Tag"] == padded["_record_offsets"]["Tag"] - 104
+
+    def test_file_shorter_than_header_is_rejected(self, tmp_path):
+        path = tmp_path / "stub.uti"
+        path.write_bytes(b"UTI V3.2" + bytes(40))
+        with pytest.raises(GFFParseError, match="File too small to be valid GFF"):
+            parse_gff(path)

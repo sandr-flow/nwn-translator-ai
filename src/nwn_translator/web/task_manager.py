@@ -49,6 +49,7 @@ from .schemas import RebuildEdit
 
 logger = logging.getLogger(__name__)
 
+#: Age (seconds) after which a finished task's workspace is purged.
 DEFAULT_TASK_TTL_SECONDS = 24 * 3600
 
 #: Seconds between two runs of :meth:`TaskManager.purge_expired`.
@@ -107,7 +108,7 @@ class JobParams:
 
 
 def _optional_path(value: Optional[str]) -> Optional[Path]:
-    """Path of a stored path column, ``None`` when empty."""
+    """Returns the path of a stored path column, ``None`` when empty."""
     return Path(value) if value else None
 
 
@@ -187,11 +188,19 @@ class TranslationTask:
         self._cancel.set()
 
     def is_cancel_requested(self) -> bool:
-        """Whether cancellation has been requested."""
+        """Tells whether cancellation has been requested.
+
+        Returns:
+            ``True`` once :meth:`request_cancel` was called.
+        """
         return self._cancel.is_set()
 
     def is_finished(self) -> bool:
-        """Whether the task has reached a terminal status."""
+        """Tells whether the task has reached a terminal status.
+
+        Returns:
+            ``True`` for a status in ``TERMINAL_STATUSES``.
+        """
         return self.status in TERMINAL_STATUSES
 
 
@@ -295,6 +304,9 @@ class TaskManager:
         ``/api/health`` so the deploy can wait for an idle service before
         recreating the container: a restart kills every worker thread, and there
         is no resume.
+
+        Returns:
+            The number of unfinished and orphaned tasks.
         """
         with self._lock:
             unfinished = sum(1 for t in self._tasks.values() if not t.is_finished())
@@ -364,7 +376,7 @@ class TaskManager:
         return task
 
     def try_register_active(self, client_ip: str, task_id: str) -> bool:
-        """Atomically register *task_id* for *client_ip* unless one is already active.
+        """Atomically registers *task_id* for *client_ip* unless one is already active.
 
         The check and the registration happen in one critical section, so two
         concurrent requests from the same IP cannot both pass the one-job-per-IP
@@ -512,6 +524,7 @@ class TaskManager:
             total: int,
             message: Optional[str] = None,
         ) -> None:
+            """Records one progress event of the pipeline on *task*."""
             task.phase = phase
             # Do not clobber ``cancelling`` with a phase name: SQLite would look
             # "still translating" and the client would resume onto the progress
@@ -742,6 +755,9 @@ def get_task_manager() -> TaskManager:
     """Returns the process-wide :class:`TaskManager`, creating it on first use.
 
     The workspace root comes from ``NWN_WEB_TASK_ROOT``.
+
+    Returns:
+        The shared manager.
     """
     global _manager
     if _manager is None:
@@ -751,6 +767,10 @@ def get_task_manager() -> TaskManager:
 
 
 def set_task_manager(manager: Optional[TaskManager]) -> None:
-    """Replaces the process-wide manager (tests); ``None`` resets it."""
+    """Replaces the process-wide manager (tests).
+
+    Args:
+        manager: The new manager; ``None`` makes the next use create one.
+    """
     global _manager
     _manager = manager

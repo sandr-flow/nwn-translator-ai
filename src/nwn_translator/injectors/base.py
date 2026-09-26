@@ -47,7 +47,7 @@ class Injector(Protocol):
             content_type: Content type of the extraction, reported back.
             text_encoding: Code page of the written strings.
             source_encoding: Code page used to decode the file at extraction
-                (None when detected).
+                (``None`` when detected).
 
         Returns:
             The injection result.

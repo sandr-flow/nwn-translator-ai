@@ -38,7 +38,7 @@ def dialog_item_id(stem: str, is_entry: bool, index: object) -> str:
 
     Args:
         stem: Dialog resource name without extension.
-        is_entry: True for an ``EntryList`` node, False for a ``ReplyList`` node.
+        is_entry: ``True`` for an ``EntryList`` node, ``False`` for a ``ReplyList`` node.
         index: Position of the node in its list.
 
     Returns:

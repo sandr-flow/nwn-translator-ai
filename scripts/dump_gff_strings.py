@@ -1,4 +1,4 @@
-"""Diagnostic tool: dump all CExoLocString fields from a GFF file or module resource.
+"""Diagnostic tool that dumps every CExoLocString field of a GFF file or module resource.
 
 Usage:
     python scripts/dump_gff_strings.py file <path/to/file.utc> [--compare <original>]
@@ -155,7 +155,11 @@ def _extract_resource_bytes(module_path: Path, resource_name: str) -> bytes:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Builds the command-line parser."""
+    """Builds the command-line parser.
+
+    Returns:
+        The parser of the ``file`` and ``module`` commands.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
@@ -172,7 +176,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Runs the command line."""
+    """Runs the command line.
+
+    Raises:
+        FileNotFoundError: If a file, the module or a resource is missing.
+    """
     parser = _build_parser()
     args = parser.parse_args()
 

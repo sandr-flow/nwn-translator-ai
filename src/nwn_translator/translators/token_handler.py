@@ -182,7 +182,7 @@ class TokenProcessingResult:
 
 
 def _classify(raw: str, preserve_tokens: bool) -> Optional[str]:
-    """Returns the artifact kind of a token-like fragment, or None to keep it as text."""
+    """Returns the artifact kind of a token-like fragment, or ``None`` to keep it as text."""
     if _INLINE_TAG_RE.fullmatch(raw):
         return "inline_tag"
     if _ENGINE_TOKEN_RE.fullmatch(raw):

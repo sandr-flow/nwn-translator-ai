@@ -47,7 +47,7 @@ class ResourceKind:
 
     Attributes:
         extractor: Selects the translatable strings of a loaded resource.
-        load: Reads the resource; returns None when it must be skipped.
+        load: Reads the resource; returns ``None`` when it must be skipped.
         inject: Writes translations back into the resource file.
     """
 
@@ -64,7 +64,7 @@ def load_gff(
     Args:
         path: Resource file.
         gff_cache: Parse cache shared by the run, if any.
-        source_encoding: Code page of the strings (None to detect).
+        source_encoding: Code page of the strings (``None`` to detect).
 
     Returns:
         The parsed root struct, with ``_record_offsets`` for patching.
@@ -80,11 +80,11 @@ def load_ncs(
     Args:
         path: Script file.
         gff_cache: Unused; scripts are not GFF.
-        source_encoding: Code page of the string literals (None to detect).
+        source_encoding: Code page of the string literals (``None`` to detect).
 
     Returns:
         ``{"_ncs_file": NCSFile, "_source_encoding": source_encoding}``, or
-        None when the script cannot be parsed.
+        ``None`` when the script cannot be parsed.
     """
     try:
         ncs_file = parse_ncs(path, source_encoding=source_encoding)

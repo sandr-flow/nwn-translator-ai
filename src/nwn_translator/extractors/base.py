@@ -116,7 +116,7 @@ class DialogNode:
         text: Node text (empty when the node has none).
         speaker: Speaker tag for entries (empty for the dialog owner),
             ``"Player"`` for replies.
-        is_entry: True for NPC entries, False for player replies.
+        is_entry: ``True`` for NPC entries, ``False`` for player replies.
         replies: Child nodes (replies of an entry, entries following a reply).
     """
 
@@ -137,7 +137,7 @@ def extract_local_string(text_data: Any) -> Optional[str]:
         text_data: Parsed CExoLocString (``{"StrRef": …, "Value": …}``).
 
     Returns:
-        The non-empty ``Value``, or None when there is none or *text_data* is
+        The non-empty ``Value``, or ``None`` when there is none or *text_data* is
         not a CExoLocString.
     """
     if not isinstance(text_data, dict):

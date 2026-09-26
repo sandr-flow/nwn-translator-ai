@@ -1,4 +1,4 @@
-"""Run the web server: ``python -m nwn_translator.web`` or ``nwn-translate-web``."""
+"""Web server entry point: ``python -m nwn_translator.web`` or ``nwn-translate-web``."""
 
 import os
 import sys
@@ -15,6 +15,12 @@ def _enable_local_mode_if_loopback(host: str) -> bool:
     the UI for autofill convenience. Any non-loopback bind (``0.0.0.0``, docker,
     a deployed instance) leaves the flag unset, so the key never leaves the
     server. The decision is made once from the bind address, not per request.
+
+    Args:
+        host: Bind address of the server.
+
+    Returns:
+        ``True`` when local mode was enabled.
     """
     if host in _LOOPBACK_HOSTS:
         os.environ["NWN_WEB_LOCAL_MODE"] = "1"

@@ -128,6 +128,12 @@ def _client_token(request: Request) -> str:
 
     Falls back to the ``client_token`` query parameter because plain browser
     navigations (download links) cannot send custom headers.
+
+    Args:
+        request: Incoming request.
+
+    Returns:
+        The token, or ``""`` when the request carries none.
     """
     header = (request.headers.get("x-client-token") or "").strip()
     if header:
@@ -233,10 +239,16 @@ def require_task_owner(
 
 @router.get("/health")
 async def health(tm: TaskManager = Depends(get_task_manager)) -> dict:
-    """Liveness check for Docker and load balancers.
+    """Reports liveness for Docker and load balancers.
 
     ``active_tasks`` is the number of unfinished translation jobs; the deploy
     script polls it and recreates the container only when it reaches zero.
+
+    Args:
+        tm: Task manager.
+
+    Returns:
+        ``{"status": "ok", "active_tasks": n}``.
     """
     return {"status": "ok", "active_tasks": tm.active_task_count()}
 
@@ -260,6 +272,23 @@ async def start_translate(
 
     An oversized upload never reaches this handler: the app's upload middleware
     answers it with 413.
+
+    Args:
+        request: Incoming request (client IP and token).
+        tm: Task manager.
+        file: Uploaded module.
+        api_key: Provider API key.
+        target_lang: Target language.
+        source_lang: Source language, ``auto`` to detect.
+        model: Model slug; the provider default when omitted.
+        preserve_tokens: Protect NWN tokens.
+        use_context: Build world context and glossary first.
+        max_concurrent_requests: Requested parallelism (see :func:`_job_from_form`).
+        player_gender: Player gender.
+        reasoning_effort: Requested reasoning effort.
+
+    Returns:
+        The id of the new task.
 
     Raises:
         HTTPException: 429 while the client IP has a running job, 400 for an
@@ -312,7 +341,14 @@ async def start_translate(
 async def task_status(
     task: TranslationTask = Depends(require_task_owner),
 ) -> TaskStatusResponse:
-    """Returns a snapshot of the task state."""
+    """Returns a snapshot of the task state.
+
+    Args:
+        task: The caller's task (see :func:`require_task_owner`).
+
+    Returns:
+        The task status with compacted stats.
+    """
     return TaskStatusResponse(
         task_id=task.task_id,
         status=task.status,
@@ -332,6 +368,12 @@ async def download_result(
 ) -> FileResponse:
     """Downloads the translated module of a completed task.
 
+    Args:
+        task: The caller's task (see :func:`require_task_owner`).
+
+    Returns:
+        The module file.
+
     Raises:
         HTTPException: 400 when the task is not completed or its result file is gone.
     """
@@ -350,6 +392,12 @@ async def download_log(
 ) -> StreamingResponse:
     """Downloads the task's translation rows as JSONL.
 
+    Args:
+        task: The caller's task (see :func:`require_task_owner`).
+
+    Returns:
+        A streaming response of one JSON line per stored row.
+
     Raises:
         HTTPException: 404 when the task has no translation rows.
     """
@@ -358,6 +406,7 @@ async def download_log(
         raise HTTPException(status_code=404, detail="Лог недоступен")
 
     def generate() -> Iterator[str]:
+        """Yields the rows as JSON lines."""
         for row in rows:
             yield json.dumps(row, ensure_ascii=False) + "\n"
 
@@ -372,7 +421,14 @@ async def download_log(
 async def get_translations(
     task: TranslationTask = Depends(require_task_owner),
 ) -> TranslationsResponse:
-    """Returns the task's translations as editor rows grouped by source file."""
+    """Returns the task's translations as editor rows.
+
+    Args:
+        task: The caller's task (see :func:`require_task_owner`).
+
+    Returns:
+        The editor rows grouped by source file.
+    """
     return TranslationsResponse(files=editor.group_rows(get_translations_by_task(task.task_id)))
 
 
@@ -383,6 +439,14 @@ async def rebuild_task(
     tm: TaskManager = Depends(get_task_manager),
 ) -> RebuildResponse:
     """Rebuilds the module with the editor's edits (no provider calls).
+
+    Args:
+        body: Edits and the target language.
+        task: The caller's task (see :func:`require_task_owner`).
+        tm: Task manager.
+
+    Returns:
+        The file name of the rebuilt module.
 
     Raises:
         HTTPException: 400 when the task is not completed or its files are gone,
@@ -407,7 +471,14 @@ async def rebuild_task(
 
 @router.get("/history", response_model=TaskHistoryResponse)
 async def task_history(request: Request) -> TaskHistoryResponse:
-    """Returns the translation history of the client identified by its token."""
+    """Returns the translation history of the client identified by its token.
+
+    Args:
+        request: Incoming request (client token).
+
+    Returns:
+        The client's tasks, newest first; none without a token.
+    """
     token = _client_token(request)
     if not token:
         return TaskHistoryResponse(items=[])
@@ -438,6 +509,14 @@ async def cancel_task(
 
     Progress is lost: in-flight provider calls finish, but their results are
     discarded.
+
+    Args:
+        task: The caller's task (see :func:`require_task_owner`).
+        tm: Task manager.
+
+    Returns:
+        ``{"ok": True, "status": ...}``: the final status of a finished task,
+        else ``"cancelling"``.
     """
     if task.is_finished():
         return {"ok": True, "status": task.status}
@@ -454,6 +533,13 @@ async def delete_task(
 
     A running job is cancelled and the client's slot freed at once; see
     :meth:`~nwn_translator.web.task_manager.TaskManager.delete`.
+
+    Args:
+        task: The caller's task (see :func:`require_task_owner`).
+        tm: Task manager.
+
+    Returns:
+        ``{"ok": True}``.
     """
     tm.delete(task.task_id)
     return {"ok": True}
@@ -461,7 +547,14 @@ async def delete_task(
 
 @router.post("/test-connection", response_model=TestConnectionResponse)
 async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse:
-    """Verifies an API key and model with a tiny translation."""
+    """Verifies an API key and model with a tiny translation.
+
+    Args:
+        body: Key, model, target language and reasoning effort to try.
+
+    Returns:
+        The translation, or the error; failures never raise.
+    """
     text = "Hello, welcome to my module!"
     provider_name = detect_provider_from_key(body.api_key)
     try:
@@ -497,14 +590,25 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
 
 @router.post("/detect-provider", response_model=DetectProviderResponse)
 async def detect_provider(body: DetectProviderRequest) -> DetectProviderResponse:
-    """Infers the provider from an API key prefix (no network calls)."""
+    """Infers the provider from an API key prefix (no network calls).
+
+    Args:
+        body: The API key.
+
+    Returns:
+        The provider name and label; empty for a blank key.
+    """
     name = detect_provider_from_key(body.api_key)
     return DetectProviderResponse(provider=name, label=provider_label(name))
 
 
 @router.get("/models", response_model=ModelsResponse)
 async def list_models() -> ModelsResponse:
-    """Returns the curated model pool with per-model OpenRouter reasoning options."""
+    """Returns the curated model pool with per-model OpenRouter reasoning options.
+
+    Returns:
+        The default model and the pool.
+    """
     catalog = await asyncio.to_thread(refresh_catalog)
     items = [
         ModelListItem(
@@ -521,6 +625,12 @@ async def list_models() -> ModelsResponse:
 @router.get("/models/lookup", response_model=ModelLookupResponse)
 async def lookup_model(slug: str = Query(..., min_length=1, max_length=200)) -> ModelLookupResponse:
     """Looks up reasoning options for a custom OpenRouter model slug.
+
+    Args:
+        slug: Model slug from the query string.
+
+    Returns:
+        Whether the catalog knows the slug, and its reasoning options.
 
     Raises:
         HTTPException: 400 for an invalid model slug.
@@ -543,6 +653,9 @@ async def get_config() -> ConfigResponse:
     The key is exposed solely in local mode (the process bound to loopback by
     ``python -m nwn_translator.web``). A deployed instance never hands it out:
     this is a BYOK product, so remote users supply their own key.
+
+    Returns:
+        The UI defaults.
     """
     api_key = None
     if os.environ.get("NWN_WEB_LOCAL_MODE") == "1":

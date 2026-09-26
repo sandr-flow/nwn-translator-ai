@@ -199,7 +199,7 @@ def batch_terminology(batch: Sequence[WorkItem], terminology: Terminology) -> Op
         terminology: Glossary lookup of the run.
 
     Returns:
-        The glossary block, or None when no term matches.
+        The glossary block, or ``None`` when no term matches.
     """
     return terminology(text for w in batch for text in (w.sanitized, w.item.context))
 

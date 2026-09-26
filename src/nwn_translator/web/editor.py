@@ -24,15 +24,15 @@ _TAGGED_DIALOG_LINE_RE = re.compile(r"\(speaker: (.+)\)$")
 
 
 def _is_dialog(filename: str) -> bool:
-    """Whether *filename* is a dialog resource."""
+    """Tells whether *filename* is a dialog resource."""
     return filename.lower().endswith(".dlg")
 
 
 def dialog_speaker(row: Row) -> Optional[DialogSpeaker]:
     """Returns the speaker label of a dialog row.
 
-    Rows stored before speakers were recorded have only the extractor's context
-    string, which still tells player replies, tagged lines and owner lines apart.
+    A row without a stored speaker still has the extractor's context string,
+    which tells player replies, tagged lines and owner lines apart.
 
     Args:
         row: Translation row of a ``.dlg`` file.

@@ -1,9 +1,9 @@
-"""Run a single translation pipeline stage in isolation (eval harness).
+"""Runs a single translation pipeline stage in isolation (eval harness).
 
 Each subcommand executes exactly one stage from
 :mod:`nwn_translator.pipeline.stages`, reading its inputs from saved artifacts
 (``--from``) and writing its outputs (``--out``) via
-:mod:`nwn_translator.pipeline.artifacts`.  ``extract_dir`` is the backbone: it
+:mod:`nwn_translator.pipeline.artifacts`. ``extract_dir`` is the backbone: it
 persists between stages so deterministic stages re-parse from it, while the LLM
 stages (entities / glossary / translate) can be run alone against the real API
 and their outputs inspected or hand-edited before the next stage.
@@ -83,7 +83,7 @@ def _build_state(args: argparse.Namespace) -> PipelineState:
     Returns:
         A state whose repacked module goes to ``--out``.
     """
-    # A non-empty key is required just to construct the provider.  Deterministic
+    # A non-empty key is required just to construct the provider. Deterministic
     # stages (unpack/extract/inject/repack) never call it; LLM stages need a
     # real key (via --api-key or NWN_TRANSLATE_API_KEY) and fail at call time.
     api_key = args.api_key or os.getenv("NWN_TRANSLATE_API_KEY") or "offline-placeholder-key"
@@ -124,7 +124,7 @@ def _require_archive(args: argparse.Namespace, command: str) -> None:
 def _resolve_extract_dir(
     args: argparse.Namespace, state: PipelineState, *, do_extract: bool
 ) -> Path:
-    """Determines (and optionally populate) the extraction directory.
+    """Determines (and optionally populates) the extraction directory.
 
     ``--extract-dir`` wins, then an input directory, then ``<out>/extract``.
 
@@ -180,7 +180,7 @@ def _translatable_files(args: argparse.Namespace, state: PipelineState) -> List[
 
 
 def _maybe_load_world_context(state: PipelineState, art_in: Path) -> None:
-    """Loads world_context.json + candidates.json from *art_in* when present.
+    """Loads ``world_context.json`` and ``candidates.json`` from *art_in* when present.
 
     Args:
         state: Run state; its ``world_context`` is set when the file exists.
@@ -435,7 +435,11 @@ COMMANDS = {
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Returns the command-line parser."""
+    """Builds the command-line parser.
+
+    Returns:
+        The parser of the stage commands and their options.
+    """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -462,7 +466,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-lang", default="auto")
     parser.add_argument("--target-lang", default="russian")
-    # The stages work in --extract-dir; the option only keeps older command lines valid.
+    # Accepted and ignored so that command lines passing it still parse; the
+    # stages work in --extract-dir.
     parser.add_argument("--temp-dir", type=Path, default=None, help="Ignored")
     parser.add_argument("--max-concurrent", type=int, default=None)
     parser.add_argument("--player-gender", choices=["male", "female"], default="male")

@@ -122,7 +122,7 @@ def _area_fields(parsed_data: Dict[str, Any], stem: str) -> Iterator[_FieldRef]:
 
 
 def _git_item(ref: _FieldRef, known_names: FrozenSet[str]) -> Optional[TranslatableItem]:
-    """Builds the item for *ref*, or None when it holds no translatable text."""
+    """Builds the item for *ref*, or ``None`` when it holds no translatable text."""
     text = extract_local_string(ref.struct.get(ref.field_name))
     if text is None or not should_translate_git_string(text, ref.item_type, known_names):
         return None

@@ -189,7 +189,7 @@ def trace_string_consumer(
         ``argument_index`` (last engine call that consumed the value),
         ``consumer_proven``, ``compare_nearby``, ``distance`` (instructions
         from the string to that consumer), ``role`` (``"player"``,
-        ``"internal"``, ``"compare"`` or None when unproven),
+        ``"internal"``, ``"compare"`` or ``None`` when unproven),
         ``player_use_seen`` and ``player_action_nearby`` (a player-facing
         routine within the next 64 instructions).
     """

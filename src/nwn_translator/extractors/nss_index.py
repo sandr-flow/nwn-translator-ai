@@ -105,7 +105,7 @@ def classify_engine_arg(func: str, arg: int) -> Optional[str]:
 
     Returns:
         ``"player"`` (shown to the player), ``"internal"`` (tag, resref,
-        variable name, …) or None when the argument is not a known consumer.
+        variable name, …) or ``None`` when the argument is not a known consumer.
     """
     if (func, arg) in PLAYER_ARG_POSITIONS:
         return "player"

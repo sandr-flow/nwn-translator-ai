@@ -667,6 +667,7 @@ class OpenRouterProvider:
         """
 
         async def request(user_prompt: str, max_tokens: int, batch_size: int) -> str:
+            """Sends one gate request with transient retries."""
             return await self._complete(
                 NCS_GATE_SYSTEM_PROMPT,
                 user_prompt,

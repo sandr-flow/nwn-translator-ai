@@ -107,10 +107,10 @@ def load_parsed_and_extracted(
         file_path: Resource file.
         file_ext: Extension selecting the resource kind (any case).
         gff_cache: Parse cache shared by the run, if any.
-        source_encoding: Code page of the strings (None to detect).
+        source_encoding: Code page of the strings (``None`` to detect).
 
     Returns:
-        ``(parsed data, extracted content)``, or None when the kind is not
+        ``(parsed data, extracted content)``, or ``None`` when the kind is not
         translatable, the file cannot be loaded or it has nothing to translate.
     """
     kind = RESOURCE_KINDS.get(file_ext.lower())
@@ -151,7 +151,7 @@ def inject_translations_into_file(
             injection re-reads the file and compares against the originals.
 
     Returns:
-        The injection result, or None when the file kind is not translatable.
+        The injection result, or ``None`` when the file kind is not translatable.
     """
     kind = RESOURCE_KINDS.get(file_path.suffix.lower())
     if kind is None:
@@ -179,7 +179,7 @@ class PipelineState:
         config: Run settings.
         provider: Model provider.
         metrics_recorder: Request metrics of the run.
-        temp_dir: Temporary directory holding :attr:`extract_dir`; None when the
+        temp_dir: Temporary directory holding :attr:`extract_dir`; ``None`` when the
             directory is kept after the run (``skip_cleanup``) or not created.
         extract_dir: Unpacked module.
         world_context: Scanned module objects (context mode).
@@ -234,7 +234,7 @@ class PipelineState:
 
     @property
     def source_encoding(self) -> Optional[str]:
-        """Code page of the module's strings; None lets the readers detect it."""
+        """Code page of the module's strings; ``None`` lets the readers detect it."""
         return source_string_encoding(self.config.source_lang)
 
     def progress(self, phase: str, current: int, total: int, message: str) -> None:
@@ -287,7 +287,12 @@ class PipelineState:
         write_trace(self.trace, {"event": "ncs_diagnostic", **sample})
 
     def output_path(self) -> Path:
-        """Returns the translated module's path: the configured one or one next to the input."""
+        """Returns the path of the translated module.
+
+        Returns:
+            ``config.output_file``, or a path next to the input named after the
+            target language.
+        """
         if self.config.output_file is not None:
             return self.config.output_file
         return create_output_path(self.config.input_file, self.config.target_lang)
@@ -331,6 +336,10 @@ class _ItemProgress:
 
     Dialog files are translated on a thread pool, so the counter is locked.
     The total is an estimate; the count never goes past it.
+
+    Attributes:
+        total: Items expected, at least one.
+        done: Items counted so far.
     """
 
     def __init__(self, state: PipelineState, total: int) -> None:
@@ -383,7 +392,7 @@ def _run_pool(
 
     Returns:
         ``(path, result, error)`` per path in input order; *error* is the
-        exception *work* raised, and *result* is then None.
+        exception *work* raised, and *result* is then ``None``.
 
     Raises:
         TranslationCancelled: If *cancellable* and the run is cancelled; queued
@@ -448,7 +457,7 @@ def stage_unpack(state: PipelineState) -> List[Path]:
         The translatable files (empty when there are none).
 
     Raises:
-        TranslationCancelled: If the run was cancelled.
+        TranslationCancelled: If the run is cancelled.
     """
     logger.info("Extracting module...")
     state.extract_dir = _unpack(state)
@@ -468,7 +477,7 @@ def stage_worldscan(state: PipelineState) -> None:
         state: Run state with an unpacked module.
 
     Raises:
-        TranslationCancelled: If the run was cancelled.
+        TranslationCancelled: If the run is cancelled.
     """
     assert state.extract_dir is not None
     state.config.raise_if_cancelled()
@@ -493,7 +502,7 @@ def _extract_file(
         file_path: Resource file.
 
     Returns:
-        ``(parsed data, extracted content, lower-case extension)``, or None
+        ``(parsed data, extracted content, lower-case extension)``, or ``None``
         when the file has nothing to translate.
     """
     file_ext = file_path.suffix.lower()
@@ -550,7 +559,7 @@ def stage_collect_entities(state: PipelineState, extracted_map: ExtractedMap) ->
         extracted_map: Extracted files.
 
     Raises:
-        TranslationCancelled: If the run was cancelled.
+        TranslationCancelled: If the run is cancelled.
     """
     state.config.raise_if_cancelled()
     if state.world_context is None or not extracted_map:
@@ -590,7 +599,7 @@ def stage_build_glossary(state: PipelineState) -> None:
             world context.
 
     Raises:
-        TranslationCancelled: If the run was cancelled.
+        TranslationCancelled: If the run is cancelled.
     """
     state.config.raise_if_cancelled()
     if not (state.config.use_context and state.world_context is not None):
@@ -790,7 +799,7 @@ def _inject_file(
         file_path: The file to patch; a key of *extracted_map*.
 
     Returns:
-        The injection result, or None when the file kind is not translatable.
+        The injection result, or ``None`` when the file kind is not translatable.
     """
     parsed_data, extracted, _ext = extracted_map[file_path]
     return inject_translations_into_file(
@@ -820,7 +829,7 @@ def stage_inject(
         translations: Translation per occurrence.
 
     Raises:
-        TranslationCancelled: If the run was cancelled before injection began;
+        TranslationCancelled: If the run is cancelled before injection began;
             once files are being patched, the stage runs to its end.
     """
     state.config.raise_if_cancelled()

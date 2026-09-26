@@ -114,7 +114,7 @@ _lock = threading.Lock()
 
 
 def _default_db_path() -> Path:
-    """Database file from ``NWN_WEB_DB_PATH``, else ``workspace/web/translations.db``."""
+    """Returns the database file: ``NWN_WEB_DB_PATH``, else ``workspace/web/translations.db``."""
     env = os.environ.get("NWN_WEB_DB_PATH", "").strip()
     if env:
         return Path(env)
@@ -189,7 +189,11 @@ def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
 
 def get_db() -> sqlite3.Connection:
-    """Returns the shared connection, opening it with :func:`init_db` on first use."""
+    """Returns the shared connection, opening it with :func:`init_db` on first use.
+
+    Returns:
+        The process-wide connection.
+    """
     if _connection is None:
         return init_db()
     return _connection
@@ -322,9 +326,9 @@ def decode_stats(raw: Optional[str]) -> Optional[Dict[str, Any]]:
 def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Returns a poll-safe copy of task stats without unbounded error dumps.
 
-    Keeps ``total_errors`` and the first few ``errors``, and drops the per-call
-    ``metrics.requests`` telemetry that rows written by older versions carry. The
-    full payload stays in the SQLite ``stats`` column.
+    Keeps ``total_errors`` and the first few ``errors``, and drops any per-call
+    ``metrics.requests`` telemetry a stored row carries. The full payload stays
+    in the SQLite ``stats`` column.
 
     Args:
         stats: Stats dict as stored for the task, or ``None``.
@@ -351,13 +355,27 @@ def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str,
 
 
 def get_task_row(task_id: str) -> Optional[Dict[str, Any]]:
-    """Returns the task row as a dict, or ``None`` if it does not exist."""
+    """Returns one task row.
+
+    Args:
+        task_id: Task UUID.
+
+    Returns:
+        The row as a dict, or ``None`` if it does not exist.
+    """
     rows = _query("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
     return rows[0] if rows else None
 
 
 def list_tasks_by_token(client_token: str) -> List[Dict[str, Any]]:
-    """Returns the rows of one client's tasks, newest first."""
+    """Returns the rows of one client's tasks.
+
+    Args:
+        client_token: Anonymous owner token.
+
+    Returns:
+        The rows, newest first.
+    """
     return _query(
         "SELECT * FROM tasks WHERE client_token = ? ORDER BY created_at DESC", (client_token,)
     )
@@ -369,6 +387,9 @@ def get_unfinished_task_rows() -> List[Dict[str, Any]]:
     Used at startup to reconcile tasks whose worker died: anything not in
     :data:`TERMINAL_STATUSES` (``pending``/``extracting``/``translating``/…) has
     no live worker after a restart and must be flipped to ``interrupted``.
+
+    Returns:
+        The unfinished rows.
     """
     return _query(
         f"SELECT * FROM tasks WHERE status NOT IN ({_TERMINAL_PLACEHOLDERS})",  # noqa: S608
@@ -476,7 +497,14 @@ def update_translation_text(task_id: str, file: str, item_id: str, translated: s
 
 
 def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
-    """Returns the task's translation rows with ``speaker`` decoded (``None`` when absent)."""
+    """Returns the translation rows of a task.
+
+    Args:
+        task_id: Task UUID.
+
+    Returns:
+        The rows, with ``speaker`` decoded (``None`` when absent).
+    """
     rows = _query(
         "SELECT original, translated, context, model, file, item_id, success, speaker "
         "FROM translations WHERE task_id = ?",
@@ -488,7 +516,14 @@ def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
 
 
 def count_translations(task_id: str) -> int:
-    """Returns how many translation rows the task has, rejected lines included."""
+    """Counts the translation rows of a task.
+
+    Args:
+        task_id: Task UUID.
+
+    Returns:
+        The number of rows, rejected lines included.
+    """
     rows = _query("SELECT COUNT(*) AS n FROM translations WHERE task_id = ?", (task_id,))
     return int(rows[0]["n"])
 
@@ -499,6 +534,12 @@ def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
     This is the addressing used by rebuild: a translation is identified by its
     source file plus the stable per-file ``item_id`` the extractor assigned, so
     identical originals in different files (or different nodes) stay distinct.
+
+    Args:
+        task_id: Task UUID.
+
+    Returns:
+        The stored translations by file and item id.
     """
     rows = _query(
         "SELECT file, item_id, translated FROM translations "

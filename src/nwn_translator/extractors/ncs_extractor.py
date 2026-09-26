@@ -69,7 +69,7 @@ def _is_definitely_not_translatable(
         player_candidate: A player-facing routine is nearby or was reached.
 
     Returns:
-        True when the string must not become a candidate.
+        ``True`` when the string must not become a candidate.
     """
     if ncs_hard_veto_reason(
         text, proven_player=proven_player, player_candidate=player_candidate, is_concat=True
@@ -141,7 +141,7 @@ def ncs_hard_veto_reason(
             without claiming proof. Only use it when that gate is enabled.
 
     Returns:
-        The veto reason, or None when the string may be translated.
+        The veto reason, or ``None`` when the string may be translated.
     """
     stripped = text.strip()
     if not stripped:
@@ -202,7 +202,7 @@ def _is_likely_translatable(text: str) -> bool:
         text: Literal or merged concat text.
 
     Returns:
-        True for punctuated sentences of three or more words and for short
+        ``True`` for punctuated sentences of three or more words and for short
         barks ending in ``.``, ``!`` or ``?``.
     """
     stripped = text.strip()
@@ -237,7 +237,7 @@ class NcsExtractor(BaseExtractor):
             parsed_data: Loaded script, not a GFF dict:
                 ``_ncs_file`` (:class:`NCSFile`, required),
                 ``_source_encoding`` (code page of the literals and the
-                ``.nss``; None reads the source as cp1252) and, optionally,
+                ``.nss``; ``None`` reads the source as cp1252) and, optionally,
                 ``_ncs_selection_trace`` (a list that receives one record per
                 selection decision, for diagnostics).
 

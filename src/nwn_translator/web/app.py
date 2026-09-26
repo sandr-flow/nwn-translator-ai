@@ -28,7 +28,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 class UploadLimitMiddleware:
-    """Cap the request body of the upload route while it streams in.
+    """ASGI middleware that caps the request body of the upload route while it streams in.
 
     FastAPI parses the whole multipart body, spooling files to disk, before a
     handler runs, so a handler-side check comes too late. Once the declared or
@@ -43,7 +43,13 @@ class UploadLimitMiddleware:
     """
 
     def __init__(self, app: ASGIApp, path: str, max_bytes: int) -> None:
-        """Wraps *app*, limiting bodies sent to *path* to *max_bytes*."""
+        """Wraps *app*, limiting bodies sent to *path* to *max_bytes*.
+
+        Args:
+            app: ASGI application to wrap.
+            path: Request path the limit applies to.
+            max_bytes: Largest accepted body.
+        """
         self.app = app
         self.path = path
         self.max_bytes = max_bytes
@@ -70,6 +76,7 @@ class UploadLimitMiddleware:
         received = 0
 
         async def receive_within_limit() -> Message:
+            """Receives one message, failing with 413 once the body is over the limit."""
             nonlocal received
             message = await receive()
             if message["type"] == "http.request":

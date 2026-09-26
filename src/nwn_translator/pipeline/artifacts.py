@@ -1,10 +1,11 @@
-"""Serialize/deserialize the data passed between pipeline stages.
+"""Serialization of the data passed between pipeline stages.
 
 Each pipeline seam (extracted items, world context, entity candidates,
 glossary, translations) has a ``dump_*``/``load_*`` pair so a stage can be run
-from a saved input or its output inspected and hand-edited.  The only seam that
-is *not* serialized is the parsed GFF (binary ``_record_offsets``); it is
-rebuilt from ``extract_dir`` by :func:`nwn_translator.main.rebuild_module`.
+from a saved input or its output inspected and hand-edited. The parsed
+resources (with their field record offsets) are not serialized: the stage
+runner and :func:`nwn_translator.main.rebuild_module` parse them again from
+``extract_dir``.
 """
 
 from __future__ import annotations
@@ -133,10 +134,10 @@ def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, An
     """Serializes the world context registry (candidates are dumped separately).
 
     Args:
-        world_context: Scanned module objects, or None.
+        world_context: Scanned module objects, or ``None``.
 
     Returns:
-        JSON-ready registries (empty for None). Script owners keep their order:
+        JSON-ready registries (empty for ``None``). Script owners keep their order:
         it decides the speaker hint of a script.
     """
     if world_context is None:
@@ -170,7 +171,7 @@ def dump_world_context(path: Path, world_context: Optional[WorldContext]) -> Non
 
     Args:
         path: Target file.
-        world_context: Scanned module objects, or None.
+        world_context: Scanned module objects, or ``None``.
     """
     write_json(Path(path), world_context_to_dict(world_context))
 
@@ -179,8 +180,8 @@ def load_world_context(path: Path) -> WorldContext:
     """Reads ``world_context.json`` back into a :class:`WorldContext`.
 
     Candidates are not part of this artifact; attach them separately via
-    :func:`load_candidates` when needed. Registries missing from older
-    artifacts (dialog actors, script owners) load empty.
+    :func:`load_candidates` when needed. Registries missing from the file
+    (dialog actors, script owners) load empty.
 
     Args:
         path: ``world_context.json``.
@@ -240,7 +241,7 @@ def dump_candidates(path: Path, registry: Optional[EntityCandidateRegistry]) -> 
 
     Args:
         path: Target file.
-        registry: Candidates, or None for an empty list.
+        registry: Candidates, or ``None`` for an empty list.
     """
     values = registry.values() if registry is not None else []
     write_json(Path(path), [candidate_to_dict(c) for c in values])
@@ -287,7 +288,7 @@ def dump_glossary(path: Path, glossary: Optional[Glossary]) -> None:
 
     Args:
         path: Target file.
-        glossary: The glossary, or None for an empty one.
+        glossary: The glossary, or ``None`` for an empty one.
     """
     entries = glossary.entries if glossary is not None else {}
     write_json(
@@ -298,7 +299,7 @@ def dump_glossary(path: Path, glossary: Optional[Glossary]) -> None:
 
 
 def load_glossary(path: Path) -> Glossary:
-    """Reads ``glossary.json``; a file without a version holds only the entries.
+    """Reads ``glossary.json``; a file without ``version`` is a bare entry map.
 
     Args:
         path: The artifact.
@@ -344,8 +345,8 @@ def load_translations(path: Path) -> Translations:
         Translation per occurrence.
 
     Raises:
-        ValueError: For a text-only artifact of an older version (it cannot
-            address occurrences) or an occurrence listed twice.
+        ValueError: If the file is not a version-2 artifact (a text-only map
+            cannot address occurrences) or lists an occurrence twice.
     """
     data = _read_json(path)
     if data.get("version") != 2:

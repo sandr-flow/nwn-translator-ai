@@ -6,13 +6,29 @@ from pydantic import BaseModel, Field
 
 
 class TranslateResponse(BaseModel):
-    """Response after starting a translation job."""
+    """Response after starting a translation job.
+
+    Attributes:
+        task_id: Id of the new task.
+    """
 
     task_id: str
 
 
 class TaskStatusResponse(BaseModel):
-    """Snapshot of a task's state, polled by the UI."""
+    """Snapshot of a task's state, polled by the UI.
+
+    Attributes:
+        task_id: Task id.
+        status: Task status (``pending``, ``translating``, ``completed``, …).
+        progress: Weighted overall progress, 0 to 1.
+        current_file: File or step the task is working on.
+        phase: Pipeline progress phase.
+        result_filename: File name of the translated module, once there is one.
+        error: Error message of a failed task.
+        stats: Run statistics, trimmed for polling.
+        target_lang: Target language of the task.
+    """
 
     task_id: str
     status: str
@@ -26,7 +42,14 @@ class TaskStatusResponse(BaseModel):
 
 
 class TestConnectionRequest(BaseModel):
-    """Body of the provider connectivity check (OpenRouter or POLZA.AI, by key)."""
+    """Body of the provider connectivity check (OpenRouter or POLZA.AI, by key).
+
+    Attributes:
+        api_key: API key to try.
+        model: Model slug; the provider default when omitted.
+        target_lang: Language of the test translation.
+        reasoning_effort: Requested reasoning effort.
+    """
 
     api_key: str = Field(..., min_length=1)
     model: Optional[str] = None
@@ -35,7 +58,15 @@ class TestConnectionRequest(BaseModel):
 
 
 class TestConnectionResponse(BaseModel):
-    """Result of the connectivity check."""
+    """Result of the connectivity check.
+
+    Attributes:
+        ok: The test translation succeeded.
+        translated: The test translation.
+        error: Why the check failed.
+        model: Model that was asked.
+        provider: Provider name.
+    """
 
     ok: bool
     translated: Optional[str] = None
@@ -45,20 +76,36 @@ class TestConnectionResponse(BaseModel):
 
 
 class DetectProviderRequest(BaseModel):
-    """Body for provider detection by API key."""
+    """Body for provider detection by API key.
+
+    Attributes:
+        api_key: API key to inspect.
+    """
 
     api_key: str = Field(..., min_length=1)
 
 
 class DetectProviderResponse(BaseModel):
-    """Provider inferred from an API key."""
+    """Provider inferred from an API key.
+
+    Attributes:
+        provider: Provider name (``openrouter``, ``polza``), empty for a blank key.
+        label: Human-readable provider name.
+    """
 
     provider: str
     label: str
 
 
 class ModelReasoningInfo(BaseModel):
-    """OpenRouter reasoning metadata for one model slug."""
+    """OpenRouter reasoning metadata for one model slug.
+
+    Attributes:
+        supported: The model accepts a reasoning effort.
+        mandatory: Reasoning cannot be turned off.
+        default_effort: Effort the model uses when none is sent.
+        supported_efforts: Efforts the UI may offer, lowest first.
+    """
 
     supported: bool
     mandatory: bool = False
@@ -67,21 +114,37 @@ class ModelReasoningInfo(BaseModel):
 
 
 class ModelListItem(BaseModel):
-    """One curated model in the UI pool."""
+    """One curated model in the UI pool.
+
+    Attributes:
+        id: Model slug.
+        reasoning: Its reasoning options.
+    """
 
     id: str
     reasoning: ModelReasoningInfo
 
 
 class ModelsResponse(BaseModel):
-    """Curated model list for the UI, with per-model reasoning options."""
+    """Curated model list for the UI, with per-model reasoning options.
+
+    Attributes:
+        default_model: Model used when the client picks none.
+        models: The curated pool, in display order.
+    """
 
     default_model: str
     models: List[ModelListItem]
 
 
 class ModelLookupResponse(BaseModel):
-    """Live OpenRouter catalog lookup for a custom model slug."""
+    """Live OpenRouter catalog lookup for a custom model slug.
+
+    Attributes:
+        id: The looked-up slug.
+        found: The catalog knows the slug.
+        reasoning: Its reasoning options (unsupported when not found).
+    """
 
     id: str
     found: bool
@@ -134,20 +197,35 @@ class TranslationItem(BaseModel):
 
 
 class TranslationFileGroup(BaseModel):
-    """Editor rows of one source file."""
+    """Editor rows of one source file.
+
+    Attributes:
+        filename: Resource file name.
+        items: Editor rows of the file.
+    """
 
     filename: str
     items: List[TranslationItem]
 
 
 class TranslationsResponse(BaseModel):
-    """Editor rows of a task, grouped by source file."""
+    """Editor rows of a task, grouped by source file.
+
+    Attributes:
+        files: One group per file, in first-seen order.
+    """
 
     files: List[TranslationFileGroup]
 
 
 class RebuildEdit(BaseModel):
-    """One edited translation, addressed by source file and ``item_id``."""
+    """One edited translation, addressed by source file and ``item_id``.
+
+    Attributes:
+        file: Resource file name.
+        item_id: Item of the edited editor row.
+        translated: New translation.
+    """
 
     file: str
     item_id: str
@@ -171,13 +249,29 @@ class RebuildRequest(BaseModel):
 
 
 class RebuildResponse(BaseModel):
-    """Response after a rebuild completes."""
+    """Response after a rebuild completes.
+
+    Attributes:
+        result_filename: File name of the rebuilt module.
+    """
 
     result_filename: str
 
 
 class TaskHistoryItem(BaseModel):
-    """One task in the history list."""
+    """One task in the history list.
+
+    Attributes:
+        task_id: Task id.
+        input_filename: Name of the uploaded module.
+        status: Task status.
+        created_at: Unix time of creation.
+        target_lang: Target language.
+        source_lang: Source language.
+        model: Model slug the client requested.
+        updated_at: Unix time the task last finished or was rebuilt.
+        stats: Run statistics, trimmed for polling.
+    """
 
     task_id: str
     input_filename: str
@@ -191,7 +285,11 @@ class TaskHistoryItem(BaseModel):
 
 
 class TaskHistoryResponse(BaseModel):
-    """Tasks of one client token, newest first."""
+    """Tasks of one client token.
+
+    Attributes:
+        items: The tasks, newest first.
+    """
 
     items: List[TaskHistoryItem]
 

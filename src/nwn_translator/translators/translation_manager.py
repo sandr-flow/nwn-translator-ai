@@ -205,17 +205,17 @@ class TranslationManager:
         return WorkItem(item=prepared, sanitized=sanitized, handler=handler)
 
     def _terminology(self, texts: Iterable[Optional[str]]) -> Optional[str]:
-        """Returns the glossary block for *texts*, or None when no term matches.
+        """Returns the glossary block for *texts*, or ``None`` when no term matches.
 
-        The provider treats None and an empty string alike (it falls back to the race
-        terms of the text); None is used because the request arguments are written to
+        The provider treats ``None`` and an empty string alike (it falls back to the race
+        terms of the text); ``None`` is used because the request arguments are written to
         the translation log. Missing texts (an item without context) match nothing.
 
         Args:
-            texts: Texts of one request; None entries are skipped.
+            texts: Texts of one request; ``None`` entries are skipped.
 
         Returns:
-            The glossary block, or None.
+            The glossary block, or ``None``.
         """
         present = (text for text in texts if text)
         return terminology_block(present, self.config.target_lang, self.glossary) or None
@@ -373,7 +373,7 @@ class TranslationManager:
             allow_cleanup: Accept a mismatched answer after removing broken artifacts.
 
         Returns:
-            The final translation, or None when the answer is rejected.
+            The final translation, or ``None`` when the answer is rejected.
         """
         item = work.item
         outcome = work.handler.finalize_translation(answer, allow_cleanup=allow_cleanup)
@@ -430,7 +430,7 @@ class TranslationManager:
             model: Model that gave it.
 
         Returns:
-            The accepted translation, or None when even the cleaned answer is rejected.
+            The accepted translation, or ``None`` when even the cleaned answer is rejected.
         """
         last_answer = first_answer
         last_model = model or self.config.model

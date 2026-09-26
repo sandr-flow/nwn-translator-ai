@@ -1,4 +1,4 @@
-"""Measure deterministic NCS selection against independently reviewed occurrences.
+"""Measures deterministic NCS selection against independently reviewed occurrences.
 
 No API calls, translations or injections are performed. The real script gate
 runs its pre-gate checks; a provider records exactly which occurrences reach the
@@ -27,37 +27,85 @@ from nwn_translator.translation_logging import NullTranslationLogWriter
 from nwn_translator.translators.ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
 from nwn_translator.translators.script_gate import ScriptGate
 
+#: Labelled corpus of compiled scripts.
 CORPUS = ROOT / "tests/fixtures/ncs_selection"
+#: Selection stages, in pipeline order.
 STAGES = ("units", "consumer", "text_filter", "candidate", "pre_gate")
+#: Risk labels of a ``preserve`` occurrence that reached the model.
 CHANGE_RISKS = ("potentially_breaking", "harmless", "unassessed")
 
 
 class BoundaryProvider:
-    """Observe the model input, without substituting gold labels for its output."""
+    """Offline provider that records which occurrences reach the model gate.
+
+    It never substitutes gold labels for the model's output: every gate entry
+    is refused.
+
+    Attributes:
+        model: Placeholder model name.
+        offsets: Bytecode offsets of the entries sent to the gate.
+    """
 
     model = "offline"
 
     def __init__(self):
+        """Starts with no recorded offsets."""
         self.offsets = set()
 
     def get_provider_name(self):
+        """Returns the placeholder provider name.
+
+        Returns:
+            ``"offline"``.
+        """
         return "offline"
 
     async def translate_async(self, *args, **kwargs):
+        """Fails: the evaluation must not translate.
+
+        Args:
+            *args: Ignored.
+            **kwargs: Ignored.
+
+        Raises:
+            AssertionError: Always.
+        """
         raise AssertionError("Corpus selection evaluation must not translate")
 
     translate_batch_async = translate_async
 
     async def close_async_client(self):
+        """Does nothing: there is no client."""
         return None
 
     async def classify_ncs_translate_gate_batch_async(self, entries, *, source_lang):
+        """Records the offsets of *entries* and refuses every one.
+
+        Args:
+            entries: Gate entries.
+            source_lang: Ignored.
+
+        Returns:
+            ``{"translate": False, "reason": "not_evaluated"}`` per entry key.
+        """
         self.offsets.update(entry["offset"] for entry in entries)
         return {entry["key"]: {"translate": False, "reason": "not_evaluated"} for entry in entries}
 
 
 def load_corpus(root: Path = CORPUS):
-    """Rejects changed files or incomplete labels instead of quietly scoring them."""
+    """Loads the corpus, rejecting changed files or incomplete labels.
+
+    A mismatch fails loudly instead of being scored quietly.
+
+    Args:
+        root: Corpus directory.
+
+    Returns:
+        ``(manifest, annotations)``.
+
+    Raises:
+        AssertionError: If a file changed or a label is incomplete.
+    """
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     annotations = json.loads((root / "annotations.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == annotations["schema_version"] == 2
@@ -99,6 +147,19 @@ def load_corpus(root: Path = CORPUS):
 
 
 def evaluate_case(case, gold, work: Path, with_sources: bool, root: Path = CORPUS):
+    """Runs extraction and the pre-gate checks on one script and scores its occurrences.
+
+    Args:
+        case: Manifest entry of the script.
+        gold: Its annotations.
+        work: Scratch directory of the case.
+        with_sources: Copy the matching ``.nss`` next to the script.
+        root: Corpus directory.
+
+    Returns:
+        ``(rows, groups)``: one row per occurrence with the stage that rejected
+        it, and the annotated concat groups with the text actually merged.
+    """
     work.mkdir(parents=True, exist_ok=True)
     path = work / (case["resource"] + ".ncs")
     shutil.copyfile(root / case["files"]["ncs"]["path"], path)
@@ -171,6 +232,14 @@ def evaluate_case(case, gold, work: Path, with_sources: bool, root: Path = CORPU
 
 
 def summarize(rows):
+    """Counts the occurrences each stage rejects and keeps, by label and change risk.
+
+    Args:
+        rows: Scored occurrences.
+
+    Returns:
+        One summary per stage, in :data:`STAGES` order.
+    """
     result = []
     alive = list(rows)
     lost = 0
@@ -200,6 +269,16 @@ def summarize(rows):
 
 
 def evaluate(work: Path, root: Path = CORPUS):
+    """Evaluates the corpus with bytecode only and with matching sources.
+
+    Args:
+        work: Scratch directory.
+        root: Corpus directory.
+
+    Returns:
+        The report: label counts and, per mode, stage summaries, breakdowns,
+        occurrences and misses.
+    """
     manifest, annotations = load_corpus(root)
     report = {
         "labels": dict(
@@ -266,6 +345,7 @@ def evaluate(work: Path, root: Path = CORPUS):
 
 
 def main():
+    """Writes the evaluation report and prints the stage summaries."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=ROOT / "docs/local/ncs-corpus-report.json")
     args = parser.parse_args()

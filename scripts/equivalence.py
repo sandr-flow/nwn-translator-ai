@@ -76,21 +76,24 @@ NEWLINE = "\n"
 
 
 def _h(*parts: str) -> int:
+    """Returns a stable 48-bit hash of *parts*, the stand-in's only source of variation."""
     return int(hashlib.sha1("\x1f".join(parts).encode("utf-8")).hexdigest()[:12], 16)
 
 
 def _mark(text: str, salt: str = "") -> str:
-    """Deterministic ASCII-marked 'translation' that keeps placeholders intact."""
+    """Returns a deterministic ASCII-marked 'translation' that keeps placeholders intact."""
     return f"[T{_h(text, salt) % 0xFFFF:04x}] {text}"
 
 
 def _content_text(content: Any) -> str:
+    """Returns the text of a message content: a string or a list of text parts."""
     if isinstance(content, list):
         return "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
     return str(content or "")
 
 
 def _json_tail(prompt: str) -> Any:
+    """Decodes the JSON value that starts at the first ``{`` of *prompt*, or ``None``."""
     idx = prompt.find("{")
     if idx < 0:
         return None
@@ -101,10 +104,12 @@ def _json_tail(prompt: str) -> Any:
 
 
 def _truncate(payload: str) -> str:
+    """Cuts a reply in half, the injected "truncated JSON" fault."""
     return payload[: max(1, len(payload) // 2)]
 
 
 def _answer_batch(user: str) -> str:
+    """Answers a batch request, leaving out some keys of multi-item batches."""
     data = _json_tail(user)
     if not isinstance(data, dict):
         return "{}"
@@ -120,6 +125,7 @@ def _answer_batch(user: str) -> str:
 
 
 def _answer_single(user: str) -> str:
+    """Answers a single-string request."""
     match = re.search(r"Text to translate from [^\n]*:\n\n(.*)\Z", user, re.DOTALL)
     text = match.group(1) if match else user
     return json.dumps({"translation": _mark(text, user)}, ensure_ascii=False)
@@ -129,7 +135,10 @@ _NODE_RE = re.compile(r"^\[([ER]\d+)\] \[[^\n]*\]:\n<<<(.*?)>>>\s*(?:\n|$)", re.
 
 
 def _answer_dialog(user: str) -> str:
+    """Answers a dialog or grouped dialog request, leaving out some lines."""
+
     def nodes(script: str) -> Dict[str, str]:
+        """Translates the nodes of one script."""
         found = _NODE_RE.findall(script)
         return {
             key: _mark(text, key)
@@ -146,6 +155,7 @@ def _answer_dialog(user: str) -> str:
 
 
 def _answer_gate(user: str) -> str:
+    """Answers an NCS gate request with a verdict per entry."""
     data = _json_tail(user)
     if not isinstance(data, dict):
         return "{}"
@@ -163,6 +173,7 @@ _CATEGORIES = ("character", "location", "organization", "item", "nickname", "unk
 
 
 def _answer_entities(user: str) -> str:
+    """Answers an entity-extraction request with capitalized phrases of the texts."""
     entities = []
     seen = set()
     for line in user.splitlines():
@@ -178,6 +189,7 @@ def _answer_entities(user: str) -> str:
 
 
 def _answer_curator(user: str) -> str:
+    """Answers a curation request with pseudo-random decisions, some aliases and gaps."""
     data = _json_tail(user)
     if not isinstance(data, dict):
         return "{}"
@@ -197,6 +209,7 @@ def _answer_curator(user: str) -> str:
 
 
 def _answer_glossary(user: str) -> str:
+    """Answers a glossary request, leaving out some names."""
     names = [line[2:].split(" (", 1)[0] for line in user.splitlines() if line.startswith("- ")]
     out = {
         name: _mark(name, "glossary")
@@ -207,7 +220,15 @@ def _answer_glossary(user: str) -> str:
 
 
 def fake_completion(kwargs: Dict[str, Any]) -> Tuple[str, str]:
-    """Returns ``(kind, content)`` for one ``chat.completions.create`` call."""
+    """Answers one ``chat.completions.create`` call as a pure function of it.
+
+    Args:
+        kwargs: Keyword arguments of the call.
+
+    Returns:
+        ``(kind, content)``: the request kind recognized from the prompts and
+        the reply text, cut in half for some requests.
+    """
     messages = kwargs.get("messages") or []
     system = _content_text(messages[0].get("content")) if messages else ""
     user = _content_text(messages[-1].get("content")) if messages else ""
@@ -235,12 +256,22 @@ def fake_completion(kwargs: Dict[str, Any]) -> Tuple[str, str]:
 
 
 class _Recorder:
+    """Fake endpoint that answers every call and records its canonical form.
+
+    Attributes:
+        lock: Guards the records; the pipeline calls from several threads.
+        requests: Canonical JSON of every call, in arrival order.
+        kinds: Number of calls per request kind.
+    """
+
     def __init__(self) -> None:
+        """Starts with no recorded requests."""
         self.lock = threading.Lock()
         self.requests: List[str] = []
         self.kinds: Dict[str, int] = {}
 
     def __call__(self, kwargs: Dict[str, Any]) -> Any:
+        """Records one call and returns its fake ``ChatCompletion``."""
         from openai.types.chat import ChatCompletion
 
         kind, content = fake_completion(kwargs)
@@ -274,12 +305,15 @@ class _Recorder:
 
 
 def _install_fake_endpoint(recorder: _Recorder) -> None:
+    """Routes the SDK's sync and async ``chat.completions.create`` to *recorder*."""
     from openai.resources.chat.completions import AsyncCompletions, Completions
 
     def create(self: Any, **kwargs: Any) -> Any:
+        """Answers a sync call."""
         return recorder(kwargs)
 
     async def acreate(self: Any, **kwargs: Any) -> Any:
+        """Answers an async call."""
         return recorder(kwargs)
 
     Completions.create = create  # type: ignore[method-assign]
@@ -292,6 +326,7 @@ def _install_fake_endpoint(recorder: _Recorder) -> None:
 
 
 def _strip_volatile(value: Any) -> Any:
+    """Removes the :data:`_VOLATILE_KEYS` from nested dicts and lists."""
     if isinstance(value, dict):
         return {k: _strip_volatile(v) for k, v in value.items() if k not in _VOLATILE_KEYS}
     if isinstance(value, list):
@@ -300,6 +335,7 @@ def _strip_volatile(value: Any) -> Any:
 
 
 def _canonical_lines(records: Iterable[Any]) -> List[str]:
+    """Returns the records as sorted canonical JSON lines."""
     return sorted(json.dumps(r, sort_keys=True, ensure_ascii=False) for r in records)
 
 
@@ -326,6 +362,7 @@ def _erf_digest(path: Path) -> Dict[str, Any]:
 
 
 def _rebuild_edits(log_lines: List[dict]) -> Dict[str, Dict[str, str]]:
+    """Picks a deterministic subset of editor rows and edits their translations."""
     edits: Dict[str, Dict[str, str]] = {}
     for entry in log_lines:
         if "event" in entry or not entry.get("item_id") or not entry.get("file"):
@@ -337,7 +374,14 @@ def _rebuild_edits(log_lines: List[dict]) -> Dict[str, Dict[str, str]]:
 
 
 def run_one(scenario: str, module: Path, out_dir: Path, concurrency: int = 1) -> None:
-    """Translates and rebuilds *module* under *scenario*; writes normalized results."""
+    """Translates and rebuilds *module* under *scenario*; writes normalized results.
+
+    Args:
+        scenario: Key of :data:`SCENARIOS`.
+        module: Module of the corpus (its ``manifest.json`` names the language).
+        out_dir: Directory of the run's result files.
+        concurrency: ``max_concurrent_requests`` of the run.
+    """
     recorder = _Recorder()
     _install_fake_endpoint(recorder)
 
@@ -423,6 +467,7 @@ def run_one(scenario: str, module: Path, out_dir: Path, concurrency: int = 1) ->
 def _plan(
     corpus: Path, scenarios: Optional[List[str]], names: Optional[List[str]]
 ) -> List[Tuple[str, Path]]:
+    """Returns the ``(scenario, module)`` runs selected by the command line."""
     modules = sorted(corpus.glob("*.mod"))
     runs = []
     for scenario, (_overrides, subset) in SCENARIOS.items():
@@ -438,10 +483,19 @@ def _plan(
 
 
 def _slug(scenario: str, module: Path) -> str:
+    """Returns the directory name of one run."""
     return f"{scenario}__{re.sub(r'[^A-Za-z0-9]+', '-', module.stem).strip('-')}"
 
 
 def record(args: argparse.Namespace) -> int:
+    """Records every selected run, each in a child process with a fixed hash seed.
+
+    Args:
+        args: ``record`` command line.
+
+    Returns:
+        The process exit code: 1 when a run failed.
+    """
     src = Path(args.src).resolve()
     corpus = Path(args.corpus).resolve()
     out = Path(args.out).resolve()
@@ -452,6 +506,7 @@ def record(args: argparse.Namespace) -> int:
     failures = []
 
     def launch(run: Tuple[str, Path]) -> None:
+        """Runs one scenario on one module in a child process."""
         scenario, module = run
         target = out / _slug(scenario, module)
         with open(out / f"{_slug(scenario, module)}.stderr.log", "wb") as err:
@@ -482,10 +537,12 @@ def record(args: argparse.Namespace) -> int:
 
 
 def _read_lines(path: Path) -> List[str]:
+    """Returns the newline-separated lines of *path*, none when it is missing."""
     return path.read_text(encoding="utf-8").split(NEWLINE) if path.exists() else []
 
 
 def _diff_multiset(a: List[str], b: List[str]) -> Tuple[int, int]:
+    """Counts the lines only in *a* and only in *b*, as multisets."""
     from collections import Counter
 
     ca, cb = Counter(a), Counter(b)
@@ -493,6 +550,15 @@ def _diff_multiset(a: List[str], b: List[str]) -> Tuple[int, int]:
 
 
 def compare(args: argparse.Namespace) -> int:
+    """Compares two recorded directories run by run and prints the verdict.
+
+    Args:
+        args: ``compare`` command line.
+
+    Returns:
+        The process exit code: 1 when a run differs, is missing or the total
+        time regressed beyond the tolerance.
+    """
     base, cand = Path(args.baseline), Path(args.candidate)
     slugs = sorted(p.name for p in base.iterdir() if (p / "result.json").exists())
     if args.partial:
@@ -538,6 +604,14 @@ def compare(args: argparse.Namespace) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Runs the ``record``, ``compare`` or internal ``run`` command.
+
+    Args:
+        argv: Command-line arguments (default: ``sys.argv[1:]``).
+
+    Returns:
+        The process exit code.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     rec = sub.add_parser("record", help="run every scenario and store normalized results")

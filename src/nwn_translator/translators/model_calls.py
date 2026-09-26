@@ -81,7 +81,7 @@ class SingleRequest:
 
     Attributes:
         context: Prompt context.
-        glossary_block: Glossary block, or None when no term matches.
+        glossary_block: Glossary block, or ``None`` when no term matches.
         content_profile: Prompt profile.
     """
 

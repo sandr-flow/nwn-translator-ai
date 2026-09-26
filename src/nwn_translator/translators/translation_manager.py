@@ -272,7 +272,8 @@ class TranslationManager:
             translated = self._accept(w, w.sanitized)
             if translated is None:
                 self._record_rejected(w, "text without translatable content was rejected")
-            self._keep(translations, w, translated)
+            else:
+                translations[w.key] = translated
             done(w)
 
         single_results, batch_results = caller.run_main_pass(plan.singles, plan.batches, done)
@@ -284,7 +285,7 @@ class TranslationManager:
                 len(plan.singles),
             )
         for w, result in zip(plan.singles, single_results):
-            self._keep(translations, w, self._process(caller, w, result))
+            self._process(caller, translations, w, result)
 
         failed_ncs: List[WorkItem] = []
         timed_out: Set[Occurrence] = set()
@@ -292,7 +293,7 @@ class TranslationManager:
         batch_work = [w for batch in plan.batches for w in batch]
         for w, result in zip(batch_work, batch_results):
             if result.success:
-                self._keep(translations, w, self._process(caller, w, result))
+                self._process(caller, translations, w, result)
             elif w.is_ncs:
                 failed_ncs.append(w)
                 if result.error and "timeout" in result.error.lower():
@@ -301,64 +302,82 @@ class TranslationManager:
                 failed_other.append(w)
 
         if failed_ncs:
-            for w in failed_ncs:
-                if w.key in timed_out:
-                    self._diagnostics.record(
-                        w.item, reason="translation_timeout", count_field="timeout"
-                    )
-            fallback_results = caller.run_fallback_pass(failed_ncs, scripts=True)
-            for w, result in zip(failed_ncs, fallback_results):
-                if w.key not in timed_out:
-                    continue
-                if result.success:
-                    self._diagnostics.record(
-                        w.item,
-                        reason="translation_timeout_retry_recovered",
-                        count_field="retry_recovered",
-                    )
-                else:
-                    self._diagnostics.record(
-                        w.item, reason="translation_timeout_retry_failed", error=result.error
-                    )
-            for w, result in zip(failed_ncs, fallback_results):
-                self._keep(translations, w, self._process(caller, w, result))
+            ncs_results = self._retry_failed_scripts(caller, failed_ncs, timed_out)
+            for w, result in zip(failed_ncs, ncs_results):
+                self._process(caller, translations, w, result)
         if failed_other:
             logger.info("Retrying %d failed batch items individually", len(failed_other))
-            for w, result in zip(
-                failed_other, caller.run_fallback_pass(failed_other, scripts=False)
-            ):
-                self._keep(translations, w, self._process(caller, w, result))
+            other_results = caller.run_fallback_pass(failed_other, scripts=False)
+            for w, result in zip(failed_other, other_results):
+                self._process(caller, translations, w, result)
         return translations
 
-    @staticmethod
-    def _keep(translations: Translations, work: WorkItem, translated: Optional[str]) -> None:
-        """Store an accepted translation."""
-        if translated is not None:
-            translations[work.key] = translated
+    def _retry_failed_scripts(
+        self, caller: ModelCaller, failed: List[WorkItem], timed_out: Set[Occurrence]
+    ) -> List[TranslationResult]:
+        """Send failed script strings with their fallback request, one per request.
 
-    def _process(
-        self, caller: ModelCaller, work: WorkItem, result: TranslationResult
-    ) -> Optional[str]:
-        """Accept a model result, retrying a broken answer; record a rejection.
+        Script strings whose batch timed out are recorded as timeouts before the
+        pass and as recovered or failed after it.
 
         Args:
             caller: Request sender of the run.
-            work: Item the result belongs to.
-            result: Model result.
+            failed: Script strings whose batch requests failed.
+            timed_out: Those whose batch request timed out.
 
         Returns:
-            The accepted translation, or None when the request is rejected.
+            One fallback result per string, in order.
+        """
+        for w in failed:
+            if w.key in timed_out:
+                self._diagnostics.record(
+                    w.item, reason="translation_timeout", count_field="timeout"
+                )
+        results = caller.run_fallback_pass(failed, scripts=True)
+        for w, result in zip(failed, results):
+            if w.key not in timed_out:
+                continue
+            if result.success:
+                self._diagnostics.record(
+                    w.item,
+                    reason="translation_timeout_retry_recovered",
+                    count_field="retry_recovered",
+                )
+            else:
+                self._diagnostics.record(
+                    w.item, reason="translation_timeout_retry_failed", error=result.error
+                )
+        return results
+
+    def _process(
+        self,
+        caller: ModelCaller,
+        translations: Translations,
+        work: WorkItem,
+        result: TranslationResult,
+    ) -> None:
+        """Accept a model result into *translations*, retrying a broken answer.
+
+        A request that fails or whose answers are all rejected is recorded as
+        rejected instead.
+
+        Args:
+            caller: Request sender of the run.
+            translations: Accepted translations of the run.
+            work: Item the result belongs to.
+            result: Model result.
         """
         if not result.success:
             self._record_rejected(work, result.error)
-            return None
+            return
         model = result.metadata.get("model", self.config.model)
         translated = self._accept(work, result.translated, model=model)
         if translated is None:
             translated = self._retry_token_mismatch(caller, work, result.translated, model)
         if translated is None:
             self._record_rejected(work, "rejected after retries")
-        return translated
+        else:
+            translations[work.key] = translated
 
     def _accept(
         self,

@@ -70,8 +70,10 @@ def find_translatable_files(directory: Path) -> List[Path]:
 
     File order decides batch composition, so it must not depend on the file
     system: the files are sorted by upper-cased relative path, the order in
-    which NTFS lists a directory. A Linux run thus sends the same requests as
-    a Windows run.
+    which NTFS lists a directory, and a Linux run batches them as a Windows
+    run does. The world scan (context mode) walks the directory in the file
+    system's own order, so its registries, and the requests they feed, can
+    still differ between file systems.
 
     Args:
         directory: Unpacked module.

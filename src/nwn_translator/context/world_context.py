@@ -1,10 +1,11 @@
 """World registry of NPCs, areas, quests and items for contextual translation.
 
-:class:`WorldScanner` reads the module's creature, area, journal, item and
-placement files once before translation. :class:`WorldContext` holds what it
-found: the glossary takes its names, dialog speaker resolution its actors, NCS
-translation its script owners, and every dialog prompt the WORLD CONTEXT block
-of the entities that dialog mentions.
+:class:`WorldScanner` reads the module's creature, placeable and door
+blueprints, areas, journals, items and area placements once before
+translation. :class:`WorldContext` holds what it found: the glossary takes its
+names, dialog speaker resolution its actors, NCS translation its script owners,
+and every dialog prompt the WORLD CONTEXT block of the entities that dialog
+mentions.
 """
 
 import logging

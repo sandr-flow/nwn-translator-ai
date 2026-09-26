@@ -80,7 +80,7 @@ def speakers_block(lines: Sequence[str]) -> str:
 
 
 def dialog_user_prompt(filename: str, script: str) -> str:
-    """Asks for the translation of one dialog script.
+    """Builds the user message asking for the translation of one dialog script.
 
     Args:
         filename: Dialog file name.
@@ -98,7 +98,7 @@ def dialog_user_prompt(filename: str, script: str) -> str:
 
 
 def repair_prompt(filename: str, script: str, keys: Sequence[str], bad_response: str) -> str:
-    """Asks again for valid JSON after an unparseable dialog answer.
+    """Builds the repair message asking for valid JSON after an unparseable dialog answer.
 
     Args:
         filename: Dialog file name.
@@ -125,7 +125,7 @@ def token_retry_prompt(
     expected: Mapping[str, Sequence[str]],
     reports: Mapping[str, Optional["TokenMismatchReport"]],
 ) -> str:
-    """Asks again for lines that were missing or whose tokens or tags broke.
+    """Builds the retry message for lines that were missing or whose tokens or tags broke.
 
     Args:
         filename: Dialog file name.
@@ -204,7 +204,7 @@ def group_script(scripts: Sequence[Tuple[str, str]]) -> str:
 
 
 def group_user_prompt(names: List[str], combined_script: str) -> str:
-    """Asks for the translation of several small dialogs in one request.
+    """Builds the user message asking for the translation of several small dialogs in one request.
 
     Args:
         names: File names in request order.
@@ -229,7 +229,7 @@ def group_user_prompt(names: List[str], combined_script: str) -> str:
 
 
 def group_repair_prompt(names: List[str], combined_script: str, bad_response: str) -> str:
-    """Asks again for valid nested JSON after an unparseable group answer.
+    """Builds the repair message asking for valid nested JSON after an unparseable group answer.
 
     Args:
         names: File names in request order.

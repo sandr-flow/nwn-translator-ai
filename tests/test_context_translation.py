@@ -65,8 +65,20 @@ def _make_config(**kwargs) -> TranslationConfig:
     return TranslationConfig(**defaults)
 
 
+class _UnexpectedLineRetry(BaseException):
+    """A single-line retry the test did not expect.
+
+    A ``BaseException``, so the manager's handlers, which catch
+    ``Exception``, let it through and the test fails.
+    """
+
+
 class _FakeProvider:
-    """Provider double: answers JSON chats from a queue; single lines fail loudly."""
+    """Provider double: answers JSON chats from a queue.
+
+    A single-line retry raises :class:`_UnexpectedLineRetry`; subclasses that
+    expect such retries override ``translate_async``.
+    """
 
     model = "fake/model"
 
@@ -112,7 +124,7 @@ class _FakeProvider:
         glossary_block=None,
         content_profile=None,
     ):
-        raise AssertionError("translate_async should not be reached in these tests")
+        raise _UnexpectedLineRetry(text)
 
     async def close_async_client(self):
         return None

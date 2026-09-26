@@ -15,10 +15,11 @@ import shutil
 import threading
 import time
 import uuid
+import weakref
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set
 
 from ..config import (
     TranslationCancelled,
@@ -224,8 +225,10 @@ class TaskManager:
         self._workers: Dict[str, threading.Thread] = {}
         #: Deleted tasks whose worker is still winding down.
         self._orphaned: Set[str] = set()
-        #: task_id -> (rebuild lock, number of rebuilds holding or awaiting it).
-        self._rebuild_locks: Dict[str, Tuple[threading.Lock, int]] = {}
+        #: task_id -> rebuild lock; an entry lives while a rebuild holds or awaits it.
+        self._rebuild_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._reconcile_interrupted()
 
     def _reconcile_interrupted(self) -> None:
@@ -277,16 +280,23 @@ class TaskManager:
             unfinished = sum(1 for t in self._tasks.values() if not t.is_finished())
             return unfinished + len(self._orphaned)
 
+    def _slot_holder(self, ip: str) -> Optional[str]:
+        """Return the unfinished task holding *ip*'s slot; the caller holds ``_lock``."""
+        tid = self._active_by_ip.get(ip)
+        task = self._tasks.get(tid) if tid else None
+        return tid if task is not None and not task.is_finished() else None
+
     def active_task_id_for_ip(self, ip: str) -> Optional[str]:
-        """Return the unfinished task occupying *ip*'s slot, or ``None``."""
+        """Return the unfinished task occupying *ip*'s slot.
+
+        Args:
+            ip: Client IP address.
+
+        Returns:
+            The task id, or ``None`` when the slot is free.
+        """
         with self._lock:
-            tid = self._active_by_ip.get(ip)
-            if not tid:
-                return None
-            t = self._tasks.get(tid)
-            if t and not t.is_finished():
-                return tid
-            return None
+            return self._slot_holder(ip)
 
     def create_task(
         self,
@@ -340,16 +350,17 @@ class TaskManager:
         concurrent requests from the same IP cannot both pass the one-job-per-IP
         limit.
 
+        Args:
+            client_ip: Client IP address.
+            task_id: Task to register.
+
         Returns:
             ``True`` if registered; ``False`` if an unfinished task already
             occupies the slot for this IP.
         """
         with self._lock:
-            existing = self._active_by_ip.get(client_ip)
-            if existing:
-                t = self._tasks.get(existing)
-                if t and not t.is_finished():
-                    return False
+            if self._slot_holder(client_ip):
+                return False
             self._active_by_ip[client_ip] = task_id
             return True
 
@@ -358,18 +369,6 @@ class TaskManager:
         with self._lock:
             if self._active_by_ip.get(client_ip) == task_id:
                 del self._active_by_ip[client_ip]
-
-    def discard_task(self, task_id: str) -> None:
-        """Remove a task that never started running (lost the IP race, failed upload).
-
-        Drops it from memory, its SQLite row so it does not linger in the
-        client's history, and its workspace, which no TTL purge would reach
-        without the row.
-        """
-        with self._lock:
-            self._tasks.pop(task_id, None)
-        delete_task_row(task_id)
-        shutil.rmtree(self.workspace_root / task_id, ignore_errors=True)
 
     def cancel(self, task: TranslationTask) -> None:
         """Ask a running task to stop and free its client's slot at once.
@@ -389,7 +388,12 @@ class TaskManager:
 
         A running job is cancelled and its client's slot freed at once. Its
         workspace goes when the worker exits, because the job may still be
-        writing there; until then the worker counts as an active task.
+        writing there; until then the worker counts as an active task. A task
+        that never started (it lost the IP race or its upload failed) goes at
+        once; without its row no TTL purge would reach its workspace.
+
+        Args:
+            task_id: Task to delete.
         """
         with self._lock:
             task = self._tasks.pop(task_id, None)
@@ -439,18 +443,23 @@ class TaskManager:
 
     @contextmanager
     def _rebuild_lock(self, task_id: str) -> Iterator[None]:
-        """Hold the rebuild lock of *task_id*; the lock exists only while in use."""
+        """Hold the rebuild lock of *task_id*.
+
+        The registry keeps the lock only weakly: each rebuild holding or awaiting
+        it keeps it alive, and it disappears with the last one.
+
+        Args:
+            task_id: Task being rebuilt.
+
+        Yields:
+            Control while the lock is held.
+        """
         with self._lock:
-            lock, users = self._rebuild_locks.get(task_id, (threading.Lock(), 0))
-            self._rebuild_locks[task_id] = (lock, users + 1)
-        try:
-            with lock:
-                yield
-        finally:
-            with self._lock:
-                lock, users = self._rebuild_locks.pop(task_id)
-                if users > 1:
-                    self._rebuild_locks[task_id] = (lock, users - 1)
+            lock = self._rebuild_locks.get(task_id)
+            if lock is None:
+                lock = self._rebuild_locks[task_id] = threading.Lock()
+        with lock:
+            yield
 
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
         """Create the pipeline progress callback of *task*.
@@ -587,7 +596,6 @@ class TaskManager:
             )
         except TranslationCancelled:
             logger.info("Translation cancelled for task %s", task.task_id)
-            task.error = None
             self._finish(task, "cancelled")
         except Exception as e:
             logger.exception("Translation failed for task %s", task.task_id)

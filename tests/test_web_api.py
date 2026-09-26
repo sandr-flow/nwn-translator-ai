@@ -593,13 +593,18 @@ class TestOneJobPerIpSlot:
         assert row["phase"] == "translating"
         assert row["current_file"] == "npc.dlg"
 
-    def test_discard_task_removes_memory_and_db_row(self, isolated_tm: TaskManager) -> None:
+    def test_deleting_a_task_that_never_ran_removes_it_everywhere(
+        self, isolated_tm: TaskManager
+    ) -> None:
+        """A task that lost the IP race or its upload leaves no row, memory or files."""
         tm = isolated_tm
         task = tm.create_task("9.9.9.9", "a.mod")
+        workspace = tm.workspace_for_task(task.task_id)
         assert db.get_task_row(task.task_id) is not None
-        tm.discard_task(task.task_id)
+        tm.delete(task.task_id)
         assert tm.get(task.task_id) is None
         assert db.get_task_row(task.task_id) is None
+        assert not workspace.exists()
 
 
 def test_rebuilds_of_one_task_run_one_at_a_time(

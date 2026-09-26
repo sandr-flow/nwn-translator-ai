@@ -273,14 +273,13 @@ async def start_translate(
     # workspace; the check at the top of the handler is only a fast path and is
     # racy on its own.
     if not tm.try_register_active(ip, task.task_id):
-        tm.discard_task(task.task_id)
+        tm.delete(task.task_id)
         raise HTTPException(status_code=429, detail=_IP_BUSY_DETAIL)
     input_path = tm.workspace_for_task(task.task_id) / Path(file.filename).name
     try:
         await _stream_upload_to_file(file, input_path)
     except BaseException:
-        tm.release_active(ip, task.task_id)
-        tm.discard_task(task.task_id)
+        tm.delete(task.task_id)
         raise
 
     tm.start(task, job, input_path)

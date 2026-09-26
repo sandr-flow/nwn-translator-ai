@@ -1,5 +1,6 @@
 """Tests for contextual dialog translation: requests, recovery, grouping and progress."""
 
+import asyncio
 import logging
 import threading
 from pathlib import Path
@@ -572,6 +573,44 @@ class TestTranslateDialogs:
         assert errors == []
         assert len(translations) == 3
         assert progress.total == 3  # one budgeted item per file, none lost
+
+    def test_worker_threads_close_their_client_and_event_loop(self):
+        class _LoopRecordingProvider(_KeyedFakeProvider):
+            def __init__(self, responses_by_marker):
+                super().__init__(responses_by_marker)
+                self.request_loops = set()
+                self.closed_by = []
+
+            async def complete_json_chat_async(self, *args, **kwargs):
+                self.request_loops.add(asyncio.get_running_loop())
+                return await super().complete_json_chat_async(*args, **kwargs)
+
+            async def close_async_client(self):
+                self.closed_by.append(threading.get_ident())
+
+        provider = _LoopRecordingProvider(
+            {
+                "Hello": '{"E1":"Привет"}',
+                "Goodbye": '{"E2":"Прощай"}',
+                "Thanks": '{"E3":"Спасибо"}',
+            }
+        )
+        manager = ContextualTranslationManager(
+            _make_config(max_concurrent_requests=2), provider, WorldContext()
+        )
+        files = [
+            _file("a.dlg", 1, "Hello"),
+            _file("b.dlg", 2, "Goodbye"),
+            _file("c.dlg", 3, "Thanks"),
+        ]
+
+        translations, errors = manager.translate_dialogs(files)
+
+        assert errors == [] and len(translations) == 3
+        assert len(provider.closed_by) == 2  # one per worker thread
+        assert threading.get_ident() not in provider.closed_by
+        assert provider.request_loops
+        assert all(loop.is_closed() for loop in provider.request_loops)
 
     def test_file_without_lines_reports_its_budget(self):
         provider = _KeyedFakeProvider({})

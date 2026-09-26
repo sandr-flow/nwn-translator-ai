@@ -12,14 +12,18 @@ broken tokens cleaned out when that yields a valid text.
 
 import json
 import logging
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+import threading
+from collections import deque
+from concurrent.futures import Future, as_completed
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
     Collection,
+    Deque,
     Dict,
     List,
     NamedTuple,
@@ -32,7 +36,7 @@ from typing import (
 
 from ..ai_providers import TranslationProvider
 from ..ai_providers.base import RateLimitError, SystemContent
-from ..async_utils import run_async
+from ..async_utils import run_async, shutdown_thread_loop
 from ..config import (
     TRANSLATION_MAX_TOKENS,
     TRANSLATION_TEMPERATURE,
@@ -395,29 +399,67 @@ class ContextualTranslationManager:
                 len(singles),
             )
 
-        max_workers = max(1, self.config.max_concurrent_requests)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures: Dict[Future[_JobResult], List[PreparedDialog]] = {}
-            for dialog in singles:
-                futures[executor.submit(self._translate_single, dialog, item_progress)] = [dialog]
-            for group in groups:
-                futures[executor.submit(self._translate_group, group, item_progress)] = group
-            try:
-                for future in as_completed(futures):
-                    try:
-                        job_translations, job_errors = future.result()
-                    except TranslationCancelled:
-                        raise
-                    except Exception as exc:
-                        errors.extend((dialog.file_path, exc) for dialog in futures[future])
-                    else:
-                        translations.update(job_translations)
-                        errors.extend(job_errors)
-            except TranslationCancelled:
-                for future in futures:
-                    future.cancel()
-                raise
+        jobs: List[Tuple[Callable[[], _JobResult], List[PreparedDialog]]] = [
+            (partial(self._translate_single, dialog, item_progress), [dialog]) for dialog in singles
+        ]
+        jobs += [(partial(self._translate_group, group, item_progress), group) for group in groups]
+        queue: Deque[Tuple[Callable[[], _JobResult], Future[_JobResult]]] = deque()
+        futures: Dict[Future[_JobResult], List[PreparedDialog]] = {}
+        for job, files in jobs:
+            future: Future[_JobResult] = Future()
+            queue.append((job, future))
+            futures[future] = files
+        workers = [
+            threading.Thread(target=self._work, args=(queue,), name=f"dialog-{index}")
+            for index in range(min(max(1, self.config.max_concurrent_requests), len(jobs)))
+        ]
+        for worker in workers:
+            worker.start()
+        try:
+            for future in as_completed(futures):
+                try:
+                    job_translations, job_errors = future.result()
+                except TranslationCancelled:
+                    raise
+                except Exception as exc:
+                    errors.extend((dialog.file_path, exc) for dialog in futures[future])
+                else:
+                    translations.update(job_translations)
+                    errors.extend(job_errors)
+        except TranslationCancelled:
+            for future in futures:
+                future.cancel()
+            raise
+        finally:
+            for worker in workers:
+                worker.join()
         return translations, errors
+
+    def _work(self, queue: Deque[Tuple[Callable[[], _JobResult], Future[_JobResult]]]) -> None:
+        """Worker thread: run queued jobs in order, then release the thread's resources.
+
+        ``run_async`` keeps one event loop per thread, and the provider one
+        HTTP client per loop, so a worker reuses them for all its jobs. They
+        are closed when the queue is empty, before the thread ends. A
+        cancelled job is skipped.
+        """
+        try:
+            while queue:
+                try:
+                    job, future = queue.popleft()
+                except IndexError:
+                    break
+                if future.set_running_or_notify_cancel():
+                    try:
+                        future.set_result(job())
+                    except BaseException as exc:
+                        future.set_exception(exc)
+        finally:
+            try:
+                run_async(self.provider.close_async_client(), timeout=30.0)
+            except Exception:
+                logger.debug("Closing a dialog worker's HTTP client failed", exc_info=True)
+            shutdown_thread_loop()
 
     def _translate_single(
         self, dialog: PreparedDialog, item_progress: Optional[ProgressSink]

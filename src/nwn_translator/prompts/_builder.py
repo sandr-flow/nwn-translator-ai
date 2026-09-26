@@ -181,7 +181,7 @@ def _speech_style_rules(target_lang: str) -> str:
 
 
 def _player_gender_rule(gender: str) -> str:
-    """One-liner for player character grammatical gender agreement."""
+    """Rule text: grammatical forms addressing the player agree with *gender*."""
     agreement = "masculine" if gender == "male" else "feminine"
     return (
         f"PLAYER CHARACTER: the protagonist is {gender}. All grammatical forms "
@@ -191,7 +191,7 @@ def _player_gender_rule(gender: str) -> str:
 
 
 def _token_preservation_rule() -> str:
-    """One-liner for preserving game tokens."""
+    """Rule text: helper placeholders and inline NWN tags stay unchanged."""
     return (
         "TAG/TOKEN PRESERVATION (mandatory):\n"
         "- Keep helper placeholders like __NWN_TOKEN_ABC__, __NWN_INLINE_XYZ__ unchanged \u2014 no "
@@ -205,7 +205,7 @@ def _token_preservation_rule() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Composite prompt builders (public API)
+# RULES bodies of the translation content profiles
 # ---------------------------------------------------------------------------
 
 

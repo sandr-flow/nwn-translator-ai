@@ -466,6 +466,14 @@ def is_generic_entity_label(name: object, category: Optional[str] = None) -> boo
     admitted only by exact substring match on the name itself; tag/speaker
     matches are not evidence because every Human-Female NPC would otherwise
     pull in via a token co-occurrence.
+
+    Args:
+        name: Entity name.
+        category: Its category.
+
+    Returns:
+        Whether the candidate filter deprioritizes the name as a generic
+        person, race or role label.
     """
     result = classify_entity_candidate(name, category)
     return result.decision == "deprioritize" and result.reason in _GENERIC_REASONS

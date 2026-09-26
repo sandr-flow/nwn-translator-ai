@@ -63,7 +63,7 @@ _MAGNET_TOKENS = frozenset(
 
 
 def tokenize(text: str) -> Set[str]:
-    """Normalize *text* and return its set of letter-token strings."""
+    """Return the letter tokens of *text* (NFKC, casefolded; digits and ``_`` split tokens)."""
     if not text:
         return set()
     normalized = unicodedata.normalize("NFKC", str(text)).casefold()
@@ -122,9 +122,14 @@ def _fuzzy_in_index(token: str, index: SourceTokenIndex) -> bool:
 def is_relevant(entity_text: str, source_tokens: Union[Set[str], SourceTokenIndex]) -> bool:
     """True if *entity_text* is strongly evidenced by *source_tokens*.
 
-    *source_tokens* is either the output of :func:`tokenize` or a prebuilt
-    :class:`SourceTokenIndex` (callers filtering many entities against the
-    same corpus should build the index once).
+    Args:
+        entity_text: Entity name (and tag) to look for.
+        source_tokens: Output of :func:`tokenize_corpus`, or a prebuilt
+            :class:`SourceTokenIndex`; callers filtering many entities against
+            the same corpus should build the index once.
+
+    Returns:
+        Whether the entity passes the conservative matching rules of this module.
     """
     if isinstance(source_tokens, SourceTokenIndex):
         index = source_tokens
@@ -232,7 +237,7 @@ def _damerau_levenshtein_le_1(a: str, b: str) -> bool:
 
 
 def tokenize_corpus(texts: Iterable[str]) -> Set[str]:
-    """Tokenize each text and return the union of all tokens."""
+    """Return the union of the :func:`tokenize` tokens of *texts* (empty items skipped)."""
     out: Set[str] = set()
     for t in texts:
         if t:
@@ -263,6 +268,13 @@ def common_hierarchy_components(
     A component appearing in *threshold* or more hierarchical names is
     classified as a common prefix/suffix and on its own is not enough to
     consider a hierarchical entry relevant to a source corpus.
+
+    Args:
+        names: Candidate names (``A - B - C`` style ones count).
+        threshold: Minimum number of names sharing a component.
+
+    Returns:
+        The common components.
     """
     counts: Dict[str, int] = {}
     for name in names:
@@ -289,6 +301,14 @@ def hierarchical_entry_passes(
     pass; substring match on the whole component avoids the
     ``Loom Avenue`` ↔ ``Dock Ward gates`` false positive that token-level
     relevance would let through via the shared ``ward``/``gates`` magnet.
+
+    Args:
+        name: Entity name; non-hierarchical names always pass.
+        source_joined: Casefolded source corpus.
+        common: Output of :func:`common_hierarchy_components`.
+
+    Returns:
+        Whether the name is evidenced.
     """
     parts = _split_hierarchical_cached(str(name)) if name else None
     if not parts:

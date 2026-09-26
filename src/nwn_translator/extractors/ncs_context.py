@@ -8,7 +8,7 @@ overrides display use. Inconclusive values still require the translation gate.
 """
 
 import struct
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .nss_index import classify_engine_arg
 from ..file_handlers.ncs_parser import (
@@ -154,12 +154,26 @@ NON_PLAYER_ACTIONS: Set[int] = {
 }
 
 
-def trace_string_consumer(instr_index: int, instructions: List[NCSInstruction]) -> Dict[str, Any]:
+def trace_string_consumer(
+    instr_index: int,
+    instructions: List[NCSInstruction],
+    index_by_offset: Optional[Dict[int, int]] = None,
+) -> Dict[str, Any]:
     """Follow copies through bounded control flow; any technical use wins.
 
     Stack positions are relative to the initial string. Unknown instructions,
     escaped values and exhausted budgets prevent a player-only proof. Engine
     return values never inherit the identity of an argument. NSS is not used.
+
+    Args:
+        instr_index: Index of the string constant (or concat tail) to trace.
+        instructions: All instructions of the script.
+        index_by_offset: Precomputed ``{instruction offset: index}`` map of
+            *instructions*. Callers tracing many strings of one script pass it
+            to avoid rebuilding the map per call.
+
+    Returns:
+        Bytecode context dict consumed by the NCS extractor and the model gate.
     """
     from ..file_handlers import ncs_parser as op
 
@@ -178,7 +192,11 @@ def trace_string_consumer(instr_index: int, instructions: List[NCSInstruction]) 
             if i.is_action
         ),
     }
-    by_offset = {i.offset: n for n, i in enumerate(instructions)}
+    by_offset = (
+        index_by_offset
+        if index_by_offset is not None
+        else {i.offset: n for n, i in enumerate(instructions)}
+    )
     # Next instruction, stack top (exclusive, bytes), tracked slots, return stack.
     pending: list[tuple[int, int, frozenset[int], tuple[int, ...]]] = [
         (instr_index + 1, 0, frozenset({-4}), ())

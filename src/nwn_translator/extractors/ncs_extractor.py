@@ -227,6 +227,7 @@ class NcsExtractor(BaseExtractor):
             )
 
         instructions = ncs_file.instructions
+        index_by_offset = {instr.offset: n for n, instr in enumerate(instructions)}
         items: List[TranslatableItem] = []
         chains = find_concat_chains(ncs_file)
         chain_lit_offsets = {part.offset for chain in chains.values() for part in chain.lits()}
@@ -274,7 +275,7 @@ class NcsExtractor(BaseExtractor):
 
             record("units", True, "concat" if chain is not None else "literal", offsets)
 
-            bytecode_ctx = trace_string_consumer(scan_idx, instructions)
+            bytecode_ctx = trace_string_consumer(scan_idx, instructions, index_by_offset)
             action_class = bytecode_ctx["role"]
             record(
                 "consumer",

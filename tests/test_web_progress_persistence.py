@@ -15,14 +15,7 @@ from nwn_translator.web.task_manager import (
 
 
 @pytest.fixture
-def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    db.close_db()
-    monkeypatch.setattr(db, "_connection", None)
-    db.init_db(tmp_path / "t.db")
-
-
-@pytest.fixture
-def task(isolated_db: None) -> TranslationTask:
+def task() -> TranslationTask:
     db.create_task_row(
         task_id="t1",
         client_token="tok",
@@ -34,7 +27,7 @@ def task(isolated_db: None) -> TranslationTask:
 
 
 @pytest.fixture
-def manager(tmp_path: Path, isolated_db: None) -> TaskManager:
+def manager(tmp_path: Path) -> TaskManager:
     return TaskManager(workspace_root=tmp_path / "tasks")
 
 

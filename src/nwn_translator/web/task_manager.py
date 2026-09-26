@@ -12,13 +12,15 @@ import asyncio
 import logging
 import os
 import shutil
+import sqlite3
 import threading
 import time
 import uuid
+import weakref
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set
 
 from ..config import (
     TranslationCancelled,
@@ -224,8 +226,10 @@ class TaskManager:
         self._workers: Dict[str, threading.Thread] = {}
         #: Deleted tasks whose worker is still winding down.
         self._orphaned: Set[str] = set()
-        #: task_id -> (rebuild lock, number of rebuilds holding or awaiting it).
-        self._rebuild_locks: Dict[str, Tuple[threading.Lock, int]] = {}
+        #: task_id -> rebuild lock; an entry lives while a rebuild holds or awaits it.
+        self._rebuild_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
+            weakref.WeakValueDictionary()
+        )
         self._reconcile_interrupted()
 
     def _reconcile_interrupted(self) -> None:
@@ -241,20 +245,39 @@ class TaskManager:
             self._tasks[row["task_id"]] = TranslationTask.from_row({**row, "status": "interrupted"})
 
     def workspace_for_task(self, task_id: str) -> Path:
-        """Return the task's workspace directory, creating it if needed."""
+        """Return the task's workspace directory, creating it if needed.
+
+        Args:
+            task_id: Task UUID.
+
+        Returns:
+            The workspace directory.
+        """
         path = self.workspace_root / task_id
         path.mkdir(parents=True, exist_ok=True)
         return path
 
     def get(self, task_id: str) -> Optional[TranslationTask]:
-        """Return the in-memory task, or ``None``."""
+        """Return the in-memory task.
+
+        Args:
+            task_id: Task UUID.
+
+        Returns:
+            The task, or ``None`` if it is not in memory.
+        """
         with self._lock:
             return self._tasks.get(task_id)
 
     def find(self, task_id: str) -> Optional[TranslationTask]:
         """Return the task from memory, else rebuilt from its SQLite row.
 
-        Finished tasks of an earlier process exist only in the database.
+        Tasks that finished under an earlier process exist only in the
+        database; the ones it left unfinished are loaded as ``interrupted`` at
+        startup.
+
+        Args:
+            task_id: Task UUID.
 
         Returns:
             The task, or ``None`` if it exists nowhere.
@@ -277,16 +300,23 @@ class TaskManager:
             unfinished = sum(1 for t in self._tasks.values() if not t.is_finished())
             return unfinished + len(self._orphaned)
 
+    def _slot_holder(self, ip: str) -> Optional[str]:
+        """Return the unfinished task holding *ip*'s slot; the caller holds ``_lock``."""
+        tid = self._active_by_ip.get(ip)
+        task = self._tasks.get(tid) if tid else None
+        return tid if task is not None and not task.is_finished() else None
+
     def active_task_id_for_ip(self, ip: str) -> Optional[str]:
-        """Return the unfinished task occupying *ip*'s slot, or ``None``."""
+        """Return the unfinished task occupying *ip*'s slot.
+
+        Args:
+            ip: Client IP address.
+
+        Returns:
+            The task id, or ``None`` when the slot is free.
+        """
         with self._lock:
-            tid = self._active_by_ip.get(ip)
-            if not tid:
-                return None
-            t = self._tasks.get(tid)
-            if t and not t.is_finished():
-                return tid
-            return None
+            return self._slot_holder(ip)
 
     def create_task(
         self,
@@ -340,36 +370,30 @@ class TaskManager:
         concurrent requests from the same IP cannot both pass the one-job-per-IP
         limit.
 
+        Args:
+            client_ip: Client IP address.
+            task_id: Task to register.
+
         Returns:
             ``True`` if registered; ``False`` if an unfinished task already
             occupies the slot for this IP.
         """
         with self._lock:
-            existing = self._active_by_ip.get(client_ip)
-            if existing:
-                t = self._tasks.get(existing)
-                if t and not t.is_finished():
-                    return False
+            if self._slot_holder(client_ip):
+                return False
             self._active_by_ip[client_ip] = task_id
             return True
 
     def release_active(self, client_ip: str, task_id: str) -> None:
-        """Free *client_ip*'s slot if *task_id* holds it."""
+        """Free *client_ip*'s slot if *task_id* holds it.
+
+        Args:
+            client_ip: Client IP address.
+            task_id: Task that may hold the slot.
+        """
         with self._lock:
             if self._active_by_ip.get(client_ip) == task_id:
                 del self._active_by_ip[client_ip]
-
-    def discard_task(self, task_id: str) -> None:
-        """Remove a task that never started running (lost the IP race, failed upload).
-
-        Drops it from memory, its SQLite row so it does not linger in the
-        client's history, and its workspace, which no TTL purge would reach
-        without the row.
-        """
-        with self._lock:
-            self._tasks.pop(task_id, None)
-        delete_task_row(task_id)
-        shutil.rmtree(self.workspace_root / task_id, ignore_errors=True)
 
     def cancel(self, task: TranslationTask) -> None:
         """Ask a running task to stop and free its client's slot at once.
@@ -378,6 +402,9 @@ class TaskManager:
         a live job while the worker waits on an in-flight provider call; the
         worker still sets the final status. The slot is not held until then,
         because a hung provider call can take minutes to time out.
+
+        Args:
+            task: Running task.
         """
         task.request_cancel()
         task.status = "cancelling"
@@ -389,7 +416,12 @@ class TaskManager:
 
         A running job is cancelled and its client's slot freed at once. Its
         workspace goes when the worker exits, because the job may still be
-        writing there; until then the worker counts as an active task.
+        writing there; until then the worker counts as an active task. A task
+        that never started (it lost the IP race or its upload failed) goes at
+        once; without its row no TTL purge would reach its workspace.
+
+        Args:
+            task_id: Task to delete.
         """
         with self._lock:
             task = self._tasks.pop(task_id, None)
@@ -419,6 +451,10 @@ class TaskManager:
             task: A completed task whose ``extract_dir`` and ``result_path`` exist.
             edits: Edits from the editor.
             target_lang: Language that drives the string encoding.
+
+        Raises:
+            Exception: Whatever :func:`~nwn_translator.main.rebuild_module`
+                raises, in which case no edit is stored, and database errors.
         """
         assert task.extract_dir is not None and task.result_path is not None
         with self._rebuild_lock(task.task_id):
@@ -439,24 +475,35 @@ class TaskManager:
 
     @contextmanager
     def _rebuild_lock(self, task_id: str) -> Iterator[None]:
-        """Hold the rebuild lock of *task_id*; the lock exists only while in use."""
+        """Hold the rebuild lock of *task_id*.
+
+        The registry keeps the lock only weakly: each rebuild holding or awaiting
+        it keeps it alive, and it disappears with the last one.
+
+        Args:
+            task_id: Task being rebuilt.
+
+        Yields:
+            Control while the lock is held.
+        """
         with self._lock:
-            lock, users = self._rebuild_locks.get(task_id, (threading.Lock(), 0))
-            self._rebuild_locks[task_id] = (lock, users + 1)
-        try:
-            with lock:
-                yield
-        finally:
-            with self._lock:
-                lock, users = self._rebuild_locks.pop(task_id)
-                if users > 1:
-                    self._rebuild_locks[task_id] = (lock, users - 1)
+            lock = self._rebuild_locks.get(task_id)
+            if lock is None:
+                lock = self._rebuild_locks[task_id] = threading.Lock()
+        with lock:
+            yield
 
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
         """Create the pipeline progress callback of *task*.
 
         The callback updates the task's phase, status and monotonic weighted
         progress, and mirrors them into SQLite.
+
+        Args:
+            task: Task the callback reports for.
+
+        Returns:
+            The callback, called as ``(phase, current, total, message=None)``.
         """
 
         def callback(
@@ -482,11 +529,12 @@ class TaskManager:
         return callback
 
     def _persist_progress(self, task: TranslationTask, phase: str, message: Optional[str]) -> None:
-        """Mirror in-flight progress into SQLite, throttled by time.
+        """Mirror in-flight progress into SQLite.
 
-        The history list and clients polling a task after a reconnect read the
-        row, so it has to follow the running job, not keep its extraction-time
-        state.
+        A phase change is written at once, other updates at most every
+        :data:`PROGRESS_PERSIST_INTERVAL_SECONDS`. The history list reads the
+        row's ``status``, so the row has to follow the running job instead of
+        keeping its extraction-time state; status polls read the in-memory task.
 
         Args:
             task: Task whose current state should be persisted.
@@ -539,6 +587,11 @@ class TaskManager:
 
         The task ends ``completed``, ``cancelled`` or ``failed``, its IP slot is
         released and the worker is unregistered.
+
+        Args:
+            task: Task that owns the job.
+            job: Validated job settings.
+            input_path: Uploaded module inside the task workspace.
         """
         try:
             base = self.workspace_for_task(task.task_id)
@@ -575,9 +628,13 @@ class TaskManager:
             task.result_path = Path(result_path)
             task.extract_dir = translator.extract_dir
             task.stats = translator.get_statistics()
-            # Editor rows of every file, dialogs included; ``items_translated``
-            # counts only accepted non-dialog answers.
-            task.stats["texts_translated"] = count_translations(task.task_id)
+            # Editor rows of every file, dialogs and rejected lines included;
+            # ``items_translated`` counts only accepted non-dialog items.
+            try:
+                task.stats["texts_translated"] = count_translations(task.task_id)
+            except sqlite3.Error as e:
+                # The module is already written; only this statistic is lost.
+                logger.warning("Could not count the rows of task %s: %s", task.task_id, e)
             self._finish(
                 task,
                 "completed",
@@ -587,7 +644,6 @@ class TaskManager:
             )
         except TranslationCancelled:
             logger.info("Translation cancelled for task %s", task.task_id)
-            task.error = None
             self._finish(task, "cancelled")
         except Exception as e:
             logger.exception("Translation failed for task %s", task.task_id)
@@ -598,9 +654,12 @@ class TaskManager:
             with self._lock:
                 del self._workers[task.task_id]
                 deleted = task.task_id in self._orphaned
-                self._orphaned.discard(task.task_id)
             if deleted:
+                # The task stays active until its files are gone, so a deploy
+                # waiting for zero active tasks cannot cut the removal short.
                 shutil.rmtree(self.workspace_root / task.task_id, ignore_errors=True)
+                with self._lock:
+                    self._orphaned.discard(task.task_id)
 
     def _finish(self, task: TranslationTask, status: str, **fields: Any) -> None:
         """Move *task* to terminal *status* in memory and in SQLite.
@@ -629,10 +688,10 @@ class TaskManager:
 
         Workspace directories (uploaded module, extraction temp, result) are
         deleted; DB rows and translations are kept, so the client history and
-        the translation editor keep working while download/rebuild degrade to
-        their "files unavailable" errors. Expired tasks come from the DB, not
-        the in-memory dict: finished tasks are not reloaded into memory after a
-        restart, but their workspace files survive it.
+        the translation editor keep working, while download answers 400 ("result
+        file not ready") and rebuild 400 ("extracted files unavailable"). Expired
+        tasks come from the DB, not the in-memory dict: finished tasks are not
+        reloaded into memory after a restart, but their workspace files survive it.
         """
         now = time.time()
         with self._lock:
@@ -660,7 +719,11 @@ class TaskManager:
                 logger.warning("Failed to purge workspace %s: %s", task_dir, e)
 
     async def purge_periodically(self, interval_seconds: float = PURGE_INTERVAL_SECONDS) -> None:
-        """Run :meth:`purge_expired` every *interval_seconds* until cancelled."""
+        """Run :meth:`purge_expired` every *interval_seconds* until cancelled.
+
+        Args:
+            interval_seconds: Pause between two purges.
+        """
         while True:
             await asyncio.sleep(interval_seconds)
             self.purge_expired()

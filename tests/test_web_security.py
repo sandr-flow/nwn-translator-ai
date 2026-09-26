@@ -163,8 +163,10 @@ def test_task_routes_allow_owner(isolated_app) -> None:
 
 
 def test_downloads_allow_owner_token_via_query_param(isolated_app) -> None:
-    """Plain <a href> download links cannot send headers, so /download and /log
-    accept ?client_token= as a fallback (otherwise the UI links get 403)."""
+    """Download links accept ``?client_token=`` as a fallback to the header.
+
+    Plain <a href> links cannot send headers; without the fallback they get 403.
+    """
     with isolated_app() as client:
         task_id = _seed_task(owner="owner-tok")
         for kind in ("download", "log"):

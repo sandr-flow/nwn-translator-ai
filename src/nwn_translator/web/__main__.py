@@ -27,6 +27,9 @@ def main() -> None:
 
     ``NWN_WEB_HOST`` (default ``127.0.0.1``), ``NWN_WEB_PORT`` (``8000``) and
     ``NWN_WEB_RELOAD`` configure the server.
+
+    Raises:
+        SystemExit: When uvicorn is not installed.
     """
     load_dotenv()
     try:

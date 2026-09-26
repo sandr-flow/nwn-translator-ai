@@ -10,19 +10,21 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, List
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .. import __version__
 from .database import init_db
-from .routes import MAX_UPLOAD_BYTES, router, upload_too_large
+from .routes import router
 from .task_manager import get_task_manager
 
 logger = logging.getLogger(__name__)
 
-_UPLOAD_PATH = "/api/translate"
+#: Largest accepted upload request. The bundled nginx applies the same limit
+#: (``client_max_body_size 50m``) in front.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 class UploadLimitMiddleware:
@@ -47,7 +49,16 @@ class UploadLimitMiddleware:
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Handle one ASGI connection."""
+        """Handle one ASGI request, limiting the body of the upload path.
+
+        Args:
+            scope: ASGI scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+
+        Raises:
+            HTTPException: 413 once the body is over the limit.
+        """
         if scope["type"] != "http" or scope["path"] != self.path:
             await self.app(scope, receive, send)
             return
@@ -66,7 +77,10 @@ class UploadLimitMiddleware:
                 if max(declared, received) > self.max_bytes:
                     while message.get("more_body", False):
                         message = await receive()
-                    raise upload_too_large(self.max_bytes)
+                    limit_mb = self.max_bytes // (1024 * 1024)
+                    raise HTTPException(
+                        status_code=413, detail=f"Файл слишком большой (максимум {limit_mb} МБ)"
+                    )
             return message
 
         await self.app(scope, receive_within_limit, send)
@@ -97,6 +111,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     Shutdown waits for running translation jobs, so a graceful stop never cuts
     a job off mid-write.
+
+    Args:
+        _app: The application (unused).
+
+    Yields:
+        Control while the app serves requests.
     """
     init_db()
     task_manager = get_task_manager()
@@ -109,7 +129,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    """Build the FastAPI app: API routes, CORS, and the SPA from ``NWN_WEB_STATIC_DIR``."""
+    """Build the FastAPI app.
+
+    Installs the API routes, the upload size limit, CORS, and the SPA from
+    ``NWN_WEB_STATIC_DIR`` when that directory exists.
+
+    Returns:
+        The configured application.
+    """
     app = FastAPI(
         title="NWN Modules Translator",
         description="Веб-API перевода модулей Neverwinter Nights",
@@ -117,8 +144,14 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    app.include_router(router)
+
     # Added first so CORS wraps it and also covers its 413 responses.
-    app.add_middleware(UploadLimitMiddleware, path=_UPLOAD_PATH, max_bytes=MAX_UPLOAD_BYTES)
+    app.add_middleware(
+        UploadLimitMiddleware,
+        path=app.url_path_for("start_translate"),
+        max_bytes=MAX_UPLOAD_BYTES,
+    )
     origins = _parse_cors_origins()
     app.add_middleware(
         CORSMiddleware,
@@ -127,8 +160,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    app.include_router(router)
 
     static_dir = os.environ.get("NWN_WEB_STATIC_DIR", "").strip()
     if static_dir:

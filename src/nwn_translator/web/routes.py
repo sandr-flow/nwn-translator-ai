@@ -8,7 +8,6 @@ editor row model in :mod:`~nwn_translator.web.editor`.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -68,11 +67,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
-#: Largest accepted upload. The app enforces it on the request body while it
-#: streams in (``UploadLimitMiddleware``) and on the stored file; the bundled
-#: nginx applies the same limit (``client_max_body_size 50m``) in front.
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-
 _READ_CHUNK = 1024 * 1024
 
 _MODULE_SUFFIXES = (".mod", ".erf", ".hak")
@@ -89,32 +83,18 @@ _UNSUPPORTED_LANG_DETAIL = (
 )
 
 
-def upload_too_large(max_bytes: int) -> HTTPException:
-    """Return the 413 error for an upload over *max_bytes*."""
-    return HTTPException(
-        status_code=413,
-        detail=f"Файл слишком большой (максимум {max_bytes // (1024 * 1024)} МБ)",
-    )
+async def _stream_upload_to_file(upload: UploadFile, dest: Path) -> None:
+    """Copy the upload to *dest* in chunks.
 
+    The upload middleware of the app has already limited its size.
 
-async def _stream_upload_to_file(upload: UploadFile, dest: Path, max_bytes: int) -> None:
-    """Copy the upload to *dest* in chunks; a partial file is removed on failure.
-
-    Raises:
-        HTTPException: 413 when the upload exceeds *max_bytes*.
+    Args:
+        upload: Uploaded module.
+        dest: Destination path inside the task workspace.
     """
-    total = 0
-    try:
-        with dest.open("wb") as out:
-            while chunk := await upload.read(_READ_CHUNK):
-                total += len(chunk)
-                if total > max_bytes:
-                    raise upload_too_large(max_bytes)
-                out.write(chunk)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            dest.unlink(missing_ok=True)
-        raise
+    with dest.open("wb") as out:
+        while chunk := await upload.read(_READ_CHUNK):
+            out.write(chunk)
 
 
 def _client_ip(request: Request) -> str:
@@ -169,10 +149,24 @@ def _job_from_form(
 ) -> JobParams:
     """Validate and normalize the job fields of a translate request.
 
-    ``max_concurrent_requests`` is capped at the server's
-    ``NWN_TRANSLATE_MAX_CONCURRENT``, which is also the value when omitted: the
-    number sizes the job's thread pools and semaphores, so a client may lower it
-    but not raise it.
+    ``max_concurrent_requests`` is clamped to ``[1, max_concurrent_from_environment()]``
+    (``NWN_TRANSLATE_MAX_CONCURRENT``, 12 when unset) and takes the upper bound
+    when omitted: the number sizes the job's thread pools and semaphores, so a
+    client may lower it but not raise it.
+
+    Args:
+        api_key: Provider API key.
+        target_lang: Requested target language.
+        source_lang: Requested source language; blank means ``"auto"``.
+        model: Model slug; ``None`` selects the provider default.
+        preserve_tokens: Protect NWN tokens.
+        use_context: Build world context and glossary first.
+        max_concurrent_requests: Requested parallelism, or ``None``.
+        player_gender: Player gender; blank means ``"male"``.
+        reasoning_effort: Raw reasoning effort value.
+
+    Returns:
+        The validated job parameters.
 
     Raises:
         HTTPException: 400 for a language NWN cannot display or an unknown
@@ -213,6 +207,14 @@ def require_task_owner(
 
     When the task has an owner (non-empty ``client_token``), the request's token
     must match it. Tasks without an owner stay accessible.
+
+    Args:
+        task_id: Task id from the path.
+        request: Incoming request (carries the client token).
+        tm: Task manager.
+
+    Returns:
+        The task.
 
     Raises:
         HTTPException: 400 for a malformed task id, 404 if the task does not
@@ -256,9 +258,12 @@ async def start_translate(
 ) -> TranslateResponse:
     """Accept a .mod/.erf/.hak upload and start translating it in the background.
 
+    An oversized upload never reaches this handler: the app's upload middleware
+    answers it with 413.
+
     Raises:
         HTTPException: 429 while the client IP has a running job, 400 for an
-            invalid file name or job field, 413 for an oversized upload.
+            invalid file name or job field.
     """
     ip = _client_ip(request)
     if tm.active_task_id_for_ip(ip):
@@ -286,17 +291,17 @@ async def start_translate(
         source_lang=job.source_lang,
         model=job.model,
     )
-    # Claim the one-job-per-IP slot atomically before the (slow) upload; the
-    # check at the top of the handler is only a fast path and is racy on its own.
+    # Claim the one-job-per-IP slot atomically before copying the upload into the
+    # workspace; the check at the top of the handler is only a fast path and is
+    # racy on its own.
     if not tm.try_register_active(ip, task.task_id):
-        tm.discard_task(task.task_id)
+        tm.delete(task.task_id)
         raise HTTPException(status_code=429, detail=_IP_BUSY_DETAIL)
     input_path = tm.workspace_for_task(task.task_id) / Path(file.filename).name
     try:
-        await _stream_upload_to_file(file, input_path, MAX_UPLOAD_BYTES)
+        await _stream_upload_to_file(file, input_path)
     except BaseException:
-        tm.release_active(ip, task.task_id)
-        tm.discard_task(task.task_id)
+        tm.delete(task.task_id)
         raise
 
     tm.start(task, job, input_path)
@@ -325,7 +330,11 @@ async def task_status(
 async def download_result(
     task: TranslationTask = Depends(require_task_owner),
 ) -> FileResponse:
-    """Download the translated module of a completed task."""
+    """Download the translated module of a completed task.
+
+    Raises:
+        HTTPException: 400 when the task is not completed or its result file is gone.
+    """
     if task.status != "completed" or not task.result_path or not task.result_path.is_file():
         raise HTTPException(status_code=400, detail="Файл результата ещё не готов")
     return FileResponse(
@@ -339,7 +348,11 @@ async def download_result(
 async def download_log(
     task: TranslationTask = Depends(require_task_owner),
 ) -> StreamingResponse:
-    """Download the task's translation rows as JSONL."""
+    """Download the task's translation rows as JSONL.
+
+    Raises:
+        HTTPException: 404 when the task has no translation rows.
+    """
     rows = get_translations_by_task(task.task_id)
     if not rows:
         raise HTTPException(status_code=404, detail="Лог недоступен")
@@ -377,13 +390,11 @@ async def rebuild_task(
     """
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="Задача ещё не завершена")
-    if not task.extract_dir or not task.extract_dir.is_dir():
+    if task.result_path is None or not task.extract_dir or not task.extract_dir.is_dir():
         raise HTTPException(
             status_code=400,
             detail="Извлечённые файлы модуля недоступны (возможно, были очищены)",
         )
-    if task.result_path is None:
-        raise HTTPException(status_code=400, detail="Task has no result path")
 
     target_lang = (body.target_lang or "").strip() or task.target_lang
     try:
@@ -439,7 +450,11 @@ async def delete_task(
     task: TranslationTask = Depends(require_task_owner),
     tm: TaskManager = Depends(get_task_manager),
 ) -> dict:
-    """Delete a task from history."""
+    """Delete a task with its files and translations.
+
+    A running job is cancelled and the client's slot freed at once; see
+    :meth:`~nwn_translator.web.task_manager.TaskManager.delete`.
+    """
     tm.delete(task.task_id)
     return {"ok": True}
 
@@ -450,10 +465,10 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
     text = "Hello, welcome to my module!"
     provider_name = detect_provider_from_key(body.api_key)
     try:
-        try:
-            reff = parse_reasoning_effort(body.reasoning_effort)
-        except ValueError as e:
-            return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
+        reff = parse_reasoning_effort(body.reasoning_effort)
+    except ValueError as e:
+        return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
+    try:
         provider = create_provider(body.api_key.strip(), body.model, reasoning_effort=reff)
         try:
             result = await provider.translate_async(text, "english", body.target_lang)
@@ -503,7 +518,11 @@ async def list_models() -> ModelsResponse:
 
 @router.get("/models/lookup", response_model=ModelLookupResponse)
 async def lookup_model(slug: str = Query(..., min_length=1, max_length=200)) -> ModelLookupResponse:
-    """Look up reasoning options for a custom OpenRouter model slug."""
+    """Look up reasoning options for a custom OpenRouter model slug.
+
+    Raises:
+        HTTPException: 400 for an invalid model slug.
+    """
     key = slug.strip()
     if not is_valid_model_slug(key):
         raise HTTPException(status_code=400, detail="Invalid model slug")

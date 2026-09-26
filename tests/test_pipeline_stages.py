@@ -13,7 +13,7 @@ from nwn_translator.context.world_context import NPCInfo, WorldContext
 from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
 from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.glossary import Glossary
-from nwn_translator.pipeline import artifacts
+from nwn_translator.pipeline import artifacts, stages
 from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_inject
 from nwn_translator.translators.ncs_diagnostics import new_ncs_diagnostics
 
@@ -271,6 +271,44 @@ def test_extract_keeps_input_order_regardless_of_completion_order(
     state = PipelineState(config=config, provider=Mock())
 
     assert list(stage_extract(state, files)) == files
+
+
+def test_inject_handles_results_in_file_order_regardless_of_completion_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injection events, errors and counts follow the file order, not thread timing."""
+    files = [tmp_path / f"f{i}.uti" for i in range(8)]
+    events: list = []
+
+    class Writer:
+        def write(self, entry):
+            events.append(entry)
+
+    def reversed_speed_inject(file_path, *_args, **_kwargs):
+        # Earlier files take longer, so completion order is the reverse of input order.
+        time.sleep(0.02 * (len(files) - files.index(file_path)))
+        if files.index(file_path) % 2:
+            raise ValueError(f"broken {file_path.name}")
+        return None
+
+    monkeypatch.setattr(stages, "inject_translations_into_file", reversed_speed_inject)
+    config = TranslationConfig(
+        api_key="test-key",
+        input_file=tmp_path / "m.mod",
+        max_concurrent_requests=8,
+        translation_log_writer=Writer(),
+    )
+    state = PipelineState(config=config, provider=Mock())
+    state.extract_dir = tmp_path
+    empty = ExtractedContent(content_type="item", items=[], source_file=tmp_path)
+
+    stage_inject(state, {path: ({}, empty, ".uti") for path in files}, {})
+
+    assert [event["file"] for event in events] == [path.name for path in files]
+    assert state.stats["errors"] == [
+        f"Error injecting {path.name}: broken {path.name}" for path in files[1::2]
+    ]
+    assert state.stats["files_processed"] == 4
 
 
 def test_manager_statistics_are_merged_once_per_manager(tmp_path: Path) -> None:

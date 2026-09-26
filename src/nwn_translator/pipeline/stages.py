@@ -12,9 +12,10 @@ import logging
 import shutil
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar
 
 from ..async_utils import close_thread_resources
 from ..config import (
@@ -46,6 +47,8 @@ logger = logging.getLogger(__name__)
 
 #: ``file_path -> (parsed_data, ExtractedContent, file_ext)``
 ExtractedMap = Dict[Path, Tuple[Dict[str, Any], ExtractedContent, str]]
+
+_Result = TypeVar("_Result")
 
 
 def _new_ncs_diagnostics() -> Dict[str, Any]:
@@ -454,51 +457,72 @@ def stage_worldscan(state: PipelineState) -> None:
         )
 
 
+def _run_pool(
+    state: PipelineState,
+    work: Callable[[Path], _Result],
+    paths: List[Path],
+    phase: str,
+    *,
+    cancellable: bool,
+) -> List[Tuple[Path, Optional[_Result], Optional[Exception]]]:
+    """Run *work* on every path on a thread pool; return the outcomes in input order.
+
+    Progress is reported as files finish, but the outcomes are handed back in the
+    order of *paths*, so what the caller does with them never depends on thread
+    timing.
+
+    Args:
+        state: Run state (worker count, progress callback, cancellation).
+        work: Called with one path per task.
+        paths: Files to process.
+        phase: Progress phase reported once per finished file.
+        cancellable: Check for cancellation after every finished file.
+
+    Returns:
+        ``(path, result, error)`` per path in input order; *error* is the
+        exception *work* raised, and *result* is then None.
+
+    Raises:
+        TranslationCancelled: If *cancellable* and the run is cancelled; queued
+            files are dropped.
+    """
+    outcomes: List[Tuple[Optional[_Result], Optional[Exception]]] = [(None, None)] * len(paths)
+    with ThreadPoolExecutor(max_workers=max(1, state.config.max_concurrent_requests)) as pool:
+        index = {pool.submit(work, path): i for i, path in enumerate(paths)}
+        try:
+            for done, future in enumerate(as_completed(index), 1):
+                i = index[future]
+                if state.config.progress_callback is not None:
+                    state.config.progress_callback(phase, done, len(paths), paths[i].name)
+                if cancellable:
+                    state.config.raise_if_cancelled()
+                error = future.exception()
+                if error is None:
+                    outcomes[i] = (future.result(), None)
+                elif isinstance(error, Exception):
+                    outcomes[i] = (None, error)
+                else:
+                    raise error
+        except BaseException:
+            # Otherwise the executor's exit would first run every queued file.
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+    return [(path, result, error) for path, (result, error) in zip(paths, outcomes)]
+
+
 def stage_extract(state: PipelineState, translatable_files: List[Path]) -> ExtractedMap:
     """Stage B (Phase A): parse and extract translatable content in parallel."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     logger.info("Phase A: extracting translatable content...")
-    total_files = len(translatable_files)
     extracted_map: ExtractedMap = {}
-
-    max_workers = max(1, getattr(state.config, "max_concurrent_requests", 4))
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {
-            executor.submit(state._extract_file, file_path): file_path
-            for file_path in translatable_files
-        }
-        completed_count = 0
-        try:
-            for future in as_completed(future_to_file):
-                file_path = future_to_file[future]
-                completed_count += 1
-                if state.config.progress_callback is not None:
-                    state.config.progress_callback(
-                        "extracting_content", completed_count, total_files, file_path.name
-                    )
-                state.config.raise_if_cancelled()
-                try:
-                    result = future.result()
-                    if result is not None:
-                        parsed_data, extracted, file_ext = result
-                        extracted_map[file_path] = (parsed_data, extracted, file_ext)
-                except Exception as e:
-                    error_msg = f"Error extracting {file_path.name}: {e}"
-                    with state._stats_lock:
-                        state.stats["errors"].append(error_msg)
-                    logger.error(error_msg)
-        except BaseException:
-            # On cancellation (or any error escaping the loop) drop the queued
-            # futures; otherwise the executor's __exit__ would run every
-            # remaining file to completion before the exception propagates.
-            executor.shutdown(wait=False, cancel_futures=True)
-            raise
-
-    # Workers finish in any order; item order drives batch composition, so keep
-    # the input order to make requests independent of thread timing.
-    extracted_map = {fp: extracted_map[fp] for fp in translatable_files if fp in extracted_map}
+    for file_path, result, error in _run_pool(
+        state, state._extract_file, translatable_files, "extracting_content", cancellable=True
+    ):
+        if error is not None:
+            error_msg = f"Error extracting {file_path.name}: {error}"
+            state.stats["errors"].append(error_msg)
+            logger.error(error_msg)
+        elif result is not None:
+            extracted_map[file_path] = result
     logger.info("Phase A complete: %d files extracted", len(extracted_map))
     return extracted_map
 
@@ -688,69 +712,49 @@ def stage_inject(
     all_translations: Translations,
 ) -> None:
     """Stage F (Phase C): byte-patch translations into files and .git areas."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     assert state.extract_dir is not None
-    max_workers = max(1, getattr(state.config, "max_concurrent_requests", 4))
+
+    def inject(file_path: Path) -> Optional[InjectedContent]:
+        parsed_data, extracted, _ext = extracted_map[file_path]
+        return state._inject_file(file_path, parsed_data, extracted, all_translations)
 
     logger.info("Phase C: injecting translations...")
     trace_writer = translation_log_writer_for_config(
         state.config.translation_log, state.config.translation_log_writer
     )
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {
-            executor.submit(
-                state._inject_file,
+    for file_path, inject_result, error in _run_pool(
+        state, inject, list(extracted_map), "injecting", cancellable=False
+    ):
+        if error is not None:
+            write_trace(
+                trace_writer,
+                {"event": "injection_result", "file": file_path.name, "error": str(error)},
+            )
+            error_msg = f"Error injecting {file_path.name}: {error}"
+            state.stats["errors"].append(error_msg)
+            logger.error(error_msg)
+            continue
+        write_trace(
+            trace_writer,
+            {
+                "event": "injection_result",
+                "file": file_path.name,
+                "submitted": [
+                    {"item_id": item.item_id, "translated": all_translations[item.key]}
+                    for item in extracted_map[file_path][1].items
+                    if item.key in all_translations
+                ],
+                "modified": inject_result.modified if inject_result else False,
+                "items_updated": inject_result.items_updated if inject_result else 0,
+                "metadata": inject_result.metadata if inject_result else {},
+            },
+        )
+        if inject_result is not None and (inject_result.metadata or {}).get("ncs_patch_failed"):
+            state._record_ncs_patch_failure(
                 file_path,
-                extracted_map[file_path][0],  # parsed_data
-                extracted_map[file_path][1],  # extracted
-                all_translations,
-            ): file_path
-            for file_path in extracted_map
-        }
-        completed_count = 0
-        for future in as_completed(future_to_file):
-            file_path = future_to_file[future]
-            completed_count += 1
-            if state.config.progress_callback is not None:
-                state.config.progress_callback(
-                    "injecting", completed_count, len(extracted_map), file_path.name
-                )
-            try:
-                inject_result = future.result()
-                write_trace(
-                    trace_writer,
-                    {
-                        "event": "injection_result",
-                        "file": file_path.name,
-                        "submitted": [
-                            {"item_id": item.item_id, "translated": all_translations[item.key]}
-                            for item in extracted_map[file_path][1].items
-                            if item.key in all_translations
-                        ],
-                        "modified": inject_result.modified if inject_result else False,
-                        "items_updated": inject_result.items_updated if inject_result else 0,
-                        "metadata": inject_result.metadata if inject_result else {},
-                    },
-                )
-                if inject_result is not None and (inject_result.metadata or {}).get(
-                    "ncs_patch_failed"
-                ):
-                    state._record_ncs_patch_failure(
-                        file_path,
-                        str((inject_result.metadata or {}).get("error", "")),
-                    )
-                with state._stats_lock:
-                    state.stats["files_processed"] += 1
-            except Exception as e:
-                error_msg = f"Error injecting {file_path.name}: {e}"
-                write_trace(
-                    trace_writer,
-                    {"event": "injection_result", "file": file_path.name, "error": str(e)},
-                )
-                with state._stats_lock:
-                    state.stats["errors"].append(error_msg)
-                logger.error(error_msg)
+                str((inject_result.metadata or {}).get("error", "")),
+            )
+        state.stats["files_processed"] += 1
 
 
 def stage_repack(state: PipelineState) -> Path:

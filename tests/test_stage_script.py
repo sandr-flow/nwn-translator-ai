@@ -58,6 +58,17 @@ def test_repack_writes_the_module_into_out(tmp_path: Path) -> None:
     assert not (tmp_path / "my-mod-rus.mod").exists()
 
 
+def test_temp_dir_is_still_accepted_and_ignored(tmp_path: Path) -> None:
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    temp_dir = str(tmp_path / "unused")
+
+    _run("unpack", str(module), "--out", str(work), "--temp-dir", temp_dir, tmp_path=tmp_path)
+
+    assert sorted(path.name for path in (work / "extract").iterdir()) == ["greet.ncs", "talk.dlg"]
+    assert not (tmp_path / "unused").exists()
+
+
 def test_repack_without_the_archive_stops_with_a_message(tmp_path: Path) -> None:
     module = _module(tmp_path)
     work = tmp_path / "work"

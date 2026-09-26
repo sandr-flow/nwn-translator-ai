@@ -336,6 +336,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-lang", default="auto")
     parser.add_argument("--target-lang", default="russian")
+    # The stages work in --extract-dir; the option only keeps older command lines valid.
+    parser.add_argument("--temp-dir", type=Path, default=None, help="Ignored")
     parser.add_argument("--max-concurrent", type=int, default=None)
     parser.add_argument("--player-gender", choices=["male", "female"], default="male")
     parser.add_argument("--reasoning-effort", default=None)

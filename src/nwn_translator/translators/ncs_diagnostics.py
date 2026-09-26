@@ -77,7 +77,12 @@ class NcsDiagnostics:
         self._log_writer = log_writer
 
     def count(self, field: str, by: int = 1) -> None:
-        """Add *by* to one counter without a sample."""
+        """Add *by* to one counter without a sample.
+
+        Args:
+            field: Counter name from :data:`NCS_COUNTERS`.
+            by: Amount to add.
+        """
         self.block[field] += by
 
     def record(

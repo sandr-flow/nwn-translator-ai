@@ -6,8 +6,9 @@ single request that times out is retried once in the same semaphore slot: a
 script string with the fallback request (explicit script context), anything else
 with the same request. A batch whose results fail is halved recursively until
 single failed leaves remain; those are left to the caller's fallback pass.
-Failures never raise: they come back as unsuccessful results, except
-:class:`~nwn_translator.config.TranslationCancelled`, which stops the run.
+A failed single or batch request never raises: it comes back as an unsuccessful
+result. Only a cancelled run (:class:`~nwn_translator.config.TranslationCancelled`)
+and a pass that exceeds its overall budget (:class:`TimeoutError`) raise.
 """
 
 import asyncio
@@ -112,6 +113,11 @@ class ModelCaller:
     """Sends the translation requests of one run.
 
     Attributes:
+        config: Run settings (languages, concurrency, cancellation).
+        provider: Model provider.
+        log_writer: Translation log of the run.
+        diagnostics: Recorder of script-string outcomes.
+        terminology: Glossary lookup of the run.
         limits: Timeouts and retry budget.
     """
 
@@ -148,7 +154,14 @@ class ModelCaller:
 
     # ── request builders ─────────────────────────────────────────────────
     def plain_request(self, work: WorkItem) -> SingleRequest:
-        """Return the regular request of an item: its context, terms and profile."""
+        """Return the regular request of an item: its context, terms and profile.
+
+        Args:
+            work: Item to translate.
+
+        Returns:
+            The request arguments besides the text.
+        """
         return SingleRequest(
             context=work.item.context,
             glossary_block=self.terminology([work.sanitized, work.item.context]),
@@ -160,6 +173,12 @@ class ModelCaller:
 
         The context restates where the literal comes from and that code must stay
         untranslated.
+
+        Args:
+            work: Script string to translate.
+
+        Returns:
+            The request arguments besides the text.
         """
         item = work.item
         meta = item.metadata
@@ -184,6 +203,9 @@ class ModelCaller:
         Args:
             work: Item whose last answer was rejected.
             attempt: Retry number, starting at 1.
+
+        Returns:
+            The request arguments besides the text.
         """
         report = work.mismatch
         parts: List[str] = []
@@ -318,6 +340,13 @@ class ModelCaller:
     ) -> TranslationResult:
         """Translate a script string that failed in a batch with its fallback request.
 
+        Args:
+            sem: Semaphore of the pass.
+            work: Script string to translate.
+
+        Returns:
+            The result; a timeout or error becomes an unsuccessful result.
+
         Raises:
             TranslationCancelled: The run was cancelled before the request.
         """
@@ -436,6 +465,10 @@ class ModelCaller:
         Returns:
             Results of *singles* in order, and results of all batch items in
             flattened batch order.
+
+        Raises:
+            TranslationCancelled: The run was cancelled.
+            TimeoutError: The pass exceeded its overall budget.
         """
 
         async def run_all() -> Tuple[List[TranslationResult], List[List[TranslationResult]]]:
@@ -468,6 +501,10 @@ class ModelCaller:
 
         Returns:
             One result per item, in order.
+
+        Raises:
+            TranslationCancelled: The run was cancelled.
+            TimeoutError: The pass exceeded its overall budget.
         """
 
         async def run_all() -> List[TranslationResult]:
@@ -511,6 +548,13 @@ class ModelCaller:
             batch_calls: Upper bound of batch requests, halving included.
             floor: Smallest budget.
             pad: Seconds added to the queued time.
+
+        Returns:
+            What the pass returns.
+
+        Raises:
+            TranslationCancelled: The run was cancelled.
+            TimeoutError: The pass exceeded its budget.
         """
         queue = (
             queued_timeout(singles, single_slot, self.concurrency)

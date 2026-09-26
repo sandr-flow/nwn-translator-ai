@@ -44,7 +44,12 @@ class ItemProgress(Protocol):
     """Per-item progress counter of a run."""
 
     def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
-        """Count *by* finished items of *filename*."""
+        """Count *by* finished items of *filename*.
+
+        Args:
+            by: Items finished.
+            filename: Resource the items belong to.
+        """
 
 
 def unescape_literal_newlines(original: str, translated: str) -> str:
@@ -228,8 +233,15 @@ class TranslationManager:
     def _terminology(self, texts: Iterable[Optional[str]]) -> Optional[str]:
         """Return the glossary block for *texts*, or None when no term matches.
 
-        None (not an empty string) tells the provider to leave the variable part of
-        the system prompt empty. Missing texts (an item without context) match nothing.
+        The provider treats None and an empty string alike (it falls back to the race
+        terms of the text); None is kept so that the logged request arguments stay
+        unchanged. Missing texts (an item without context) match nothing.
+
+        Args:
+            texts: Texts of one request; None entries are skipped.
+
+        Returns:
+            The glossary block, or None.
         """
         present = (text for text in texts if text)
         return terminology_block(present, self.config.target_lang, self.glossary) or None

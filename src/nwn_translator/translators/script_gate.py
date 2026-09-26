@@ -38,7 +38,14 @@ _UNAVAILABLE_VERDICT = {"translate": False, "reason": "gate_unavailable"}
 
 
 class ScriptGate:
-    """Approves or rejects the string literals of compiled scripts."""
+    """Approves or rejects the string literals of compiled scripts.
+
+    Attributes:
+        config: Run settings (source language, gate switch, concurrency).
+        provider: Model provider that classifies the candidates.
+        log_writer: Translation log of the run.
+        diagnostics: Recorder of the decisions.
+    """
 
     def __init__(
         self,

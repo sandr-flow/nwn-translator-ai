@@ -198,7 +198,7 @@ class PipelineState:
 
         An injected writer (``config.translation_log_writer``) belongs to the
         caller; the file named by ``config.translation_log`` is opened by the
-        run and closed by :func:`run_pipeline`.
+        run and closed by :meth:`close_log` when :func:`run_pipeline` ends.
         """
         if self.config.translation_log_writer is not None:
             self.trace = self.config.translation_log_writer
@@ -206,6 +206,11 @@ class PipelineState:
             self.trace = self._log_file = FileTranslationLogWriter(self.config.translation_log)
         else:
             self.trace = NullTranslationLogWriter()
+
+    def close_log(self) -> None:
+        """Close the log file the run opened; an injected writer belongs to its caller."""
+        if self._log_file is not None:
+            self._log_file.close()
 
     @classmethod
     def create(cls, config: TranslationConfig) -> "PipelineState":
@@ -905,8 +910,7 @@ def run_pipeline(state: PipelineState) -> Path:
         # The loop and its client serve the whole run; without closing them
         # the web process would keep one open client and loop per task thread.
         close_thread_resources(state.provider)
-        if state._log_file is not None:
-            state._log_file.close()
+        state.close_log()
         if not state.config.skip_cleanup and state.temp_dir is not None:
             state.temp_dir.cleanup()
             state.temp_dir = None

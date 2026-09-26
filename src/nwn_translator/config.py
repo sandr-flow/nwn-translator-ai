@@ -231,15 +231,15 @@ class TranslationConfig:
 
 
 # GFF/NCS injection encodes player-visible strings with a Windows code page chosen
-# from the target language (see :func:`module_string_encoding_for_target_lang` and
-# ``gff_patcher`` / ``ncs_patcher``).
+# from the target language (see :func:`module_string_encoding_for_target_lang`; the
+# patchers accept only ``formats.text_codec.MODULE_ENCODINGS``).
 #
 # **CJK** cannot be represented in these single-byte pages, and NWN:EE's codepage
 # setting only offers cp1250/cp1251/cp1252 — Turkish (cp1254) is not displayable
 # either. Those tags are blocked in the web UI / API.
 GAME_INCOMPATIBLE_TARGET_LANGS = frozenset({"chinese", "japanese", "korean", "turkish"})
 
-# Language slug -> Python codec (must stay in sync with ``gff_patcher`` allow-list).
+# Language slug -> Python codec; a test keeps the values equal to ``MODULE_ENCODINGS``.
 _LANG_TO_WINDOWS_ENCODING: dict[str, str] = {
     "russian": "cp1251",
     "ukrainian": "cp1251",

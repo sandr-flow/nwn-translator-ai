@@ -104,8 +104,9 @@ def rebuild_module(
 
     Translations are addressed by ``item_id``, not by original text: the
     extracted files on disk already hold the first-pass translation. Only files
-    with an addressed edit are re-extracted, for their current field offsets, and
-    patched; the others are packed as they are.
+    with an addressed translation are re-extracted, for their current field
+    offsets, and patched; the others are packed as they are. The web passes
+    every stored translation of the task, so it re-extracts each file that has one.
 
     Args:
         extract_dir: Directory with previously extracted files.
@@ -125,10 +126,10 @@ def rebuild_module(
         for filename, per_file in translations_by_item_id.items()
         for item_id, text in per_file.items()
     }
-    edited_files = {resource for resource, _item_id in translations}
+    addressed_files = {resource for resource, _item_id in translations}
     gff_cache: Dict[Path, Dict[str, Any]] = {}
     for file_path in find_translatable_files(extract_dir):
-        if file_path.name not in edited_files:
+        if file_path.name not in addressed_files:
             continue
         try:
             loaded = load_parsed_and_extracted(

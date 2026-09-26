@@ -113,7 +113,8 @@ class EntityExtractor:
 
         Returns:
             New names in reply order, deduplicated case-insensitively and
-            filtered by :func:`is_valid_entity_name`. Failed batches contribute
+            filtered by :func:`is_valid_entity_name`. Failed batches, and
+            batches unfinished when the overall budget runs out, contribute
             nothing; the method never raises for model errors.
         """
         texts = _select_texts(items)
@@ -163,14 +164,7 @@ class EntityExtractor:
             )
             return entries
 
-        try:
-            results = _STAGE.run(batches, extract_batch, concurrency=config.max_concurrent_requests)
-        except Exception as exc:
-            logger.warning(
-                "Entity extraction failed; continuing without extracted names: %s",
-                exc,
-            )
-            return []
+        results = _STAGE.run(batches, extract_batch, concurrency=config.max_concurrent_requests)
 
         known_lower = {n.strip().lower() for n in known_names if n and n.strip()}
         out: List[Tuple[str, str]] = []

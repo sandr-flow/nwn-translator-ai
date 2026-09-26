@@ -164,6 +164,34 @@ class TestGlossaryPartialFailure:
         assert glossary.entries == {"Alpha": "Альфа", "Beta": "Бета", "Gamma": "Гамма"}
         assert call_count == 2
 
+    def test_overall_timeout_keeps_finished_batches(self, monkeypatch):
+        """A batch still running at the overall deadline must not discard the others."""
+        import json
+        from dataclasses import replace
+
+        import src.nwn_translator.glossary_builder as module
+
+        monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, batch_timeout=0.1))
+
+        async def fake_glossary(system_prompt, user_prompt, *, glossary_keys, **kwargs):
+            if len(glossary_keys) < 80:
+                await asyncio.sleep(5)
+            return json.dumps({key: key.upper() for key in glossary_keys})
+
+        mock_provider = Mock()
+        mock_provider.complete_glossary_chat_async = AsyncMock(side_effect=fake_glossary)
+        names = {f"Name{i:03d}": "character" for i in range(81)}
+
+        from src.nwn_translator.context.world_context import WorldContext
+        from src.nwn_translator.glossary_builder import GlossaryBuilder
+
+        world = WorldContext()
+        world.extracted_names = list(names.items())
+        config = SimpleNamespace(target_lang="russian", max_concurrent_requests=2)
+        glossary = GlossaryBuilder().build(world, mock_provider, config)
+
+        assert glossary.entries == {name: name.upper() for name in list(names)[:80]}
+
 
 # ---------------------------------------------------------------------------
 # TranslationManager timeout handling

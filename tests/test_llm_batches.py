@@ -59,6 +59,17 @@ class TestRun:
         assert isinstance(results[1], ValueError)
         assert results[2] == (3, "c")
 
+    def test_overall_timeout_keeps_finished_batches(self):
+        async def worker(sem, number, batch):
+            if number == 2:
+                await asyncio.sleep(5)
+            return batch
+
+        results = _stage(batch_timeout=0.1).run(["a", "b", "c"], worker, concurrency=3)
+
+        assert (results[0], results[2]) == ("a", "c")
+        assert isinstance(results[1], TimeoutError)
+
     def test_concurrency_limits_requests_in_flight(self):
         in_flight: List[int] = []
         peak = 0

@@ -57,8 +57,8 @@ class GlossaryCurator:
             progress_callback: Optional progress reporter.
 
         Returns:
-            *registry*. When the model run fails as a whole, only the
-            deterministic decisions apply.
+            *registry*. Candidates of failed batches, and of batches unfinished
+            when the overall budget runs out, keep their deterministic decisions.
         """
         candidates = registry.values()
         if not candidates:
@@ -117,11 +117,7 @@ class GlossaryCurator:
                 }
             return decisions
 
-        try:
-            results = _STAGE.run(batches, curate_batch, concurrency=config.max_concurrent_requests)
-        except Exception as exc:
-            logger.warning("Glossary curation failed; using deterministic decisions: %s", exc)
-            return registry
+        results = _STAGE.run(batches, curate_batch, concurrency=config.max_concurrent_requests)
 
         for batch_result in results:
             if isinstance(batch_result, BaseException):

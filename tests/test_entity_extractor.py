@@ -279,3 +279,27 @@ class TestExtractIntegration:
         assert len(provider.calls) == 2
         assert len(result) == 1
         assert result[0][0] == "Dup"
+
+    def test_overall_timeout_keeps_finished_batches(self, monkeypatch):
+        import asyncio
+        from dataclasses import replace
+
+        import src.nwn_translator.context.entity_extractor as module
+
+        monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, batch_timeout=0.1))
+
+        class _SecondBatchStalls(_FakeProvider):
+            async def complete_json_chat_async(self, system_prompt, user_prompt, **_kw):
+                self.calls.append((system_prompt, user_prompt))
+                if len(self.calls) == 2:
+                    await asyncio.sleep(5)
+                return '{"entities": [{"name": "Stout Village", "type": "location"}]}'
+
+        texts = [f"Sentence number {i} that is well over forty chars long here." for i in range(60)]
+        provider = _SecondBatchStalls([])
+        result = EntityExtractor().extract(
+            [_item(t) for t in texts], provider, _config(), known_names=set()
+        )
+
+        assert len(provider.calls) == 2
+        assert result == [("Stout Village", "location")]

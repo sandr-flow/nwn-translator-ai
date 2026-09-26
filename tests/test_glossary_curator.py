@@ -53,3 +53,31 @@ def test_curator_drops_numbered_labels_before_llm():
     candidate = registry.values()[0]
     assert candidate.curation_decision == "drop"
     assert provider.calls == []
+
+
+def test_overall_timeout_keeps_decisions_of_finished_batches(monkeypatch):
+    import asyncio
+    import json
+    from dataclasses import replace
+    from itertools import product
+
+    import src.nwn_translator.glossary_curator as module
+
+    monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, batch_timeout=0.1))
+    registry = EntityCandidateRegistry()
+    names = [f"Guild of {a.upper()}{b}" for a, b in product("abcdefghi", repeat=2)][:81]
+    for name in names:
+        registry.add(name, category="term", source="entity_extractor")
+
+    class _SecondBatchStalls(_CuratorProvider):
+        async def complete_json_chat_async(self, system_prompt, user_prompt, **kwargs):
+            records = json.loads(user_prompt[user_prompt.index("{") :])
+            if len(records) < 80:
+                await asyncio.sleep(5)
+            return json.dumps({name: {"decision": "keep", "reason": "llm"} for name in records})
+
+    config = SimpleNamespace(target_lang="russian", max_concurrent_requests=2)
+    GlossaryCurator().curate(registry, _SecondBatchStalls([]), config)
+
+    reasons = [candidate.curation_reason for candidate in registry.values()]
+    assert reasons == ["llm"] * 80 + [""]

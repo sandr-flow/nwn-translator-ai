@@ -121,6 +121,9 @@ class LlmStage:
     ) -> List[Union[R, BaseException]]:
         """Run *worker* on every batch concurrently and return the results in batch order.
 
+        When :meth:`run_timeout` runs out, the unfinished batches are cancelled
+        and the finished ones keep their results.
+
         Args:
             batches: Batches in request order.
             worker: Coroutine function processing one batch; it passes the
@@ -128,20 +131,43 @@ class LlmStage:
             concurrency: Maximum requests in flight.
 
         Returns:
-            One result per batch, or the exception its worker raised.
-
-        Raises:
-            TimeoutError: When the run exceeds :meth:`run_timeout`.
+            One entry per batch: its result, the exception its worker raised,
+            or a ``TimeoutError`` when it was still running at the deadline.
         """
+        limit = self.run_timeout(len(batches))
 
         async def run_all() -> List[Union[R, BaseException]]:
             sem = asyncio.Semaphore(max(1, concurrency))
-            return await asyncio.gather(
-                *(worker(sem, number, batch) for number, batch in enumerate(batches, 1)),
-                return_exceptions=True,
-            )
+            tasks = [
+                asyncio.ensure_future(worker(sem, number, batch))
+                for number, batch in enumerate(batches, 1)
+            ]
+            if not tasks:
+                return []
+            _done, pending = await asyncio.wait(tasks, timeout=limit)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            if pending:
+                logger.warning(
+                    "%s: %d of %d batch(es) unfinished after the overall limit of %.0fs",
+                    self.label,
+                    len(pending),
+                    len(tasks),
+                    limit,
+                )
+            results: List[Union[R, BaseException]] = []
+            for task in tasks:
+                if task in pending:
+                    results.append(TimeoutError(f"unfinished after {limit:.0f}s"))
+                elif task.cancelled():
+                    results.append(asyncio.CancelledError())
+                else:
+                    error = task.exception()
+                    results.append(error if error is not None else task.result())
+            return results
 
-        return run_async(run_all(), timeout=self.run_timeout(len(batches)))
+        return run_async(run_all(), timeout=None)
 
     async def request(self, sem: asyncio.Semaphore, send: Callable[[], Awaitable[str]]) -> str:
         """Send one request once *sem* admits it, tagged with the stage's metrics phase.

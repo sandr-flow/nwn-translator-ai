@@ -12,10 +12,11 @@ Translation runs as a pipeline of sequential stages:
 
 1. **Unpack** the `.mod`/`.erf`/`.hak` archive and find translatable resources (GFF and compiled NCS scripts).
 2. **World context** — scan NPCs, areas, quests, and proper nouns for consistent translation; creatures, placeables, and doors placed in areas tell who speaks each dialog line.
-3. **Glossary** — collect and curate terminology that is then injected into prompts.
-4. **Translate** — dialogs are translated contextually (aware of branching), other strings in batches; NWN tokens and inline tags (`<FirstName>`, `<CustomToken:123>`, `<StartAction>`) are protected with placeholders.
-5. **Inject** — byte-level patching of strings back into GFF/NCS without fully rewriting binary resources.
-6. **Repack** the new archive.
+3. **Extract** the strings embedded in each resource; StrRef-only fields stay with the player's `dialog.tlk`.
+4. **Glossary** — collect name candidates (from name fields and from the texts), curate them and translate the canonical forms that are then injected into prompts.
+5. **Translate** — dialogs are translated contextually (aware of branching), other strings in batches; NWN tokens and inline tags (`<FirstName>`, `<CustomToken:123>`, `<StartAction>`) are protected with placeholders.
+6. **Inject** — byte-level patching of strings back into GFF/NCS without fully rewriting binary resources.
+7. **Repack** the new archive.
 
 Fields of one NPC or item and entries of one journal category form translation
 groups with shared context. Small groups share requests with explicit boundaries;
@@ -97,7 +98,7 @@ print(output_path)
 ```
 
 The API key is read from `NWN_TRANSLATE_API_KEY` or passed as `TranslationConfig(api_key=...)`.
-The model is set via web/API or `TranslationConfig(model=...)`; otherwise `OpenRouterProvider.DEFAULT_MODEL` (`google/gemini-3.8-flash`).
+The model is set via web/API or `TranslationConfig(model=...)`; otherwise `nwn_translator.config.DEFAULT_MODEL` (`google/gemini-3.8-flash`).
 
 ## Docker
 
@@ -116,8 +117,8 @@ Primary environment variables:
 | `NWN_TRANSLATE_API_KEY` | OpenRouter (`sk-or-...`) or POLZA.AI (`pza...`) API key | required |
 | `NWN_TRANSLATE_MAX_CONCURRENT` | Maximum parallel AI requests | `12` |
 | `NWN_TRANSLATE_PROMPT_CACHE` | Explicit prompt-cache breakpoints; `0` disables | `1` |
-| `NWN_GLOSSARY_LLM_TIMEOUT` | Timeout for one glossary LLM call, seconds | `300` |
-| `NWN_GLOSSARY_RUN_TIMEOUT` | Overall glossary wrapper timeout, seconds | `360` |
+| `NWN_GLOSSARY_LLM_TIMEOUT` | Timeout of one glossary, curation or entity-extraction LLM call, seconds | `300` |
+| `NWN_GLOSSARY_RUN_TIMEOUT` | Per-batch share of the overall deadline of glossary building and entity extraction, seconds (the deadline is capped at 900) | `360` |
 | `NWN_WEB_HOST` | Web server host | `127.0.0.1` |
 | `NWN_WEB_PORT` | Web server port | `8000` |
 | `NWN_WEB_RELOAD` | Backend auto-reload in development | disabled |
@@ -173,6 +174,8 @@ Isolated pipeline stages: `scripts/stage.py`. Dump CExoLocString fields: `script
 | [`README.md`](README.md) | Russian version of this guide |
 | [`AGENTS.md`](AGENTS.md) | Canonical conventions for coding agents |
 | [`CLAUDE.md`](CLAUDE.md) | Pointer to AGENTS.md for Claude Code |
+| [`docs/translation-contract.md`](docs/translation-contract.md) | Addressing of translations, request reuse and terminology |
+| [`docs/ncs-translation.md`](docs/ncs-translation.md) | Selection and validation of compiled-script strings |
 
 ## License
 

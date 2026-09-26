@@ -23,12 +23,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from dotenv import load_dotenv
 
-from nwn_translator.ai_providers import TranslationItem, TranslationProvider, TranslationResult
+from nwn_translator.ai_providers import (
+    TranslationItem,
+    TranslationProvider,
+    TranslationResult,
+    create_provider_for_config,
+)
 from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.base import ExtractedContent
 from nwn_translator.formats.erf import ERFReader
 from nwn_translator.main import load_parsed_and_extracted
-from nwn_translator.pipeline.stages import PipelineState
+from nwn_translator.telemetry import RunMetricsRecorder
 from nwn_translator.translators.translation_manager import TranslationManager
 
 logger = logging.getLogger(__name__)
@@ -224,9 +229,8 @@ def _run_mode(
     """Run one real NCS translation mode and write per-item results."""
     config = _build_config(args, mode, output_dir)
     config.get_api_key()
-    state = PipelineState.create(config)
-    metrics = state.metrics_recorder
-    provider = CountingProvider(state.provider)
+    metrics = RunMetricsRecorder()
+    provider = CountingProvider(create_provider_for_config(config, metrics))
     manager = TranslationManager(config, provider)
     if mode == "single":
         # No script string fits a batch: every approved one gets its own request.

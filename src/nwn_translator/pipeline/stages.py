@@ -17,7 +17,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar
 
-from ..ai_providers import TranslationProvider, create_provider
+from ..ai_providers import TranslationProvider, create_provider_for_config
 from ..async_utils import close_thread_resources
 from ..config import (
     TranslationConfig,
@@ -223,13 +223,7 @@ class PipelineState:
             A state whose provider reports to the state's metrics recorder.
         """
         recorder = RunMetricsRecorder()
-        provider = create_provider(
-            config.api_key,
-            config.model,
-            player_gender=config.player_gender,
-            reasoning_effort=config.reasoning_effort,
-            metrics_recorder=recorder,
-        )
+        provider = create_provider_for_config(config, recorder)
         return cls(config=config, provider=provider, metrics_recorder=recorder)
 
     @property

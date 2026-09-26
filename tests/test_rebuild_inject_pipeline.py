@@ -64,7 +64,7 @@ def test_load_and_inject_ncs_prefers_explicit_item_id_map(tmp_path: Path) -> Non
 def test_inject_records_ncs_patch_failure_stats(tmp_path: Path, monkeypatch) -> None:
     """A script whose patch failed is counted, sampled and logged by the inject stage."""
     writer = CapturingWriter()
-    monkeypatch.setattr(stages, "create_provider", lambda *args, **kwargs: Mock())
+    monkeypatch.setattr(stages, "create_provider_for_config", lambda *args, **kwargs: Mock())
     translator = ModuleTranslator(
         TranslationConfig(
             api_key="test-key",

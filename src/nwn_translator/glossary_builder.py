@@ -7,12 +7,13 @@ their canonical translations, retrying the names a reply left out.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
 import time
 import unicodedata
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List, Optional, Sequence, Set
 
 from .config import (
     GLOSSARY_MAX_TOKENS,
@@ -125,7 +126,9 @@ class GlossaryBuilder:
             batch = {name: seen[name] for name in batch_names}
             logger.info("Glossary %s: translating %d names…", label, len(batch))
 
-            async def send(keys: List[str], accepted: Dict[str, str], attempt: int) -> str:
+            def prepare(
+                keys: List[str], accepted: Dict[str, str], attempt: int
+            ) -> Callable[[], Awaitable[str]]:
                 if progress_callback:
                     progress_callback(
                         "scanning",
@@ -134,7 +137,8 @@ class GlossaryBuilder:
                         f"Glossary {label} (attempt {attempt}/{_STAGE.max_attempts})…",
                     )
                 lines = [hints.line(name, batch[name]) for name in keys]
-                return await provider.complete_glossary_chat_async(
+                return functools.partial(
+                    provider.complete_glossary_chat_async,
                     system_prompt,
                     build_glossary_user_prompt(lines, accepted),
                     glossary_keys=keys,
@@ -146,7 +150,7 @@ class GlossaryBuilder:
             # order decides the order of the accepted forms a retry repeats (KI-008).
             remaining = set(batch.keys())
             return await _STAGE.fill_keys(
-                sem, remaining, send, parse_glossary_json, name=f"Glossary {label}"
+                sem, remaining, prepare, parse_glossary_json, name=f"Glossary {label}"
             )
 
         results = _STAGE.run(batches, translate_batch, concurrency=config.max_concurrent_requests)

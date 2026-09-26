@@ -6,9 +6,10 @@ then reviews the candidates whose status the rules cannot settle.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Awaitable, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from .config import GLOSSARY_LLM_TIMEOUT, ProgressCallback
 from .context.entity_candidates import EntityCandidate, EntityCandidateRegistry
@@ -98,14 +99,17 @@ class GlossaryCurator:
             # fallback keep their iteration order.
             remaining: Set[str] = set({candidate.name for candidate in batch})
 
-            def send(keys: List[str], _accepted: object, _attempt: int) -> Awaitable[str]:
+            def prepare(
+                keys: List[str], _accepted: object, _attempt: int
+            ) -> Callable[[], Awaitable[str]]:
                 records = {name: by_name[name].to_curator_record() for name in keys}
-                return json_request(provider, system_prompt, build_curator_user_prompt(records))
+                user_prompt = build_curator_user_prompt(records)
+                return functools.partial(json_request, provider, system_prompt, user_prompt)
 
             decisions = await _STAGE.fill_keys(
                 sem,
                 remaining,
-                send,
+                prepare,
                 _parse_curator_json,
                 name=f"Glossary curation batch {number}/{len(batches)}",
             )

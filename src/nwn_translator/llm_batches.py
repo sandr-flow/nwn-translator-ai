@@ -11,7 +11,6 @@ reply left out.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import math
 import time
@@ -37,8 +36,9 @@ V = TypeVar("V")
 #: Worker of one batch: ``(semaphore, 1-based batch number, batch) -> result``.
 BatchWorker = Callable[[asyncio.Semaphore, int, B], Awaitable[R]]
 
-#: Request of one attempt: ``(keys sorted by str.lower, accepted so far, attempt) -> reply``.
-KeyRequest = Callable[[List[str], Dict[str, V], int], Awaitable[str]]
+#: Request builder of one attempt: ``(keys sorted by str.lower, accepted so far, attempt)
+#: -> function starting the request``.
+KeyRequest = Callable[[List[str], Dict[str, V], int], Callable[[], Awaitable[str]]]
 
 #: Reply parser: ``(reply, keys still expected) -> answered keys``.
 KeyParser = Callable[[str, Set[str]], Dict[str, V]]
@@ -193,7 +193,7 @@ class LlmStage:
         self,
         sem: asyncio.Semaphore,
         remaining: Set[str],
-        send: KeyRequest[V],
+        prepare: KeyRequest[V],
         parse: KeyParser[V],
         *,
         name: str,
@@ -209,12 +209,18 @@ class LlmStage:
         Args:
             sem: Concurrency limit shared by the run.
             remaining: Keys to answer; updated in place.
-            send: Starts the request of one attempt.
+            prepare: Builds the request of one attempt. It runs before the
+                request waits for its slot and outside the failure handling,
+                so an error in it propagates instead of counting as a failed
+                request.
             parse: Extracts the answered keys from a reply.
             name: Batch name for log lines.
 
         Returns:
             Answered key -> value, in answer order.
+
+        Raises:
+            Exception: Whatever *prepare* or *parse* raises.
         """
         total = len(remaining)
         accepted: Dict[str, V] = {}
@@ -230,9 +236,10 @@ class LlmStage:
                     attempt,
                     self.max_attempts,
                 )
+            send = prepare(keys, accepted, attempt)
             started = time.monotonic()
             try:
-                raw = await self.request(sem, functools.partial(send, keys, accepted, attempt))
+                raw = await self.request(sem, send)
             except Exception as exc:
                 logger.warning(
                     "%s attempt %d/%d: request failed after %.1fs: %s",

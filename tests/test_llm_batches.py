@@ -111,15 +111,19 @@ def _fill(stage: LlmStage, keys: List[str], replies: List[object]):
     requests: List[tuple] = []
     remaining = set(keys)
 
-    async def send(asked, accepted, attempt):
+    def prepare(asked, accepted, attempt):
         requests.append((list(asked), dict(accepted), attempt))
-        reply = replies.pop(0)
-        if isinstance(reply, Exception):
-            raise reply
-        return reply
+
+        async def send():
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        return send
 
     async def main():
-        return await stage.fill_keys(asyncio.Semaphore(1), remaining, send, _parse, name="t")
+        return await stage.fill_keys(asyncio.Semaphore(1), remaining, prepare, _parse, name="t")
 
     accepted = asyncio.run(main())
     return accepted, remaining, requests
@@ -166,6 +170,22 @@ class TestFillKeys:
         assert remaining == set()
         assert [attempt for _keys, _accepted, attempt in requests] == [1, 2]
 
+    def test_error_building_a_request_propagates_without_retry(self):
+        stage = _stage(max_attempts=3, retry_on_error=True)
+        built = 0
+
+        def prepare(asked, accepted, attempt):
+            nonlocal built
+            built += 1
+            raise KeyError("bad record")
+
+        async def main():
+            return await stage.fill_keys(asyncio.Semaphore(1), {"a"}, prepare, _parse, name="t")
+
+        with pytest.raises(KeyError, match="bad record"):
+            asyncio.run(main())
+        assert built == 1
+
     def test_timeout_of_one_request_counts_as_a_failed_attempt(self, monkeypatch):
         import nwn_translator.llm_batches as module
 
@@ -173,15 +193,18 @@ class TestFillKeys:
         stage = _stage(max_attempts=2, retry_on_error=True)
         calls = 0
 
-        async def send(asked, accepted, attempt):
-            nonlocal calls
-            calls += 1
-            if attempt == 1:
-                await asyncio.sleep(1)
-            return ",".join(asked)
+        def prepare(asked, accepted, attempt):
+            async def send():
+                nonlocal calls
+                calls += 1
+                if attempt == 1:
+                    await asyncio.sleep(1)
+                return ",".join(asked)
+
+            return send
 
         async def main():
-            return await stage.fill_keys(asyncio.Semaphore(1), {"a"}, send, _parse, name="t")
+            return await stage.fill_keys(asyncio.Semaphore(1), {"a"}, prepare, _parse, name="t")
 
         assert asyncio.run(main()) == {"a": "a"}
         assert calls == 2

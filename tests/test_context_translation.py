@@ -162,7 +162,10 @@ def _hello_who() -> DialogNode:
 
 
 def _translate(manager, name, *roots):
-    return manager.translate_dialog(Path(name), _dlg(*roots))
+    """Translate one dialog file whose tree is *roots*; return its translations."""
+    translations, errors = manager.translate_dialogs([(Path(name), _dlg(*roots), 0)])
+    assert errors == []
+    return translations
 
 
 def test_initial_invalid_json_truncation_retries_original_prompt_first(caplog):
@@ -1013,7 +1016,7 @@ class TestSpeakersBlock:
 
         assert self._block(WorldContext(), "severina", node_map) == ""
 
-    def test_translate_dialog_injects_block_into_system_prompt(self):
+    def test_dialog_request_injects_block_into_system_prompt(self):
         provider = _FakeProvider(['{"E1":"Привет"}'])
         manager = ContextualTranslationManager(_make_config(), provider, self._world_with_npcs())
 
@@ -1026,7 +1029,7 @@ class TestSpeakersBlock:
         assert "DIALOG SPEAKERS:" in system_prompt
         assert "Severina (Dwarf, Female)" in system_prompt
 
-    def test_translate_dialog_without_matching_npc_omits_block(self):
+    def test_dialog_request_without_matching_npc_omits_block(self):
         provider = _FakeProvider(['{"E1":"Привет"}'])
         manager = ContextualTranslationManager(_make_config(), provider, self._world_with_npcs())
 

@@ -304,44 +304,6 @@ class ContextualTranslationManager:
         )
         self.failed_items: Set[Occurrence] = set()
 
-    def translate_dialog(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any],
-        item_progress: Optional[ProgressSink] = None,
-        item_budget: Optional[int] = None,
-        *,
-        accepted: Optional[Translations] = None,
-    ) -> Translations:
-        """Translate one dialog file.
-
-        Errors of the requests are logged, not raised: the lines not accepted
-        by then are added to :attr:`failed_items`.
-
-        Args:
-            file_path: Path of the ``.dlg`` resource.
-            parsed_data: Parsed GFF root struct.
-            item_progress: Progress sink, if any.
-            item_budget: Progress units of the file; exactly this many are
-                reported in total. Without it progress is not clamped.
-            accepted: Translations accepted earlier; lines of this file found
-                there are kept and not requested again.
-
-        Returns:
-            The file's accepted translations, including those from *accepted*.
-
-        Raises:
-            TranslationCancelled: When the run is cancelled.
-        """
-        budget = item_budget or 0
-        dialog = prepare_dialog(
-            file_path, parsed_data, budget, preserve_tokens=self.config.preserve_tokens
-        )
-        if dialog is None:
-            _FileProgress(item_progress, budget, file_path.name).finish()
-            return {}
-        return self._translate_file(dialog, item_progress, accepted)
-
     def translate_dialogs(
         self,
         dialog_files: Sequence[Tuple[Path, Dict[str, Any], int]],
@@ -474,9 +436,24 @@ class ContextualTranslationManager:
         item_progress: Optional[ProgressSink],
         accepted: Optional[Translations] = None,
     ) -> Translations:
-        """Request the lines of one dialog that *accepted* does not cover yet.
+        """Translate the lines of one dialog that *accepted* does not cover yet.
 
-        See :meth:`translate_dialog` for the arguments and the result.
+        Errors are logged, not raised: the lines not accepted by then are
+        added to :attr:`failed_items`. The file reports its whole item budget
+        of progress in the end.
+
+        Args:
+            dialog: The prepared dialog.
+            item_progress: Progress sink, if any.
+            accepted: Translations accepted earlier (from a grouped answer);
+                lines of this file found there are kept and not requested
+                again.
+
+        Returns:
+            The file's accepted translations, including those from *accepted*.
+
+        Raises:
+            TranslationCancelled: When the run is cancelled.
         """
         name = dialog.file_path.name
         progress = _FileProgress(item_progress, dialog.item_budget, name)

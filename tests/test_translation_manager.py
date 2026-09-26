@@ -1499,6 +1499,128 @@ class TestNcsSampleOrder:
         assert stats["translated"] == 1
 
 
+class TestRequestTexts:
+    """Retry and fallback requests keep their exact arguments."""
+
+    def test_token_retry_requests(self):
+        from src.nwn_translator.glossary import Glossary, terminology_block
+        from src.nwn_translator.prompts.token_retry import (
+            PRESERVE_INLINE_MARKUP,
+            PRESERVE_PLACEHOLDERS,
+        )
+        from src.nwn_translator.translators.token_handler import sanitize_text
+
+        text = "<StartHighlight>[Shudder.]</Start> Drizzt"
+        sanitized, _ = sanitize_text(text)
+        glossary = Glossary({"Drizzt": "Дзирт"})
+        item = TranslatableItem(text, "Line of Drizzt", "i", "a.dlg")
+        provider = _make_provider({})
+
+        async def failing_batch(items, source_lang, target_lang, **kwargs):
+            return [
+                TranslationResult(translated="", original=i.original, success=False, error="x")
+                for i in items
+            ]
+
+        provider.translate_batch_async = AsyncMock(side_effect=failing_batch)
+        provider.translate_async = AsyncMock(
+            side_effect=[
+                TranslationResult(translated=sanitized.replace("Shudder.", "欢迎"), original=""),
+                TranslationResult(
+                    translated="<StartAction>[Вздрогнуть.]</StartAction> Дзирт", original=""
+                ),
+                TranslationResult(
+                    translated=sanitized.replace("Shudder.", "Вздрогнуть.").replace(
+                        "Drizzt", "Дзирт"
+                    ),
+                    original="",
+                ),
+            ]
+        )
+        manager = TranslationManager(_make_config(), provider, glossary)
+
+        result = manager.translate_content(ExtractedContent("combined", [item], Path("m")))
+
+        assert result == {item.key: "<StartHighlight>[Вздрогнуть.]</Start> Дзирт"}
+        block = terminology_block([sanitized, item.context], "russian", glossary)
+        assert "Дзирт" in block
+        common = "\n".join(
+            [
+                "Line of Drizzt",
+                PRESERVE_PLACEHOLDERS,
+                PRESERVE_INLINE_MARKUP,
+                "If the line contains dialog action markers like <<...>> or -...-, preserve "
+                "the surrounding markers exactly and translate only the inner text. Do not "
+                "invent new angle-bracket pseudo-tags such as <sir/madam>.",
+                "Expected preserved artifacts after restoration: <StartHighlight> | </Start>",
+            ]
+        )
+        contexts = [
+            "Line of Drizzt",
+            common + "\nYour previous answer contained characters from a foreign script "
+            "(such as Chinese). Write the translation in russian using only that "
+            "language's alphabet.\nPrevious mismatch type: foreign_script.\n"
+            "Previous restored artifact sequence: <StartHighlight> | </Start>\n"
+            "Retry attempt 1 of 2.",
+            common + "\nPrevious mismatch type: value_mismatch.\n"
+            "Previous restored artifact sequence: <StartAction> | </StartAction>\n"
+            "Retry attempt 2 of 2.",
+        ]
+        assert [call.kwargs for call in provider.translate_async.call_args_list] == [
+            {
+                "text": sanitized,
+                "source_lang": "english",
+                "target_lang": "russian",
+                "context": context,
+                "glossary_block": block,
+                "content_profile": "default",
+            }
+            for context in contexts
+        ]
+        batch_call = provider.translate_batch_async.call_args
+        assert batch_call.kwargs["glossary_block"] == block
+        assert batch_call.kwargs["content_profile"] == "default"
+
+    def test_ncs_fallback_request_and_batch_metadata(self):
+        item = _make_ncs_item("The gate opens.", item_id="script:off_10", offset=0x10)
+        provider = _make_provider({})
+
+        async def failing_batch(items, source_lang, target_lang, **kwargs):
+            return [
+                TranslationResult(translated="", original=i.original, success=False, error="x")
+                for i in items
+            ]
+
+        provider.translate_batch_async = AsyncMock(side_effect=failing_batch)
+        manager = TranslationManager(_make_config(), provider)
+
+        manager.translate_content(ExtractedContent("ncs", [item], Path("script.ncs")))
+
+        sent = provider.translate_batch_async.call_args.kwargs["items"][0]
+        assert list(sent.metadata.items()) == [
+            ("type", "ncs_string"),
+            ("offset", 0x10),
+            ("confidence", "high"),
+            ("needs_llm_gate", False),
+            ("ncs_hint", "SpeakString"),
+            ("batch_resource", "script.ncs"),
+            ("translation_group", "script"),
+            ("batch_context", "NCS string; hint=SpeakString"),
+            ("approved_neighbors", []),
+        ]
+        assert provider.translate_async.call_args.kwargs == {
+            "text": "The gate opens.",
+            "source_lang": "english",
+            "target_lang": "russian",
+            "context": "NCS timeout fallback. Translate only if this is player-visible script "
+            "text. Do not translate identifiers, tags, resrefs, variables, debug logs, or "
+            "code. file=script.ncs; item_id=script:off_10; offset=16; confidence=high; "
+            "hint=SpeakString.\nNCS string; hint=SpeakString",
+            "glossary_block": None,
+            "content_profile": "script_message",
+        }
+
+
 class TestTokenMismatchRecovery:
     """Token/tag mismatches trigger retries and cleanup, not English fallback."""
 

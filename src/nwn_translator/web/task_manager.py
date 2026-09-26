@@ -586,13 +586,14 @@ class TaskManager:
         """Translate the uploaded module of *task* and record the outcome.
 
         The task ends ``completed``, ``cancelled`` or ``failed``, its IP slot is
-        released and the worker is unregistered.
+        released, its trace file is closed and the worker is unregistered.
 
         Args:
             task: Task that owns the job.
             job: Validated job settings.
             input_path: Uploaded module inside the task workspace.
         """
+        log_writer: Optional[SqliteTranslationLogWriter] = None
         try:
             base = self.workspace_for_task(task.task_id)
             temp_dir = base / "temp"
@@ -609,14 +610,15 @@ class TaskManager:
             task.status = "extracting"
             update_task_row(task.task_id, status="extracting")
 
+            log_writer = SqliteTranslationLogWriter(
+                task.task_id, trace_path=base / "translation_trace.jsonl"
+            )
             config = TranslationConfig(
                 **asdict(job),
                 input_file=input_path,
                 output_file=create_output_path(input_path, job.target_lang, output_dir=base),
                 translation_log=None,
-                translation_log_writer=SqliteTranslationLogWriter(
-                    task.task_id, trace_path=base / "translation_trace.jsonl"
-                ),
+                translation_log_writer=log_writer,
                 temp_dir=temp_dir,
                 skip_cleanup=True,
                 verbose=False,
@@ -650,6 +652,10 @@ class TaskManager:
             task.error = str(e)
             self._finish(task, "failed", error=str(e))
         finally:
+            if log_writer is not None:
+                # An open file cannot be removed on Windows, and the rmtree
+                # below ignores errors.
+                log_writer.close()
             self.release_active(task.client_ip, task.task_id)
             with self._lock:
                 del self._workers[task.task_id]

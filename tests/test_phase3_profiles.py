@@ -19,13 +19,8 @@ from src.nwn_translator.prompts._builder import (
     CONTENT_PROFILE_DEFAULT,
     CONTENT_PROFILE_SHORT_LABEL,
 )
-from src.nwn_translator.translators.token_handler import sanitize_text
 from src.nwn_translator.translators.translation_manager import TranslationManager
-from src.nwn_translator.translators.work_plan import (
-    BatchLimits,
-    WorkItem,
-    content_profile,
-)
+from src.nwn_translator.translators.work_plan import BatchLimits
 
 # ---------------------------------------------------------------------------
 # 3.4 — prompt-builder profile selection
@@ -131,7 +126,7 @@ class TestShortLabelProfileShrinkage:
 
 
 # ---------------------------------------------------------------------------
-# 3.4 — TranslationManager profile selection
+# 3.4 — profile passed to the provider
 # ---------------------------------------------------------------------------
 
 
@@ -154,40 +149,6 @@ def _make_config(**kwargs) -> TranslationConfig:
     )
     defaults.update(kwargs)
     return TranslationConfig(**defaults)
-
-
-class TestTranslationManagerProfileSelection:
-    """The manager picks the correct content profile per item / per batch."""
-
-    def _make_item(self, text: str, type_: str = "") -> WorkItem:
-        item = TranslatableItem(text=text, item_id=f"x:{text}", metadata={"type": type_})
-        return WorkItem(item, *sanitize_text(text, preserve_tokens=True))
-
-    def test_short_label_for_batchable_type(self):
-        d = self._make_item("Guard", "creature_first_name")
-        assert d.profile == CONTENT_PROFILE_SHORT_LABEL
-
-    def test_default_for_non_batchable_type(self):
-        d = self._make_item("Long item description...", "item_description")
-        assert d.profile == CONTENT_PROFILE_DEFAULT
-
-    def test_batch_all_short_labels_yields_short_profile(self):
-        batch = [
-            self._make_item("Guard", "creature_first_name"),
-            self._make_item("Captain", "creature_first_name"),
-            self._make_item("Main Gate", "area_name"),
-        ]
-        assert content_profile(batch) == CONTENT_PROFILE_SHORT_LABEL
-
-    def test_batch_mixed_falls_back_to_default(self):
-        batch = [
-            self._make_item("Guard", "creature_first_name"),
-            self._make_item("A long description.", "item_description"),
-        ]
-        assert content_profile(batch) == CONTENT_PROFILE_DEFAULT
-
-    def test_batch_empty_returns_default(self):
-        assert content_profile([]) == CONTENT_PROFILE_DEFAULT
 
 
 class TestContentProfilePropagatedToProvider:

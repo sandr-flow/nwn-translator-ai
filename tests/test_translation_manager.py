@@ -11,6 +11,8 @@ import pytest
 
 from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+from src.nwn_translator.glossary import Glossary, terminology_block
+from src.nwn_translator.prompts.token_retry import PRESERVE_INLINE_MARKUP, PRESERVE_PLACEHOLDERS
 from src.nwn_translator.translators.token_handler import (
     TokenHandler,
     has_translatable_content,
@@ -33,8 +35,8 @@ def _key(content, text):
     return next(item.key for item in content.items if item.text == text)
 
 
-class TestEmptyAfterSanitize:
-    """The passthrough gate must not swallow real words between placeholders."""
+class TestHasTranslatableContent:
+    """The passthrough check must not swallow real words between placeholders."""
 
     @pytest.mark.parametrize(
         "text",
@@ -874,8 +876,8 @@ class TestNcsBatchTranslation:
         assert stats["translated"] == 1
 
 
-class TestTranslationCache:
-    """Tests for translation deduplication and statistics."""
+class TestStatistics:
+    """Accepted requests are counted; rejected ones are recorded as errors."""
 
     def test_statistics_increment(self):
         """items_translated statistic must match actual successful translations."""
@@ -937,7 +939,7 @@ class TestTranslationCache:
         assert manager.get_statistics()["total_errors"] >= 1
 
 
-class TestPassthroughEmptyAfterSanitize:
+class TestPassthrough:
     """Strings with no translatable content skip the API entirely."""
 
     def test_token_only_item_bypasses_provider(self):
@@ -1682,13 +1684,6 @@ class TestRequestTexts:
     """Retry and fallback requests keep their exact arguments."""
 
     def test_token_retry_requests(self):
-        from src.nwn_translator.glossary import Glossary, terminology_block
-        from src.nwn_translator.prompts.token_retry import (
-            PRESERVE_INLINE_MARKUP,
-            PRESERVE_PLACEHOLDERS,
-        )
-        from src.nwn_translator.translators.token_handler import sanitize_text
-
         text = "<StartHighlight>[Shudder.]</Start> Drizzt"
         sanitized, _ = sanitize_text(text)
         glossary = Glossary({"Drizzt": "Дзирт"})

@@ -1,8 +1,16 @@
-"""Tests for json_utils.json_extract_first_object."""
+"""Tests for the JSON reply helpers in json_utils."""
 
 from __future__ import annotations
 
-from nwn_translator.json_utils import json_extract_first_object, strip_json_markdown_fences
+import json
+
+import pytest
+
+from nwn_translator.json_utils import (
+    json_extract_first_object,
+    load_first_json_object,
+    strip_json_markdown_fences,
+)
 
 
 def test_strip_fences() -> None:
@@ -42,3 +50,27 @@ def test_raw_newlines_inside_string_values() -> None:
 
 def test_array_root_returns_none() -> None:
     assert json_extract_first_object("[1, 2]") is None
+
+
+def test_case_sensitive_fence_keeps_upper_case_tag() -> None:
+    assert strip_json_markdown_fences("```JSON\n{}\n```") == "{}"
+    assert strip_json_markdown_fences("```JSON\n{}\n```", case_sensitive=True) == "JSON\n{}"
+
+
+def test_load_first_json_object_ignores_surrounding_text() -> None:
+    assert load_first_json_object('```json\n{"a": "x\ny"} trailing') == {"a": "x\ny"}
+    assert load_first_json_object('Sure! {"a": 1}{"b": 2}') == {"a": 1}
+
+
+@pytest.mark.parametrize(
+    "raw,message",
+    [
+        ("no brace", "No JSON object found: line 1 column 1 (char 0)"),
+        ('```JSON\n{"a": ', "Expecting value: line 2 column 6 (char 10)"),
+        ('```json\n{"a": ', "Expecting value: line 1 column 6 (char 5)"),
+    ],
+)
+def test_load_first_json_object_error_positions_refer_to_stripped_text(raw, message) -> None:
+    with pytest.raises(json.JSONDecodeError) as exc_info:
+        load_first_json_object(raw)
+    assert str(exc_info.value) == message

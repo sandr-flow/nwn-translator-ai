@@ -131,9 +131,11 @@ class TranslationManager:
     ) -> Translations:
         """Translates every non-blank occurrence of *content*.
 
-        Only requests with equal text, context, profile, hint and terminology share
-        an answer; every answer stays addressed by resource and item id. Rejected
-        requests are recorded in :attr:`stats` and :attr:`failed_items`.
+        Only requests with equal text, context, shared group context, profile,
+        hint and terminology share an answer (see
+        :func:`~nwn_translator.translators.work_plan.dedup_key`); every answer
+        stays addressed by resource and item id. Rejected requests are recorded
+        in :attr:`stats` and :attr:`failed_items`.
 
         Args:
             content: Occurrences to translate (usually of several resources).

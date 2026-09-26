@@ -156,8 +156,9 @@ def content_profile(work: Sequence[WorkItem]) -> str:
 def dedup_key(work: WorkItem, terminology: Terminology) -> Tuple[Hashable, ...]:
     """Returns the key under which equal requests share one answer.
 
-    Only identical text with the same context, profile, hint and terminology may
-    share an answer; every occurrence keeps its own address.
+    Only identical text with the same context, shared group context
+    (``shared_context``), profile, hint and terminology may share an answer;
+    every occurrence keeps its own address.
 
     Args:
         work: Prepared item.

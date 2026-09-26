@@ -7,8 +7,11 @@ Matching is deliberately conservative:
 
 * single-token names match exact source tokens; distinctive (long, non-magnet)
   tokens also match simple plural/possessive variants or Damerau-Levenshtein <= 1;
-* multi-token names need at least two meaningful token hits, except for a
-  distinctive long surname/title token such as ``Winters`` vs. ``Winter's``;
+* multi-token names match when all their tokens occur, with two strong hits
+  (exact, variant or fuzzy) of meaningful tokens, with one exact hit of a
+  non-magnet token of at least 4 letters (``Smith``), or with a
+  plural/possessive variant of one distinctive token (``Winters`` vs.
+  ``Winter's``);
 * common prompt/routing/game tokens (``player``, ``reply``, ``ravenloft``,
   ``module``, etc.) never count as meaningful multi-token evidence.
 

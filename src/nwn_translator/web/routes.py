@@ -175,22 +175,10 @@ def _job_from_form(
 ) -> JobParams:
     """Validate and normalize the job fields of a translate request.
 
-    Args:
-        api_key: Provider API key.
-        target_lang: Target language.
-        source_lang: Source language or ``"auto"``.
-        model: Model slug, if any.
-        preserve_tokens: Protect NWN tokens.
-        use_context: Build world context and glossary.
-        max_concurrent_requests: Parallel requests, at most the server's
-            ``NWN_TRANSLATE_MAX_CONCURRENT`` (also the value when omitted): the
-            number sizes the job's thread pools and semaphores, so a client may
-            lower it but not raise it.
-        player_gender: Player gender for grammatical agreement.
-        reasoning_effort: Provider reasoning effort, if any.
-
-    Returns:
-        The job settings.
+    ``max_concurrent_requests`` is capped at the server's
+    ``NWN_TRANSLATE_MAX_CONCURRENT``, which is also the value when omitted: the
+    number sizes the job's thread pools and semaphores, so a client may lower it
+    but not raise it.
 
     Raises:
         HTTPException: 400 for a language NWN cannot display or an unknown

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from nwn_translator.ai_providers.ncs_gate import parse_gate_verdicts
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
 from nwn_translator.file_handlers.ncs_concat import find_concat_chains, merged_text
 from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
@@ -17,19 +17,18 @@ from nwn_translator.translators.translation_manager import TranslationManager
 
 @pytest.mark.parametrize("value", ["false", "true", 1, 0, None, [], {}])
 def test_gate_requires_json_boolean_true(value):
-    provider = OpenRouterProvider(api_key="test")
-    result = provider._parse_ncs_gate_raw(json.dumps({"0": {"translate": value}}), [{"key": "0"}])
+    result = parse_gate_verdicts(json.dumps({"0": {"translate": value}}), [{"key": "0"}])
     assert result["0"]["translate"] is False
 
 
 @pytest.mark.parametrize("raw", ["[]", 'prefix {"0": {"translate": true}}', "{} {}"])
 def test_gate_rejects_non_object_or_extra_output(raw):
     with pytest.raises(json.JSONDecodeError):
-        OpenRouterProvider(api_key="test")._parse_ncs_gate_raw(raw, [{"key": "0"}])
+        parse_gate_verdicts(raw, [{"key": "0"}])
 
 
 def test_gate_accepts_explicit_approval_and_rejects_missing_entries():
-    result = OpenRouterProvider(api_key="test")._parse_ncs_gate_raw(
+    result = parse_gate_verdicts(
         '```json\n{"0": {"translate": true, "reason": "speech"}}\n```',
         [{"key": "0"}, {"key": "1"}],
     )

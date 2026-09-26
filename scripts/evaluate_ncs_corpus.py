@@ -19,7 +19,6 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from nwn_translator.ai_providers.base import BaseAIProvider
 from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
 from nwn_translator.file_handlers.ncs_concat import find_concat_chains, merged_text
@@ -31,21 +30,24 @@ STAGES = ("units", "consumer", "text_filter", "candidate", "pre_gate")
 CHANGE_RISKS = ("potentially_breaking", "harmless", "unassessed")
 
 
-class BoundaryProvider(BaseAIProvider):
+class BoundaryProvider:
     """Observe the model input, without substituting gold labels for its output."""
 
-    def __init__(self):
-        super().__init__(api_key="offline", model="offline")
-        self.offsets = set()
+    model = "offline"
 
-    def get_default_model(self):
-        return "offline"
+    def __init__(self):
+        self.offsets = set()
 
     def get_provider_name(self):
         return "offline"
 
-    def translate(self, *args, **kwargs):
+    async def translate_async(self, *args, **kwargs):
         raise AssertionError("Corpus selection evaluation must not translate")
+
+    translate_batch_async = translate_async
+
+    async def close_async_client(self):
+        return None
 
     async def classify_ncs_translate_gate_batch_async(self, entries, *, source_lang):
         self.offsets.update(entry["offset"] for entry in entries)

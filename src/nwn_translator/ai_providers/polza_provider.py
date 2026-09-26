@@ -1,12 +1,8 @@
-"""POLZA.AI provider implementation.
+"""POLZA.AI provider.
 
-POLZA.AI (https://polza.ai) is an OpenAI-compatible API gateway with the
-same chat-completion semantics as OpenRouter, so the implementation is a
-thin subclass that swaps the base URL and identifying labels. All retry,
-reasoning-fallback, batch-translate, glossary and NCS-gate logic is
-inherited unchanged from :class:`OpenRouterProvider`.
-
-See: https://polza.ai/docs
+POLZA.AI (https://polza.ai) is an OpenAI-compatible gateway with the same
+chat-completion semantics as OpenRouter; only the base URL, the labels and the
+extra headers differ. See https://polza.ai/docs
 """
 
 from typing import Dict
@@ -15,11 +11,9 @@ from .openrouter_provider import OpenRouterProvider
 
 
 class PolzaProvider(OpenRouterProvider):
-    """AI provider for POLZA.AI (OpenAI-compatible)."""
+    """Translation provider for POLZA.AI."""
 
     BASE_URL = "https://polza.ai/api/v1"
+    HEADERS: Dict[str, str] = {}
     PROVIDER_LABEL = "POLZA.AI"
     PROVIDER_NAME = "polza"
-
-    def _build_default_headers(self) -> Dict[str, str]:
-        return {}

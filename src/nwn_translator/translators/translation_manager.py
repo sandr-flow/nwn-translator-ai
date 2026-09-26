@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from ..context.dialog_speakers import DialogSpeaker
     from ..glossary import Glossary
 from ..extractors import ExtractedContent
-from ..ai_providers import BaseAIProvider, TranslationItem, TranslationResult
+from ..ai_providers import TranslationItem, TranslationProvider, TranslationResult
 from ..ai_providers.batch_payload import batch_payload_chars
 from ..extractors.base import Occurrence, Translations
 from .token_handler import TokenHandler, sanitize_text
@@ -98,7 +98,7 @@ class TranslationManager:
     def __init__(
         self,
         config: TranslationConfig,
-        provider: BaseAIProvider,
+        provider: TranslationProvider,
         glossary: Optional["Glossary"] = None,
     ):
         """Initialize translation manager.

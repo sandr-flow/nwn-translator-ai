@@ -21,9 +21,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from ..ai_providers import (
     OpenRouterProvider,
-    PolzaProvider,
     create_provider,
     detect_provider_from_key,
+    provider_label,
 )
 from ..ai_providers.openrouter_models import (
     FALLBACK as OPENROUTER_REASONING_FALLBACK,
@@ -87,12 +87,6 @@ _UNSUPPORTED_LANG_DETAIL = (
     "(зависит от языка); китайский, японский, корейский и турецкий в игре не отображаются. "
     "Выберите другой язык."
 )
-
-#: Friendly labels for the providers exposed to the UI.
-_PROVIDER_LABELS: dict[str, str] = {
-    OpenRouterProvider.PROVIDER_NAME: OpenRouterProvider.PROVIDER_LABEL,
-    PolzaProvider.PROVIDER_NAME: PolzaProvider.PROVIDER_LABEL,
-}
 
 
 def upload_too_large(max_bytes: int) -> HTTPException:
@@ -461,8 +455,11 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
         except ValueError as e:
             return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
         provider = create_provider(body.api_key.strip(), body.model, reasoning_effort=reff)
-        result = await asyncio.to_thread(provider.translate, text, "english", body.target_lang)
-        model = getattr(provider, "model", None) or OpenRouterProvider.DEFAULT_MODEL
+        try:
+            result = await provider.translate_async(text, "english", body.target_lang)
+        finally:
+            await provider.close_async_client()
+        model = provider.model
         if result.success:
             return TestConnectionResponse(
                 ok=True,
@@ -485,7 +482,7 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
 async def detect_provider(body: DetectProviderRequest) -> DetectProviderResponse:
     """Infer the provider from an API key prefix (no network calls)."""
     name = detect_provider_from_key(body.api_key)
-    return DetectProviderResponse(provider=name, label=_PROVIDER_LABELS.get(name, ""))
+    return DetectProviderResponse(provider=name, label=provider_label(name))
 
 
 @router.get("/models", response_model=ModelsResponse)

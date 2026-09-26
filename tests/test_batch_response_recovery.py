@@ -32,13 +32,14 @@ def test_valid_translations_survive_single_item_wrapper(wrapped):
     provider = OpenRouterProvider(api_key="test")
     values = {"0": "Рабб", "1": "Хилл", "2": "Описание"}
     raw = json.dumps({"translation": values} if wrapped else values, ensure_ascii=False)
-    provider._chat_completion_json_async = AsyncMock(return_value=raw)
+    provider._complete = AsyncMock(return_value=raw)
     items = [TranslationItem(text) for text in ["Rabb", "Hill", "Description"]]
     results = run_async(provider.translate_batch_async(items, "english", "russian"))
     assert [r.translated for r in results] == list(values.values())
     assert all(r.success for r in results)
-    assert provider._chat_completion_json_async.call_count == 1
-    prompt = provider._chat_completion_json_async.call_args.args[0]
+    assert provider._complete.call_count == 1
+    prompt = provider._complete.call_args.args[0]
+    assert isinstance(prompt, str)
     assert "exactly ONE key" not in prompt
 
 
@@ -53,7 +54,7 @@ def test_valid_translations_survive_single_item_wrapper(wrapped):
 )
 def test_wrapper_recovery_does_not_invent_addresses(response):
     provider = OpenRouterProvider(api_key="test")
-    provider._chat_completion_json_async = AsyncMock(return_value=json.dumps(response))
+    provider._complete = AsyncMock(return_value=json.dumps(response))
     results = run_async(
         provider.translate_batch_async(
             [TranslationItem("A"), TranslationItem("B")], "english", "russian"

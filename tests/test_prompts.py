@@ -17,7 +17,12 @@ from src.nwn_translator.prompts import (
     build_translation_system_prompt,
     build_translation_system_prompt_parts,
 )
-from src.nwn_translator.prompts._builder import CONTENT_PROFILE_SCRIPT_MESSAGE
+from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from src.nwn_translator.prompts._builder import (
+    CONTENT_PROFILE_SCRIPT_MESSAGE,
+    build_batch_user_prompt,
+    build_single_user_prompt,
+)
 from src.nwn_translator.prompts.examples import get_examples, _LANG_MODULE_MAP
 
 ALL_LANGS = list(_LANG_MODULE_MAP.keys())
@@ -299,23 +304,8 @@ class TestStableVariableSplit:
 class TestSystemMessageContent:
     """Verify the cache_control breakpoint emitted by make_system_message_content."""
 
-    def _make_provider(self):
-        from unittest.mock import patch
-
-        with patch(
-            "src.nwn_translator.ai_providers.base.BaseAIProvider._validate_api_key",
-            lambda self: None,
-        ):
-            from src.nwn_translator.ai_providers.openrouter_provider import (
-                OpenRouterProvider,
-            )
-
-            return OpenRouterProvider(api_key="sk-or-test")
-
     def test_content_parts_with_breakpoint_when_variable_present(self):
-        from src.nwn_translator.ai_providers.base import BaseAIProvider
-
-        content = BaseAIProvider.make_system_message_content("STABLE", "VARIABLE")
+        content = OpenRouterProvider.make_system_message_content("STABLE", " VARIABLE\n")
         assert isinstance(content, list)
         assert len(content) == 2
         assert content[0]["text"] == "STABLE"
@@ -324,30 +314,42 @@ class TestSystemMessageContent:
         assert "cache_control" not in content[1]
 
     def test_string_when_variable_empty(self):
-        from src.nwn_translator.ai_providers.base import BaseAIProvider
-
-        content = BaseAIProvider.make_system_message_content("STABLE", "")
+        content = OpenRouterProvider.make_system_message_content("STABLE", "  ")
         assert isinstance(content, str)
         assert content == "STABLE"
 
-    def test_stable_suffix_is_cached_side(self):
-        from src.nwn_translator.ai_providers.base import BaseAIProvider
-
-        content = BaseAIProvider.make_system_message_content(
-            "STABLE", "VAR", stable_suffix="\nBATCH MODE: ..."
+    def test_batch_rules_are_on_the_cached_side(self):
+        stable, variable = build_translation_system_prompt_parts(
+            "russian", "male", "GLOSSARY: X", batch_mode=True
         )
-        assert isinstance(content, list)
-        assert content[0]["text"] == "STABLE\nBATCH MODE: ..."
-        assert content[1]["text"] == "VAR"
+        single, _ = build_translation_system_prompt_parts("russian", "male", "GLOSSARY: X")
+        assert stable.startswith(single.split("The JSON object must contain", 1)[0])
+        assert "\nBATCH MODE: Input items have numeric IDs." in stable
+        assert stable.endswith("Do NOT wrap in markdown. Output ONLY the JSON object.\n")
+        assert variable == "GLOSSARY: X"
 
     def test_env_flag_disables_breakpoint(self, monkeypatch):
         """When NWN_TRANSLATE_PROMPT_CACHE=0 the helper falls back to a plain string."""
-        from src.nwn_translator.ai_providers import base as base_mod
+        from src.nwn_translator.ai_providers import openrouter_provider
 
-        monkeypatch.setattr(base_mod, "PROMPT_CACHE_BREAKPOINTS_ENABLED", False)
-        content = base_mod.BaseAIProvider.make_system_message_content("STABLE", "VAR")
+        monkeypatch.setattr(openrouter_provider, "PROMPT_CACHE_BREAKPOINTS_ENABLED", False)
+        content = OpenRouterProvider.make_system_message_content("STABLE", "VAR")
         assert isinstance(content, str)
         assert content == "STABLE\n\nVAR"
+
+
+class TestUserPrompts:
+    def test_single_user_prompt(self):
+        assert build_single_user_prompt("Hi", "english") == "Text to translate from english:\n\nHi"
+        assert build_single_user_prompt("Hi", "english", "Greeting") == (
+            "Context Hint: Greeting\n\nText to translate from english:\n\nHi"
+        )
+
+    def test_batch_user_prompt(self):
+        assert build_batch_user_prompt("french", '{"0":"a"}') == (
+            "Translate the items from french. Return only a flat object of numeric item IDs "
+            'and translated strings. Shared groups are context only.\n\n{"0":"a"}'
+        )
 
 
 class TestCrossLanguageIsolation:

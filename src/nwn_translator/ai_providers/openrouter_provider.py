@@ -1,290 +1,222 @@
-"""OpenRouter provider implementation.
+"""OpenRouter provider: the OpenAI-compatible chat transport and the model tasks.
 
-OpenRouter is an OpenAI-compatible API gateway that provides access to
-hundreds of AI models from Anthropic, Google, Meta, DeepSeek, OpenAI, and
-others through a single endpoint.
-
-See: https://openrouter.ai/docs
+OpenRouter is an OpenAI-compatible gateway to models from Anthropic, Google,
+Meta, DeepSeek, OpenAI and others. See https://openrouter.ai/docs
 """
 
+import asyncio
+import functools
 import json
 import logging
-import re
 import threading
-import asyncio
 import time
-from typing import Any, Dict, List, NoReturn, Optional, Union, cast
+from typing import Any, Dict, List, Optional, cast
 
-logger = logging.getLogger(__name__)
+from openai import APITimeoutError, AsyncOpenAI, BadRequestError, Timeout
 
-from openai import (
-    APIConnectionError,
-    APITimeoutError,
-    AsyncOpenAI,
-    BadRequestError,
-    InternalServerError,
-    OpenAI,
-    Timeout,
-)
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
-)
-
-from .base import (
-    BaseAIProvider,
-    TranslationItem,
-    TranslationResult,
-    ProviderError,
-    RateLimitError,
-)
-from .batch_payload import build_batch_payload, source_windows
-from .openrouter_models import resolve_reasoning_effort
 from ..config import (
-    TRANSLATION_TEMPERATURE,
+    DEFAULT_MODEL,
+    NCS_GATE_TEMPERATURE,
+    PROMPT_CACHE_BREAKPOINTS_ENABLED,
     TRANSLATION_MAX_TOKENS,
-    GLOSSARY_TEMPERATURE,
-    GLOSSARY_MAX_TOKENS,
+    TRANSLATION_TEMPERATURE,
     parse_reasoning_effort,
 )
+from ..json_utils import load_first_json_object
+from ..prompts._builder import (
+    CONTENT_PROFILE_DEFAULT,
+    build_batch_user_prompt,
+    build_single_user_prompt,
+    build_translation_system_prompt_parts,
+)
+from ..prompts.ncs_gate import NCS_GATE_SYSTEM_PROMPT
 from ..race_dictionary import match_race_terms
 from ..telemetry import (
     LLMRequestMetric,
+    RunMetricsRecorder,
     current_llm_phase,
     estimate_tokens,
     split_system_prompt_chars,
     usage_tokens,
 )
+from .base import ProviderError, SystemContent, TranslationItem, TranslationResult
+from .batch_payload import serialize_batch_payload
+from .errors import TRANSIENT_ERRORS, TRANSIENT_RETRY, is_reasoning_rejection, map_api_error
+from .ncs_gate import Verdict, classify_with_recovery
+from .openrouter_models import FALLBACK, resolve_reasoning_effort
 
-#: Exception types that should trigger automatic retry with exponential backoff.
-#: ``InternalServerError`` covers every HTTP status >= 500 from the gateway.
-_RETRYABLE_EXCEPTIONS = (RateLimitError, APIConnectionError, APITimeoutError, InternalServerError)
+logger = logging.getLogger(__name__)
 
-#: Shared exponential wait; floor raised when ``Retry-After`` exceeds it.
-_EXPONENTIAL_WAIT = wait_exponential(multiplier=1, min=2, max=120)
+#: HTTP timeouts in seconds; generation may take minutes, connecting may not. The
+#: client's own ``Timeout`` type is used because the SDK may pin another httpx.
+_HTTP_TIMEOUT = Timeout(connect=10, read=180, write=10, pool=10)
 
-_RETRY_AFTER_RE = re.compile(r"retry[- ]after[:\s=]+(\d+(?:\.\d+)?)", re.IGNORECASE)
-
-
-def _extract_retry_after_seconds(exc: BaseException) -> Optional[float]:
-    """Parse ``Retry-After`` from a RateLimitError, HTTP response, or message."""
-    if isinstance(exc, RateLimitError) and exc.retry_after_seconds is not None:
-        try:
-            value = float(exc.retry_after_seconds)
-        except (TypeError, ValueError):
-            value = None
-        else:
-            if value is not None and value > 0:
-                return value
-
-    response = getattr(exc, "response", None)
-    headers = getattr(response, "headers", None) if response is not None else None
-    if headers is not None:
-        raw = None
-        try:
-            raw = headers.get("retry-after") or headers.get("Retry-After")
-        except Exception:
-            raw = None
-        if raw is not None:
-            try:
-                value = float(raw)
-            except (TypeError, ValueError):
-                value = None
-            else:
-                if value > 0:
-                    return value
-
-    match = _RETRY_AFTER_RE.search(str(exc))
-    if match:
-        try:
-            value = float(match.group(1))
-        except (TypeError, ValueError):
-            return None
-        if value > 0:
-            return value
-    return None
+#: Requests per single-string translation: an unparseable reply is asked once more.
+_SINGLE_JSON_ATTEMPTS = 2
 
 
-def _wait_with_retry_after(retry_state: Any) -> float:
-    """Exponential backoff floored at the provider's ``Retry-After`` hint."""
-    base = float(_EXPONENTIAL_WAIT(retry_state))
-    outcome = getattr(retry_state, "outcome", None)
-    exc = outcome.exception() if outcome is not None and outcome.failed else None
-    retry_after = _extract_retry_after_seconds(exc) if exc is not None else None
-    if retry_after is None:
-        return base
-    # Small jitter so concurrent slots do not stampede the same second.
-    jitter = 1.0 + (0.05 * (hash(str(exc)) % 21) / 20.0)
-    return max(base, retry_after) * jitter
+def parse_single_translation(raw: str) -> str:
+    """Extract the ``translation`` value of a single-string reply.
+
+    Args:
+        raw: Model reply; text around the first JSON object is ignored.
+
+    Returns:
+        The translation, or ``""`` when the reply has no JSON object, does not
+        decode, or lacks a non-empty string ``translation``.
+    """
+    try:
+        translated = load_first_json_object(raw).get("translation", "")
+    except json.JSONDecodeError:
+        logger.warning(
+            "No valid JSON object in model response. Raw (first 200 chars): %s", raw[:200]
+        )
+        return ""
+    if not isinstance(translated, str) or not translated:
+        logger.warning("JSON parsed but 'translation' key missing or empty")
+        return ""
+    return translated
 
 
-def _is_rate_or_budget_error(error_msg: str, exc: Exception) -> bool:
-    """True for HTTP 429/402 and OpenRouter in-flight budget exhaustion."""
-    status = getattr(exc, "status_code", None)
-    if status in (429, 402):
-        return True
-    lower = error_msg.lower()
-    if "rate_limit" in lower or "429" in lower:
-        return True
-    if "402" in lower or "in_flight_budget" in lower:
-        return True
-    return False
+def parse_batch_results(
+    raw: str, items: List[TranslationItem], model: str
+) -> List[TranslationResult]:
+    """Turn a batch reply into one result per item, addressed by position.
+
+    A ``{"translation": {...}}`` wrapper around the ID map is unwrapped; positions
+    are never inferred from lists, group ids or a combined string.
+
+    Args:
+        raw: Model reply.
+        items: The requested items, in payload order.
+        model: Model slug recorded in the result metadata.
+
+    Returns:
+        One result per item. Every item fails with ``Batch JSON parse error: ...``
+        when the reply does not decode, and individually when its key is missing
+        or empty.
+    """
+    try:
+        parsed = load_first_json_object(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("Batch JSON parse failed: %s", exc)
+        return [
+            TranslationResult(
+                translated="",
+                original=item.original,
+                success=False,
+                error=f"Batch JSON parse error: {exc}",
+            )
+            for item in items
+        ]
+    wrapped = parsed.get("translation")
+    if set(parsed) == {"translation"} and isinstance(wrapped, dict):
+        parsed = wrapped
+    results = []
+    for i, item in enumerate(items):
+        translated = parsed.get(str(i), "")
+        ok = isinstance(translated, str) and bool(translated)
+        results.append(
+            TranslationResult(
+                translated=translated if ok else "",
+                original=item.original,
+                success=ok,
+                error=None if ok else "Missing or empty translation in batch response",
+                metadata={"model": model, "batch": True},
+            )
+        )
+    return results
 
 
-class OpenRouterError(ProviderError):
-    """OpenRouter-specific error."""
+class OpenRouterProvider:
+    """Translation provider for OpenRouter and other OpenAI-compatible gateways.
 
-    pass
+    Every request goes through :meth:`_complete`: JSON response format, catalog-
+    clamped reasoning effort, error mapping and one request metric per attempt.
+    Any slug listed on https://openrouter.ai/models can be used as the model.
 
-
-class OpenRouterProvider(BaseAIProvider):
-    """AI provider implementation for OpenRouter.
-
-    OpenRouter exposes an OpenAI-compatible REST API, so this provider
-    reuses the ``openai`` SDK with a custom ``base_url``.  Any model
-    available on https://openrouter.ai/models can be used by passing its
-    slug (e.g. ``anthropic/claude-3.5-sonnet``) as the ``model`` argument.
+    Attributes:
+        BASE_URL: API base URL; subclasses target another gateway.
+        HEADERS: Extra headers sent with every request.
+        PROVIDER_LABEL: Human-readable name used in error messages.
+        PROVIDER_NAME: Short id returned by :meth:`get_provider_name`.
+        DEFAULT_MODEL: Model used when none is given.
+        POPULAR_MODELS: Curated model shortlist for the web UI.
+        api_key: API key.
+        model: Model slug sent with every request.
+        player_gender: Grammatical gender of the player in translation prompts.
+        metrics_recorder: Receives one metric per request attempt, if set.
     """
 
-    #: API base URL. Subclasses override to target an OpenAI-compatible gateway.
     BASE_URL = "https://openrouter.ai/api/v1"
-    #: Backwards-compat alias; external code may reference ``OPENROUTER_BASE_URL``.
-    OPENROUTER_BASE_URL = BASE_URL
-    #: Human-readable provider label used in error messages.
+    #: OpenRouter attributes traffic (and rate-limit tiers) to the calling app.
+    HEADERS: Dict[str, str] = {
+        "HTTP-Referer": "https://github.com/nwn-modules-translator",
+        "X-Title": "NWN Modules Translator",
+    }
     PROVIDER_LABEL = "OpenRouter"
-    #: Short identifier returned from :meth:`get_provider_name`.
     PROVIDER_NAME = "openrouter"
+    DEFAULT_MODEL = DEFAULT_MODEL
+    POPULAR_MODELS = list(FALLBACK)
 
-    #: Default model — change via config or ``--model`` CLI flag.
-    DEFAULT_MODEL = "google/gemini-3.8-flash"
-
-    #: A curated shortlist for the web UI; not an exhaustive list.
-    POPULAR_MODELS = [
-        "google/gemini-3.1-flash-lite",
-        "google/gemini-3.5-flash-lite",
-        "google/gemini-3.8-flash",
-        "openai/gpt-5.6-luna",
-    ]
+    #: Distinguishes "no client cached yet" from a client cached for loop ``None``.
+    _NO_LOOP_CACHED = object()
 
     def __init__(
         self,
         api_key: str,
         model: Optional[str] = None,
-        site_url: str = "https://github.com/nwn-modules-translator",
-        site_name: str = "NWN Modules Translator",
-        **kwargs,
-    ):
-        """Initialize the OpenRouter provider.
+        *,
+        player_gender: str = "male",
+        reasoning_effort: Optional[str] = None,
+        metrics_recorder: Optional[RunMetricsRecorder] = None,
+    ) -> None:
+        """Create a provider; no network access happens here.
 
         Args:
-            api_key: OpenRouter API key (sk-or-…).
-            model: Model slug (default: google/gemini-3.8-flash).
-            site_url: Your app's URL, forwarded as HTTP-Referer header.
-                OpenRouter uses this for attribution / rate-limit tiers.
-            site_name: Your app's name, forwarded as X-Title header.
-            **kwargs: Passed to base (e.g. ``player_gender``); ``reasoning_effort`` is consumed here for OpenRouter's ``reasoning`` request field.
+            api_key: Gateway API key.
+            model: Model slug; :attr:`DEFAULT_MODEL` when ``None`` or empty.
+            player_gender: ``"male"`` or ``"female"``.
+            reasoning_effort: Requested ``reasoning.effort`` (see
+                :func:`~nwn_translator.config.parse_reasoning_effort`).
+            metrics_recorder: Receives one metric per request attempt.
+
+        Raises:
+            ProviderError: If *api_key* is blank.
+            ValueError: If *reasoning_effort* is not a known effort.
         """
-        reasoning_raw = kwargs.pop("reasoning_effort", None)
-        self.site_url = site_url
-        self.site_name = site_name
-        super().__init__(api_key, model, **kwargs)
-        self._reasoning_effort = parse_reasoning_effort(reasoning_raw)
-        #: Set after the first "reasoning not supported" 400 so the rest of the
-        #: session skips the doomed reasoning request instead of retrying each call.
+        self.api_key = api_key
+        self.model = model or self.DEFAULT_MODEL
+        self.player_gender = player_gender
+        self.metrics_recorder = metrics_recorder
+        if not api_key or not api_key.strip():
+            raise ProviderError(f"{self.PROVIDER_NAME}: API key is required")
+        self._reasoning_effort = parse_reasoning_effort(reasoning_effort)
+        #: Set by the first "reasoning not supported" 400 so the rest of the session
+        #: skips the doomed reasoning request instead of repeating it for every call.
         self._reasoning_unsupported = False
-        # The client's own Timeout type: openai 3 builds on httpx2, not httpx.
-        _timeout = Timeout(connect=10, read=180, write=10, pool=10)
-        self._headers = self._build_default_headers()
-        self._timeout = _timeout
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url=self.BASE_URL,
-            default_headers=self._headers,
-            timeout=self._timeout,
-            max_retries=0,
-        )
         self._thread_local = threading.local()
 
-    def _build_default_headers(self) -> Dict[str, str]:
-        """Extra headers appended to every request. Subclasses may override."""
-        return {
-            "HTTP-Referer": self.site_url,
-            "X-Title": self.site_name,
-        }
+    def __repr__(self) -> str:
+        return f"{self.get_provider_name()}(model={self.model})"
 
-    def _record_llm_metric(
-        self,
-        *,
-        phase: str,
-        system_prompt: Any,
-        user_prompt: str,
-        batch_size: int,
-        latency_ms: int,
-        success: bool,
-        response: Any = None,
-        error: Optional[BaseException] = None,
-        world_context_chars: int = 0,
-        glossary_chars: int = 0,
-        retry_count: int = 0,
-        parse_recovery: Optional[str] = None,
-    ) -> None:
-        """Record one request-level metric when telemetry is configured."""
-        recorder = getattr(self, "metrics_recorder", None)
-        if recorder is None:
-            return
-        stable_chars, variable_chars = split_system_prompt_chars(system_prompt)
-        user_chars = len(user_prompt or "")
-        prompt_chars = stable_chars + variable_chars + user_chars
-        usage_in, usage_out = usage_tokens(response)
-        raw_out = ""
-        if response is not None:
-            try:
-                raw_out = (response.choices[0].message.content or "").strip()
-            except Exception:
-                raw_out = ""
-        metric = LLMRequestMetric(
-            request_id=recorder.next_request_id(),
-            phase=phase,
-            provider=self.get_provider_name(),
-            model=self.model,
-            batch_size=batch_size,
-            stable_chars=stable_chars,
-            variable_chars=variable_chars,
-            user_chars=user_chars,
-            world_context_chars=world_context_chars,
-            glossary_chars=glossary_chars,
-            prompt_chars=prompt_chars,
-            estimated_input_tokens=(
-                int(usage_in) if usage_in is not None else estimate_tokens(prompt_chars)
-            ),
-            estimated_output_tokens=(
-                int(usage_out) if usage_out is not None else estimate_tokens(len(raw_out))
-            ),
-            usage_input_tokens=usage_in,
-            usage_output_tokens=usage_out,
-            latency_ms=latency_ms,
-            retry_count=retry_count,
-            timeout=isinstance(error, APITimeoutError),
-            parse_recovery=parse_recovery,
-            success=success,
-            error=str(error) if error is not None else None,
-        )
-        recorder.record(metric)
+    def get_provider_name(self) -> str:
+        """Return the short provider id recorded in metrics.
 
-    #: Sentinel distinguishing "no cached loop yet" from a legitimate ``None`` loop.
-    _NO_LOOP_CACHED = object()
+        Returns:
+            :attr:`PROVIDER_NAME`.
+        """
+        return self.PROVIDER_NAME
 
     @property
     def async_client(self) -> AsyncOpenAI:
-        """Get or create an AsyncOpenAI client bound to the current event loop.
+        """The ``AsyncOpenAI`` client bound to the current thread's running loop.
 
         The cache key is the loop object itself (a strong reference is kept):
         comparing ``id(loop)`` values would false-hit when a garbage-collected
         loop's address is reused by a new one. With the persistent loop of
-        ``run_async`` the same client thus serves every call of a run."""
+        ``run_async`` the same client serves every call of a run.
+        """
         try:
             loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
         except RuntimeError:
@@ -295,14 +227,14 @@ class OpenRouterProvider(BaseAIProvider):
             self._thread_local.async_client = AsyncOpenAI(
                 api_key=self.api_key,
                 base_url=self.BASE_URL,
-                default_headers=self._headers,
-                timeout=self._timeout,
+                default_headers=dict(self.HEADERS),
+                timeout=_HTTP_TIMEOUT,
                 max_retries=0,
             )
         return cast(AsyncOpenAI, self._thread_local.async_client)
 
     async def close_async_client(self) -> None:
-        """Explicitly close the thread-local async client (call before loop shutdown)."""
+        """Close this thread's client; call it before the event loop shuts down."""
         client = getattr(self._thread_local, "async_client", None)
         if client is not None:
             try:
@@ -312,245 +244,189 @@ class OpenRouterProvider(BaseAIProvider):
             self._thread_local.async_client = None
             self._thread_local.client_loop = self._NO_LOOP_CACHED
 
-    def get_default_model(self) -> str:
-        """Get the default OpenRouter model.
-
-        Returns:
-            Default model slug.
-        """
-        return self.DEFAULT_MODEL
-
-    def get_provider_name(self) -> str:
-        """Get provider name.
-
-        Returns:
-            Provider identifier string.
-        """
-        return self.PROVIDER_NAME
-
-    def _resolved_reasoning_effort(self, *, use_reasoning: bool) -> Optional[str]:
-        """Effort to send, or ``None`` to omit the reasoning field."""
-        if self._reasoning_unsupported:
-            return None
-        requested = self._reasoning_effort
-        if not use_reasoning:
-            requested = "none"
-        return resolve_reasoning_effort(self.model, requested)
-
     @staticmethod
-    def _with_reasoning_kwargs(kwargs: Dict[str, Any], effort: str) -> Dict[str, Any]:
-        return {
-            **kwargs,
-            "reasoning_effort": effort,
-            "extra_body": {"reasoning": {"effort": effort}},
-        }
+    def make_system_message_content(stable: str, variable: str = "") -> SystemContent:
+        """Build ``messages[0].content`` from a cacheable and a per-call prompt half.
 
-    @staticmethod
-    def _is_reasoning_mandatory_error(error: BadRequestError) -> bool:
-        """True when the model forbids disabling reasoning (Gemini 3.8 Flash)."""
-        msg = str(error).lower()
-        return "cannot be disabled" in msg or "reasoning is mandatory" in msg
-
-    @staticmethod
-    def _is_reasoning_rejection(error: BadRequestError) -> bool:
-        """True when the model has no reasoning parameter (omit is correct)."""
-        if OpenRouterProvider._is_reasoning_mandatory_error(error):
-            return False
-        msg = str(error).lower()
-        if "reasoning" not in msg:
-            return False
-        if "effort" in msg:
-            return False
-        return "not supported" in msg or "unsupported" in msg
-
-    def _handle_reasoning_rejection(self, error: BadRequestError) -> None:
-        """Remember that the model rejects ``reasoning``; re-raise unrelated 400s."""
-        if not self._is_reasoning_rejection(error):
-            raise error
-        logger.warning(
-            "%s rejected the reasoning field (HTTP 400); disabling reasoning for this session",
-            self.PROVIDER_LABEL,
-        )
-        self._reasoning_unsupported = True
-
-    def _chat_completions_create_sync(self, *, use_reasoning: bool = True, **kwargs: Any):
-        """``chat.completions.create`` with catalog-clamped reasoning."""
-        effort = self._resolved_reasoning_effort(use_reasoning=use_reasoning)
-        call_kw = self._with_reasoning_kwargs(kwargs, effort) if effort else dict(kwargs)
-        try:
-            return self.client.chat.completions.create(**call_kw)
-        except BadRequestError as e:
-            self._handle_reasoning_rejection(e)
-            return self.client.chat.completions.create(**kwargs)
-
-    async def _chat_completions_create_async(
-        self,
-        *,
-        use_reasoning: bool = True,
-        **kwargs: Any,
-    ):
-        """Async ``chat.completions.create`` with catalog-clamped reasoning."""
-        effort = self._resolved_reasoning_effort(use_reasoning=use_reasoning)
-        call_kw = self._with_reasoning_kwargs(kwargs, effort) if effort else dict(kwargs)
-        try:
-            return await self.async_client.chat.completions.create(**call_kw)
-        except BadRequestError as e:
-            self._handle_reasoning_rejection(e)
-            return await self.async_client.chat.completions.create(**kwargs)
-
-    @staticmethod
-    def _parse_model_json_response(raw_response: str) -> str:
-        """Extract translated string from model JSON (``translation`` key).
-
-        Returns the translated text, or ``""`` when the response is
-        truncated / unparseable JSON (caller should treat as failure).
-        """
-        try:
-            # Strip markdown code fences that some models wrap around JSON
-            cleaned = re.sub(r"^```(?:json)?\s*", "", raw_response.strip())
-            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
-
-            # Use raw_decode for precise extraction of the first valid JSON object.
-            # strict=False accepts raw newlines inside JSON strings (models often
-            # emit them instead of escaped \n).
-            decoder = json.JSONDecoder(strict=False)
-            # Find the first '{' and decode from there
-            idx = cleaned.find("{")
-            if idx == -1:
-                logger.warning(
-                    "No JSON object in model response, treating as failure. "
-                    "Raw (first 200 chars): %s",
-                    (raw_response or "")[:200],
-                )
-                return ""
-            parsed, _ = decoder.raw_decode(cleaned, idx)
-            translated_text = parsed.get("translation", "")
-            if not isinstance(translated_text, str) or not translated_text:
-                logger.warning("JSON parsed but 'translation' key missing or empty")
-                return ""
-            return translated_text
-        except json.JSONDecodeError:
-            # Response looks like truncated JSON — return empty to trigger retry
-            logger.warning(
-                "Truncated/invalid JSON in model response, will retry. "
-                "Raw (first 200 chars): %s",
-                (raw_response or "")[:200],
-            )
-            return ""
-
-    def _map_openrouter_exception(self, e: Exception) -> NoReturn:
-        """Raise RateLimitError or OpenRouterError from a caught API exception."""
-        error_msg = str(e)
-        if _is_rate_or_budget_error(error_msg, e):
-            raise RateLimitError(
-                f"{self.PROVIDER_LABEL} rate limit exceeded: {error_msg}",
-                retry_after_seconds=_extract_retry_after_seconds(e),
-            ) from e
-        raise OpenRouterError(f"{self.PROVIDER_LABEL} translation failed: {error_msg}") from e
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=_wait_with_retry_after,
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True,
-    )
-    def translate(
-        self,
-        text: str,
-        source_lang: str,
-        target_lang: str,
-        context: Optional[str] = None,
-        glossary_block: Optional[str] = None,
-        content_profile: Optional[str] = None,
-    ) -> TranslationResult:
-        """Translate text via OpenRouter.
+        Without a variable half the content is plain text (maximally compatible
+        with OpenAI-compatible gateways). Otherwise the stable half carries a
+        ``cache_control: ephemeral`` breakpoint: honoured by Anthropic, Gemini and
+        Grok through OpenRouter, ignored by providers that cache prefixes on their
+        own. :data:`~nwn_translator.config.PROMPT_CACHE_BREAKPOINTS_ENABLED` off
+        joins both halves into one string instead.
 
         Args:
-            text: Text to translate.
-            source_lang: Source language name (e.g. "english").
-            target_lang: Target language name (e.g. "russian").
-            context: Optional context hint for the model.
-            content_profile: Prompt profile selector ("default" or "short_label").
+            stable: Prompt text that is byte-identical across the calls of a run.
+            variable: Prompt text that may change between calls.
 
         Returns:
-            TranslationResult with translated text.
+            A string, or two text parts of which the first is cacheable.
+        """
+        variable = variable.strip() if variable else ""
+        if not variable:
+            return stable
+        if not PROMPT_CACHE_BREAKPOINTS_ENABLED:
+            return f"{stable}\n\n{variable}"
+        return [
+            {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": variable},
+        ]
+
+    async def _create(self, kwargs: Dict[str, Any], *, use_reasoning: bool) -> Any:
+        """Send one ``chat.completions.create`` with the catalog-clamped effort.
+
+        A model that rejects the reasoning field gets the request once more without
+        it, and later requests of this provider omit it.
+        """
+        effort = None
+        if not self._reasoning_unsupported:
+            requested = self._reasoning_effort if use_reasoning else "none"
+            effort = resolve_reasoning_effort(self.model, requested)
+        call_kwargs = (
+            {**kwargs, "reasoning_effort": effort, "extra_body": {"reasoning": {"effort": effort}}}
+            if effort
+            else kwargs
+        )
+        try:
+            return await self.async_client.chat.completions.create(**call_kwargs)
+        except BadRequestError as error:
+            if not is_reasoning_rejection(error):
+                raise
+            logger.warning(
+                "%s rejected the reasoning field (HTTP 400); disabling reasoning for this session",
+                self.PROVIDER_LABEL,
+            )
+            self._reasoning_unsupported = True
+            return await self.async_client.chat.completions.create(**kwargs)
+
+    async def _complete_once(
+        self,
+        system: SystemContent,
+        user: str,
+        *,
+        max_tokens: int,
+        temperature: float,
+        phase: str,
+        batch_size: int = 1,
+        glossary_chars: int = 0,
+        use_reasoning: bool = True,
+        stream: Optional[bool] = False,
+    ) -> str:
+        """Send one JSON-mode chat request and return the stripped reply text.
+
+        Every attempt, failed or not, is recorded as one request metric.
+        :meth:`_complete` is the same request retried on transient errors.
+
+        Args:
+            system: System message content.
+            user: User message.
+            max_tokens: Completion token budget (hidden reasoning included).
+            temperature: Sampling temperature.
+            phase: Metric phase label.
+            batch_size: Items answered by this request (metrics).
+            glossary_chars: Glossary characters in the system prompt (metrics).
+            use_reasoning: ``False`` requests the lowest effort the model allows.
+            stream: Value of the ``stream`` field; ``None`` omits it.
+
+        Returns:
+            The reply text, stripped.
 
         Raises:
-            RateLimitError: When the API returns HTTP 429.
-            OpenRouterError: On any other API error.
+            RateLimitError: HTTP 429/402 or budget exhaustion.
+            OpenRouterError: Any other non-transient API error.
+            APIConnectionError: Connection failure or timeout (transient).
+            InternalServerError: HTTP >= 500 (transient).
         """
-        if not text or not text.strip():
-            return TranslationResult(translated="", original=text, success=True)
-
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"},
+        }
+        if stream is not None:
+            kwargs["stream"] = stream
+        record = functools.partial(
+            self._record_metric,
+            phase=phase,
+            system=system,
+            user=user,
+            batch_size=batch_size,
+            glossary_chars=glossary_chars,
+            started=time.monotonic(),
+        )
         try:
-            gb = glossary_block or ""
-            race_block = match_race_terms(text, target_lang)
-            if race_block and not gb:
-                gb = gb + "\n\n" + race_block if gb else race_block
-            stable, variable = self._create_system_prompt_parts(
-                target_lang,
-                glossary_block=gb,
-                content_profile=content_profile,
-            )
-            system_content = self.make_system_message_content(stable, variable)
-            user_prompt = self._create_user_prompt(text, source_lang, context)
+            response = await self._create(kwargs, use_reasoning=use_reasoning)
+        except Exception as exc:
+            record(error=exc)
+            if isinstance(exc, TRANSIENT_ERRORS):
+                raise
+            raise map_api_error(exc, self.PROVIDER_LABEL) from exc
+        record(response=response)
+        try:
+            return (response.choices[0].message.content or "").strip()
+        except Exception as exc:  # a reply without choices
+            raise map_api_error(exc, self.PROVIDER_LABEL) from exc
 
-            t0 = time.monotonic()
-            response = self._chat_completions_create_sync(
+    #: :meth:`_complete_once` retried on transient errors. The retry repeats only the
+    #: failed request, never the requests a task already completed (JSON attempts,
+    #: NCS gate halves).
+    _complete = TRANSIENT_RETRY(_complete_once)
+
+    def _record_metric(
+        self,
+        *,
+        phase: str,
+        system: SystemContent,
+        user: str,
+        batch_size: int,
+        glossary_chars: int,
+        started: float,
+        response: Any = None,
+        error: Optional[BaseException] = None,
+    ) -> None:
+        """Record one request attempt when a metrics recorder is configured."""
+        recorder = self.metrics_recorder
+        if recorder is None:
+            return
+        stable_chars, variable_chars = split_system_prompt_chars(system)
+        user_chars = len(user or "")
+        prompt_chars = stable_chars + variable_chars + user_chars
+        usage_in, usage_out = usage_tokens(response)
+        try:
+            reply = (response.choices[0].message.content or "").strip()
+        except Exception:
+            reply = ""
+        recorder.record(
+            LLMRequestMetric(
+                request_id=recorder.next_request_id(),
+                phase=phase,
+                provider=self.get_provider_name(),
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=TRANSLATION_TEMPERATURE,
-                max_tokens=TRANSLATION_MAX_TOKENS,
-                response_format={"type": "json_object"},
+                batch_size=batch_size,
+                stable_chars=stable_chars,
+                variable_chars=variable_chars,
+                user_chars=user_chars,
+                glossary_chars=glossary_chars,
+                prompt_chars=prompt_chars,
+                estimated_input_tokens=(
+                    usage_in if usage_in is not None else estimate_tokens(prompt_chars)
+                ),
+                estimated_output_tokens=(
+                    usage_out if usage_out is not None else estimate_tokens(len(reply))
+                ),
+                usage_input_tokens=usage_in,
+                usage_output_tokens=usage_out,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                timeout=isinstance(error, APITimeoutError),
+                success=error is None,
+                error=str(error) if error is not None else None,
             )
-            self._record_llm_metric(
-                phase=current_llm_phase("generic_single"),
-                system_prompt=system_content,
-                user_prompt=user_prompt,
-                batch_size=1,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                success=True,
-                response=response,
-                glossary_chars=len(gb),
-            )
+        )
 
-            raw_response = (response.choices[0].message.content or "").strip()
-            translated_text = self._parse_model_json_response(raw_response)
-
-            if not translated_text:
-                return TranslationResult(
-                    translated="",
-                    original=text,
-                    success=False,
-                    error="Model returned empty or unparseable JSON",
-                    metadata={"model": self.model},
-                )
-
-            return TranslationResult(
-                translated=translated_text,
-                original=text,
-                success=True,
-                metadata={"model": self.model},
-            )
-
-        except _RETRYABLE_EXCEPTIONS:
-            raise
-        except OpenRouterError:
-            raise
-        except Exception as e:
-            self._map_openrouter_exception(e)
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=_wait_with_retry_after,
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True,
-    )
     async def translate_async(
         self,
         text: str,
@@ -560,171 +436,152 @@ class OpenRouterProvider(BaseAIProvider):
         glossary_block: Optional[str] = None,
         content_profile: Optional[str] = None,
     ) -> TranslationResult:
-        """Async translate via OpenRouter (concurrent-friendly)."""
+        """Translate one string.
+
+        Race terms found in *text* are added to the prompt when no glossary block
+        is given. An unparseable reply is requested once more.
+
+        Args:
+            text: Text to translate; blank text returns an empty success.
+            source_lang: Source language name.
+            target_lang: Target language name.
+            context: Context hint for the model.
+            glossary_block: GLOSSARY section for the variable prompt half.
+            content_profile: Prompt profile (``default``, ``short_label``,
+                ``script_message``).
+
+        Returns:
+            The translation, or a failed result when no reply parses.
+
+        Raises:
+            RateLimitError: Rate limit or budget exhausted after retries.
+            OpenRouterError: Non-transient API error.
+        """
         if not text or not text.strip():
             return TranslationResult(translated="", original=text, success=True)
-
-        try:
-            gb = glossary_block or ""
-            race_block = match_race_terms(text, target_lang)
-            if race_block and not gb:
-                gb = gb + "\n\n" + race_block if gb else race_block
-            stable, variable = self._create_system_prompt_parts(
-                target_lang,
-                glossary_block=gb,
-                content_profile=content_profile,
+        glossary = glossary_block or match_race_terms(text, target_lang)
+        stable, variable = build_translation_system_prompt_parts(
+            target_lang,
+            self.player_gender,
+            glossary,
+            content_profile=content_profile or CONTENT_PROFILE_DEFAULT,
+        )
+        system = self.make_system_message_content(stable, variable)
+        user = build_single_user_prompt(text, source_lang, context)
+        for attempt in range(_SINGLE_JSON_ATTEMPTS):
+            raw = await self._complete(
+                system,
+                user,
+                max_tokens=TRANSLATION_MAX_TOKENS,
+                temperature=TRANSLATION_TEMPERATURE,
+                phase=current_llm_phase("generic_single"),
+                glossary_chars=len(glossary),
+                stream=None,
             )
-            system_content = self.make_system_message_content(stable, variable)
-            user_prompt = self._create_user_prompt(text, source_lang, context)
-
-            translated_text = ""
-            for attempt in range(2):
-                t0 = time.monotonic()
-                response = await self._chat_completions_create_async(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_content},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=TRANSLATION_TEMPERATURE,
-                    max_tokens=TRANSLATION_MAX_TOKENS,
-                    response_format={"type": "json_object"},
-                )
-                self._record_llm_metric(
-                    phase=current_llm_phase("generic_single"),
-                    system_prompt=system_content,
-                    user_prompt=user_prompt,
-                    batch_size=1,
-                    latency_ms=int((time.monotonic() - t0) * 1000),
-                    success=True,
-                    response=response,
-                    glossary_chars=len(gb),
-                )
-                raw_response = (response.choices[0].message.content or "").strip()
-                translated_text = self._parse_model_json_response(raw_response)
-                if translated_text:
-                    break
-                if attempt == 0:
-                    logger.warning(
-                        "Unparseable or empty JSON from model, retrying once. "
-                        "Raw (first 200 chars): %s",
-                        (raw_response or "")[:200],
-                    )
-
-            if not translated_text:
+            translated = parse_single_translation(raw)
+            if translated:
                 return TranslationResult(
-                    translated="",
+                    translated=translated,
                     original=text,
-                    success=False,
-                    error="Model returned empty or unparseable JSON",
+                    success=True,
                     metadata={"model": self.model},
                 )
+            if attempt == 0:
+                logger.warning(
+                    "Unparseable or empty JSON from model, retrying once. "
+                    "Raw (first 200 chars): %s",
+                    raw[:200],
+                )
+        return TranslationResult(
+            translated="",
+            original=text,
+            success=False,
+            error="Model returned empty or unparseable JSON",
+            metadata={"model": self.model},
+        )
 
-            return TranslationResult(
-                translated=translated_text,
-                original=text,
-                success=True,
-                metadata={"model": self.model},
-            )
-
-        except _RETRYABLE_EXCEPTIONS:
-            raise
-        except OpenRouterError:
-            raise
-        except Exception as e:
-            self._map_openrouter_exception(e)
-
-    async def _chat_completion_json_async(
+    async def translate_batch_async(
         self,
-        system_prompt: Any,
+        items: List[TranslationItem],
+        source_lang: str,
+        target_lang: str,
+        glossary_block: Optional[str] = None,
+        content_profile: Optional[str] = None,
+    ) -> List[TranslationResult]:
+        """Translate several strings in one request.
+
+        Args:
+            items: Items to translate; see
+                :func:`~nwn_translator.ai_providers.batch_payload.build_batch_payload`.
+            source_lang: Source language name.
+            target_lang: Target language name.
+            glossary_block: GLOSSARY section; race terms of the items are used when
+                it is empty.
+            content_profile: Prompt profile; it must depend only on the batch's
+                content-type mix so the stable prompt prefix stays cacheable.
+
+        Returns:
+            One result per item, in order (see :func:`parse_batch_results`).
+
+        Raises:
+            RateLimitError: Rate limit or budget exhausted after retries.
+            OpenRouterError: Non-transient API error.
+        """
+        if not items:
+            return []
+        glossary = glossary_block or match_race_terms(
+            " ".join(item.original for item in items if item.original), target_lang
+        )
+        stable, variable = build_translation_system_prompt_parts(
+            target_lang,
+            self.player_gender,
+            glossary,
+            content_profile=content_profile or CONTENT_PROFILE_DEFAULT,
+            batch_mode=True,
+        )
+        raw = await self._complete(
+            self.make_system_message_content(stable, variable),
+            build_batch_user_prompt(source_lang, serialize_batch_payload(items)),
+            max_tokens=TRANSLATION_MAX_TOKENS,
+            temperature=TRANSLATION_TEMPERATURE,
+            phase=current_llm_phase("generic_batch"),
+            batch_size=len(items),
+            glossary_chars=len(glossary),
+        )
+        return parse_batch_results(raw, items, self.model)
+
+    async def complete_json_chat_async(
+        self,
+        system_prompt: SystemContent,
         user_prompt: str,
         *,
         max_tokens: int,
         temperature: float,
-        response_format: dict,
-        use_reasoning: bool = True,
-        phase: Optional[str] = None,
-        batch_size: int = 1,
-        world_context_chars: int = 0,
-        glossary_chars: int = 0,
-    ) -> str:
-        """One chat completion with forced JSON-style ``response_format`` (no retries).
-
-        ``system_prompt`` may be a plain string or a list of content parts
-        (the latter produced by :meth:`BaseAIProvider.make_system_message_content`
-        when prompt caching is in effect).
-        """
-        t0 = time.monotonic()
-        try:
-            response = await self._chat_completions_create_async(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format=response_format,
-                stream=False,
-                use_reasoning=use_reasoning,
-            )
-            self._record_llm_metric(
-                phase=phase or current_llm_phase("generic_batch"),
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                batch_size=batch_size,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                success=True,
-                response=response,
-                world_context_chars=world_context_chars,
-                glossary_chars=glossary_chars,
-            )
-            return (response.choices[0].message.content or "").strip()
-        except _RETRYABLE_EXCEPTIONS as exc:
-            self._record_llm_metric(
-                phase=phase or current_llm_phase("generic_batch"),
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                batch_size=batch_size,
-                latency_ms=int((time.monotonic() - t0) * 1000),
-                success=False,
-                error=exc,
-                world_context_chars=world_context_chars,
-                glossary_chars=glossary_chars,
-            )
-            raise
-        except OpenRouterError:
-            raise
-        except Exception as e:
-            self._map_openrouter_exception(e)
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=_wait_with_retry_after,
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True,
-    )
-    async def complete_json_chat_async(
-        self,
-        system_prompt: Any,
-        user_prompt: str,
-        *,
-        max_tokens: int = TRANSLATION_MAX_TOKENS,
-        temperature: float = TRANSLATION_TEMPERATURE,
         use_reasoning: bool = True,
     ) -> str:
-        """Single chat completion with OpenAI/OpenRouter ``json_object`` mode.
+        """Send one JSON-mode chat request with the caller's prompts.
 
-        ``system_prompt`` accepts either a plain string or a content-parts
-        list (see :meth:`BaseAIProvider.make_system_message_content`).
+        Args:
+            system_prompt: System content, plain or from
+                :meth:`make_system_message_content`.
+            user_prompt: User message.
+            max_tokens: Completion token budget.
+            temperature: Sampling temperature.
+            use_reasoning: ``False`` requests the lowest effort the model allows.
+
+        Returns:
+            The stripped reply text.
+
+        Raises:
+            RateLimitError: Rate limit or budget exhausted after retries.
+            OpenRouterError: Non-transient API error.
         """
-        return await self._chat_completion_json_async(
+        return await self._complete(
             system_prompt,
             user_prompt,
             max_tokens=max_tokens,
             temperature=temperature,
-            response_format={"type": "json_object"},
+            phase=current_llm_phase("generic_batch"),
             use_reasoning=use_reasoning,
         )
 
@@ -734,428 +591,71 @@ class OpenRouterProvider(BaseAIProvider):
         user_prompt: str,
         *,
         glossary_keys: List[str],
-        max_tokens: int = GLOSSARY_MAX_TOKENS,
-        temperature: float = GLOSSARY_TEMPERATURE,
+        max_tokens: int,
+        temperature: float,
     ) -> str:
-        """Glossary batch via ``json_object`` mode (no retries — caller retries).
+        """Send one glossary request, without retries or reasoning.
 
-        Uses ``json_object`` response format for maximum model compatibility.
-        Structured outputs (``json_schema`` with ``strict: true``) cause
-        timeouts/hangs on models without native support (DeepSeek, Qwen, etc.)
-        because OpenRouter's constrained-decoding wrapper is extremely slow.
+        ``json_object`` mode is used rather than a strict ``json_schema``: OpenRouter's
+        constrained decoding hangs on models without native support (DeepSeek, Qwen).
+        The glossary builder retries and merges partial results itself.
 
-        Callers (``GlossaryBuilder._translate_batch_async``) handle retries
-        and partial-result merging, so no tenacity decorator here.
+        Args:
+            system_prompt: Glossary system prompt.
+            user_prompt: Names to translate.
+            glossary_keys: Requested names (metrics batch size).
+            max_tokens: Completion token budget.
+            temperature: Sampling temperature.
+
+        Returns:
+            The stripped reply text.
+
+        Raises:
+            RateLimitError: Rate limit or budget exhausted.
+            OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout.
+            InternalServerError: HTTP >= 500.
         """
-        return await self._chat_completion_json_async(
+        return await self._complete_once(
             system_prompt,
             user_prompt,
             max_tokens=max_tokens,
             temperature=temperature,
-            response_format={"type": "json_object"},
-            use_reasoning=False,
             phase=current_llm_phase("glossary"),
             batch_size=len(glossary_keys),
+            use_reasoning=False,
         )
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=_wait_with_retry_after,
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True,
-    )
-    async def translate_batch_async(
-        self,
-        items: List[TranslationItem],
-        source_lang: str,
-        target_lang: str,
-        glossary_block: Optional[str] = None,
-        content_profile: Optional[str] = None,
-    ) -> List[TranslationResult]:
-        """Translate a batch of short strings in a single API call.
-
-        Sends up to ~30 short items as a JSON mapping and parses the
-        response back into individual TranslationResult objects.
-
-        Args:
-            items: List of TranslationItem objects (should be short strings).
-            source_lang: Source language name.
-            target_lang: Target language name.
-            glossary_block: Optional glossary prompt block.
-            content_profile: Prompt profile selector; must be deterministic across
-                batches that share the same content-type mix so the stable prefix
-                hits the provider cache.
-
-        Returns:
-            List of TranslationResult, one per input item.
-        """
-        if not items:
-            return []
-
-        gb = glossary_block or ""
-        combined_text = " ".join(item.original for item in items if item.original)
-        race_block = match_race_terms(combined_text, target_lang)
-        if race_block and not gb:
-            gb = gb + "\n\n" + race_block if gb else race_block
-        stable, variable = self._create_system_prompt_parts(
-            target_lang,
-            glossary_block=gb,
-            content_profile=content_profile,
-            batch_mode=True,
-        )
-        # BATCH MODE instructions are identical for every batch call — keep
-        # them inside the cached stable half so the prompt prefix is stable.
-        batch_mode_suffix = (
-            "\nBATCH MODE: Input items have numeric IDs. Input is either the item map "
-            "itself or an object with items and shared groups maps. Each item is "
-            "either a plain string or an object "
-            '{"text": "...", "hint": "...", "context": "..."}. '
-            'The hint (e.g. "item_name", "creature_first_name", "store_name") '
-            "tells you what kind of game entity this is — use it to decide "
-            "whether to translate the meaning or transliterate. "
-            "The optional context describes where the string appears in the "
-            "game — use it to choose tone and grammatical forms. "
-            "Items may come from different resources; use each item's own context. "
-            "Their order in this batch does not imply a shared conversation. "
-            "Grouped input has groups and items maps. Translate ONLY the numeric keys "
-            "of items. Each item references its group and optional field context_ref "
-            "and source_window indices. Groups describe one structural object, quest "
-            "category, or script; different groups are independent. Shared source and "
-            "approved speech are context only, never additional outputs. Script constant "
-            "order is NOT proven execution order. Keep each field separate. "
-            "For creature_first_name return ONLY the first name; for creature_last_name "
-            "return ONLY the surname or title. Never add the other name field. "
-            "Translate item names naturally; item_description is the unidentified "
-            "description and item_identified_description is the identified description. "
-            "Return a JSON object with the EXACT SAME numeric keys, where each "
-            "value is the translated string (NOT an object). "
-            "Do NOT rename, add, or remove keys. "
-            "Do NOT wrap in markdown. Output ONLY the JSON object.\n"
-        )
-        system_content = self.make_system_message_content(
-            stable, variable, stable_suffix=batch_mode_suffix
-        )
-
-        batch_input = build_batch_payload(items)
-
-        user_prompt = (
-            f"Translate the items from {source_lang}. Return only a flat object of numeric "
-            "item IDs and translated strings. Shared groups are context only.\n\n"
-        ) + json.dumps(batch_input, ensure_ascii=False, separators=(",", ":"))
-
-        try:
-            raw = await self._chat_completion_json_async(
-                system_content,
-                user_prompt,
-                max_tokens=TRANSLATION_MAX_TOKENS,
-                temperature=TRANSLATION_TEMPERATURE,
-                response_format={"type": "json_object"},
-                phase=current_llm_phase("generic_batch"),
-                batch_size=len(items),
-                glossary_chars=len(gb),
-            )
-
-            # Strip markdown fences if present
-            cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip())
-            cleaned = re.sub(r"\s*```\s*$", "", cleaned)
-
-            # Use raw_decode to handle trailing junk. strict=False accepts
-            # raw newlines inside JSON strings.
-            decoder = json.JSONDecoder(strict=False)
-            idx = cleaned.find("{")
-            if idx == -1:
-                raise json.JSONDecodeError("No JSON object found", cleaned, 0)
-            parsed, _ = decoder.raw_decode(cleaned, idx)
-            if (
-                isinstance(parsed, dict)
-                and set(parsed) == {"translation"}
-                and isinstance(parsed["translation"], dict)
-            ):
-                # Some models retain the single-item wrapper around a valid ID map.
-                # Never infer positions from lists, group IDs or a combined string.
-                parsed = parsed["translation"]
-
-            results = []
-            for i, item in enumerate(items):
-                key = str(i)
-                translated = parsed.get(key, "")
-                if isinstance(translated, str) and translated:
-                    results.append(
-                        TranslationResult(
-                            translated=translated,
-                            original=item.original,
-                            success=True,
-                            metadata={"model": self.model, "batch": True},
-                        )
-                    )
-                else:
-                    results.append(
-                        TranslationResult(
-                            translated="",
-                            original=item.original,
-                            success=False,
-                            error="Missing or empty translation in batch response",
-                            metadata={"model": self.model, "batch": True},
-                        )
-                    )
-            return results
-
-        except json.JSONDecodeError as e:
-            logger.warning("Batch JSON parse failed: %s", e)
-            return [
-                TranslationResult(
-                    translated="",
-                    original=item.original,
-                    success=False,
-                    error=f"Batch JSON parse error: {e}",
-                )
-                for item in items
-            ]
-        except _RETRYABLE_EXCEPTIONS:
-            raise
-        except Exception as e:
-            self._map_openrouter_exception(e)
-
-    @staticmethod
-    def _ncs_gate_system_prompt() -> str:
-        return (
-            "You are a safety gate for translating string literals from compiled "
-            "Neverwinter Nights (NWN) NWScript bytecode. Your job: decide whether "
-            "each literal is natural-language text the player reads in-game, or a "
-            "technical value the script engine relies on (a rename would break it).\n"
-            "\n"
-            "## Context you receive per item\n"
-            "- `text`: the literal string from the bytecode.\n"
-            "- `file`: script filename (e.g. `dmfi_execute.ncs`).\n"
-            "- `nss_snippet`: source window around the literal when available. "
-            "It comes only from the matching script, but may be stale or show another "
-            "occurrence of the same text. It never overrides a proven bytecode consumer.\n"
-            "- `bytecode_context`: structured hint from bytecode analysis. "
-            "When `consumer_proven` is true, `next_action_name` and the zero-based "
-            "`argument_index` identify the argument receiving this string. "
-            "A function can receive both text and identifiers; use the argument role. "
-            "`compare_nearby: true` means a string comparison consumes this value. "
-            "Missing consumer evidence is inconclusive.\n"
-            "`player_action_nearby` only indicates a display call nearby in the file; "
-            "it does not prove that this string reaches that call.\n"
-            "- `confidence`: prior heuristic classification "
-            "(candidate hints, not proof).\n"
-            "\n"
-            "## Rules — output `translate: false` when ANY of these hold\n"
-            '1. The literal appears as `== "X"`, `!= "X"`, `"X" ==`, `"X" !=` '
-            "in nss_snippet, OR bytecode_context.compare_nearby is true. "
-            "These are dispatch keys — translating breaks the script silently. "
-            "Classic trap: DMFI voice commands like `.loc`, `.dm`, "
-            "`animal empathy`, `Craft Armor`, `Open Lock` compared against "
-            "`sChat`, `sCommand`, `sSpeakString`.\n"
-            '2. Used as a tag/resref argument: `GetObjectByTag("X")`, '
-            '`GetWaypointByTag("X")`, `CreateObject(..., "X", ...)`, '
-            '`GetNearestObjectByTag`, `StartNewModule("X")`, '
-            '`ExecuteScript("X", ...)`. The dialog arguments of '
-            "`SpeakOneLinerConversation`, `ActionStartConversation` and "
-            "`BeginConversation` are resrefs, not the conversation text. "
-            "Journal plot IDs, listen patterns, 2DA names/columns and "
-            "PostString's argument 9 (font name) are also internal.\n"
-            '3. Local-variable name argument: `GetLocalInt(oObj, "X")`, '
-            '`SetLocalString(..., "X", ...)`, `GetLocalObject`, '
-            "`DeleteLocalInt`: argument 1 names a variable. Campaign arguments "
-            "0 and 1 are database/variable names. SetLocalString and "
-            "SetCampaignString argument 2 is a stored value: approve it only "
-            "when source context establishes a later player-visible use.\n"
-            "4. Looks like an identifier: `snake_case`, `UPPER_SNAKE`, "
-            "`CamelCase` with no spaces, resref (≤16 chars alnum+underscore), "
-            "dotted `module.function`, or an alphabet dump "
-            "(`ABC...XYZ`). Even when passed to a player-facing function, these "
-            "are usually debug fragments concatenated into a larger message.\n"
-            "A natural single word such as Goodbye or a displayed name is not "
-            "automatically a resref: verify its use in the source or argument context.\n"
-            "5. Debug scaffolding: `PrintString`, `SendMessageToAllDMs`, "
-            "`WriteTimestampedLogEntry`, or obvious developer text like "
-            '`"Module Leadership = "` used as a `+ IntToString(x)` prefix. '
-            '`SendMessageToPC(oPC, "X = " + IntToString(...))` is DM/debug, '
-            "not in-character dialogue — still false.\n"
-            '6. Format/template fragments: trailing `" = "`, `": "`, empty-ish '
-            'punctuation-only strings, separator runs (`"****"`, `"----"`).\n'
-            "\n"
-            "## Rules — output `translate: true` when ALL these hold\n"
-            "- The literal is natural-language text in the source language.\n"
-            "- nss_snippet shows it flowing into a player-visible consumer: "
-            "`SpeakString`, `ActionSpeakString`, "
-            "`FloatingTextStringOnCreature`, `SetCustomToken` (token body shown "
-            "in dialog), `SetName`, `SetDescription`, `SetKeyRequiredFeedback`, "
-            "`PopUpDeathGUIPanel` (help text), `CreateArea`/`CopyArea` (argument 2, "
-            "display name), `PostString` (argument 1, message), or `SendMessageToPC` carrying an "
-            "actual sentence, not a debug concatenation.\n"
-            "- It is a full or near-full utterance. A merged concatenation uses "
-            "<VARn> placeholders for runtime values; judge the whole utterance. "
-            'Short barks (`"Help!"`, `"Mommy."`, '
-            '`"I\'m okay, sir."`) count as dialogue; approve them.\n'
-            '- Informal or broken in-character English (`"Oi, ye git!"`) is '
-            "still dialogue — approve.\n"
-            "\n"
-            "## When nss_snippet is missing\n"
-            "Fall back to bytecode_context. A proven player-visible argument "
-            "with natural-language text supports translation. Without a proven "
-            "consumer or source evidence, prefer false: sentence shape alone "
-            "does not establish player-visible use.\n"
-            "\n"
-            "## Output format\n"
-            'Return ONLY a JSON object. Keys match input keys (`"0"`, `"1"`, …). '
-            'Each value: `{"translate": true|false, "reason": "<short tag>"}`. '
-            "`reason` is a short machine-readable tag like `compare_target`, "
-            "`tag_arg`, `var_name`, `identifier_like`, `debug_concat`, "
-            "`player_speakstring`, `player_sendmessage`, `player_floatingtext`, "
-            "`bark`, `ambiguous_conservative`. Keep it under ~30 chars.\n"
-            "Never add prose outside the JSON.\n"
-        )
-
-    def _ncs_gate_build_user_prompt(
-        self,
-        *,
-        source_lang: str,
-        entries: List[Dict[str, Any]],
-    ) -> str:
-        user_payload: Dict[str, Dict[str, Any]] = {}
-        for e in entries:
-            cell: Dict[str, Any] = {
-                "text": e.get("text", ""),
-                "file": str(e.get("file", "")),
-                "offset": str(e.get("offset", "")),
-                "hint": str(e.get("hint", "")),
-            }
-            # Optional enrichment fields — pass through when extractor supplied them.
-            if e.get("nss_snippet"):
-                cell["nss_snippet"] = e["nss_snippet"]
-            if e.get("bytecode_context"):
-                cell["bytecode_context"] = e["bytecode_context"]
-            if e.get("confidence"):
-                cell["confidence"] = e["confidence"]
-            user_payload[str(e["key"])] = cell
-        sources = {}
-        by_file: Dict[str, List[dict]] = {}
-        for entry in entries:
-            if entry.get("nss_snippet") and isinstance(entry.get("nss_start"), int):
-                by_file.setdefault(str(entry.get("file", "")), []).append(entry)
-        for filename, file_entries in by_file.items():
-            windows, refs = source_windows(file_entries)
-            sources[filename] = windows
-            for entry, ref in zip(file_entries, refs):
-                cell = user_payload[str(entry["key"])]
-                cell.pop("nss_snippet", None)
-                cell["source_window"] = ref
-        if sources:
-            return (
-                f"Source language label: {source_lang}. Classify each numeric key in entries. "
-                "sources maps each matching file to shared source windows; source_window is "
-                "an index into that file's windows. These are context only and can be stale; "
-                "per-entry bytecode evidence retains priority. Return only entry keys.\n\n"
-                + json.dumps(
-                    {"sources": sources, "entries": user_payload},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-            )
-        return f"Source language label: {source_lang}. Classify each entry.\n\n" + json.dumps(
-            user_payload, ensure_ascii=False
-        )
-
-    def _parse_ncs_gate_raw(
-        self,
-        raw: str,
-        entries: List[Dict[str, Any]],
-    ) -> Dict[str, Dict[str, Any]]:
-        cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
-        parsed = json.loads(cleaned)
-        if not isinstance(parsed, dict):
-            raise json.JSONDecodeError("NCS gate response must be an object", cleaned, 0)
-
-        out: Dict[str, Dict[str, Any]] = {}
-        for e in entries:
-            k = str(e["key"])
-            cell: Union[Dict[str, Any], bool, None] = parsed.get(k)
-            if isinstance(cell, dict):
-                out[k] = {
-                    "translate": cell.get("translate") is True,
-                    "reason": str(cell.get("reason", "")) or "unspecified",
-                }
-            else:
-                out[k] = {"translate": False, "reason": "missing_verdict"}
-        return out
-
-    async def _ncs_gate_batch_with_recovery(
-        self,
-        entries: List[Dict[str, Any]],
-        *,
-        source_lang: str,
-    ) -> Dict[str, Dict[str, Any]]:
-        """Parse gate JSON with token bump retries, then split batch on failure."""
-        if not entries:
-            return {}
-
-        max_tok = min(8192, TRANSLATION_MAX_TOKENS)
-        last_err: Optional[json.JSONDecodeError] = None
-        for attempt in range(2):
-            try:
-                raw = await self._chat_completion_json_async(
-                    self._ncs_gate_system_prompt(),
-                    self._ncs_gate_build_user_prompt(source_lang=source_lang, entries=entries),
-                    max_tokens=max_tok,
-                    temperature=0.15,
-                    response_format={"type": "json_object"},
-                    phase="ncs_gate",
-                    batch_size=len(entries),
-                )
-                return self._parse_ncs_gate_raw(raw, entries)
-            except json.JSONDecodeError as err:
-                last_err = err
-                logger.warning(
-                    "NCS gate JSON parse failed (attempt %d/2, %d entries): %s",
-                    attempt + 1,
-                    len(entries),
-                    err,
-                )
-                max_tok = min(TRANSLATION_MAX_TOKENS, max(max_tok * 2, 4096))
-
-        if len(entries) <= 1:
-            logger.warning(
-                "NCS gate giving up on batch; defaulting to translate=false: %s",
-                last_err,
-            )
-            return {
-                str(e["key"]): {"translate": False, "reason": "gate_parse_failed"} for e in entries
-            }
-
-        mid = len(entries) // 2
-        left = entries[:mid]
-        right = entries[mid:]
-        left_rekeyed = [{**e, "key": str(i)} for i, e in enumerate(left)]
-        right_rekeyed = [{**e, "key": str(i)} for i, e in enumerate(right)]
-        left_out = await self._ncs_gate_batch_with_recovery(left_rekeyed, source_lang=source_lang)
-        right_out = await self._ncs_gate_batch_with_recovery(right_rekeyed, source_lang=source_lang)
-        merged: Dict[str, Dict[str, Any]] = {}
-        for i, e in enumerate(left):
-            merged[str(e["key"])] = left_out[str(i)]
-        for i, e in enumerate(right):
-            merged[str(e["key"])] = right_out[str(i)]
-        return merged
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=_wait_with_retry_after,
-        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
-        before_sleep=before_sleep_log(logger, logging.WARNING),
-        reraise=True,
-    )
     async def classify_ncs_translate_gate_batch_async(
         self,
         entries: List[Dict[str, Any]],
         *,
         source_lang: str,
-    ) -> Dict[str, Dict[str, Any]]:
-        """LLM gate: whether each NCS string occurrence is player-facing.
+    ) -> Dict[str, Verdict]:
+        """Decide for each NCS string occurrence whether it is player-facing text.
 
-        Returns mapping ``key -> {"translate": bool, "reason": str}``.
+        Args:
+            entries: Candidates with unique ``key`` values (see
+                :func:`~nwn_translator.ai_providers.ncs_gate.gate_user_prompt`).
+            source_lang: Source language label.
+
+        Returns:
+            ``key -> {"translate": bool, "reason": str}`` for every entry (see
+            :func:`~nwn_translator.ai_providers.ncs_gate.classify_with_recovery`).
+
+        Raises:
+            RateLimitError: Rate limit or budget exhausted after retries.
+            OpenRouterError: Non-transient API error.
         """
-        return await self._ncs_gate_batch_with_recovery(entries, source_lang=source_lang)
+
+        async def request(user_prompt: str, max_tokens: int, batch_size: int) -> str:
+            return await self._complete(
+                NCS_GATE_SYSTEM_PROMPT,
+                user_prompt,
+                max_tokens=max_tokens,
+                temperature=NCS_GATE_TEMPERATURE,
+                phase="ncs_gate",
+                batch_size=batch_size,
+            )
+
+        return await classify_with_recovery(request, entries, source_lang)

@@ -1,4 +1,4 @@
-"""Serialize structural translation groups without repeating shared context."""
+"""Batch request payload: numeric item cells plus shared, resource-local group context."""
 
 import json
 from typing import Any, Dict, List
@@ -7,10 +7,18 @@ from .base import TranslationItem
 
 
 def source_windows(entries: List[dict]) -> tuple[List[dict], List[int]]:
-    """Merge verified overlapping character ranges from one matching source file.
+    """Merge verified overlapping source excerpts of one script into shared windows.
 
-    Unknown positions are deduplicated only when their complete text is equal.
-    Every input excerpt remains recoverable through its window reference.
+    Excerpts with a known ``nss_start`` are merged when their text overlaps the
+    window exactly; excerpts without a position are deduplicated only when their
+    complete text is equal. Every excerpt stays recoverable through its reference.
+
+    Args:
+        entries: Items with ``nss_snippet`` and optional int ``nss_start``.
+
+    Returns:
+        ``(windows, refs)``: windows ``{"start", "text"}`` and, per entry, the
+        index of its window (``-1`` for entries without an excerpt).
     """
     windows: List[dict] = []
     refs = [-1] * len(entries)
@@ -50,7 +58,21 @@ def source_windows(entries: List[dict]) -> tuple[List[dict], List[int]]:
 
 
 def build_batch_payload(items: List[TranslationItem]) -> Dict[str, Any]:
-    """Keep numeric output addresses flat; scope context to resource-local groups."""
+    """Build the item map of a batch request.
+
+    Every item is addressed by its position (``"0"``, ``"1"``, ...). A cell is the
+    plain text, or ``{"text", "hint", "context"}`` when a hint or context exists.
+    Items sharing ``translation_group`` (or ``name_group``) within one
+    ``batch_resource`` also get a ``group`` id, and their shared context, source
+    windows, approved neighbouring speech and deduplicated field contexts move
+    into that group, referenced by ``source_window`` and ``context_ref``.
+
+    Args:
+        items: Batch items in output order.
+
+    Returns:
+        ``{"groups": ..., "items": ...}`` when any group exists, else the flat item map.
+    """
     cells: Dict[str, Any] = {}
     groups: Dict[str, Any] = {}
     members: Dict[tuple, List[int]] = {}
@@ -117,6 +139,25 @@ def build_batch_payload(items: List[TranslationItem]) -> Dict[str, Any]:
     return {"groups": groups, "items": cells} if groups else cells
 
 
+def serialize_batch_payload(items: List[TranslationItem]) -> str:
+    """Serialize :func:`build_batch_payload` exactly as the request sends it.
+
+    Args:
+        items: Batch items in output order.
+
+    Returns:
+        Compact JSON with non-ASCII characters kept.
+    """
+    return json.dumps(build_batch_payload(items), ensure_ascii=False, separators=(",", ":"))
+
+
 def batch_payload_chars(items: List[TranslationItem]) -> int:
-    """Character budget proxy for the exact serialized input, not a token count."""
-    return len(json.dumps(build_batch_payload(items), ensure_ascii=False, separators=(",", ":")))
+    """Measure the serialized batch payload (a size budget proxy, not a token count).
+
+    Args:
+        items: Batch items.
+
+    Returns:
+        Length of :func:`serialize_batch_payload`.
+    """
+    return len(serialize_batch_payload(items))

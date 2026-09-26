@@ -1,83 +1,85 @@
 """AI providers for translation (OpenRouter and POLZA.AI).
 
-Provider selection is driven by the API key prefix: ``sk-or-...`` dispatches
-to :class:`OpenRouterProvider`, ``pza...`` dispatches to
-:class:`PolzaProvider`. Both share the same OpenAI-compatible request
-semantics and the same default / popular model lineup.
+The API key prefix selects the provider: ``sk-or-...`` goes to
+:class:`OpenRouterProvider`, ``pza...`` to :class:`PolzaProvider`, anything else
+to OpenRouter. Both share the same OpenAI-compatible request semantics and the
+same default and popular models.
 """
 
-from typing import Dict, Optional, Type
+from typing import Any, Dict, Optional, Type
 
 from .base import (
-    BaseAIProvider,
-    TranslationItem,
-    TranslationResult,
     ProviderError,
     RateLimitError,
+    TranslationItem,
+    TranslationProvider,
+    TranslationResult,
 )
 from .openrouter_provider import OpenRouterProvider
 from .polza_provider import PolzaProvider
 
-#: Order matters: first matching prefix wins.
+#: Provider class by API-key prefix; the first matching prefix wins.
 _PROVIDER_BY_PREFIX: Dict[str, Type[OpenRouterProvider]] = {
     "sk-or-": OpenRouterProvider,
     "pza": PolzaProvider,
 }
 
-#: Fallback when the key matches no known prefix.
-_DEFAULT_PROVIDER_CLASS: Type[OpenRouterProvider] = OpenRouterProvider
 
-
-def detect_provider_from_key(api_key: Optional[str]) -> str:
-    """Return the canonical provider name inferred from *api_key*.
-
-    Returns ``""`` for empty keys, the short name (``"openrouter"`` /
-    ``"polza"``) for matching prefixes, and the default provider's name
-    otherwise.
-    """
-    if not api_key:
-        return ""
-    key = api_key.strip()
-    if not key:
-        return ""
-    for prefix, cls in _PROVIDER_BY_PREFIX.items():
-        if key.startswith(prefix):
-            return cls.PROVIDER_NAME
-    return _DEFAULT_PROVIDER_CLASS.PROVIDER_NAME
-
-
-def _provider_class_for_key(api_key: str) -> Type[OpenRouterProvider]:
-    """Pick the provider class that matches *api_key*'s prefix."""
+def _provider_class_for_key(api_key: Optional[str]) -> Type[OpenRouterProvider]:
+    """Pick the provider class for *api_key*; OpenRouter when no prefix matches."""
     key = (api_key or "").strip()
     for prefix, cls in _PROVIDER_BY_PREFIX.items():
         if key.startswith(prefix):
             return cls
-    return _DEFAULT_PROVIDER_CLASS
+    return OpenRouterProvider
 
 
-def create_provider(
-    api_key: str,
-    model: Optional[str] = None,
-    **kwargs,
-) -> OpenRouterProvider:
-    """Create an AI provider instance, auto-selected from the API key prefix.
+def detect_provider_from_key(api_key: Optional[str]) -> str:
+    """Return the provider name inferred from an API key, without network access.
+
+    Args:
+        api_key: API key or ``None``.
+
+    Returns:
+        ``""`` for a blank key, otherwise ``"openrouter"`` or ``"polza"``.
+    """
+    if not (api_key or "").strip():
+        return ""
+    return _provider_class_for_key(api_key).PROVIDER_NAME
+
+
+def provider_label(name: str) -> str:
+    """Return the human-readable label of a provider name.
+
+    Args:
+        name: Provider name as returned by :func:`detect_provider_from_key`.
+
+    Returns:
+        ``"OpenRouter"``, ``"POLZA.AI"``, or ``""`` for an unknown name.
+    """
+    for cls in _PROVIDER_BY_PREFIX.values():
+        if cls.PROVIDER_NAME == name:
+            return cls.PROVIDER_LABEL
+    return ""
+
+
+def create_provider(api_key: str, model: Optional[str] = None, **kwargs: Any) -> OpenRouterProvider:
+    """Create the provider that matches the API key prefix.
 
     Args:
         api_key: OpenRouter (``sk-or-...``) or POLZA.AI (``pza...``) API key.
-        model: Model slug (optional; uses the provider's default if ``None``).
-        **kwargs: Passed through to the provider (``site_url``,
-            ``site_name``, ``reasoning_effort``, ``player_gender``, …).
+        model: Model slug; the provider's default when ``None``.
+        **kwargs: Keyword arguments of :class:`OpenRouterProvider`
+            (``player_gender``, ``reasoning_effort``, ``metrics_recorder``).
 
     Returns:
-        Configured provider instance (``OpenRouterProvider`` or
-        ``PolzaProvider``).
+        An :class:`OpenRouterProvider` or :class:`PolzaProvider`.
     """
-    cls = _provider_class_for_key(api_key)
-    return cls(api_key=api_key, model=model, **kwargs)
+    return _provider_class_for_key(api_key)(api_key, model, **kwargs)
 
 
 __all__ = [
-    "BaseAIProvider",
+    "TranslationProvider",
     "TranslationItem",
     "TranslationResult",
     "ProviderError",
@@ -86,4 +88,5 @@ __all__ = [
     "PolzaProvider",
     "create_provider",
     "detect_provider_from_key",
+    "provider_label",
 ]

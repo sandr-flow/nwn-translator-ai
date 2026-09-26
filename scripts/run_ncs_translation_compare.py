@@ -20,7 +20,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from nwn_translator.ai_providers import BaseAIProvider, TranslationItem, TranslationResult
+from nwn_translator.ai_providers import TranslationItem, TranslationProvider, TranslationResult
 from nwn_translator.ai_providers import create_provider
 from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.base import ExtractedContent
@@ -32,11 +32,12 @@ from nwn_translator.translators.translation_manager import TranslationManager
 logger = logging.getLogger(__name__)
 
 
-class CountingProvider(BaseAIProvider):
+class CountingProvider:
     """Provider wrapper that counts translate calls while delegating to a real provider."""
 
-    def __init__(self, wrapped: BaseAIProvider) -> None:
+    def __init__(self, wrapped: TranslationProvider) -> None:
         self.wrapped = wrapped
+        self.model = wrapped.model
         self.single_calls = 0
         self.batch_calls = 0
         self.batch_items = 0
@@ -44,28 +45,6 @@ class CountingProvider(BaseAIProvider):
 
     def get_provider_name(self) -> str:
         return self.wrapped.get_provider_name()
-
-    def get_default_model(self) -> str:
-        return self.wrapped.get_default_model()
-
-    def translate(
-        self,
-        text: str,
-        source_lang: str,
-        target_lang: str,
-        context: Optional[str] = None,
-        glossary_block: Optional[str] = None,
-        content_profile: Optional[str] = None,
-    ) -> TranslationResult:
-        self.single_calls += 1
-        return self.wrapped.translate(
-            text,
-            source_lang,
-            target_lang,
-            context=context,
-            glossary_block=glossary_block,
-            content_profile=content_profile,
-        )
 
     async def translate_async(
         self,

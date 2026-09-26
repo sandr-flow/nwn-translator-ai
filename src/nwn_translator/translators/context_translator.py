@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 from ..extractors.base import Occurrence, Translations, occurrence_key
-from ..ai_providers import BaseAIProvider
+from ..ai_providers import TranslationProvider
 from ..ai_providers.base import RateLimitError
 from ..ai_providers.openrouter_provider import OpenRouterProvider
 from ..config import (
@@ -87,7 +87,7 @@ class ContextualTranslationManager:
     def __init__(
         self,
         config: TranslationConfig,
-        provider: BaseAIProvider,
+        provider: TranslationProvider,
         world_context: WorldContext,
         glossary: Optional["Glossary"] = None,
     ):

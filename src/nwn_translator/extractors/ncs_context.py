@@ -45,8 +45,9 @@ from ..file_handlers.ncs_parser import (
 TYPE_STRING_STRING = 0x23
 
 # Routine id -> (name, parameter types, return stack slots). Parameters are
-# in declaration order. Each takes one 4-byte slot, except vector (v): three and stored action (a): zero.
-# Only known signatures can be crossed, even for calls without string args.
+# in declaration order. Each takes one 4-byte slot, except vector (v): three
+# and stored action (a): zero. Only known signatures can be crossed, even for
+# calls without string args.
 # Sources: game nwscript.nss; https://nwnlexicon.com/<function name>.
 ACTION_SIGNATURES: Dict[int, Tuple[str, str, int]] = {
     1: ("PrintString", "s", 0),

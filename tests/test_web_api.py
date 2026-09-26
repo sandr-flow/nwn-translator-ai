@@ -736,7 +736,7 @@ def test_second_request_during_upload_gets_429(
     upload_started = threading.Event()
     release_upload = threading.Event()
 
-    async def held_upload(upload, dest: Path, max_bytes: int) -> None:
+    async def held_upload(upload, dest: Path) -> None:
         dest.write_bytes(b"\x01" * 10)
         upload_started.set()
         while not release_upload.is_set():
@@ -771,7 +771,7 @@ def test_failed_upload_frees_slot(client: TestClient, monkeypatch: pytest.Monkey
     """An upload error must release the IP slot and discard the task."""
     original_upload = web_routes._stream_upload_to_file
 
-    async def broken_upload(upload, dest: Path, max_bytes: int) -> None:
+    async def broken_upload(upload, dest: Path) -> None:
         raise HTTPException(status_code=413, detail="too big")
 
     monkeypatch.setattr(web_routes, "_stream_upload_to_file", broken_upload)
@@ -790,7 +790,7 @@ def test_failed_upload_leaves_no_workspace(
 ) -> None:
     """A discarded task has no row, so no TTL purge would ever remove its directory."""
 
-    async def interrupted_upload(upload, dest: Path, max_bytes: int) -> None:
+    async def interrupted_upload(upload, dest: Path) -> None:
         dest.write_bytes(b"partial")
         raise HTTPException(status_code=413, detail="too big")
 
@@ -829,17 +829,6 @@ def test_translate_streamed_upload_bytes_preserved(
     saved = task_workspace / task_id / "chunky.mod"
     assert saved.is_file()
     assert saved.read_bytes() == payload
-
-
-def test_translate_rejects_oversized_stream(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("nwn_translator.web.routes.MAX_UPLOAD_BYTES", 800)
-    payload = b"y" * 900
-    files = {"file": ("huge.mod", payload, "application/octet-stream")}
-    data = {"api_key": "sk-big", "target_lang": "russian"}
-    r = client.post("/api/translate", files=files, data=data)
-    assert r.status_code == 413
 
 
 # ---------------------------------------------------------------------------

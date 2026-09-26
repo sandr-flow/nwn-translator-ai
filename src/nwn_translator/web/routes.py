@@ -8,7 +8,6 @@ editor row model in :mod:`~nwn_translator.web.editor`.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -68,11 +67,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
-#: Largest accepted upload. The app enforces it on the request body while it
-#: streams in (``UploadLimitMiddleware``) and on the stored file; the bundled
-#: nginx applies the same limit (``client_max_body_size 50m``) in front.
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-
 _READ_CHUNK = 1024 * 1024
 
 _MODULE_SUFFIXES = (".mod", ".erf", ".hak")
@@ -89,32 +83,18 @@ _UNSUPPORTED_LANG_DETAIL = (
 )
 
 
-def upload_too_large(max_bytes: int) -> HTTPException:
-    """Return the 413 error for an upload over *max_bytes*."""
-    return HTTPException(
-        status_code=413,
-        detail=f"Файл слишком большой (максимум {max_bytes // (1024 * 1024)} МБ)",
-    )
+async def _stream_upload_to_file(upload: UploadFile, dest: Path) -> None:
+    """Copy the upload to *dest* in chunks.
 
+    The upload middleware of the app has already limited its size.
 
-async def _stream_upload_to_file(upload: UploadFile, dest: Path, max_bytes: int) -> None:
-    """Copy the upload to *dest* in chunks; a partial file is removed on failure.
-
-    Raises:
-        HTTPException: 413 when the upload exceeds *max_bytes*.
+    Args:
+        upload: Uploaded module.
+        dest: Destination path inside the task workspace.
     """
-    total = 0
-    try:
-        with dest.open("wb") as out:
-            while chunk := await upload.read(_READ_CHUNK):
-                total += len(chunk)
-                if total > max_bytes:
-                    raise upload_too_large(max_bytes)
-                out.write(chunk)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            dest.unlink(missing_ok=True)
-        raise
+    with dest.open("wb") as out:
+        while chunk := await upload.read(_READ_CHUNK):
+            out.write(chunk)
 
 
 def _client_ip(request: Request) -> str:
@@ -256,9 +236,12 @@ async def start_translate(
 ) -> TranslateResponse:
     """Accept a .mod/.erf/.hak upload and start translating it in the background.
 
+    An oversized upload never reaches this handler: the app's upload middleware
+    answers it with 413.
+
     Raises:
         HTTPException: 429 while the client IP has a running job, 400 for an
-            invalid file name or job field, 413 for an oversized upload.
+            invalid file name or job field.
     """
     ip = _client_ip(request)
     if tm.active_task_id_for_ip(ip):
@@ -286,14 +269,15 @@ async def start_translate(
         source_lang=job.source_lang,
         model=job.model,
     )
-    # Claim the one-job-per-IP slot atomically before the (slow) upload; the
-    # check at the top of the handler is only a fast path and is racy on its own.
+    # Claim the one-job-per-IP slot atomically before copying the upload into the
+    # workspace; the check at the top of the handler is only a fast path and is
+    # racy on its own.
     if not tm.try_register_active(ip, task.task_id):
         tm.discard_task(task.task_id)
         raise HTTPException(status_code=429, detail=_IP_BUSY_DETAIL)
     input_path = tm.workspace_for_task(task.task_id) / Path(file.filename).name
     try:
-        await _stream_upload_to_file(file, input_path, MAX_UPLOAD_BYTES)
+        await _stream_upload_to_file(file, input_path)
     except BaseException:
         tm.release_active(ip, task.task_id)
         tm.discard_task(task.task_id)

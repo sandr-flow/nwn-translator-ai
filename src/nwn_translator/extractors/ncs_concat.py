@@ -1,4 +1,4 @@
-"""Detect NWScript string concatenation chains in compiled NCS bytecode.
+"""NWScript string concatenation chains in compiled NCS bytecode.
 
 NWScript ``"a" + name + "b"`` compiles as separate CONSTS instructions combined
 with ``ADD`` (type ``0x23``, string+string). Translating those CONSTS in
@@ -36,7 +36,12 @@ _VAR_RE = re.compile(r"<VAR(\d+)>")
 
 @dataclass(frozen=True)
 class ConcatLit:
-    """A string CONSTS operand in a concat expression."""
+    """A string CONSTS operand in a concat expression.
+
+    Attributes:
+        offset: Byte offset of the CONSTS instruction.
+        text: Decoded literal.
+    """
 
     offset: int
     text: str
@@ -44,11 +49,16 @@ class ConcatLit:
 
 @dataclass(frozen=True)
 class ConcatVar:
-    """A runtime value in a concat expression, numbered as ``<VARn>``."""
+    """A runtime value in a concat expression, numbered as ``<VARn>``.
+
+    Attributes:
+        index: 1-based slot number ``n``.
+    """
 
     index: int
 
 
+#: One operand of a concat expression.
 ConcatPart = Union[ConcatLit, ConcatVar]
 
 
@@ -67,11 +77,20 @@ class ConcatChain:
     last_instr_index: int
 
     def lits(self) -> List[ConcatLit]:
-        """Returns the CONSTS operands in left-to-right order."""
+        """Returns the CONSTS operands.
+
+        Returns:
+            The literals in left-to-right order.
+        """
         return [p for p in self.parts if isinstance(p, ConcatLit)]
 
     def to_metadata(self) -> List[Dict[str, Any]]:
-        """Serializes parts for ``TranslatableItem.metadata['concat_parts']``."""
+        """Serializes the parts for ``TranslatableItem.metadata['concat_parts']``.
+
+        Returns:
+            ``{"offset", "text"}`` per literal and ``{"var"}`` per runtime slot,
+            in source order.
+        """
         out: List[Dict[str, Any]] = []
         for part in self.parts:
             if isinstance(part, ConcatLit):
@@ -83,7 +102,12 @@ class ConcatChain:
 
 @dataclass
 class _Cat:
-    """A partial concat result on the simulated stack."""
+    """A partial concat result on the simulated stack.
+
+    Attributes:
+        parts: Literals and runtime-value markers, left to right.
+        end_index: Index of the ADD instruction that produced the result.
+    """
 
     parts: List[Union[ConcatLit, object]]
     end_index: int
@@ -94,7 +118,14 @@ _VAR = object()
 
 
 def merged_text(chain: ConcatChain) -> str:
-    """Joins chain parts, replacing runtime slots with ``<VAR1>``, ``<VAR2>``, …."""
+    """Joins the parts of a chain into the text the model translates.
+
+    Args:
+        chain: A concat chain.
+
+    Returns:
+        The literals joined, with ``<VAR1>``, ``<VAR2>``, … for the runtime slots.
+    """
     bits: List[str] = []
     for part in chain.parts:
         if isinstance(part, ConcatLit):
@@ -105,7 +136,14 @@ def merged_text(chain: ConcatChain) -> str:
 
 
 def parts_from_metadata(raw: Sequence[Mapping[str, Any]]) -> List[ConcatPart]:
-    """Rebuilds concat parts from extractor metadata."""
+    """Rebuilds concat parts from extractor metadata.
+
+    Args:
+        raw: Output of :meth:`ConcatChain.to_metadata`.
+
+    Returns:
+        The parts in source order.
+    """
     parts: List[ConcatPart] = []
     for cell in raw:
         if "var" in cell:
@@ -116,7 +154,7 @@ def parts_from_metadata(raw: Sequence[Mapping[str, Any]]) -> List[ConcatPart]:
 
 
 def _finalize(parts: Sequence[Union[ConcatLit, object]], end_index: int) -> Optional[ConcatChain]:
-    """Number the runtime slots of *parts*; ``None`` unless a literal and 2+ parts."""
+    """Numbers the runtime slots of *parts*; ``None`` unless a literal and 2+ parts."""
     numbered: List[ConcatPart] = []
     var_n = 0
     has_lit = False
@@ -156,11 +194,13 @@ def find_concat_chains(ncs: NCSFile) -> Dict[int, ConcatChain]:
     stack: List[Union[_Cat, ConcatLit, object]] = []
 
     def emit(cat: _Cat) -> None:
+        """Records *cat* as a chain when it qualifies."""
         chain = _finalize(cat.parts, cat.end_index)
         if chain is not None:
             chains[chain.first_offset] = chain
 
     def flush() -> None:
+        """Emits every partial result on the stack and empties it."""
         for node in stack:
             if isinstance(node, _Cat):
                 emit(node)

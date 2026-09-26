@@ -100,7 +100,7 @@ def prepare_dialog(
     *,
     preserve_tokens: bool,
 ) -> Optional[PreparedDialog]:
-    """Builds a dialog's conversation tree and sanitize its lines.
+    """Builds a dialog's conversation tree and sanitizes its lines.
 
     Args:
         file_path: Path of the ``.dlg`` resource.

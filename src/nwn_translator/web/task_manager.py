@@ -208,7 +208,7 @@ class TaskManager:
         workspace_root: Optional[Path] = None,
         task_ttl_seconds: float = DEFAULT_TASK_TTL_SECONDS,
     ) -> None:
-        """Creates the manager and mark tasks orphaned by a previous process.
+        """Creates the manager and marks tasks orphaned by a previous process.
 
         Args:
             workspace_root: Workspace directory; ``workspace/web`` by default.
@@ -396,7 +396,7 @@ class TaskManager:
                 del self._active_by_ip[client_ip]
 
     def cancel(self, task: TranslationTask) -> None:
-        """Asks a running task to stop and free its client's slot at once.
+        """Asks a running task to stop and frees its client's slot at once.
 
         ``cancelling`` is persisted immediately so history and resume do not show
         a live job while the worker waits on an in-flight provider call; the
@@ -438,7 +438,7 @@ class TaskManager:
     def rebuild(
         self, task: TranslationTask, edits: Sequence[RebuildEdit], target_lang: Optional[str]
     ) -> None:
-        """Re-injects the task's translations plus *edits* and repack its module.
+        """Re-injects the task's translations plus *edits* and repacks its module.
 
         No provider calls are made. An edit addresses one ``(file, item_id)`` and
         reaches every identical line its editor row stands for. The edits are
@@ -583,7 +583,7 @@ class TaskManager:
             worker.join()
 
     def _run_job(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
-        """Translates the uploaded module of *task* and record the outcome.
+        """Translates the uploaded module of *task* and records the outcome.
 
         The task ends ``completed``, ``cancelled`` or ``failed``, its IP slot is
         released, its trace file is closed and the worker is unregistered.

@@ -26,7 +26,7 @@ class InjectedContent:
 
 
 class Injector(Protocol):
-    """Write the translations of extracted items back into a resource file."""
+    """Callable that writes the translations of extracted items back into a resource file."""
 
     def __call__(
         self,
@@ -64,7 +64,8 @@ def changed_translations(
         translations: Translated text by occurrence.
 
     Yields:
-        Items with a translation that differs from their source text.
+        ``(item, translation)`` for each item whose translation differs from
+        its source text, in *items* order.
     """
     for item in items:
         translated = translations.get(item.key)

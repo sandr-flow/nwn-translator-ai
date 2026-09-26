@@ -121,6 +121,7 @@ class GlossaryBuilder:
         async def translate_batch(
             slot: "Slot", number: int, batch_names: List[str]
         ) -> Dict[str, str]:
+            """Translates one batch of names, retrying the names left out."""
             label = f"batch {number}/{len(batches)}" if len(batches) > 1 else "glossary"
             batch = {name: seen[name] for name in batch_names}
             logger.info("Glossary %s: translating %d names…", label, len(batch))
@@ -128,6 +129,7 @@ class GlossaryBuilder:
             def prepare(
                 keys: List[str], accepted: Dict[str, str], attempt: int
             ) -> Callable[[], Awaitable[str]]:
+                """Reports the attempt and builds its glossary request."""
                 if progress_callback:
                     progress_callback(
                         "scanning",
@@ -145,12 +147,13 @@ class GlossaryBuilder:
                     temperature=GLOSSARY_TEMPERATURE,
                 )
 
-            # Built from the batch dict exactly like this: the iteration order
-            # of the set decides the order of the "Already accepted forms" JSON
-            # a retry sends, which must stay byte-identical.
+            # Built from the batch dict on purpose: the set's iteration order
+            # decides the order of the answers, and so of the "Already accepted
+            # forms" JSON a retry sends (see LlmStage.fill_keys).
             remaining = set(batch.keys())
 
             def report(attempt: int, answered: int) -> None:
+                """Reports the progress of the batch after one attempt."""
                 if not progress_callback:
                     return
                 if answered:
@@ -246,6 +249,11 @@ class _NameHints:
     """World-context facts that annotate the names of a glossary request."""
 
     def __init__(self, world_context: "WorldContext") -> None:
+        """Indexes the candidates by name and the NPCs by each of their names.
+
+        Args:
+            world_context: World context of the run.
+        """
         self._candidates = {c.name: c for c in world_context.candidates.values()}
         self._npcs: Dict[str, List["NPCInfo"]] = {}
         for npc in world_context.npcs.values():
@@ -287,6 +295,7 @@ def glossary_key_variants(key: str) -> List[str]:
     variants: List[str] = []
 
     def add(value: str) -> None:
+        """Appends a non-empty variant not seen yet."""
         if value and value not in variants:
             variants.append(value)
 
@@ -305,12 +314,12 @@ def glossary_key_variants(key: str) -> List[str]:
 
 
 def parse_glossary_json(raw: str, expected_keys: Set[str]) -> Dict[str, str]:
-    """Parses a glossary reply; keep only the requested names.
+    """Parses a glossary reply, keeping only the requested names.
 
     Tolerates a single wrapper object (``{"glossary": {…}}``), category suffixes
-    and quotation marks in the keys, stray whitespace and case differences
-    (exact variants win over casefolded ones). Values regain the quotation marks
-    their key is wrapped in.
+    and quotation marks in the keys, stray whitespace and case differences (for
+    each variant, an exact match wins over a casefolded one). Values regain the
+    quotation marks their key is wrapped in.
 
     Args:
         raw: Model reply, decoded with

@@ -222,7 +222,7 @@ def _query(sql: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
 
 
 def _execute(sql: str, params: Sequence[Any] = ()) -> None:
-    """Runs one write statement under the connection lock and commit it.
+    """Runs one write statement under the connection lock and commits it.
 
     Args:
         sql: Statement with ``?`` placeholders.
@@ -423,7 +423,7 @@ def insert_translation(
     success: bool = True,
     speaker: Optional[Dict[str, str]] = None,
 ) -> None:
-    """Inserts or replace the row of one ``(task_id, file, item_id)``.
+    """Inserts or replaces the row of one ``(task_id, file, item_id)``.
 
     Args:
         task_id: Owning task.
@@ -456,7 +456,7 @@ def insert_translation(
 
 
 def update_translation_text(task_id: str, file: str, item_id: str, translated: str) -> None:
-    """Persists an editor edit: set ``translated`` for one ``(task_id, file, item_id)``.
+    """Persists an editor edit: sets *translated* for one ``(task_id, file, item_id)``.
 
     The original text and the row identity are kept, and the line counts as
     translated (the user has reviewed it). An edit of an item with no stored

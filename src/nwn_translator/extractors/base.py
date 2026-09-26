@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Union
 
+#: Address of one extracted string: ``(resource file name, item_id)``.
 Occurrence = tuple[str, str]
+#: Translated text by occurrence.
 Translations = Dict[Occurrence, str]
 
 
@@ -47,6 +49,7 @@ class ExtractedContent:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Fills in the location of every item that has none."""
         for item in self.items:
             if not item.location:
                 item.location = str(self.source_file)
@@ -80,11 +83,16 @@ class TranslatableItem:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Replaces a ``None`` metadata with an empty dict."""
         if self.metadata is None:
             self.metadata = {}
 
     def has_text(self) -> bool:
-        """Returns whether the item holds non-blank text."""
+        """Tells whether the item holds non-blank text.
+
+        Returns:
+            ``True`` when :attr:`text` is a string with a non-whitespace character.
+        """
         return bool(self.text and isinstance(self.text, str) and self.text.strip())
 
     @property
@@ -106,7 +114,8 @@ class DialogNode:
     Attributes:
         node_id: Index of the node in ``EntryList`` or ``ReplyList``.
         text: Node text (empty when the node has none).
-        speaker: Speaker tag for entries, ``"Player"`` for replies.
+        speaker: Speaker tag for entries (empty for the dialog owner),
+            ``"Player"`` for replies.
         is_entry: True for NPC entries, False for player replies.
         replies: Child nodes (replies of an entry, entries following a reply).
     """
@@ -167,7 +176,7 @@ def list_field(struct: Any, key: str) -> List[Any]:
 
 
 class BaseExtractor(ABC):
-    """Select the translatable strings of one resource kind."""
+    """Base class of the extractors: selects the translatable strings of one resource kind."""
 
     @abstractmethod
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:

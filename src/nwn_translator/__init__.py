@@ -1,4 +1,8 @@
-"""NWN Modules Translator - AI-powered translation tool for Neverwinter Nights modules."""
+"""NWN Modules Translator: LLM translation of Neverwinter Nights modules.
+
+The package root exposes the run settings eagerly and the pipeline entry points
+(``translate_module``, ``ModuleTranslator``) lazily.
+"""
 
 from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
@@ -17,6 +21,15 @@ def __getattr__(name):
 
     Keeps ``import nwn_translator`` (and ``nwn_translator.config``) light: the
     pipeline imports every extractor and the provider SDK.
+
+    Args:
+        name: Attribute looked up on the package.
+
+    Returns:
+        ``translate_module`` or ``ModuleTranslator`` from :mod:`nwn_translator.main`.
+
+    Raises:
+        AttributeError: If *name* is neither of them.
     """
     if name == "translate_module":
         from .main import translate_module

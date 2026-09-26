@@ -249,7 +249,7 @@ class _FileRun:
     rejected: Dict[str, _Rejected] = field(default_factory=dict)
 
     def take(self, accepted: Translations) -> None:
-        """Adds accepted lines and report their progress.
+        """Adds accepted lines and reports their progress.
 
         Args:
             accepted: Accepted translations by occurrence.
@@ -566,7 +566,7 @@ class ContextualTranslationManager:
         return translations
 
     def _request_lines(self, run: _FileRun, keys: List[str]) -> None:
-        """Sends the chunks of *keys*, then retry what is still missing or broken.
+        """Sends the chunks of *keys*, then retries what is still missing or broken.
 
         Accepted lines are added to *run* as they come.
 
@@ -608,7 +608,7 @@ class ContextualTranslationManager:
             self._retry_lines(run, pending)
 
     def _translate_chunk(self, run: _FileRun, chunk: Chunk, index: int, total: int) -> List[str]:
-        """Requests one chunk and accept its valid lines.
+        """Requests one chunk and accepts its valid lines.
 
         A failing request (a provider error after its own retries, a
         timeout) costs only this chunk: its lines stay unaccepted and are
@@ -730,7 +730,7 @@ class ContextualTranslationManager:
         return [key for key in pending if key not in answer or key in rejected]
 
     def _retry_lines(self, run: _FileRun, keys: List[str]) -> None:
-        """Retries lines one by one; accept a cleaned answer for lines that still fail.
+        """Retries lines one by one, accepting a cleaned answer for lines that still fail.
 
         Args:
             run: The file's state.
@@ -935,7 +935,7 @@ class ContextualTranslationManager:
         trace: Dict[str, Any],
         label: str,
     ) -> Optional[Dict[str, Any]]:
-        """Sends a JSON request and recover from an unparseable answer.
+        """Sends a JSON request and recovers from an unparseable answer.
 
         Args:
             recovery: Steps to take when the first answer does not parse.
@@ -972,7 +972,7 @@ class ContextualTranslationManager:
     def _call_json(
         self, system: SystemContent, user: str, max_tokens: int, trace: Dict[str, Any]
     ) -> str:
-        """Sends one JSON chat request (metrics phase ``dialog``) and return the reply.
+        """Sends one JSON chat request (metrics phase ``dialog``) and returns the reply.
 
         Args:
             system: System message content.
@@ -1031,7 +1031,7 @@ class ContextualTranslationManager:
         *,
         allow_cleanup: bool,
     ) -> Tuple[Translations, Dict[str, _Rejected]]:
-        """Restores and validate the answered lines; log each accepted one.
+        """Restores and validates the answered lines, logging each accepted one.
 
         Only *requested* keys are read: an answer may also carry the IDs of
         context-only nodes or of lines accepted earlier.

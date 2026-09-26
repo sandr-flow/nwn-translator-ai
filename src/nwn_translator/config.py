@@ -185,10 +185,10 @@ class TranslationConfig:
     cancel_check: Optional[Callable[[], bool]] = None
 
     def __post_init__(self):
-        """Coerces path strings, apply the default model and normalize the effort.
+        """Coerces path strings, applies the default model and normalizes the effort.
 
         Raises:
-            ValueError: If *reasoning_effort* is not a known effort.
+            ValueError: If ``reasoning_effort`` is not a known effort.
         """
         self.input_file = (
             Path(self.input_file) if isinstance(self.input_file, str) else self.input_file
@@ -322,7 +322,7 @@ def lang_suffix(target_lang: str) -> str:
         target_lang: Target language name (e.g. ``"russian"``).
 
     Returns:
-        Tag string like ``"-rus"`` or ``"-de"``.
+        ``"-"`` plus the first three letters of the name, e.g. ``"-rus"`` for ``"russian"``.
     """
     return f"-{target_lang[:3].lower()}"
 

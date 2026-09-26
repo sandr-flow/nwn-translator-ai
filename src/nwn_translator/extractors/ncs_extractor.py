@@ -1,4 +1,4 @@
-"""Select NCS string occurrences using bytecode consumers and source context.
+"""Extractor of NCS string candidates, selected by bytecode consumers and source context.
 
 Extraction produces candidates. Every candidate still needs the translation
 manager's safety gate; sentence shape and source snippets are not proof.
@@ -112,7 +112,7 @@ _RE_ALPHABET_DUMP = re.compile(
 
 
 def _contains_code_identifiers(text: str) -> bool:
-    """True if text contains CamelCase identifiers or struct.field patterns."""
+    """Tells whether *text* contains CamelCase identifiers or ``struct.field`` patterns."""
     return bool(_RE_CAMEL_CASE.search(text) or _RE_FUNC_DOT.search(text))
 
 
@@ -196,7 +196,7 @@ def ncs_hard_veto_reason(
 
 
 def _is_likely_translatable(text: str) -> bool:
-    """Returns whether *text* looks like a player-visible sentence or short bark.
+    """Tells whether *text* looks like a player-visible sentence or short bark.
 
     Args:
         text: Literal or merged concat text.
@@ -257,6 +257,7 @@ class NcsExtractor(BaseExtractor):
         selection_trace = parsed_data.get("_ncs_selection_trace")
 
         def record(stage: str, kept: bool, reason: str, offsets: List[int]) -> None:
+            """Appends one selection decision to the diagnostics trace, if requested."""
             if selection_trace is not None:
                 selection_trace.append(
                     {

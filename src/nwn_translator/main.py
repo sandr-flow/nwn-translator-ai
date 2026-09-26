@@ -89,7 +89,11 @@ class ModuleTranslator:
         return self.state.glossary
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Returns the run statistics; see :meth:`PipelineState.get_statistics`."""
+        """Returns the run statistics.
+
+        Returns:
+            The statistics of :meth:`PipelineState.get_statistics`.
+        """
         return self.state.get_statistics()
 
 
@@ -100,7 +104,7 @@ def rebuild_module(
     original_mod_path: Path,
     target_lang: Optional[str] = None,
 ) -> Path:
-    """Re-injects translations and reassemble a .mod without LLM calls.
+    """Re-injects translations and reassembles a .mod without model requests.
 
     Translations are addressed by ``item_id``, not by original text: the
     extracted files on disk already hold the first-pass translation. Only files
@@ -173,7 +177,7 @@ def translate_module(config: TranslationConfig) -> Path:
 
 
 def run_translation_pipeline(config: TranslationConfig) -> Tuple[Path, ModuleTranslator]:
-    """Validates *config*, translate the module and return the translator too.
+    """Validates *config*, translates the module and returns the translator too.
 
     The library entry point and the web task runner share this startup path.
 

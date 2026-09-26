@@ -74,7 +74,7 @@ def close_thread_resources(provider: TranslationProvider) -> None:
 
 
 def _cancel_all_tasks(loop: asyncio.AbstractEventLoop) -> None:
-    """Cancels every remaining task on *loop* and await their cancellation."""
+    """Cancels every remaining task on *loop* and awaits their cancellation."""
     to_cancel = asyncio.all_tasks(loop)
     if not to_cancel:
         return

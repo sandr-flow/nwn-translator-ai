@@ -139,7 +139,11 @@ class RunMetricsRecorder:
         self._counters: Dict[str, int] = {}
 
     def next_request_id(self) -> str:
-        """Returns a new opaque request id."""
+        """Returns a new opaque request id.
+
+        Returns:
+            A random 32-character hex string.
+        """
         return uuid.uuid4().hex
 
     def increment(self, key: str, by: int = 1) -> None:

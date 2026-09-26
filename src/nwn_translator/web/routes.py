@@ -147,7 +147,7 @@ def _job_from_form(
     player_gender: str,
     reasoning_effort: Optional[str],
 ) -> JobParams:
-    """Validates and normalize the job fields of a translate request.
+    """Validates and normalizes the job fields of a translate request.
 
     ``max_concurrent_requests`` is clamped to ``[1, max_concurrent_from_environment()]``
     (``NWN_TRANSLATE_MAX_CONCURRENT``, 12 when unset) and takes the upper bound
@@ -203,7 +203,7 @@ def require_task_owner(
     request: Request,
     tm: TaskManager = Depends(get_task_manager),
 ) -> TranslationTask:
-    """Resolves the path's task and enforce that the caller owns it.
+    """Resolves the path's task and enforces that the caller owns it.
 
     When the task has an owner (non-empty ``client_token``), the request's token
     must match it. Tasks without an owner stay accessible.
@@ -256,7 +256,7 @@ async def start_translate(
     player_gender: str = Form("male"),
     reasoning_effort: Optional[str] = Form(None),
 ) -> TranslateResponse:
-    """Accepts a .mod/.erf/.hak upload and start translating it in the background.
+    """Accepts a .mod/.erf/.hak upload and starts translating it in the background.
 
     An oversized upload never reaches this handler: the app's upload middleware
     answers it with 413.
@@ -434,7 +434,7 @@ async def cancel_task(
     task: TranslationTask = Depends(require_task_owner),
     tm: TaskManager = Depends(get_task_manager),
 ) -> dict:
-    """Stops a running task at its next checkpoint and free the client's slot.
+    """Stops a running task at its next checkpoint and frees the client's slot.
 
     Progress is lost: in-flight provider calls finish, but their results are
     discarded.

@@ -41,14 +41,14 @@ from ..formats.ncs import (
     TYPE_STRING,
 )
 
-# Binary string/string qualifier; TYPE_STRING (0x05) is unary, used by CONSTS.
+#: Binary string/string qualifier; TYPE_STRING (0x05) is unary, used by CONSTS.
 TYPE_STRING_STRING = 0x23
 
-# Routine id -> (name, parameter types, return stack slots). Parameters are
-# in declaration order. Each takes one 4-byte slot, except vector (v): three
-# and stored action (a): zero. Only known signatures can be crossed, even for
-# calls without string args.
-# Sources: game nwscript.nss; https://nwnlexicon.com/<function name>.
+#: Routine id -> (name, parameter types, return stack slots). Parameters are
+#: in declaration order. Each takes one 4-byte slot, except vector (v): three
+#: and stored action (a): zero. Only known signatures can be crossed, even for
+#: calls without string args.
+#: Sources: game nwscript.nss; https://nwnlexicon.com/<function name>.
 ACTION_SIGNATURES: Dict[int, Tuple[str, str, int]] = {
     1: ("PrintString", "s", 0),
     3: ("FloatToString", "fii", 1),
@@ -155,8 +155,9 @@ ACTION_SIGNATURES: Dict[int, Tuple[str, str, int]] = {
 _TRACE_WINDOW = 64
 _SCALAR_TYPES = {TYPE_INT, TYPE_FLOAT, TYPE_STRING, TYPE_OBJECT}
 
-# A routine can have both player and internal arguments (PostString/CreateArea).
-# This set describes the routine; proof still requires a particular argument.
+#: Routines with at least one player-facing argument. A routine can have both
+#: player and internal arguments (PostString/CreateArea): this set describes the
+#: routine; proof still requires a particular argument.
 PLAYER_FACING_ACTIONS: Set[int] = {
     routine
     for routine, (name, params, _) in ACTION_SIGNATURES.items()
@@ -233,6 +234,7 @@ def trace_string_consumer(
         next_idx = idx + 1
 
         def pop(size: int) -> bool:
+            """Pops *size* bytes; tells whether a tracked slot was among them."""
             nonlocal sp
             removed = {pos for pos in tokens if sp - size <= pos < sp}
             tokens.difference_update(removed)

@@ -1,4 +1,9 @@
-"""Pluggable translation log output (file, null, or custom)."""
+"""Translation log writers and the model-call trace.
+
+A run writes its translation log through a :class:`TranslationLogWriter`: a JSONL
+file, nothing, or an injected writer (the web database). :func:`logged_model_call`
+adds a request and a response entry around each provider task.
+"""
 
 import json
 import logging
@@ -15,14 +20,18 @@ _Result = TypeVar("_Result")
 
 
 class TranslationLogWriter(Protocol):
-    """Append one JSON-serializable log record per translation."""
+    """Destination of the translation log: one JSON-serializable dict per entry."""
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Persists a single log entry (e.g. one line of JSONL)."""
+        """Persists a single log entry (e.g. one line of JSONL).
+
+        Args:
+            entry: JSON-serializable log entry.
+        """
 
 
 class FileTranslationLogWriter:
-    """Append JSONL lines to a file through one handle kept open.
+    """Log writer that appends JSONL lines to a file through one handle kept open.
 
     Opening the file for every entry costs milliseconds on Windows, and a run
     writes tens of thousands of entries. Each entry is flushed at once, so the
@@ -45,7 +54,7 @@ class FileTranslationLogWriter:
         self._finalizer: Optional[weakref.finalize] = None
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Serializes *entry* as JSON and append one line to the log file.
+        """Serializes *entry* as JSON and appends one line to the log file.
 
         Args:
             entry: JSON-serializable dict (e.g. original/translated pair).
@@ -135,7 +144,7 @@ async def logged_model_call(
     trace_context: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> _Result:
-    """Calls a provider task and log the request and its response.
+    """Calls a provider task and logs the request and its response.
 
     The request entry records ``method.__name__`` and the call arguments, never
     provider credentials; the response entry records the result or the error type.

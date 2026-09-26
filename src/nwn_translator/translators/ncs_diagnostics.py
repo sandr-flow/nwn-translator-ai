@@ -41,7 +41,7 @@ def add_sample(
     sample: Dict[str, Any],
     count_field: Optional[str] = None,
 ) -> None:
-    """Counts an outcome and keep its sample while the block has room.
+    """Counts an outcome and keeps its sample while the block has room.
 
     Args:
         diagnostics: Block from :func:`new_ncs_diagnostics`.
@@ -62,7 +62,7 @@ class NcsDiagnostics:
     """
 
     def __init__(self, block: Dict[str, Any], log_writer: TranslationLogWriter):
-        """Records into *block* and log every sample to *log_writer*.
+        """Records into *block* and logs every sample to *log_writer*.
 
         Args:
             block: Block from :func:`new_ncs_diagnostics`.

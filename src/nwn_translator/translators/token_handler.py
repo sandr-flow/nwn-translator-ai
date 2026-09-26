@@ -79,7 +79,7 @@ _EXACT_PLACEHOLDER_RE = re.compile(_wrapped(r"(?:NWN_INLINE|NWN_TOKEN)_[0-9a-f]{
 
 
 def normalize_translated_text(text: str) -> str:
-    """NFC-normalizes model output and drop stray combining marks.
+    """NFC-normalizes model output and drops stray combining marks.
 
     Models occasionally emit combining accents (e.g. U+0301 in ``Тиндало́са``)
     that no single-byte NWN code page can encode. NFC runs first so precomposed
@@ -357,7 +357,7 @@ class TokenHandler:
         *,
         allow_cleanup: bool = False,
     ) -> TokenProcessingResult:
-        """Restores a model answer, validate it and optionally clean it up.
+        """Restores a model answer, validates it and optionally cleans it up.
 
         An answer that brings in a foreign script the source lacks is invalid even
         when its artifacts match.
@@ -402,7 +402,7 @@ class TokenHandler:
         )
 
     def cleanup_mismatched_artifacts(self, restored: str) -> str:
-        """Keeps the source's artifacts in order and drop every other token-like fragment.
+        """Keeps the source's artifacts in order and drops every other token-like fragment.
 
         Args:
             restored: Output of :meth:`restore` that failed validation.
@@ -433,7 +433,7 @@ class TokenHandler:
         return [artifact.original for artifact in self.artifacts]
 
     def _protect(self, original: str, kind: str) -> str:
-        """Registers one artifact and return its placeholder."""
+        """Registers one artifact and returns its placeholder."""
         prefix = "NWN_INLINE" if kind in _INLINE_KINDS else "NWN_TOKEN"
         core = f"{prefix}_{self._nonce}_{len(self.artifacts)}"
         placeholder = f"__{core}__"

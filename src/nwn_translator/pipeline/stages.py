@@ -101,7 +101,7 @@ def load_parsed_and_extracted(
     gff_cache: Optional[Dict[Path, Dict[str, Any]]],
     source_encoding: Optional[str] = None,
 ) -> Optional[Tuple[Dict[str, Any], ExtractedContent]]:
-    """Loads *file_path* and extract its translatable items.
+    """Loads *file_path* and extracts its translatable items.
 
     Args:
         file_path: Resource file.
@@ -250,7 +250,7 @@ class PipelineState:
             self.config.progress_callback(phase, current, total, message)
 
     def add_error(self, message: str) -> None:
-        """Records one error of the run and log it.
+        """Records one error of the run and logs it.
 
         Args:
             message: Error description.
@@ -293,7 +293,7 @@ class PipelineState:
         return create_output_path(self.config.input_file, self.config.target_lang)
 
     def write_metrics(self, output_path: Path) -> None:
-        """Stores the metrics summary in :attr:`stats` and write the metrics file.
+        """Stores the metrics summary in :attr:`stats` and writes the metrics file.
 
         The file is ``config.metrics_output``, or *output_path* with a
         ``.metrics.json`` suffix appended. A failed write is only logged.
@@ -346,7 +346,7 @@ class _ItemProgress:
         self._lock = threading.Lock()
 
     def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
-        """Counts *by* finished items and report a ``translating_item`` event.
+        """Counts *by* finished items and reports a ``translating_item`` event.
 
         Args:
             by: Items finished; nothing is reported for zero or less.
@@ -368,7 +368,7 @@ def _run_pool(
     *,
     cancellable: bool,
 ) -> List[Tuple[Path, Optional[_Result], Optional[Exception]]]:
-    """Runs *work* on every path on a thread pool; return the outcomes in input order.
+    """Runs *work* on every path on a thread pool, returning the outcomes in input order.
 
     Progress is reported as files finish, but the outcomes are handed back in the
     order of *paths*, so what the caller does with them never depends on thread
@@ -486,7 +486,7 @@ def stage_worldscan(state: PipelineState) -> None:
 def _extract_file(
     state: PipelineState, file_path: Path
 ) -> Optional[Tuple[Dict[str, Any], ExtractedContent, str]]:
-    """Loads one file and extract its items, for :func:`stage_extract`.
+    """Loads one file and extracts its items, for :func:`stage_extract`.
 
     Args:
         state: Run state (parse cache, source code page).
@@ -507,7 +507,7 @@ def _extract_file(
 
 
 def stage_extract(state: PipelineState, translatable_files: List[Path]) -> ExtractedMap:
-    """Parses the files and extract their translatable items on a thread pool.
+    """Parses the files and extracts their translatable items on a thread pool.
 
     A file that fails is recorded as an error and left out.
 
@@ -580,7 +580,7 @@ def stage_collect_entities(state: PipelineState, extracted_map: ExtractedMap) ->
 
 
 def stage_build_glossary(state: PipelineState) -> None:
-    """Curates the entity candidates and build :attr:`PipelineState.glossary`.
+    """Curates the entity candidates and builds :attr:`PipelineState.glossary`.
 
     A failed build leaves an empty glossary. The outcome is logged as a
     ``terminology_resolved`` event.
@@ -861,7 +861,7 @@ def stage_inject(
 
 
 def stage_repack(state: PipelineState) -> Path:
-    """Builds the translated module from the unpacked files and write the metrics.
+    """Builds the translated module from the unpacked files and writes the metrics.
 
     Args:
         state: Run state.
@@ -905,7 +905,7 @@ def _log_summary(state: PipelineState) -> None:
 
 
 def run_pipeline(state: PipelineState) -> Path:
-    """Runs every stage on *state* and return the translated module.
+    """Runs every stage on *state* and returns the translated module.
 
     An archive without translatable files is copied unchanged. However the run
     ends, the provider's HTTP client and this thread's event loop are closed,

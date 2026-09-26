@@ -356,7 +356,7 @@ class TranslationManager:
         model: Optional[str] = None,
         allow_cleanup: bool = False,
     ) -> Optional[str]:
-        """Restores and validate one answer; count and log it when accepted.
+        """Restores and validates one answer; counts and logs it when accepted.
 
         A rejected answer's validation report is kept in ``work.mismatch`` for the
         retry prompt.
@@ -413,7 +413,7 @@ class TranslationManager:
     def _retry_token_mismatch(
         self, caller: ModelCaller, work: WorkItem, first_answer: str, model: Optional[str]
     ) -> Optional[str]:
-        """Retries a rejected answer with stricter prompts, then accept a cleaned one.
+        """Retries a rejected answer with stricter prompts, then accepts a cleaned one.
 
         Retries stop early when the model repeats the same broken artifact
         sequence. Requests are sent one at a time, in result order.

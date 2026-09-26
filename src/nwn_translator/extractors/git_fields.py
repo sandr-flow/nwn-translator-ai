@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 #: ``{lowercased first name: gender label}`` of the creatures placed in an area.
 NpcIndex = Dict[str, str]
+#: Prompt context of a field computed from ``(instance struct, NPC index)``.
 GitContext = Callable[[Dict[str, Any], NpcIndex], str]
 
 _AREA_INSTANCE = "area instance"
@@ -53,7 +54,15 @@ class GitField:
     context: Union[str, GitContext]
 
     def context_for(self, instance: Dict[str, Any], npc_index: NpcIndex) -> str:
-        """Returns the prompt context of this field on *instance*."""
+        """Returns the prompt context of this field on *instance*.
+
+        Args:
+            instance: Instance struct holding the field.
+            npc_index: NPC index of the area (see :func:`build_npc_index`).
+
+        Returns:
+            The fixed context, or the one computed from *instance*.
+        """
         if isinstance(self.context, str):
             return self.context
         return self.context(instance, npc_index)
@@ -102,13 +111,13 @@ def npc_possessive_hint(text: str, npc_index: NpcIndex) -> str:
 
 
 def _creature_name_context(field_name: str, instance: Dict[str, Any], _npcs: NpcIndex) -> str:
-    """Context of a placed creature's first or last name."""
+    """Returns the context of a placed creature's first or last name."""
     qualifier = ", ".join(filter(None, [creature_traits(instance), _AREA_INSTANCE]))
     return creature_name_context(field_name, qualifier)
 
 
 def _creature_description_context(instance: Dict[str, Any], _npcs: NpcIndex) -> str:
-    """Context of a placed creature's description."""
+    """Returns the context of a placed creature's description."""
     full_name = " ".join(
         filter(
             None,
@@ -124,13 +133,13 @@ def _creature_description_context(instance: Dict[str, Any], _npcs: NpcIndex) -> 
 
 
 def _placeable_name_context(instance: Dict[str, Any], npc_index: NpcIndex) -> str:
-    """Context of a placed placeable's name, with an NPC possessive hint."""
+    """Returns the context of a placed placeable's name, with an NPC possessive hint."""
     name = extract_local_string(instance.get("LocName", {})) or ""
     return f"Placeable name ({_AREA_INSTANCE}){npc_possessive_hint(name, npc_index)}"
 
 
 def _placeable_description_context(instance: Dict[str, Any], npc_index: NpcIndex) -> str:
-    """Context of a placed placeable's description, naming the placeable."""
+    """Returns the context of a placed placeable's description, naming the placeable."""
     name = extract_local_string(instance.get("LocName", {})) or ""
     if not name:
         return f"Placeable description ({_AREA_INSTANCE})"
@@ -139,7 +148,7 @@ def _placeable_description_context(instance: Dict[str, Any], npc_index: NpcIndex
 
 
 def _trigger_name_context(instance: Dict[str, Any], _npcs: NpcIndex) -> str:
-    """Context of a trigger name, by trigger type."""
+    """Returns the context of a trigger name, by trigger type."""
     trigger_type = instance.get("Type", 0)
     if trigger_type == 1:
         return (
@@ -263,7 +272,7 @@ def should_translate_git_string(
     meta_type: str,
     known_names: Optional[FrozenSet[str]] = None,
 ) -> bool:
-    """Returns True when a ``.git`` string is suitable for translation.
+    """Tells whether a ``.git`` string is suitable for translation.
 
     Code-like route labels, resrefs, placeholders and toolset terms are
     rejected. A code-like string matching a blueprint creature name is a real
@@ -275,7 +284,7 @@ def should_translate_git_string(
         known_names: Blueprint-name oracle (see :func:`get_module_creature_names`).
 
     Returns:
-        Whether the string should be extracted.
+        ``True`` when the string should be extracted.
     """
     if not isinstance(text, str):
         return False
@@ -331,7 +340,7 @@ _creature_name_build_locks: Dict[Path, threading.Lock] = {}
 
 
 def _cached_creature_names(key: Path) -> Optional[FrozenSet[str]]:
-    """Returns the cached oracle for *key* and mark it recently used."""
+    """Returns the cached oracle for *key* and marks it recently used."""
     with _creature_name_cache_lock:
         cached = _creature_name_cache.get(key)
         if cached is not None:

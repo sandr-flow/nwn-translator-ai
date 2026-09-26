@@ -236,7 +236,7 @@ class OpenRouterProvider:
         return cast(AsyncOpenAI, self._thread_local.async_client)
 
     async def close_async_client(self) -> None:
-        """Closes this thread's client; call it before the event loop shuts down.
+        """Closes this thread's client; called before the event loop shuts down.
 
         A failing close is logged at debug level and otherwise ignored: the run's
         results do not depend on it.
@@ -318,7 +318,7 @@ class OpenRouterProvider:
         use_reasoning: bool = True,
         stream: Optional[bool] = False,
     ) -> str:
-        """Sends one JSON-mode chat request and return the stripped reply text.
+        """Sends one JSON-mode chat request and returns the stripped reply text.
 
         Every attempt, failed or not, is recorded as one request metric.
         :meth:`_complete` is the same request retried on transient errors.

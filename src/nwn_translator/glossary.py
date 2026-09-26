@@ -33,6 +33,11 @@ class _TermMatcher:
     """
 
     def __init__(self, keys: Iterable[str]) -> None:
+        """Compiles one pattern per source form.
+
+        Args:
+            keys: Source forms to search for.
+        """
         self._patterns = {
             key: (key.lower(), re.compile(r"(?<!\w)" + re.escape(key) + r"(?!\w)", re.IGNORECASE))
             for key in keys
@@ -40,7 +45,14 @@ class _TermMatcher:
         self._memo: Dict[str, FrozenSet[str]] = {}
 
     def keys_in(self, text: str) -> FrozenSet[str]:
-        """Returns the forms that occur in *text* as whole words."""
+        """Returns the forms that occur in *text* as whole words.
+
+        Args:
+            text: One source text.
+
+        Returns:
+            The matching source forms.
+        """
         found = self._memo.get(text)
         if found is None:
             lowered = text.lower()

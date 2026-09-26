@@ -500,7 +500,7 @@ class WorldScanner:
         progress_callback: Optional[ProgressCallback] = None,
         source_encoding: Optional[str] = None,
     ) -> WorldContext:
-        """Scans the directory and build world context.
+        """Scans the directory and builds the world context.
 
         Args:
             extract_dir: Path to directory containing extracted module files.

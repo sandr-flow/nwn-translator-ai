@@ -337,7 +337,7 @@ def _rebuild_edits(log_lines: List[dict]) -> Dict[str, Dict[str, str]]:
 
 
 def run_one(scenario: str, module: Path, out_dir: Path, concurrency: int = 1) -> None:
-    """Translates and rebuild *module* under *scenario*; write normalized results."""
+    """Translates and rebuilds *module* under *scenario*; writes normalized results."""
     recorder = _Recorder()
     _install_fake_endpoint(recorder)
 

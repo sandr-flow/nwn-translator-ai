@@ -390,7 +390,7 @@ def patch_ncs_string_replacements(
 def _patched_bytes(
     ncs: NCSFile, patches: List[Tuple[NCSInstruction, str]], text_encoding: str
 ) -> bytearray:
-    """Splices new CONSTS into ``ncs.raw_bytes`` and fix jumps and the size field.
+    """Splices new CONSTS into ``ncs.raw_bytes`` and fixes jumps and the size field.
 
     Patches are applied from the highest offset down, so an instruction's
     offset only changes after every patch below it is done. The instructions

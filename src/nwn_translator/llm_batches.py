@@ -156,7 +156,7 @@ class LlmStage:
         *,
         concurrency: int,
     ) -> List[Union[R, BaseException]]:
-        """Runs *worker* on every batch concurrently and return the results in batch order.
+        """Runs *worker* on every batch concurrently and returns the results in batch order.
 
         When :meth:`run_timeout` runs out, the unfinished batches are cancelled
         and the finished ones keep their results.
@@ -176,9 +176,11 @@ class LlmStage:
         limit = self.run_timeout(len(batches))
 
         async def run_all() -> List[Union[R, BaseException]]:
+            """Runs the batches until the deadline and collects their outcomes."""
             sem = asyncio.Semaphore(max(1, concurrency))
 
             async def run_batch(number: int, batch: B) -> R:
+                """Runs *worker* on one batch with the slot policy of the stage."""
                 if not self.slot_per_batch:
                     return await worker(sem, number, batch)
                 async with sem:

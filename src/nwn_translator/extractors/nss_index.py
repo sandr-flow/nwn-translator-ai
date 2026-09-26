@@ -7,6 +7,7 @@ sources can be stale and identical literals can have different consumers.
 from pathlib import Path
 from typing import Optional, Set, Tuple
 
+#: ``(routine, zero-based argument)`` pairs whose string is shown to the player.
 PLAYER_ARG_POSITIONS: Set[Tuple[str, int]] = {
     ("SpeakString", 0),
     ("ActionSpeakString", 0),
@@ -22,6 +23,8 @@ PLAYER_ARG_POSITIONS: Set[Tuple[str, int]] = {
     ("CopyArea", 2),
 }
 
+#: ``(routine, zero-based argument)`` pairs whose string names something
+#: (tag, resref, variable, database, …) and must stay untranslated.
 INTERNAL_ARG_POSITIONS: Set[Tuple[str, int]] = {
     ("PrintString", 0),
     ("WriteTimestampedLogEntry", 0),

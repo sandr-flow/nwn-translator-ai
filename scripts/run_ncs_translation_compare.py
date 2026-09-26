@@ -133,7 +133,7 @@ def _load_ncs_contents(
     limit_files: Optional[int],
     limit_items: Optional[int],
 ) -> List[ExtractedContent]:
-    """Parses and extract NCS content, optionally limiting file/item counts."""
+    """Parses and extracts NCS content, optionally limiting file/item counts."""
     contents: List[ExtractedContent] = []
     item_count = 0
     for index, path in enumerate(ncs_files, 1):
@@ -226,7 +226,7 @@ def _run_mode(
     args: argparse.Namespace,
     output_dir: Path,
 ) -> Dict[str, Any]:
-    """Runs one real NCS translation mode and write per-item results."""
+    """Runs one real NCS translation mode and writes per-item results."""
     config = _build_config(args, mode, output_dir)
     config.get_api_key()
     metrics = RunMetricsRecorder()

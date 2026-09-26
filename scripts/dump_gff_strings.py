@@ -29,7 +29,7 @@ from nwn_translator.formats.text_codec import decode_fixed_ascii, decode_module_
 
 
 def _decode_string(raw_bytes: bytes) -> tuple[str, str]:
-    """Decodes *raw_bytes* as the pipeline does; also name the branch taken."""
+    """Decodes *raw_bytes* as the pipeline does; also names the branch taken."""
     try:
         return raw_bytes.decode("utf-8"), "UTF-8"
     except UnicodeDecodeError:

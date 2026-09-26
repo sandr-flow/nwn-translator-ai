@@ -36,7 +36,16 @@ _AREA_FLOOR = "placed on the area floor"
 
 
 class _FieldRef(NamedTuple):
-    """A candidate CExoLocString field and how to address it."""
+    """A candidate CExoLocString field and how to address it.
+
+    Attributes:
+        struct: Struct holding the field.
+        field_name: GFF label of the field.
+        item_type: Metadata ``type`` of the item.
+        context: Prompt context of the item.
+        item_id: Item id, unique within the area.
+        group: Translation group: the instance or item row.
+    """
 
     struct: Dict[str, Any]
     field_name: str

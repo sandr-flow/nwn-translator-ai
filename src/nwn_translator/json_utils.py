@@ -80,7 +80,7 @@ def json_extract_first_object(raw: str) -> Optional[Dict[str, Any]]:
 
 
 def load_brace_span(raw: str) -> Any:
-    """Strictly decode the text from the first ``{`` to the last ``}`` of *raw*.
+    """Strictly decodes the text from the first ``{`` to the last ``}`` of *raw*.
 
     The span is greedy, so prose around one object is ignored, but text between
     two objects makes the span invalid. Strict decoding rejects raw control
@@ -110,8 +110,8 @@ def scan_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
         raw: Model reply.
 
     Returns:
-        The first decodable object, or ``None`` when *raw* decodes whole to a
-        non-object value.
+        The first decodable object, or ``None`` when *raw* has no ``{`` and
+        decodes whole to a non-object value.
 
     Raises:
         json.JSONDecodeError: The last decoding error, when no object decodes.

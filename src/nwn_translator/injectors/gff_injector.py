@@ -1,4 +1,4 @@
-"""Patch the GFF field records of extracted items."""
+"""GFF injector: patches the field records of extracted items."""
 
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple

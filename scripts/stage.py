@@ -211,7 +211,7 @@ def _build_extracted_map(args: argparse.Namespace, state: PipelineState) -> Extr
 
 
 def cmd_unpack(args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path) -> None:
-    """Unpacks the archive and list its translatable files in ``files.json``.
+    """Unpacks the archive and lists its translatable files in ``files.json``.
 
     Args:
         args: Command line.
@@ -297,7 +297,7 @@ def cmd_entities(
 def cmd_glossary(
     args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path
 ) -> None:
-    """Curates the candidates and build ``glossary.json`` (model requests).
+    """Curates the candidates and builds ``glossary.json`` (model requests).
 
     The entity candidates are collected first unless the entities stage has
     run; the world context is saved again with what that collection found.

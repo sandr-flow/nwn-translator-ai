@@ -81,7 +81,24 @@ _WIDE_FORMATS = {GFFType.DWORD64: "<Q", GFFType.INT64: "<q", GFFType.DOUBLE: "<d
 
 
 class GFFHeader(NamedTuple):
-    """GFF V3.2 header; block sizes are in bytes except the three counts."""
+    """GFF V3.2 header.
+
+    Attributes:
+        file_type: FileType tag, e.g. ``b"DLG "``.
+        version: Version tag, e.g. ``b"V3.2"``.
+        struct_offset: File offset of the struct records.
+        struct_count: Number of struct records.
+        field_offset: File offset of the field records.
+        field_count: Number of field records.
+        label_offset: File offset of the labels.
+        label_count: Number of labels.
+        field_data_offset: File offset of the field data block.
+        field_data_size: Byte size of the field data block.
+        field_indices_offset: File offset of the field indices block.
+        field_indices_size: Byte size of the field indices block.
+        list_indices_offset: File offset of the list indices block.
+        list_indices_size: Byte size of the list indices block.
+    """
 
     file_type: bytes
     version: bytes
@@ -100,7 +117,14 @@ class GFFHeader(NamedTuple):
 
     @classmethod
     def read(cls, data: Union[bytes, bytearray]) -> "GFFHeader":
-        """Unpacks the header at the start of *data* (at least 56 bytes)."""
+        """Unpacks the header at the start of *data*.
+
+        Args:
+            data: File bytes, at least 56 of them.
+
+        Returns:
+            The header.
+        """
         return cls._make(HEADER.unpack_from(data))
 
 
@@ -324,7 +348,7 @@ def _locstring_value(data: bytes, offset: int, encoding: Optional[str]) -> Dict[
 def _expand_struct(
     struct_fields: Dict[str, GFFValue], gff: GFFFile, visited: set
 ) -> Dict[str, Any]:
-    """Recursively expand struct fields into plain values and nested dicts.
+    """Recursively expands struct fields into plain values and nested dicts.
 
     List fields (lists of struct indices) and Struct fields (one struct index)
     become nested dicts; invalid or already-visited indices stay ints, so

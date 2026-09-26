@@ -176,7 +176,7 @@ class ERFHeader:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "ERFHeader":
-        """Parses and validate the first 160 bytes of an archive.
+        """Parses and validates the first 160 bytes of an archive.
 
         Args:
             data: Archive bytes starting at offset 0.
@@ -201,7 +201,11 @@ class ERFHeader:
         return header
 
     def pack(self) -> bytes:
-        """Returns the 160-byte header with zeroed reserved bytes."""
+        """Serializes the header.
+
+        Returns:
+            The 160-byte header with zeroed reserved bytes.
+        """
         return HEADER.pack(*astuple(self), b"")
 
 
@@ -256,7 +260,7 @@ class ERFReader:
             raise ERFError(f"File not found: {file_path}")
 
     def read_header(self) -> ERFHeader:
-        """Reads the header and check that the declared tables fit the file.
+        """Reads the header and checks that the declared tables fit the file.
 
         The size check runs before anything is allocated per entry, so a
         crafted header with a huge entry count fails fast.
@@ -309,7 +313,7 @@ class ERFReader:
             return f.read(size)
 
     def read_entries(self) -> List[ERFEntry]:
-        """Reads the key and resource lists and detect each entry's extension.
+        """Reads the key and resource lists and detects each entry's extension.
 
         Returns:
             The entries in key-list order (also stored in :attr:`entries`).
@@ -501,8 +505,10 @@ class ERFWriter:
         a failed write never destroys a previous archive.
 
         Raises:
-            ERFError: If a source file cannot be read or changes size, or a
+            ERFError: If a source file cannot be stat'ed or changes size, or a
                 resref exceeds 16 bytes.
+            OSError: If a source file cannot be opened or the archive cannot be
+                written.
         """
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         resources = sorted(self._resources.items())
@@ -581,7 +587,7 @@ def _resref_bytes(res_ref: str) -> bytes:
 
 
 def _copy_into(out: BinaryIO, src: Union[bytes, Path]) -> int:
-    """Appends one resource's data to *out* and return the number of bytes written."""
+    """Appends one resource's data to *out* and returns the number of bytes written."""
     if isinstance(src, bytes):
         out.write(src)
         return len(src)
@@ -608,7 +614,9 @@ def create_mod_from_directory(
         original_mod: The archive *input_dir* was extracted from.
 
     Raises:
-        ERFError: If *original_mod* cannot be read or the write fails.
+        ERFError: If *original_mod* cannot be read or :meth:`ERFWriter.write`
+            rejects a resource.
+        OSError: If a resource cannot be read or the archive cannot be written.
     """
     writer = ERFWriter(output_path)
     if original_mod and original_mod.exists():

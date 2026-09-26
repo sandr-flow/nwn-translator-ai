@@ -1,4 +1,4 @@
-"""Patch translated string constants into compiled scripts (``.ncs``).
+"""NCS injector: patches translated string constants into compiled scripts (``.ncs``).
 
 Delegates the actual binary patching to :mod:`~nwn_translator.formats.ncs`.
 """
@@ -42,7 +42,8 @@ def inject_ncs(
     Returns:
         The injection result. Its metadata carries ``error`` and
         ``ncs_patch_failed`` when the patch or a concat split failed, and
-        ``concat_split_failed`` (item ids) for failed splits.
+        ``concat_split_failed`` (item ids) when splits failed but the patch
+        of the other literals did not.
     """
     replacements: List[Tuple[int, str, str]] = []
     split_failed: List[str] = []

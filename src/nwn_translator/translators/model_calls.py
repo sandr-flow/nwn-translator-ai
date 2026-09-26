@@ -384,7 +384,7 @@ class ModelCaller:
     async def translate_batch(
         self, sem: asyncio.Semaphore, batch: List[WorkItem], done: Done = None
     ) -> List[TranslationResult]:
-        """Translates a batch and narrow its failures by halving.
+        """Translates a batch and narrows its failures by halving.
 
         When two or more results fail, the failed items are split in two halves,
         left first, and each half is sent again the same way. A single failed item

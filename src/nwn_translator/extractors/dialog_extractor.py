@@ -127,9 +127,9 @@ class DialogExtractor(BaseExtractor):
         visited_entries: Set[Any] = set()
 
         # Work items: (is_entry, node_id, parent); parent None = root of the tree.
-        # A LIFO stack with children pushed in reverse order reproduces the
-        # depth-first order of the recursive walk, including the visited check
-        # firing only after the previous sibling's subtree is fully built.
+        # A LIFO stack with children pushed in reverse order walks depth-first
+        # in link order, and the visited check fires only after the previous
+        # sibling's subtree is fully built.
         stack: List[Tuple[bool, Any, Optional[DialogNode]]] = [
             (True, link["Index"], None)
             for link in reversed(list_field(parsed_data, "StartingList"))

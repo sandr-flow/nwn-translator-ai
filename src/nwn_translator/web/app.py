@@ -107,7 +107,7 @@ def _parse_cors_origins() -> List[str]:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Opens the database and run the periodic workspace purge while the app lives.
+    """Opens the database and runs the periodic workspace purge while the app lives.
 
     Shutdown waits for running translation jobs, so a graceful stop never cuts
     a job off mid-write.

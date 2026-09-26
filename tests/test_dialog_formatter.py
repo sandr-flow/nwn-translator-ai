@@ -9,11 +9,9 @@ from src.nwn_translator.context.dialog_formatter import (
     iter_nodes,
     node_key,
 )
-from src.nwn_translator.config import TranslationConfig
-from src.nwn_translator.context.world_context import WorldContext
 from src.nwn_translator.extractors.base import DialogNode
 from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
-from src.nwn_translator.translators.context_translator import ContextualTranslationManager
+from src.nwn_translator.translators.dialog_plan import prepare_dialog
 
 
 def test_format_dialog_tree_does_not_repeat_reply_text_as_truncated_preview():
@@ -155,12 +153,9 @@ def test_deep_dialog_formats_and_prepares_without_recursion_error():
     tree = DialogExtractor().build_dialog_tree(parsed)
 
     script = format_dialog_tree(tree)
-    manager = ContextualTranslationManager(
-        TranslationConfig(api_key="k", input_file=Path("m.mod")), object(), WorldContext()
-    )
-    prepared = manager._prepare_dialog(Path("deep.dlg"), parsed)
+    prepared = prepare_dialog(Path("deep.dlg"), parsed, 2000, preserve_tokens=True)
 
     assert script.count("<<<") == 2000
     assert prepared is not None
-    assert len(prepared.all_keys) == 2000
-    assert prepared.all_keys[:3] == ["E0", "R0", "E1"]
+    assert len(prepared.keys) == 2000
+    assert prepared.keys[:3] == ["E0", "R0", "E1"]

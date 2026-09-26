@@ -1,94 +1,279 @@
-"""Contextual Translation Manager.
+"""Contextual translation of dialogs (``.dlg``) with their conversation tree.
 
-Translates entire dialog trees in a single batch using world context.
+A dialog is sent as a script that shows every line with its speaker and the
+lines it leads to (:mod:`~nwn_translator.context.dialog_formatter`), under a
+system prompt with the world context, the glossary and the dialog's
+speakers. Large dialogs are split into chunks and small ones share grouped
+requests (:mod:`.dialog_plan`). An unparseable answer is re-requested along a
+fixed recovery table. Lines that stay missing or come back with broken NWN
+tokens are retried together, then one by one, and at last accepted with the
+broken tokens cleaned out when that yields a valid text.
 """
 
-import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Collection, Dict, List, Optional, Set
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Collection,
+    Dict,
+    List,
+    NamedTuple,
+    Optional,
+    Protocol,
+    Sequence,
+    Set,
+    Tuple,
+)
 
-from ..extractors.base import Occurrence, Translations, occurrence_key
 from ..ai_providers import TranslationProvider
-from ..ai_providers.base import RateLimitError
-from ..ai_providers.openrouter_provider import OpenRouterProvider
+from ..ai_providers.base import RateLimitError, SystemContent
+from ..async_utils import run_async
 from ..config import (
-    TranslationCancelled,
-    TranslationConfig,
     TRANSLATION_MAX_TOKENS,
     TRANSLATION_TEMPERATURE,
+    TranslationCancelled,
+    TranslationConfig,
 )
-from ..context.dialog_formatter import format_dialog_tree, format_nodes, iter_nodes
-from ..context.dialog_speakers import dialog_owners, speaker_description, tagged_speakers
+from ..context.dialog_formatter import format_nodes, speaker_label
+from ..context.dialog_speakers import speaker_lines
 from ..context.world_context import WorldContext
-from ..extractors.dialog_extractor import DialogExtractor, DialogNode, dialog_item_id
+from ..extractors.base import Occurrence, Translations
+from ..glossary import terminology_block
 from ..json_utils import json_extract_first_object, strip_json_markdown_fences
-from ..prompts.token_retry import (
-    PRESERVE_INLINE_MARKUP,
-    PRESERVE_PLACEHOLDERS,
-    expected_artifacts_line,
-    previous_mismatch_lines,
+from ..prompts import build_dialog_system_prompt_parts
+from ..prompts.dialog import (
+    dialog_user_prompt,
+    group_repair_prompt,
+    group_script,
+    group_user_prompt,
+    line_retry_context,
+    repair_prompt,
+    speakers_block,
+    token_retry_prompt,
 )
 from ..telemetry import llm_phase
-from ..glossary import GLOSSARY_MAX_CHARS, terminology_block
-from ..translation_logging import logged_model_call, translation_log_writer_for_config
-from .token_handler import TokenHandler, sanitize_text
+from ..translation_logging import logged_model_call, translation_log_writer_for_config, write_trace
+from .dialog_plan import Chunk, PreparedDialog, plan_chunks, plan_requests, prepare_dialog
+from .token_handler import TokenMismatchReport
 
 if TYPE_CHECKING:
     from ..glossary import Glossary
 
 logger = logging.getLogger(__name__)
 
-# Upper bound for dialog responses when retrying after likely truncation.
-# Kept local to the dialog path so future tuning does not affect the rest of
-# the translation pipeline.
-_DIALOG_TRUNCATION_MAX_TOKENS = 32768
+#: Output budget of the recovery requests. It equals ``TRANSLATION_MAX_TOKENS``,
+#: so a step that re-sends the prompt repeats the first request unchanged; the
+#: step stays because it is one of the run's requests.
+_RECOVERY_MAX_TOKENS = 32768
 
-# Chunking keeps large DLG files away from one huge JSON response. The limits
-# are intentionally conservative and based on prompt characters, not exact
-# tokenizer counts, because providers and models vary.
-_DIALOG_CHUNK_TARGET_CHARS = 24000
-_DIALOG_CHUNK_MAX_KEYS = 120
+#: Result of one pool job: its translations and ``(file, error)`` pairs.
+_JobResult = Tuple[Translations, List[Tuple[Path, Exception]]]
 
-# Small dialog scripts are packed into grouped multi-file requests to cut
-# per-request prompt overhead. The threshold is measured on the formatted
-# script (with [E0]/[NPC] markup), not raw text. Limits keep the grouped
-# response comfortably inside TRANSLATION_MAX_TOKENS even with reasoning.
-_SMALL_DIALOG_CHARS = 2000
-_DIALOG_GROUP_TARGET_CHARS = 8000
-_DIALOG_GROUP_MAX_FILES = 12
+
+class ProgressSink(Protocol):
+    """Counter of translated items (the pipeline's progress reporter)."""
+
+    def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
+        """Count *by* more items of *filename* as done."""
+
+
+class _Step(NamedTuple):
+    """One recovery request after an unparseable answer.
+
+    Attributes:
+        repair: Send the repair prompt instead of the original one. The repair
+            prompt is built once, from the answer before the first repair step.
+        max_tokens: Output budget of the request.
+        warning: Message logged before the request; ``%s`` is the request label.
+    """
+
+    repair: bool
+    max_tokens: int
+    warning: str
+
+
+#: Recovery steps, keyed by whether the first answer looks cut off mid-string.
+_Recovery = Dict[bool, Tuple[_Step, ...]]
+
+_CHUNK_RECOVERY: _Recovery = {
+    True: (
+        _Step(
+            False,
+            _RECOVERY_MAX_TOKENS,
+            "%s: dialog JSON parse failed with truncation-like invalid JSON; "
+            "retrying original prompt with higher max_tokens...",
+        ),
+        _Step(
+            True,
+            _RECOVERY_MAX_TOKENS,
+            "%s: high-token original prompt retry still returned invalid JSON; "
+            "retrying repair prompt with higher max_tokens as final fallback...",
+        ),
+    ),
+    False: (
+        _Step(
+            True,
+            TRANSLATION_MAX_TOKENS,
+            "%s: dialog JSON parse failed with non-truncation invalid JSON; "
+            "retrying with repair prompt...",
+        ),
+        _Step(
+            True,
+            _RECOVERY_MAX_TOKENS,
+            "%s: repair prompt still returned invalid JSON; "
+            "retrying repair prompt with higher max_tokens as final fallback...",
+        ),
+    ),
+}
+_GROUP_RECOVERY: _Recovery = {
+    True: (
+        _Step(
+            False,
+            _RECOVERY_MAX_TOKENS,
+            "Dialog group %s: JSON looks truncated; retrying with higher max_tokens...",
+        ),
+    ),
+    False: (
+        _Step(
+            True,
+            TRANSLATION_MAX_TOKENS,
+            "Dialog group %s: invalid JSON; retrying with repair prompt...",
+        ),
+    ),
+}
+_PENDING_RECOVERY: _Recovery = {
+    True: (
+        _Step(
+            False,
+            _RECOVERY_MAX_TOKENS,
+            "%s: pending dialog retry JSON looks truncated; "
+            "retrying the same JSON retry prompt with higher max_tokens...",
+        ),
+    ),
+    False: (),
+}
+
+
+class _Rejected(NamedTuple):
+    """A model answer for one line that was not accepted.
+
+    Attributes:
+        text: The answer as sent back (sanitized form).
+        report: How it broke the line's tokens and tags; ``None`` for an
+            empty answer.
+    """
+
+    text: str
+    report: Optional[TokenMismatchReport]
+
+
+class _FileProgress:
+    """Progress of one dialog file, clamped to the file's item budget."""
+
+    def __init__(self, sink: Optional[ProgressSink], budget: int, filename: str) -> None:
+        self._sink = sink
+        self._budget = budget
+        self._filename = filename
+        self._done = 0
+
+    def bump(self, by: int) -> None:
+        """Report *by* more lines; without a budget nothing is clamped."""
+        if self._sink is None or by <= 0:
+            return
+        delta = min(by, max(0, self._budget - self._done)) if self._budget else by
+        if delta <= 0:
+            return
+        self._sink.bump(by=delta, filename=self._filename)
+        self._done += delta
+
+    def finish(self) -> None:
+        """Report the rest of the budget, whatever was translated."""
+        if self._budget:
+            self.bump(self._budget - self._done)
 
 
 @dataclass
-class _PreparedDialog:
-    """Parsed dialog state for request formatting and result validation."""
+class _FileRun:
+    """State of one dialog file while its lines are requested.
 
-    tree: List[DialogNode]
-    node_map: Dict[str, DialogNode]
-    original_text_map: Dict[str, str]
-    sanitized_by_key: Dict[str, str]
-    handlers: Dict[str, TokenHandler]
-    speakers_block: str
-    all_keys: List[str]
+    Attributes:
+        dialog: The prepared dialog.
+        progress: Its progress.
+        translations: Lines accepted so far.
+        speakers: ``DIALOG SPEAKERS`` block of its system prompts.
+        rejected: Latest rejected answer of each line not accepted yet.
+    """
+
+    dialog: PreparedDialog
+    progress: _FileProgress
+    translations: Translations
+    speakers: str
+    rejected: Dict[str, _Rejected] = field(default_factory=dict)
+
+    def take(self, accepted: Translations) -> None:
+        """Add accepted lines and report their progress."""
+        self.translations.update(accepted)
+        self.progress.bump(len(accepted))
 
 
-@dataclass
-class _SmallDialog:
-    """A small dialog file queued for grouped translation."""
+def _parse_answer(raw: str, label: str) -> Optional[Dict[str, Any]]:
+    """Return the first JSON object of an answer, logging an error when there is none."""
+    parsed = json_extract_first_object(raw)
+    if parsed is None:
+        logger.error(
+            "Failed to parse JSON for %s (no valid object). Raw prefix: %s...",
+            label,
+            (raw or "").strip()[:400],
+        )
+    return parsed
 
-    file_path: Path
-    parsed_data: Dict[str, Any]
-    item_budget: int
-    prepared: _PreparedDialog
-    script: str
+
+def _looks_truncated(raw: str) -> bool:
+    """Guess whether an unparseable answer stopped mid-string at ``max_tokens``.
+
+    Only an unterminated string counts, and the strict decoder is used, so a
+    raw control character earlier in the answer hides the truncation.
+    """
+    cleaned = strip_json_markdown_fences(raw)
+    start = cleaned.find("{")
+    if start == -1:
+        return False
+    try:
+        json.JSONDecoder().raw_decode(cleaned, start)
+    except json.JSONDecodeError as exc:
+        return "unterminated" in str(exc).lower()
+    return False
+
+
+def _group_part(answer: Dict[str, Any], file_path: Path) -> Any:
+    """Return the part of a grouped answer for *file_path*.
+
+    Keys match the file name or its stem, ignoring case and surrounding
+    spaces; the first match in answer order wins.
+    """
+    targets = {file_path.name.casefold(), file_path.stem.casefold()}
+    for key, value in answer.items():
+        if str(key).strip().casefold() in targets:
+            return value
+    return None
 
 
 class ContextualTranslationManager:
-    """Manager for full-graph contextual translation."""
+    """Translate dialog files with their conversation tree as context.
 
-    _TOKEN_RETRY_BUDGET = 2
+    Attributes:
+        config: Run configuration.
+        provider: Model provider.
+        world_context: Scanned module objects: speakers and the world block.
+        glossary: Canonical translations of proper names, if built.
+        failed_items: Lines sent to the model whose translation was never
+            accepted.
+    """
 
     def __init__(
         self,
@@ -96,7 +281,15 @@ class ContextualTranslationManager:
         provider: TranslationProvider,
         world_context: WorldContext,
         glossary: Optional["Glossary"] = None,
-    ):
+    ) -> None:
+        """Create a manager for one run.
+
+        Args:
+            config: Run configuration.
+            provider: Model provider.
+            world_context: Scanned module objects.
+            glossary: Canonical translations of proper names, if built.
+        """
         self.config = config
         self.provider = provider
         self.world_context = world_context
@@ -105,411 +298,94 @@ class ContextualTranslationManager:
             config.translation_log,
             config.translation_log_writer,
         )
-        #: Originals sent to the model whose output was never accepted.
         self.failed_items: Set[Occurrence] = set()
-
-    @staticmethod
-    def _node_address(file_path: Path, key: str) -> Occurrence:
-        return occurrence_key(
-            file_path, dialog_item_id(file_path.stem, key.startswith("E"), key[1:])
-        )
-
-    def _mark_untranslated_api_keys(
-        self,
-        keys_for_api: List[str],
-        original_text_map: Dict[str, str],
-        translations: Translations,
-        file_path: Path,
-    ) -> None:
-        """Record dialog originals that were sent to the model but never accepted."""
-        for key in keys_for_api:
-            original = original_text_map.get(key)
-            address = self._node_address(file_path, key)
-            if original and address not in translations:
-                self.failed_items.add(address)
 
     def translate_dialog(
         self,
         file_path: Path,
         parsed_data: Dict[str, Any],
-        item_progress: Optional[Any] = None,
+        item_progress: Optional[ProgressSink] = None,
         item_budget: Optional[int] = None,
         *,
         accepted: Optional[Translations] = None,
     ) -> Translations:
-        """Translate a complete dialog tree."""
-        budget = int(item_budget) if item_budget else 0
-        bumped = 0
+        """Translate one dialog file.
 
-        def _bump(by: int) -> None:
-            nonlocal bumped
-            if item_progress is None or by <= 0:
-                return
-            remaining = max(0, budget - bumped)
-            delta = min(by, remaining) if budget else by
-            if delta <= 0:
-                return
-            item_progress.bump(by=delta, filename=file_path.name)
-            bumped += delta
+        Errors of the requests are logged, not raised: the lines not accepted
+        by then are added to :attr:`failed_items`.
 
-        def _finish() -> None:
-            if item_progress is not None and budget:
-                _bump(budget - bumped)
+        Args:
+            file_path: Path of the ``.dlg`` resource.
+            parsed_data: Parsed GFF root struct.
+            item_progress: Progress sink, if any.
+            item_budget: Progress units of the file; exactly this many are
+                reported in total. Without it progress is not clamped.
+            accepted: Translations accepted earlier; lines of this file found
+                there are kept and not requested again.
 
-        if not isinstance(self.provider, OpenRouterProvider):
-            logger.error(
-                "Contextual dialog translation requires OpenRouterProvider (got %s)",
-                type(self.provider).__name__,
-            )
-            _finish()
+        Returns:
+            The file's accepted translations, including those from *accepted*.
+
+        Raises:
+            TranslationCancelled: When the run is cancelled.
+        """
+        budget = item_budget or 0
+        dialog = prepare_dialog(
+            file_path, parsed_data, budget, preserve_tokens=self.config.preserve_tokens
+        )
+        if dialog is None:
+            _FileProgress(item_progress, budget, file_path.name).finish()
             return {}
-
-        provider: OpenRouterProvider = self.provider
-
-        prepared = self._prepare_dialog(file_path, parsed_data)
-        if prepared is None:
-            _finish()
-            return {}
-
-        tree = prepared.tree
-        node_map = prepared.node_map
-        speakers_block = prepared.speakers_block
-        original_text_map = prepared.original_text_map
-        sanitized_by_key = prepared.sanitized_by_key
-        handlers = prepared.handlers
-        translations = {
-            address: text
-            for address, text in (accepted or {}).items()
-            if address[0] == file_path.name
-        }
-        keys_for_api = [
-            key
-            for key in prepared.all_keys
-            if self._node_address(file_path, key) not in translations
-        ]
-        all_keys = prepared.all_keys
-
-        accepted_count = len(all_keys) - len(keys_for_api)
-        if accepted_count > 0:
-            _bump(accepted_count)
-        if not keys_for_api:
-            logger.debug(
-                "All %d dialog lines for %s already accepted for this dialog",
-                len(all_keys),
-                file_path.name,
-            )
-            _finish()
-            return translations
-
-        try:
-
-            async def call_api(
-                sp: str, up: str, *, max_tokens: int = TRANSLATION_MAX_TOKENS
-            ) -> str:
-                with llm_phase("dialog"):
-                    return await logged_model_call(
-                        self._log_writer,
-                        provider.complete_json_chat_async,
-                        trace_context={"file": file_path.name},
-                        system_prompt=sp,
-                        user_prompt=up,
-                        max_tokens=max_tokens,
-                        temperature=TRANSLATION_TEMPERATURE,
-                    )
-
-            from ..async_utils import run_async
-
-            dialog_chunks = self._build_dialog_chunks(
-                keys_for_api,
-                all_keys,
-                tree,
-                node_map,
-                original_text_map,
-                sanitized_by_key,
-            )
-            if not dialog_chunks:
-                self._mark_untranslated_api_keys(
-                    keys_for_api, original_text_map, translations, file_path
-                )
-                _finish()
-                return translations
-
-            if len(dialog_chunks) == 1:
-                logger.info(
-                    "Sending %d/%d dialog lines to AI for %s...",
-                    len(keys_for_api),
-                    len(original_text_map),
-                    file_path.name,
-                )
-            else:
-                logger.info(
-                    "Sending %d/%d dialog lines to AI for %s in %d chunk(s)...",
-                    len(keys_for_api),
-                    len(original_text_map),
-                    file_path.name,
-                    len(dialog_chunks),
-                )
-
-            pending_keys: List[str] = []
-            latest_invalid: Dict[str, Dict[str, Any]] = {}
-
-            for chunk_index, (chunk_keys, script) in enumerate(dialog_chunks, 1):
-                self.config.raise_if_cancelled()
-                chunk_translations, chunk_pending, chunk_invalid = self._translate_dialog_chunk(
-                    file_path,
-                    file_path.stem,
-                    script,
-                    chunk_keys,
-                    original_text_map,
-                    handlers,
-                    sanitized_by_key,
-                    call_api,
-                    run_async,
-                    chunk_index=chunk_index,
-                    total_chunks=len(dialog_chunks),
-                    speakers_block=speakers_block,
-                )
-                translations.update(chunk_translations)
-                _bump(len(chunk_translations))
-                pending_keys.extend(chunk_pending)
-                latest_invalid.update(chunk_invalid)
-
-            pending_keys = sorted(set(pending_keys))
-
-            if pending_keys:
-                self.config.raise_if_cancelled()
-                logger.warning(
-                    "%s: retrying %d dialog nodes with missing or invalid preserved artifacts...",
-                    file_path.name,
-                    len(pending_keys),
-                )
-                retry_script = format_nodes(pending_keys, node_map, sanitized_by_key)
-                retry_prompt = self._build_token_retry_user_prompt(
-                    file_path.name,
-                    retry_script,
-                    pending_keys,
-                    handlers,
-                    {key: latest_invalid.get(key, {}).get("report") for key in pending_keys},
-                )
-                retry_raw = run_async(
-                    call_api(
-                        self._build_system_prompt(
-                            source_text=retry_script,
-                            filename_stem=file_path.stem,
-                            speakers_block=speakers_block,
-                        ),
-                        retry_prompt,
-                        max_tokens=TRANSLATION_MAX_TOKENS,
-                    ),
-                )
-                retry_json = self._parse_json_response(retry_raw, file_path.name)
-                if retry_json is None and self._dialog_response_likely_truncated(retry_raw):
-                    logger.warning(
-                        "%s: pending dialog retry JSON looks truncated; "
-                        "retrying the same JSON retry prompt with higher max_tokens...",
-                        file_path.name,
-                    )
-                    retry_raw = run_async(
-                        call_api(
-                            self._build_system_prompt(
-                                source_text=retry_script,
-                                filename_stem=file_path.stem,
-                                speakers_block=speakers_block,
-                            ),
-                            retry_prompt,
-                            max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
-                        ),
-                    )
-                    retry_json = self._parse_json_response(retry_raw, file_path.name)
-
-                pending_after_json = list(pending_keys)
-                if retry_json:
-                    retry_translations, retry_invalid = self._apply_translations(
-                        retry_json,
-                        original_text_map,
-                        handlers,
-                        file_path,
-                        sanitized_by_key=sanitized_by_key,
-                        requested=pending_keys,
-                        allow_cleanup=False,
-                    )
-                    translations.update(retry_translations)
-                    _bump(len(retry_translations))
-                    logger.info(
-                        "%s: retry recovered %d additional dialog translations.",
-                        file_path.name,
-                        len(retry_translations),
-                    )
-                    for key in pending_keys:
-                        if key in retry_json and key not in retry_invalid:
-                            latest_invalid.pop(key, None)
-                    latest_invalid.update(retry_invalid)
-                    pending_after_json = sorted(
-                        set(
-                            [key for key in pending_keys if key not in retry_json]
-                            + list(retry_invalid.keys())
-                        )
-                    )
-
-                if pending_after_json:
-                    logger.warning(
-                        "%s: %d dialog nodes still invalid after JSON retry; retrying individually.",
-                        file_path.name,
-                        len(pending_after_json),
-                    )
-                    glossary_block = self._glossary_block_for_texts(
-                        [sanitized_by_key[key] for key in pending_after_json]
-                    )
-                    for key in pending_after_json:
-                        self.config.raise_if_cancelled()
-                        context = self._build_dialog_retry_context(
-                            key,
-                            node_map,
-                            handlers,
-                            latest_invalid.get(key, {}).get("report"),
-                            file_path.name,
-                            self._TOKEN_RETRY_BUDGET,
-                        )
-
-                        async def run_single_retry() -> Any:
-                            return await logged_model_call(
-                                self._log_writer,
-                                provider.translate_async,
-                                trace_context={"occurrence": self._node_address(file_path, key)},
-                                text=sanitized_by_key[key],
-                                source_lang=self.config.source_lang,
-                                target_lang=self.config.target_lang,
-                                context=context,
-                                glossary_block=glossary_block,
-                                content_profile=None,
-                            )
-
-                        try:
-                            line_result = run_async(run_single_retry())
-                        except TranslationCancelled:
-                            raise
-                        except Exception as exc:
-                            logger.warning(
-                                "%s: individual dialog retry failed for %s: %s",
-                                file_path.name,
-                                key,
-                                exc,
-                            )
-                            line_result = None
-
-                        if line_result is not None and getattr(line_result, "success", False):
-                            single_translations, single_invalid = self._apply_translations(
-                                {key: line_result.translated},
-                                original_text_map,
-                                handlers,
-                                file_path,
-                                sanitized_by_key=sanitized_by_key,
-                                requested=[key],
-                                allow_cleanup=False,
-                            )
-                            if single_translations:
-                                translations.update(single_translations)
-                                _bump(len(single_translations))
-                                latest_invalid.pop(key, None)
-                                continue
-                            latest_invalid[key] = single_invalid.get(
-                                key,
-                                {
-                                    "translated_sanitized": line_result.translated,
-                                    "report": None,
-                                },
-                            )
-
-                        cleanup_payload = latest_invalid.get(
-                            key,
-                            {"translated_sanitized": "", "report": None},
-                        )
-                        cleaned_translations, _ = self._apply_translations(
-                            {key: cleanup_payload.get("translated_sanitized", "")},
-                            original_text_map,
-                            handlers,
-                            file_path,
-                            sanitized_by_key=sanitized_by_key,
-                            requested=[key],
-                            allow_cleanup=True,
-                        )
-                        if cleaned_translations:
-                            translations.update(cleaned_translations)
-                            _bump(len(cleaned_translations))
-
-            self._mark_untranslated_api_keys(
-                keys_for_api, original_text_map, translations, file_path
-            )
-            _finish()
-            return translations
-
-        except TranslationCancelled:
-            raise
-        except Exception as exc:
-            logger.error("Contextual translation failed for %s: %s", file_path.name, exc)
-            self._mark_untranslated_api_keys(
-                keys_for_api, original_text_map, translations, file_path
-            )
-            _finish()
-            return translations
+        return self._translate_file(dialog, item_progress, accepted)
 
     def translate_dialogs(
         self,
-        dialog_files: List[tuple[Path, Dict[str, Any], int]],
-        item_progress: Optional[Any] = None,
-    ) -> tuple[Translations, List[tuple[Path, Exception]]]:
-        """Translate multiple dialog files concurrently on a thread pool.
+        dialog_files: Sequence[Tuple[Path, Dict[str, Any], int]],
+        item_progress: Optional[ProgressSink] = None,
+    ) -> Tuple[Translations, List[Tuple[Path, Exception]]]:
+        """Translate dialog files on a pool of ``max_concurrent_requests`` threads.
 
-        Each *dialog_files* entry is ``(file_path, parsed_data, item_budget)``.
-        Small dialog scripts (:data:`_SMALL_DIALOG_CHARS`) are packed into
-        grouped multi-file requests; a file whose grouped answer is missing or
-        invalid falls back to the single-file path, where lines already
-        accepted from the group are passed explicitly by node address.
-        Failures are isolated per work unit (file or group) and returned
-        alongside the aggregated translations; :class:`TranslationCancelled`
-        aborts the whole pool.
+        Small dialogs share grouped requests. A file whose part of a grouped
+        answer is missing, incomplete or has broken tokens falls back to its
+        own requests for the remaining lines. Each file reports its item
+        budget of progress in total.
 
+        Args:
+            dialog_files: ``(file_path, parsed_data, item_budget)`` per file, in
+                pipeline order; *item_budget* is the file's extracted item count.
+            item_progress: Progress sink, if any.
+
+        Returns:
+            All accepted translations, and ``(file_path, error)`` for every file
+            whose preparation or grouped request failed.
+
+        Raises:
+            TranslationCancelled: When the run is cancelled; queued files are
+                dropped.
         """
-        from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-
-        all_translations: Translations = {}
-        errors: List[tuple[Path, Exception]] = []
-        if not dialog_files:
-            return all_translations, errors
-
-        def bump_full(file_path: Path, item_budget: int) -> None:
-            if item_progress is not None and item_budget > 0:
-                item_progress.bump(by=item_budget, filename=file_path.name)
-
-        singles: List[tuple[Path, Dict[str, Any], int]] = []
-        small: List[_SmallDialog] = []
-        can_group = isinstance(self.provider, OpenRouterProvider)
+        translations: Translations = {}
+        errors: List[Tuple[Path, Exception]] = []
+        dialogs: List[PreparedDialog] = []
         for file_path, parsed_data, item_budget in dialog_files:
             self.config.raise_if_cancelled()
-            if not can_group:
-                singles.append((file_path, parsed_data, item_budget))
-                continue
             try:
-                prepared = self._prepare_dialog(file_path, parsed_data)
+                dialog = prepare_dialog(
+                    file_path,
+                    parsed_data,
+                    item_budget,
+                    preserve_tokens=self.config.preserve_tokens,
+                )
             except TranslationCancelled:
                 raise
             except Exception as exc:
                 errors.append((file_path, exc))
                 continue
-            if prepared is None:
-                bump_full(file_path, item_budget)
-                continue
-            if not prepared.all_keys:
-                bump_full(file_path, item_budget)
-                continue
-            script = self._format_prepared_script(prepared)
-            if script and len(script) <= _SMALL_DIALOG_CHARS:
-                small.append(_SmallDialog(file_path, parsed_data, item_budget, prepared, script))
+            if dialog is None or not dialog.texts:
+                _FileProgress(item_progress, item_budget, file_path.name).finish()
             else:
-                singles.append((file_path, parsed_data, item_budget))
+                dialogs.append(dialog)
 
-        groups, loners = self._pack_dialog_groups(small)
-        singles.extend((entry.file_path, entry.parsed_data, entry.item_budget) for entry in loners)
+        singles, groups = plan_requests(dialogs, self.config.target_lang, self.glossary)
         if groups:
             logger.info(
                 "Dialog grouping: %d small file(s) packed into %d group request(s); "
@@ -519,179 +395,296 @@ class ContextualTranslationManager:
                 len(singles),
             )
 
-        max_workers = max(1, int(getattr(self.config, "max_concurrent_requests", 4) or 1))
-
-        def translate_one(
-            file_path: Path, parsed_data: Dict[str, Any], item_budget: int
-        ) -> Translations:
-            self.config.raise_if_cancelled()
-            return self.translate_dialog(
-                file_path,
-                parsed_data,
-                item_progress=item_progress,
-                item_budget=item_budget,
-            )
-
+        max_workers = max(1, self.config.max_concurrent_requests)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_meta: Dict[Future[Any], tuple[str, Any]] = {}
-            for file_path, parsed_data, item_budget in singles:
-                future: Future[Any] = executor.submit(
-                    translate_one, file_path, parsed_data, item_budget
-                )
-                future_meta[future] = ("single", file_path)
+            futures: Dict[Future[_JobResult], List[PreparedDialog]] = {}
+            for dialog in singles:
+                futures[executor.submit(self._translate_single, dialog, item_progress)] = [dialog]
             for group in groups:
-                future = executor.submit(self._translate_dialog_group, group, item_progress)
-                future_meta[future] = ("group", group)
+                futures[executor.submit(self._translate_group, group, item_progress)] = group
             try:
-                for future in as_completed(future_meta):
-                    kind, meta = future_meta[future]
+                for future in as_completed(futures):
                     try:
-                        result = future.result()
+                        job_translations, job_errors = future.result()
                     except TranslationCancelled:
                         raise
                     except Exception as exc:
-                        if kind == "single":
-                            errors.append((meta, exc))
-                        else:
-                            errors.extend((entry.file_path, exc) for entry in meta)
+                        errors.extend((dialog.file_path, exc) for dialog in futures[future])
                     else:
-                        if kind == "single":
-                            if result:
-                                all_translations.update(result)
-                        else:
-                            group_translations, group_errors = result
-                            all_translations.update(group_translations)
-                            errors.extend(group_errors)
+                        translations.update(job_translations)
+                        errors.extend(job_errors)
             except TranslationCancelled:
-                for pending in future_meta:
-                    pending.cancel()
+                for future in futures:
+                    future.cancel()
                 raise
-        return all_translations, errors
+        return translations, errors
 
-    def _prepare_dialog(
+    def _translate_single(
+        self, dialog: PreparedDialog, item_progress: Optional[ProgressSink]
+    ) -> _JobResult:
+        """Pool job: translate one dialog on its own."""
+        self.config.raise_if_cancelled()
+        return self._translate_file(dialog, item_progress), []
+
+    def _translate_file(
         self,
-        file_path: Path,
-        parsed_data: Dict[str, Any],
-    ) -> Optional[_PreparedDialog]:
-        """Parse the dialog tree and sanitize node texts.
+        dialog: PreparedDialog,
+        item_progress: Optional[ProgressSink],
+        accepted: Optional[Translations] = None,
+    ) -> Translations:
+        """Request the lines of one dialog that *accepted* does not cover yet.
 
-        Returns ``None`` when the dialog has no tree at all.
+        See :meth:`translate_dialog` for the arguments and the result.
         """
-        extractor = DialogExtractor()
-
-        tree = extractor.build_dialog_tree(parsed_data)
-        if not tree:
-            return None
-
-        node_map: Dict[str, DialogNode] = dict(iter_nodes(tree))
-
-        speakers_block = self._build_speakers_block(file_path.stem, node_map)
-
-        original_text_map: Dict[str, str] = {}
-        sanitized_by_key: Dict[str, str] = {}
-        handlers: Dict[str, TokenHandler] = {}
-
-        for key, node in node_map.items():
-            original_text = node.text
-            if original_text is None or not str(original_text).strip():
-                continue
-
-            original_text_map[key] = original_text
-            sanitized, handler = sanitize_text(
-                original_text,
-                preserve_tokens=self.config.preserve_tokens,
+        name = dialog.file_path.name
+        progress = _FileProgress(item_progress, dialog.item_budget, name)
+        translations = {
+            address: text for address, text in (accepted or {}).items() if address[0] == name
+        }
+        keys = [key for key in dialog.keys if dialog.address(key) not in translations]
+        progress.bump(len(dialog.texts) - len(keys))
+        if not keys:
+            logger.debug(
+                "All %d dialog lines for %s already accepted for this dialog",
+                len(dialog.texts),
+                name,
             )
-            handlers[key] = handler
-            sanitized_by_key[key] = sanitized
+        else:
+            run = _FileRun(
+                dialog,
+                progress,
+                translations,
+                speakers_block(
+                    speaker_lines(self.world_context, dialog.file_path.stem, dialog.node_map)
+                ),
+            )
+            try:
+                self._request_lines(run, keys)
+            except TranslationCancelled:
+                raise
+            except Exception as exc:
+                logger.error("Contextual translation failed for %s: %s", name, exc)
+            self._mark_failed(dialog, keys, translations)
+        progress.finish()
+        return translations
 
-        return _PreparedDialog(
-            tree=tree,
-            node_map=node_map,
-            original_text_map=original_text_map,
-            sanitized_by_key=sanitized_by_key,
-            handlers=handlers,
-            speakers_block=speakers_block,
-            all_keys=list(original_text_map.keys()),
+    def _request_lines(self, run: _FileRun, keys: List[str]) -> None:
+        """Send the chunks of *keys*, then retry what is still missing or broken."""
+        dialog = run.dialog
+        name = dialog.file_path.name
+        chunks = plan_chunks(dialog, keys, self.config.target_lang, self.glossary)
+        if len(chunks) == 1:
+            logger.info(
+                "Sending %d/%d dialog lines to AI for %s...", len(keys), len(dialog.texts), name
+            )
+        else:
+            logger.info(
+                "Sending %d/%d dialog lines to AI for %s in %d chunk(s)...",
+                len(keys),
+                len(dialog.texts),
+                name,
+                len(chunks),
+            )
+        pending: List[str] = []
+        for index, chunk in enumerate(chunks, 1):
+            self.config.raise_if_cancelled()
+            pending.extend(self._translate_chunk(run, chunk, index, len(chunks)))
+        # Sorted as strings (E10 before E2): the retry prompt lists them so.
+        pending = sorted(set(pending))
+        if not pending:
+            return
+        self.config.raise_if_cancelled()
+        pending = self._retry_pending(run, pending)
+        if pending:
+            self._retry_lines(run, pending)
+
+    def _translate_chunk(self, run: _FileRun, chunk: Chunk, index: int, total: int) -> List[str]:
+        """Request one chunk and accept its valid lines.
+
+        Returns:
+            Keys of the chunk that are missing from the answer or were
+            rejected; all of them when the answer never parsed.
+        """
+        dialog = run.dialog
+        name = dialog.file_path.name
+        if total > 1:
+            logger.info(
+                "%s: translating dialog chunk %d/%d (%d node(s), %d chars).",
+                name,
+                index,
+                total,
+                len(chunk.keys),
+                len(chunk.script),
+            )
+        answer = self._request_json(
+            _CHUNK_RECOVERY,
+            self._system_prompt([chunk.script, dialog.file_path.stem], run.speakers),
+            dialog_user_prompt(name, chunk.script),
+            lambda raw: repair_prompt(name, chunk.script, chunk.keys, raw),
+            trace={"file": name},
+            label=name,
         )
+        if answer is None:
+            logger.error(
+                "%s: dialog translation chunk %d/%d failed after retries (invalid JSON).",
+                name,
+                index,
+                total,
+            )
+            return list(chunk.keys)
+        accepted, rejected = self._accept(dialog, answer, chunk.keys, allow_cleanup=False)
+        run.take(accepted)
+        run.rejected.update(rejected)
+        return [key for key in chunk.keys if key not in answer or key in rejected]
 
-    def _format_prepared_script(self, prepared: _PreparedDialog) -> str:
-        """Format a prepared dialog without changing its node identities."""
-        return format_dialog_tree(prepared.tree, prepared.sanitized_by_key)
+    def _retry_pending(self, run: _FileRun, pending: List[str]) -> List[str]:
+        """Request the pending lines again in one token-preserving request.
 
-    def _pack_dialog_groups(
-        self,
-        small: List[_SmallDialog],
-    ) -> tuple[List[List[_SmallDialog]], List[_SmallDialog]]:
-        """Greedily pack small dialogs by char/file limits; singletons become loners."""
-        groups: List[List[_SmallDialog]] = []
-        loners: List[_SmallDialog] = []
-        current: List[_SmallDialog] = []
-        current_chars = 0
+        Args:
+            run: The file's state.
+            pending: Keys still missing or rejected, sorted.
 
-        def flush() -> None:
-            nonlocal current, current_chars
-            if len(current) > 1:
-                groups.append(current)
-            elif current:
-                loners.append(current[0])
-            current = []
-            current_chars = 0
+        Returns:
+            Keys still pending afterwards, sorted.
+        """
+        dialog = run.dialog
+        name = dialog.file_path.name
+        logger.warning(
+            "%s: retrying %d dialog nodes with missing or invalid preserved artifacts...",
+            name,
+            len(pending),
+        )
+        script = format_nodes(pending, dialog.node_map, dialog.sanitized)
+        prompt = token_retry_prompt(
+            name,
+            script,
+            pending,
+            {key: dialog.handlers[key].get_expected_artifact_sequence() for key in pending},
+            {key: run.rejected[key].report for key in pending if key in run.rejected},
+        )
+        answer = self._request_json(
+            _PENDING_RECOVERY,
+            self._system_prompt([script, dialog.file_path.stem], run.speakers),
+            prompt,
+            None,
+            trace={"file": name},
+            label=name,
+        )
+        if not answer:
+            return pending
+        accepted, rejected = self._accept(dialog, answer, pending, allow_cleanup=False)
+        run.take(accepted)
+        logger.info("%s: retry recovered %d additional dialog translations.", name, len(accepted))
+        for key in pending:
+            if key in answer and key not in rejected:
+                run.rejected.pop(key, None)
+        run.rejected.update(rejected)
+        return [key for key in pending if key not in answer or key in rejected]
 
-        for entry in small:
-            if current and (
-                current_chars + len(entry.script) > _DIALOG_GROUP_TARGET_CHARS
-                or len(current) >= _DIALOG_GROUP_MAX_FILES
-                or len(
-                    self._glossary_block_for_texts(
-                        [dialog.script for dialog in current] + [entry.script]
-                    )
-                    or ""
+    def _retry_lines(self, run: _FileRun, keys: List[str]) -> None:
+        """Retry lines one by one; accept a cleaned answer for lines that still fail."""
+        dialog = run.dialog
+        logger.warning(
+            "%s: %d dialog nodes still invalid after JSON retry; retrying individually.",
+            dialog.file_path.name,
+            len(keys),
+        )
+        # One block for all the lines retried, matched against all their texts.
+        glossary_block = (
+            terminology_block(
+                [dialog.sanitized[key] for key in keys], self.config.target_lang, self.glossary
+            )
+            or None
+        )
+        for key in keys:
+            self.config.raise_if_cancelled()
+            if self._retry_line(run, key, glossary_block):
+                continue
+            candidate = run.rejected.get(key)
+            cleaned, _ = self._accept(
+                dialog, {key: candidate.text if candidate else ""}, [key], allow_cleanup=True
+            )
+            run.take(cleaned)
+
+    def _retry_line(self, run: _FileRun, key: str, glossary_block: Optional[str]) -> bool:
+        """Request one line alone through ``translate_async``.
+
+        Returns:
+            Whether the answer was accepted. A rejected answer replaces the
+            line's candidate for cleanup.
+        """
+        dialog = run.dialog
+        name = dialog.file_path.name
+        previous = run.rejected.get(key)
+        context = line_retry_context(
+            key,
+            name,
+            speaker_label(dialog.node_map[key]),
+            dialog.handlers[key].get_expected_artifact_sequence(),
+            previous.report if previous else None,
+        )
+        try:
+            result = run_async(
+                logged_model_call(
+                    self._log_writer,
+                    self.provider.translate_async,
+                    trace_context={"occurrence": dialog.address(key)},
+                    text=dialog.sanitized[key],
+                    source_lang=self.config.source_lang,
+                    target_lang=self.config.target_lang,
+                    context=context,
+                    glossary_block=glossary_block,
+                    content_profile=None,
                 )
-                > GLOSSARY_MAX_CHARS
-            ):
-                flush()
-            current.append(entry)
-            current_chars += len(entry.script)
-        flush()
-        return groups, loners
+            )
+        except TranslationCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("%s: individual dialog retry failed for %s: %s", name, key, exc)
+            return False
+        if not result.success:
+            return False
+        accepted, rejected = self._accept(
+            dialog, {key: result.translated}, [key], allow_cleanup=False
+        )
+        if accepted:
+            run.take(accepted)
+            run.rejected.pop(key, None)
+            return True
+        run.rejected[key] = rejected[key]
+        return False
 
-    def _translate_dialog_group(
-        self,
-        group: List[_SmallDialog],
-        item_progress: Optional[Any] = None,
-    ) -> tuple[Translations, List[tuple[Path, Exception]]]:
-        """Translate one packed group and demux the answer per file.
+    def _translate_group(
+        self, group: List[PreparedDialog], item_progress: Optional[ProgressSink]
+    ) -> _JobResult:
+        """Pool job: translate small dialogs in one request, then split the answer.
 
-        A file whose sub-object is missing, incomplete, or token-invalid is
-        retried through the regular single-file path; its lines already
-        accepted here are passed explicitly, so only the gaps are re-requested.
+        A file whose part of the answer is missing, incomplete or has a
+        rejected line falls back to its own requests; the lines accepted from
+        the group are kept. After a rate or budget limit error the files are
+        not re-requested: they are reported as errors.
         """
         translations: Translations = {}
-        errors: List[tuple[Path, Exception]] = []
+        errors: List[Tuple[Path, Exception]] = []
         self.config.raise_if_cancelled()
         label = f"{group[0].file_path.name}+{len(group) - 1}"
+        answer: Optional[Dict[str, Any]]
         try:
-            parsed_group = self._request_group_translation(group, label)
+            answer = self._request_group(group, label)
         except TranslationCancelled:
             raise
         except RateLimitError as exc:
-            # Group request already exhausted provider retries. Fan-out into
-            # one call per file would multiply in-flight budget pressure.
+            # The request already used up the provider's retries; one request
+            # per file would multiply the pressure on the limit.
             logger.warning(
                 "Dialog group %s: rate/budget limit (%s); not falling back to single files.",
                 label,
                 exc,
             )
-            for entry in group:
-                errors.append((entry.file_path, exc))
-                self._mark_untranslated_api_keys(
-                    entry.prepared.all_keys,
-                    entry.prepared.original_text_map,
-                    {},
-                    entry.file_path,
-                )
-                if item_progress is not None and entry.item_budget > 0:
-                    item_progress.bump(by=entry.item_budget, filename=entry.file_path.name)
+            for dialog in group:
+                errors.append((dialog.file_path, exc))
+                self._mark_failed(dialog, dialog.keys, {})
+                _FileProgress(item_progress, dialog.item_budget, dialog.file_path.name).finish()
             return translations, errors
         except Exception as exc:
             logger.warning(
@@ -699,627 +692,224 @@ class ContextualTranslationManager:
                 label,
                 exc,
             )
-            parsed_group = None
+            answer = None
 
-        for entry in group:
+        for dialog in group:
             self.config.raise_if_cancelled()
-            if parsed_group is not None:
-                sub = self._resolve_group_file(parsed_group, entry.file_path)
-            else:
-                sub = None
+            name = dialog.file_path.name
+            part = _group_part(answer, dialog.file_path) if answer is not None else None
             applied: Translations = {}
-            if isinstance(sub, dict):
-                applied, invalid = self._apply_translations(
-                    sub,
-                    entry.prepared.original_text_map,
-                    entry.prepared.handlers,
-                    entry.file_path,
-                    sanitized_by_key=entry.prepared.sanitized_by_key,
-                    requested=entry.prepared.all_keys,
-                    allow_cleanup=False,
-                )
-                missing = [key for key in entry.prepared.all_keys if key not in sub]
-                pending = sorted(set(missing) | set(invalid))
-                if not pending:
+            if isinstance(part, dict):
+                applied, rejected = self._accept(dialog, part, dialog.keys, allow_cleanup=False)
+                if not rejected and all(key in part for key in dialog.keys):
                     translations.update(applied)
-                    if item_progress is not None and entry.item_budget > 0:
-                        item_progress.bump(by=entry.item_budget, filename=entry.file_path.name)
+                    _FileProgress(item_progress, dialog.item_budget, name).finish()
                     continue
             logger.warning(
-                "Dialog group %s: falling back to single-file translation for %s.",
-                label,
-                entry.file_path.name,
+                "Dialog group %s: falling back to single-file translation for %s.", label, name
             )
             try:
                 translations.update(applied)
-                single = self.translate_dialog(
-                    entry.file_path,
-                    entry.parsed_data,
-                    item_progress=item_progress,
-                    item_budget=entry.item_budget,
-                    accepted=applied,
-                )
-                translations.update(single)
+                translations.update(self._translate_file(dialog, item_progress, applied))
             except TranslationCancelled:
                 raise
             except Exception as exc:
-                errors.append((entry.file_path, exc))
+                errors.append((dialog.file_path, exc))
         return translations, errors
 
-    def _request_group_translation(self, group: List[_SmallDialog], label: str) -> Optional[dict]:
-        """Send one grouped request and return the parsed nested JSON, or ``None``."""
-        if not isinstance(self.provider, OpenRouterProvider):
-            return None
-        provider = self.provider
+    def _request_group(self, group: List[PreparedDialog], label: str) -> Optional[Dict[str, Any]]:
+        """Send one grouped request.
 
-        names = [entry.file_path.name for entry in group]
-        combined = "\n\n".join(
-            f"=== FILE: {entry.file_path.name} ===\n{entry.script}" for entry in group
-        )
-        speaker_lines: List[str] = []
-        for entry in group:
-            speaker_lines.extend(
-                self._speaker_lines(
-                    entry.file_path.stem,
-                    entry.prepared.node_map,
-                    file_label=entry.file_path.name,
-                )
+        Returns:
+            The parsed answer (file name -> line key -> text), or ``None``.
+        """
+        names = [dialog.file_path.name for dialog in group]
+        combined = group_script([(dialog.file_path.name, dialog.script) for dialog in group])
+        lines = [
+            line
+            for dialog in group
+            for line in speaker_lines(
+                self.world_context,
+                dialog.file_path.stem,
+                dialog.node_map,
+                file_label=dialog.file_path.name,
             )
-        system_prompt = self._build_system_prompt(
-            source_text=combined,
-            speakers_block=self._wrap_speaker_lines(speaker_lines),
+        ]
+        system = self._system_prompt([combined], speakers_block(lines))
+        logger.info(
+            "Sending dialog group %s (%d files, %d chars)...", label, len(group), len(combined)
         )
-        user_prompt = self._build_group_user_prompt(names, combined)
+        return self._request_json(
+            _GROUP_RECOVERY,
+            system,
+            group_user_prompt(names, combined),
+            lambda raw: group_repair_prompt(names, combined, raw),
+            trace={"files": names},
+            label=label,
+        )
 
-        from ..async_utils import run_async
+    def _request_json(
+        self,
+        recovery: _Recovery,
+        system: SystemContent,
+        user: str,
+        repair: Optional[Callable[[str], str]],
+        *,
+        trace: Dict[str, Any],
+        label: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Send a JSON request and recover from an unparseable answer.
 
-        async def call_api(sp: str, up: str, *, max_tokens: int = TRANSLATION_MAX_TOKENS) -> str:
+        Args:
+            recovery: Steps to take when the first answer does not parse.
+            system: System message content.
+            user: User prompt.
+            repair: Builds the repair prompt from the latest answer; required
+                when *recovery* has repair steps.
+            trace: Context of the requests in the translation log.
+            label: Name used in log messages.
+
+        Returns:
+            The first answer that parses, or ``None``.
+        """
+        raw = self._call_json(system, user, TRANSLATION_MAX_TOKENS, trace)
+        parsed = _parse_answer(raw, label)
+        if parsed is not None:
+            return parsed
+        repaired: Optional[str] = None
+        for step in recovery[_looks_truncated(raw)]:
+            logger.warning(step.warning, label)
+            prompt = user
+            if step.repair:
+                assert repair is not None
+                if repaired is None:
+                    repaired = repair(raw)
+                prompt = repaired
+            raw = self._call_json(system, prompt, step.max_tokens, trace)
+            parsed = _parse_answer(raw, label)
+            if parsed is not None:
+                break
+        return parsed
+
+    def _call_json(
+        self, system: SystemContent, user: str, max_tokens: int, trace: Dict[str, Any]
+    ) -> str:
+        """Send one JSON chat request (metrics phase ``dialog``) and return the reply."""
+
+        async def call() -> str:
             with llm_phase("dialog"):
                 return await logged_model_call(
                     self._log_writer,
-                    provider.complete_json_chat_async,
-                    trace_context={"files": names},
-                    system_prompt=sp,
-                    user_prompt=up,
+                    self.provider.complete_json_chat_async,
+                    trace_context=trace,
+                    system_prompt=system,
+                    user_prompt=user,
                     max_tokens=max_tokens,
                     temperature=TRANSLATION_TEMPERATURE,
                 )
 
-        logger.info(
-            "Sending dialog group %s (%d files, %d chars)...", label, len(group), len(combined)
-        )
-        raw = run_async(call_api(system_prompt, user_prompt))
-        parsed = self._parse_json_response(raw, label)
-        if parsed is None:
-            if self._dialog_response_likely_truncated(raw):
-                logger.warning(
-                    "Dialog group %s: JSON looks truncated; retrying with higher max_tokens...",
-                    label,
-                )
-                raw = run_async(
-                    call_api(system_prompt, user_prompt, max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS)
-                )
-            else:
-                logger.warning(
-                    "Dialog group %s: invalid JSON; retrying with repair prompt...", label
-                )
-                raw = run_async(
-                    call_api(system_prompt, self._build_group_repair_prompt(names, combined, raw))
-                )
-            parsed = self._parse_json_response(raw, label)
-        return parsed
+        return run_async(call())
 
-    def _build_group_user_prompt(self, names: List[str], combined_script: str) -> str:
-        """Build the user prompt for a multi-file dialog group request."""
-        names_csv = ", ".join(names)
-        return (
-            f"Translate the following {len(names)} unrelated dialog scripts ({names_csv}). "
-            f"Each script starts with a '=== FILE: <name> ===' header. The conversations "
-            f"are independent: do not let tone, wording, or context leak from one file "
-            f"into another.\n\n"
-            f"{combined_script}\n\n"
-            f"Return ONLY one JSON object. Each top-level key is a file name exactly as "
-            f"written in its header; each value is an object mapping that file's line IDs "
-            f"(e.g. E0, R1) to the translated string. "
-            f'Example: {{"a.dlg": {{"E0": "...", "R1": "..."}}, "b.dlg": {{"E0": "..."}}}}. '
-            f"No markdown fences, no extra keys, no text outside JSON."
-        )
+    def _system_prompt(self, corpus: List[str], speakers: str) -> SystemContent:
+        """Build the system message of a dialog request.
 
-    def _build_group_repair_prompt(
-        self, names: List[str], combined_script: str, bad_response: str
-    ) -> str:
-        """Ask the model to return valid nested JSON after a failed group parse."""
-        names_csv = ", ".join(names)
-        bad_snip = (bad_response or "").strip()[:1200]
-        return (
-            f"The previous answer was not valid JSON or was truncated.\n"
-            f"Return ONLY one JSON object with exactly these top-level keys: {names_csv}. "
-            f"Each value is an object mapping that file's line IDs (same IDs as in the "
-            f"script) to the translated string.\n"
-            f"No markdown, no comments, no text before or after the object.\n\n"
-            f"Dialog scripts:\n\n{combined_script}\n\n"
-            f"Invalid previous output (truncated for context):\n{bad_snip}"
-        )
+        Args:
+            corpus: Texts that select the world entities and glossary terms:
+                the script, plus the file stem for single-file requests.
+            speakers: ``DIALOG SPEAKERS`` block, or ``""``.
 
-    @staticmethod
-    def _resolve_group_file(parsed_group: dict, file_path: Path) -> Optional[Any]:
-        """Find the sub-object for *file_path*, tolerating stem/extension variants."""
-        targets = {file_path.name.casefold(), file_path.stem.casefold()}
-        for key, value in parsed_group.items():
-            if str(key).strip().casefold() in targets:
-                return value
-        return None
-
-    def _parse_json_response(self, raw: str, filename: str) -> Optional[dict]:
-        """Parse a JSON object from a raw AI response string."""
-        parsed = json_extract_first_object(raw)
-        if parsed is not None:
-            return parsed
-        snippet = (raw or "").strip()[:400]
-        logger.error(
-            "Failed to parse JSON for %s (no valid object). Raw prefix: %s...",
-            filename,
-            snippet,
-        )
-        return None
-
-    @staticmethod
-    def _dialog_response_likely_truncated(raw: str) -> bool:
-        """Heuristic: model hit max_tokens mid-string."""
-        cleaned = strip_json_markdown_fences(raw)
-        idx = cleaned.find("{")
-        if idx == -1:
-            return False
-        try:
-            json.JSONDecoder().raw_decode(cleaned, idx)
-        except json.JSONDecodeError as exc:
-            msg = str(exc).lower()
-            return "unterminated" in msg
-        return False
-
-    def _build_dialog_chunks(
-        self,
-        keys_for_api: List[str],
-        all_keys: List[str],
-        tree: List[DialogNode],
-        node_map: Dict[str, DialogNode],
-        original_text_map: Dict[str, str],
-        sanitized_by_key: Dict[str, str],
-    ) -> List[tuple[List[str], str]]:
-        """Return one full-dialog script or smaller node chunks for large dialogs."""
-        if set(keys_for_api) == set(all_keys):
-            full_script = format_dialog_tree(tree, sanitized_by_key)
-        else:
-            full_script = format_nodes(keys_for_api, node_map, sanitized_by_key)
-
-        if not full_script:
-            return []
-
-        if (
-            len(full_script) <= _DIALOG_CHUNK_TARGET_CHARS
-            and len(keys_for_api) <= _DIALOG_CHUNK_MAX_KEYS
-            and len(self._glossary_block_for_texts([full_script]) or "") <= GLOSSARY_MAX_CHARS
-        ):
-            return [(list(keys_for_api), full_script)]
-
-        chunks: List[tuple[List[str], str]] = []
-        current_keys: List[str] = []
-
-        for key in keys_for_api:
-            node_script = format_nodes(current_keys + [key], node_map, sanitized_by_key)
-            if not node_script:
-                continue
-
-            would_exceed_chars = current_keys and len(node_script) > _DIALOG_CHUNK_TARGET_CHARS
-            would_exceed_keys = current_keys and len(current_keys) >= _DIALOG_CHUNK_MAX_KEYS
-            would_exceed_terms = (
-                current_keys
-                and len(self._glossary_block_for_texts([node_script]) or "") > GLOSSARY_MAX_CHARS
-            )
-            if would_exceed_chars or would_exceed_keys or would_exceed_terms:
-                script = format_nodes(current_keys, node_map, sanitized_by_key)
-                if script:
-                    chunks.append((list(current_keys), script))
-                current_keys = []
-
-            current_keys.append(key)
-
-        if current_keys:
-            script = format_nodes(current_keys, node_map, sanitized_by_key)
-            if script:
-                chunks.append((list(current_keys), script))
-
-        return chunks
-
-    def _translate_dialog_chunk(
-        self,
-        file_path: Path,
-        filename_stem: str,
-        script: str,
-        keys_for_api: List[str],
-        original_text_map: Dict[str, str],
-        handlers: Dict[str, Any],
-        sanitized_by_key: Dict[str, str],
-        call_api: Any,
-        run_async: Any,
-        *,
-        chunk_index: int,
-        total_chunks: int,
-        speakers_block: str = "",
-    ) -> tuple[Translations, List[str], Dict[str, Dict[str, Any]]]:
-        """Translate one dialog script chunk and return accepted plus pending keys."""
-        system_prompt = self._build_system_prompt(
-            source_text=script,
-            filename_stem=filename_stem,
-            speakers_block=speakers_block,
-        )
-        user_prompt = self._build_user_prompt(file_path.name, script)
-        if total_chunks > 1:
-            logger.info(
-                "%s: translating dialog chunk %d/%d (%d node(s), %d chars).",
-                file_path.name,
-                chunk_index,
-                total_chunks,
-                len(keys_for_api),
-                len(script),
-            )
-
-        raw_response = run_async(call_api(system_prompt, user_prompt))
-        parsed_json = self._parse_json_response(raw_response, file_path.name)
-
-        if parsed_json is None:
-            truncation_like_invalid_json = self._dialog_response_likely_truncated(raw_response)
-            if truncation_like_invalid_json:
-                logger.warning(
-                    "%s: dialog JSON parse failed with truncation-like invalid JSON; "
-                    "retrying original prompt with higher max_tokens...",
-                    file_path.name,
-                )
-                raw_response = run_async(
-                    call_api(
-                        system_prompt,
-                        user_prompt,
-                        max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
-                    ),
-                )
-                parsed_json = self._parse_json_response(raw_response, file_path.name)
-
-                if parsed_json is None:
-                    logger.warning(
-                        "%s: high-token original prompt retry still returned invalid JSON; "
-                        "retrying repair prompt with higher max_tokens as final fallback...",
-                        file_path.name,
-                    )
-                    repair_prompt = self._build_repair_user_prompt(
-                        file_path.name,
-                        script,
-                        keys_for_api,
-                        raw_response,
-                    )
-                    raw_response = run_async(
-                        call_api(
-                            system_prompt,
-                            repair_prompt,
-                            max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
-                        ),
-                    )
-                    parsed_json = self._parse_json_response(raw_response, file_path.name)
-            else:
-                logger.warning(
-                    "%s: dialog JSON parse failed with non-truncation invalid JSON; "
-                    "retrying with repair prompt...",
-                    file_path.name,
-                )
-                repair_prompt = self._build_repair_user_prompt(
-                    file_path.name,
-                    script,
-                    keys_for_api,
-                    raw_response,
-                )
-                raw_response = run_async(call_api(system_prompt, repair_prompt))
-                parsed_json = self._parse_json_response(raw_response, file_path.name)
-
-                if parsed_json is None:
-                    logger.warning(
-                        "%s: repair prompt still returned invalid JSON; "
-                        "retrying repair prompt with higher max_tokens as final fallback...",
-                        file_path.name,
-                    )
-                    raw_response = run_async(
-                        call_api(
-                            system_prompt,
-                            repair_prompt,
-                            max_tokens=_DIALOG_TRUNCATION_MAX_TOKENS,
-                        ),
-                    )
-                    parsed_json = self._parse_json_response(raw_response, file_path.name)
-
-        if parsed_json is None:
-            logger.error(
-                "%s: dialog translation chunk %d/%d failed after retries (invalid JSON).",
-                file_path.name,
-                chunk_index,
-                total_chunks,
-            )
-            return {}, list(keys_for_api), {}
-
-        api_translations, invalid_nodes = self._apply_translations(
-            parsed_json,
-            original_text_map,
-            handlers,
-            file_path,
-            sanitized_by_key=sanitized_by_key,
-            requested=keys_for_api,
-            allow_cleanup=False,
-        )
-        missing_keys = [key for key in keys_for_api if key not in parsed_json]
-        pending_keys = sorted(set(missing_keys + list(invalid_nodes.keys())))
-        return api_translations, pending_keys, dict(invalid_nodes)
-
-    def _build_dialog_retry_context(
-        self,
-        key: str,
-        node_map: Dict[str, DialogNode],
-        handlers: Dict[str, TokenHandler],
-        mismatch_report: Optional[Any],
-        filename: str,
-        attempt: int,
-    ) -> str:
-        """Build a stricter line-level retry context for one dialog node."""
-        node = node_map.get(key)
-        parts: List[str] = [f"Dialog node {key} in {filename}."]
-        if node is not None:
-            speaker = node.speaker or ("NPC" if node.is_entry else "Player")
-            parts.append(f"Speaker: {speaker}.")
-        parts.append(PRESERVE_PLACEHOLDERS)
-        parts.append(PRESERVE_INLINE_MARKUP)
-        parts.extend(expected_artifacts_line(handlers[key].get_expected_artifact_sequence()))
-        parts.extend(previous_mismatch_lines(mismatch_report))
-        parts.append(f"Retry attempt {attempt} of {self._TOKEN_RETRY_BUDGET}.")
-        return "\n".join(parts)
-
-    def _build_token_retry_user_prompt(
-        self,
-        filename: str,
-        script: str,
-        keys_required: List[str],
-        handlers: Dict[str, TokenHandler],
-        mismatch_reports: Dict[str, Any],
-    ) -> str:
-        """Ask the model to regenerate only invalid/missing nodes with strict preservation."""
-        keys_csv = ", ".join(sorted(keys_required))
-        lines = [
-            f"The previous answer for {filename} changed, dropped, or omitted preserved NWN tags/tokens for keys: {keys_csv}.",
-            f"Return ONLY one JSON object: keys exactly {keys_csv} (same IDs as in the script), each value a string translation.",
-            "Preserve every placeholder and helper token surrogate EXACTLY as it appears in the script.",
-            "Do not rename, reorder, delete, duplicate, or replace any placeholder.",
-            "Translate only the normal prose and the text inside square brackets.",
-            "",
-            "Expected preserved artifacts after restoration:",
-        ]
-        for key in sorted(keys_required):
-            expected = handlers[key].get_expected_artifact_sequence()
-            if expected:
-                lines.append(f"- {key}: " + " | ".join(expected))
-            report = mismatch_reports.get(key)
-            if report is not None and not report.is_exact_match and report.actual_sequence:
-                lines.append("  previous restored sequence: " + " | ".join(report.actual_sequence))
-        lines.extend(["", "Dialog script:", "", script])
-        return "\n".join(lines)
-
-    def _build_repair_user_prompt(
-        self,
-        filename: str,
-        script: str,
-        keys_required: List[str],
-        bad_response: str,
-    ) -> str:
-        """Ask the model to return a single valid JSON object after a failed parse."""
-        keys_csv = ", ".join(sorted(keys_required))
-        bad_snip = (bad_response or "").strip()[:1200]
-        return (
-            f"The previous answer for {filename} was not valid JSON or was truncated.\n"
-            f"Return ONLY one JSON object: keys exactly {keys_csv} "
-            f"(same IDs as in the script), each value a string translation.\n"
-            f"No markdown, no comments, no text before or after the object.\n\n"
-            f"Dialog script:\n\n{script}\n\n"
-            f"Invalid previous output (truncated for context):\n{bad_snip}"
-        )
-
-    def _apply_translations(
-        self,
-        parsed_json: dict,
-        original_text_map: Dict[str, str],
-        handlers: Dict[str, Any],
-        file_path: Path,
-        sanitized_by_key: Optional[Dict[str, str]] = None,
-        *,
-        requested: Collection[str],
-        allow_cleanup: bool = False,
-    ) -> tuple[Translations, Dict[str, Dict[str, Any]]]:
-        """Restore, validate, and return accepted plus invalid dialog nodes.
-
-        Only *requested* keys are read: an answer may also carry the IDs of
-        context-only nodes or of lines accepted earlier, which must not be
-        overwritten.
+        Returns:
+            System message content.
         """
-        translations: Translations = {}
-        invalid: Dict[str, Dict[str, Any]] = {}
-        wanted = set(requested)
-        for key, translated_sanitized in parsed_json.items():
-            if key not in wanted:
-                continue
-            original_text = original_text_map[key]
-            if translated_sanitized is None:
-                translated_sanitized = ""
-            elif not isinstance(translated_sanitized, str):
-                translated_sanitized = str(translated_sanitized)
-
-            if str(original_text).strip() and not str(translated_sanitized).strip():
-                invalid[key] = {
-                    "translated_sanitized": translated_sanitized,
-                    "report": None,
-                }
-                logger.warning(
-                    "%s: empty translation rejected for dialog node %s",
-                    file_path.name,
-                    key,
-                )
-                continue
-
-            outcome = handlers[key].finalize_translation(
-                translated_sanitized,
-                allow_cleanup=allow_cleanup,
-            )
-            if not outcome.exact_valid and not outcome.used_cleanup:
-                invalid[key] = {
-                    "translated_sanitized": translated_sanitized,
-                    "report": outcome.mismatch_report,
-                }
-                logger.warning(
-                    "%s: token/tag mismatch for dialog node %s (%s). expected=%s actual=%s",
-                    file_path.name,
-                    key,
-                    outcome.mismatch_report.mismatch_type,
-                    outcome.mismatch_report.expected_sequence,
-                    outcome.mismatch_report.actual_sequence,
-                )
-                continue
-
-            final_translated = outcome.final_text
-            translations[self._node_address(file_path, key)] = final_translated
-
-            if outcome.used_cleanup:
-                logger.warning(
-                    "%s: accepted cleaned dialog translation for node %s after token/tag mismatch cleanup.",
-                    file_path.name,
-                    key,
-                )
-
-            # Tree keys are ``E{i}`` / ``R{i}`` with the dialog list index.
-            node_index = key[1:] if len(key) > 1 else key
-            item_id = dialog_item_id(file_path.stem, key.startswith("E"), node_index)
-            log_entry = {
-                "original": original_text,
-                "translated": final_translated,
-                "context": f"Dialog node {key} in {file_path.name}",
-                "model": self.provider.model,
-                "file": file_path.name,
-                "item_id": item_id,
-            }
-            try:
-                self._log_writer.write(log_entry)
-            except Exception as log_exc:
-                logger.debug("Failed to write to translation log: %s", log_exc)
-        return translations, invalid
-
-    def _speaker_lines(
-        self,
-        file_stem: str,
-        node_map: Dict[str, DialogNode],
-        file_label: str = "",
-    ) -> List[str]:
-        """Per-dialog speaker description lines (see :meth:`_build_speakers_block`).
-
-        With *file_label* set, each line is scoped to that file so lines from
-        several dialogs can share one grouped speakers block.
-        """
-        if self.world_context is None:
-            return []
-
-        scope = f"In {file_label}, lines" if file_label else "Lines"
-        lines: List[str] = []
-        owner_descs = sorted(
-            {speaker_description(npc) for npc in dialog_owners(self.world_context, file_stem)}
+        target_lang = self.config.target_lang
+        world = self.world_context.to_prompt_block(
+            glossary=self.glossary, target_lang=target_lang, source_texts=corpus
         )
-        if owner_descs:
-            lines.append(f"- {scope} marked [NPC]: spoken by " + "; or ".join(owner_descs))
-
-        tags = sorted(
-            {node.speaker for node in node_map.values() if node.is_entry and node.speaker}
-        )
-        for tag in tags:
-            descs = sorted(
-                {speaker_description(npc) for npc in tagged_speakers(self.world_context, tag)}
-            )
-            if descs:
-                lines.append(f"- {scope} marked [{tag}]: spoken by " + "; or ".join(descs))
-        return lines
-
-    @staticmethod
-    def _wrap_speaker_lines(lines: List[str]) -> str:
-        """Wrap speaker lines with the block header and the gender instruction."""
-        if not lines:
-            return ""
-        closing = (
-            "Use each speaker's gender for their grammatical forms (verb endings, "
-            "adjectives, self-references) in the lines they speak."
-        )
-        return "DIALOG SPEAKERS:\n" + "\n".join([*lines, closing])
-
-    def _build_speakers_block(
-        self,
-        file_stem: str,
-        node_map: Dict[str, DialogNode],
-    ) -> str:
-        """Describe known dialog speakers so the model uses correct gender forms.
-
-        The dialog's owner NPC almost never mentions their own name in their
-        lines, so the relevance-filtered WORLD CONTEXT block usually omits them
-        and the model has to guess the speaker's gender. This block resolves
-        speakers deterministically: creatures whose ``Conversation`` resref
-        matches the .dlg stem own the unmarked ``[NPC]`` lines, and per-entry
-        ``Speaker`` tags are looked up directly.
-        """
-        return self._wrap_speaker_lines(self._speaker_lines(file_stem, node_map))
-
-    def _build_system_prompt(
-        self,
-        source_text: str = "",
-        filename_stem: str = "",
-        speakers_block: str = "",
-    ) -> Any:
-        """Build the system ``content`` payload for a dialog translation call."""
-        from ..prompts import build_dialog_system_prompt_parts
-
-        corpus = [text for text in (source_text, filename_stem) if text]
-
-        if self.world_context is not None and corpus:
-            world_block = self.world_context.to_prompt_block(
-                glossary=self.glossary,
-                target_lang=self.config.target_lang,
-                source_texts=corpus,
-            )
-        elif self.world_context is not None:
-            world_block = self.world_context.to_prompt_block(
-                glossary=self.glossary,
-                target_lang=self.config.target_lang,
-            )
-        else:
-            world_block = ""
-
-        glossary_block = terminology_block(corpus, self.config.target_lang, self.glossary)
-
-        if speakers_block:
-            world_block = f"{speakers_block}\n\n{world_block}" if world_block else speakers_block
-
+        if speakers:
+            world = f"{speakers}\n\n{world}" if world else speakers
         stable, variable = build_dialog_system_prompt_parts(
-            self.config.target_lang,
+            target_lang,
             self.config.player_gender,
-            world_block,
-            glossary_block,
+            world,
+            terminology_block(corpus, target_lang, self.glossary),
         )
         return self.provider.make_system_message_content(stable, variable)
 
-    def _build_user_prompt(self, filename: str, script: str) -> str:
-        """Build the user prompt containing the dialog script."""
-        return (
-            f"Translate the following dialog script from {filename}:\n\n"
-            f"{script}\n\n"
-            f"Return ONLY a JSON object: map each line ID (e.g. E0, R1) to the "
-            f"translated string. No markdown fences, no extra keys, no text outside JSON."
-        )
+    def _accept(
+        self,
+        dialog: PreparedDialog,
+        answer: Dict[str, Any],
+        requested: Collection[str],
+        *,
+        allow_cleanup: bool,
+    ) -> Tuple[Translations, Dict[str, _Rejected]]:
+        """Restore and validate the answered lines; log each accepted one.
 
-    def _glossary_block_for_texts(self, texts: List[str]) -> Optional[str]:
-        """Return a glossary block narrowed to entries present in *texts*."""
-        return terminology_block(texts, self.config.target_lang, self.glossary) or None
+        Only *requested* keys are read: an answer may also carry the IDs of
+        context-only nodes or of lines accepted earlier.
+
+        Args:
+            dialog: The prepared dialog.
+            answer: Line key -> translated (sanitized) text.
+            requested: Keys the request asked for.
+            allow_cleanup: Accept a text with broken tokens or tags after
+                removing them.
+
+        Returns:
+            Accepted translations by occurrence, and the rejected answers by key.
+        """
+        name = dialog.file_path.name
+        wanted = set(requested)
+        accepted: Translations = {}
+        rejected: Dict[str, _Rejected] = {}
+        for key, value in answer.items():
+            if key not in wanted:
+                continue
+            text = "" if value is None else str(value)
+            if not text.strip():
+                rejected[key] = _Rejected(text, None)
+                logger.warning("%s: empty translation rejected for dialog node %s", name, key)
+                continue
+            outcome = dialog.handlers[key].finalize_translation(text, allow_cleanup=allow_cleanup)
+            if not outcome.exact_valid and not outcome.used_cleanup:
+                report = outcome.mismatch_report
+                rejected[key] = _Rejected(text, report)
+                logger.warning(
+                    "%s: token/tag mismatch for dialog node %s (%s). expected=%s actual=%s",
+                    name,
+                    key,
+                    report.mismatch_type,
+                    report.expected_sequence,
+                    report.actual_sequence,
+                )
+                continue
+            if outcome.used_cleanup:
+                logger.warning(
+                    "%s: accepted cleaned dialog translation for node %s after token/tag "
+                    "mismatch cleanup.",
+                    name,
+                    key,
+                )
+            address = dialog.address(key)
+            accepted[address] = outcome.final_text
+            write_trace(
+                self._log_writer,
+                {
+                    "original": dialog.texts[key],
+                    "translated": outcome.final_text,
+                    "context": f"Dialog node {key} in {name}",
+                    "model": self.provider.model,
+                    "file": name,
+                    "item_id": address[1],
+                },
+            )
+        return accepted, rejected
+
+    def _mark_failed(
+        self, dialog: PreparedDialog, keys: List[str], translations: Translations
+    ) -> None:
+        """Record the lines of *keys* that have no accepted translation."""
+        for key in keys:
+            address = dialog.address(key)
+            if address not in translations:
+                self.failed_items.add(address)

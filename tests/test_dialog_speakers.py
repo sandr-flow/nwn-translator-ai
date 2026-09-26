@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from nwn_translator.config import TranslationConfig
-from nwn_translator.context.dialog_speakers import dialog_line_speaker
+from nwn_translator.context.dialog_speakers import dialog_line_speaker, speaker_lines
 from nwn_translator.context.world_context import NPCInfo, WorldContext, WorldScanner
 from nwn_translator.extractors.base import DialogNode, ExtractedContent, TranslatableItem
 from nwn_translator.extractors.dialog_extractor import DialogExtractor
@@ -19,14 +19,12 @@ from nwn_translator.formats.gff import read_gff
 from tests.support.gff_writer import write_gff
 from nwn_translator.main import rebuild_module
 from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_translate
-from nwn_translator.translators import context_translator as context_module
-from nwn_translator.translators.context_translator import ContextualTranslationManager
 from nwn_translator.translators.translation_manager import TranslationManager
 from nwn_translator.web import database as db
 from nwn_translator.web.app import create_app
 from nwn_translator.web.task_manager import TaskManager, set_task_manager
 
-from tests.test_context_translation import _FakeOpenRouter
+from tests.test_context_translation import _FakeProvider
 
 PLAYER = {"kind": "player", "name": "", "tag": ""}
 OWNER_UNKNOWN = {"kind": "owner_unknown", "name": "", "tag": ""}
@@ -164,9 +162,6 @@ def test_prompt_speaker_lines_are_unchanged():
         NPCInfo("bare_tag", "", "", "", "Dwarf", "", "tavern"),
         NPCInfo("bob_tag", "Bob", "", "", "Halfling", "Male", "bob"),
     )
-    manager = ContextualTranslationManager(
-        TranslationConfig(api_key="k", input_file=Path("m.mod")), Mock(), world
-    )
     node_map = {
         "E0": DialogNode(node_id=0, text="Hi", is_entry=True),
         "E1": DialogNode(node_id=1, text="Yo", speaker="bob_tag", is_entry=True),
@@ -174,7 +169,7 @@ def test_prompt_speaker_lines_are_unchanged():
         "R0": DialogNode(node_id=0, text="Hey", is_entry=False),
     }
 
-    assert manager._speaker_lines("tavern", node_map, "tavern.dlg") == [
+    assert speaker_lines(world, "tavern", node_map, "tavern.dlg") == [
         "- In tavern.dlg, lines marked [NPC]: spoken by Anna Smith (Human, Female); "
         "or bare_tag (Dwarf)",
         "- In tavern.dlg, lines marked [bob_tag]: spoken by Bob (Halfling, Male)",
@@ -417,7 +412,7 @@ def test_dialog_rows_without_speaker_fall_back_to_context(client: TestClient) ->
 
 
 def test_translated_dialog_reaches_the_editor_with_speakers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, client: TestClient
+    tmp_path: Path, client: TestClient
 ) -> None:
     """World scan, extraction, contextual dialog translation, SQLite rows and the editor API."""
     extract_dir = tmp_path / "extract"
@@ -440,8 +435,7 @@ def test_translated_dialog_reaches_the_editor_with_speakers(
     write_gff(dlg_path, _severina_dlg(), file_type="DLG")
 
     task_id = _completed_task()
-    monkeypatch.setattr(context_module, "OpenRouterProvider", _FakeOpenRouter)
-    provider = _FakeOpenRouter(['{"E0": "Привет.", "E1": "Здорово.", "R0": "Привет!"}'])
+    provider = _FakeProvider(['{"E0": "Привет.", "E1": "Здорово.", "R0": "Привет!"}'])
     config = TranslationConfig(
         api_key="k",
         model="fake/model",

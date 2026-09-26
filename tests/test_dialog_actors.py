@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 
-from nwn_translator.config import TranslationConfig
 from nwn_translator.context.dialog_speakers import (
     dialog_line_speaker,
     dialog_owners,
+    speaker_lines,
     tagged_speakers,
 )
 from nwn_translator.context.world_context import NPCInfo, WorldContext, WorldScanner
 from nwn_translator.extractors.base import DialogNode
 from tests.support.gff_writer import write_gff
-from nwn_translator.translators.context_translator import ContextualTranslationManager
 
 OWNER_UNKNOWN = {"kind": "owner_unknown", "name": "", "tag": ""}
 
@@ -242,10 +240,7 @@ def test_blueprint_and_renamed_placement_are_both_owners() -> None:
 
 
 def _speaker_lines(world: WorldContext, stem: str, node_map: dict) -> list[str]:
-    manager = ContextualTranslationManager(
-        TranslationConfig(api_key="k", input_file=Path("m.mod")), Mock(), world
-    )
-    return manager._speaker_lines(stem, node_map, f"{stem}.dlg")
+    return speaker_lines(world, stem, node_map, f"{stem}.dlg")
 
 
 def test_prompt_names_placed_owners_and_tagged_speakers(world: WorldContext) -> None:

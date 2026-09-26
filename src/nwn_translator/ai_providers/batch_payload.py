@@ -128,7 +128,8 @@ def build_batch_payload(items: List[TranslationItem]) -> Dict[str, Any]:
             cell["group"] = group_id
             if ref >= 0:
                 cell["source_window"] = ref
-            # A context shared by several fields of the group is sent once, by reference.
+            # Every field context moves into the group's ``field_contexts``
+            # (identical ones stored once) and the cell refers to it by index.
             context = cell.pop("context", None)
             if context:
                 shared.setdefault("field_contexts", [])

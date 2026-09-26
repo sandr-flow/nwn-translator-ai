@@ -526,6 +526,27 @@ class TestTranslateAsyncJsonRetry:
         assert calls["n"] == 2
 
 
+class TestBatchErrorMapping:
+    def test_api_error_is_prefixed_once(self, monkeypatch):
+        from openai.resources.chat.completions import AsyncCompletions
+
+        req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        denied = AuthenticationError("denied", response=httpx.Response(401, request=req), body=None)
+
+        async def create(self, **kwargs):
+            raise denied
+
+        monkeypatch.setattr(AsyncCompletions, "create", create)
+        provider = OpenRouterProvider(api_key=FAKE_KEY)
+        with pytest.raises(OpenRouterError) as exc_info:
+            run_async(
+                provider.translate_batch_async([TranslationItem("A")], "english", "russian"),
+                timeout=5.0,
+            )
+        assert str(exc_info.value) == "OpenRouter translation failed: denied"
+        assert exc_info.value.__cause__ is denied
+
+
 class TestBatchRawNewlines:
     def test_batch_parses_raw_newlines_inside_values(self):
         with patch("src.nwn_translator.ai_providers.openrouter_provider.OpenAI"):

@@ -918,6 +918,8 @@ class OpenRouterProvider(BaseAIProvider):
             ]
         except _RETRYABLE_EXCEPTIONS:
             raise
+        except OpenRouterError:
+            raise
         except Exception as e:
             self._map_openrouter_exception(e)
 

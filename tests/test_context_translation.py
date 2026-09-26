@@ -271,6 +271,45 @@ def test_large_dialog_is_translated_in_chunks(monkeypatch):
     assert "[R3]" in provider.calls[2]["user_prompt"]
 
 
+def test_answer_keys_outside_the_request_are_ignored(monkeypatch):
+    """A chunk answer may echo context-only IDs; they are not accepted or logged."""
+    tree = [
+        DialogNode(
+            node_id=1,
+            text="Hello there",
+            is_entry=True,
+            replies=[DialogNode(node_id=2, text="Who are you?", is_entry=False)],
+        )
+    ]
+    _patch_dialog_environment(monkeypatch, tree)
+    monkeypatch.setattr(context_module, "_DIALOG_CHUNK_MAX_KEYS", 1)
+    rows = []
+
+    class _Writer:
+        def write(self, entry):
+            rows.append(entry)
+
+    monkeypatch.setattr(
+        context_module, "translation_log_writer_for_config", lambda *_a, **_k: _Writer()
+    )
+    provider = _FakeOpenRouter(
+        [
+            '{"E1":"Привет", "R2":"FROM-CONTEXT"}',
+            '{"R2":"Кто ты?", "E1":"OVERWRITE"}',
+        ]
+    )
+    manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+
+    result = manager.translate_dialog(Path("test.dlg"), parsed_data={})
+
+    assert result == _expected_dialog(
+        [(Path("test.dlg"), {"tree": tree}, 0)],
+        {"Hello there": "Привет", "Who are you?": "Кто ты?"},
+    )
+    assert len(provider.calls) == 2
+    assert [row["translated"] for row in rows if not row.get("event")] == ["Привет", "Кто ты?"]
+
+
 def test_chunked_dialog_retries_missing_keys_after_merge(monkeypatch):
     tree = [
         DialogNode(

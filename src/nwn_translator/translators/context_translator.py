@@ -8,7 +8,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Collection, Dict, List, Optional, Set
 
 from ..extractors.base import Occurrence, Translations, occurrence_key
 from ..ai_providers import TranslationProvider
@@ -336,6 +336,7 @@ class ContextualTranslationManager:
                         handlers,
                         file_path,
                         sanitized_by_key=sanitized_by_key,
+                        requested=pending_keys,
                         allow_cleanup=False,
                     )
                     translations.update(retry_translations)
@@ -409,6 +410,7 @@ class ContextualTranslationManager:
                                 handlers,
                                 file_path,
                                 sanitized_by_key=sanitized_by_key,
+                                requested=[key],
                                 allow_cleanup=False,
                             )
                             if single_translations:
@@ -434,6 +436,7 @@ class ContextualTranslationManager:
                             handlers,
                             file_path,
                             sanitized_by_key=sanitized_by_key,
+                            requested=[key],
                             allow_cleanup=True,
                         )
                         if cleaned_translations:
@@ -721,6 +724,7 @@ class ContextualTranslationManager:
                     entry.prepared.handlers,
                     entry.file_path,
                     sanitized_by_key=entry.prepared.sanitized_by_key,
+                    requested=entry.prepared.all_keys,
                     allow_cleanup=False,
                 )
                 missing = [key for key in entry.prepared.all_keys if key not in sub]
@@ -1077,6 +1081,7 @@ class ContextualTranslationManager:
             handlers,
             file_path,
             sanitized_by_key=sanitized_by_key,
+            requested=keys_for_api,
             allow_cleanup=False,
         )
         missing_keys = [key for key in keys_for_api if key not in parsed_json]
@@ -1161,13 +1166,20 @@ class ContextualTranslationManager:
         file_path: Path,
         sanitized_by_key: Optional[Dict[str, str]] = None,
         *,
+        requested: Collection[str],
         allow_cleanup: bool = False,
     ) -> tuple[Translations, Dict[str, Dict[str, Any]]]:
-        """Restore, validate, and return accepted plus invalid dialog nodes."""
+        """Restore, validate, and return accepted plus invalid dialog nodes.
+
+        Only *requested* keys are read: an answer may also carry the IDs of
+        context-only nodes or of lines accepted earlier, which must not be
+        overwritten.
+        """
         translations: Translations = {}
         invalid: Dict[str, Dict[str, Any]] = {}
+        wanted = set(requested)
         for key, translated_sanitized in parsed_json.items():
-            if key not in original_text_map:
+            if key not in wanted:
                 continue
             original_text = original_text_map[key]
             if translated_sanitized is None:

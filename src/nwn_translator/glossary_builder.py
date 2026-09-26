@@ -67,7 +67,7 @@ class GlossaryBuilder:
         config: "TranslationConfig",
         progress_callback: Optional[ProgressCallback] = None,
     ) -> Glossary:
-        """Translate the glossary names of *world_context*.
+        """Translates the glossary names of *world_context*.
 
         Names are sorted case-insensitively and packed into batches of up to 80
         that keep each alias family together. Batches run concurrently (up to
@@ -218,7 +218,7 @@ class GlossaryBuilder:
 def _pack_alias_families(
     names: Sequence[str], aliases: Dict[str, str], size: int
 ) -> List[List[str]]:
-    """Pack *names* into batches of up to *size*, keeping each alias family in one batch.
+    """Packs *names* into batches of up to *size*, keeping each alias family in one batch.
 
     Families keep the order of their first name; a family larger than *size*
     gets a batch of its own.
@@ -253,7 +253,7 @@ class _NameHints:
                 self._npcs.setdefault(key, []).append(npc)
 
     def line(self, name: str, category: str) -> str:
-        """Render the request line of *name* with its candidate and NPC hints.
+        """Renders the request line of *name* with its candidate and NPC hints.
 
         Args:
             name: Requested name.
@@ -268,7 +268,7 @@ class _NameHints:
 
 
 def glossary_key_variants(key: str) -> List[str]:
-    """Return the normalized forms under which a glossary key may be matched.
+    """Returns the normalized forms under which a glossary key may be matched.
 
     The key is NFKC-normalized with zero-width characters removed and
     whitespace collapsed; further variants drop quotation marks wrapping the
@@ -305,7 +305,7 @@ def glossary_key_variants(key: str) -> List[str]:
 
 
 def parse_glossary_json(raw: str, expected_keys: Set[str]) -> Dict[str, str]:
-    """Parse a glossary reply; keep only the requested names.
+    """Parses a glossary reply; keep only the requested names.
 
     Tolerates a single wrapper object (``{"glossary": {…}}``), category suffixes
     and quotation marks in the keys, stray whitespace and case differences

@@ -9,7 +9,7 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def _enable_local_mode_if_loopback(host: str) -> bool:
-    """Mark this process as a local single-user run when bound to loopback.
+    """Marks this process as a local single-user run when bound to loopback.
 
     Only in local mode does ``/api/config`` hand the server's ``.env`` API key to
     the UI for autofill convenience. Any non-loopback bind (``0.0.0.0``, docker,
@@ -23,7 +23,7 @@ def _enable_local_mode_if_loopback(host: str) -> bool:
 
 
 def main() -> None:
-    """Load ``.env`` and serve the app with uvicorn.
+    """Loads ``.env`` and serve the app with uvicorn.
 
     ``NWN_WEB_HOST`` (default ``127.0.0.1``), ``NWN_WEB_PORT`` (``8000``) and
     ``NWN_WEB_RELOAD`` configure the server.

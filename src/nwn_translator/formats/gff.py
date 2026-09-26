@@ -100,7 +100,7 @@ class GFFHeader(NamedTuple):
 
     @classmethod
     def read(cls, data: Union[bytes, bytearray]) -> "GFFHeader":
-        """Unpack the header at the start of *data* (at least 56 bytes)."""
+        """Unpacks the header at the start of *data* (at least 56 bytes)."""
         return cls._make(HEADER.unpack_from(data))
 
 
@@ -159,7 +159,7 @@ class GFFFile:
 
 
 def parse_gff(file_path: Path, source_encoding: Optional[str] = None) -> GFFFile:
-    """Parse a GFF file.
+    """Parses a GFF file.
 
     Records that reference missing labels, fields or indices are tolerated;
     a header whose blocks lie outside the file is rejected before any
@@ -249,7 +249,7 @@ def parse_gff(file_path: Path, source_encoding: Optional[str] = None) -> GFFFile
 def _field_value(
     data: bytes, header: GFFHeader, gff_type: GFFType, raw: int, encoding: Optional[str]
 ) -> Any:
-    """Decode one field; data that lies outside the file reads as empty."""
+    """Decodes one field; data that lies outside the file reads as empty."""
     if gff_type in _INLINE_TYPES:
         return _inline_value(gff_type, raw)
     if gff_type in _WIDE_FORMATS:
@@ -285,7 +285,7 @@ def _field_value(
 
 
 def _inline_value(gff_type: GFFType, raw: int) -> Any:
-    """Decode a value stored in the field record's DataOrDataOffset DWORD."""
+    """Decodes a value stored in the field record's DataOrDataOffset DWORD."""
     if gff_type == GFFType.BYTE:
         return raw & 0xFF
     if gff_type == GFFType.CHAR:
@@ -302,7 +302,7 @@ def _inline_value(gff_type: GFFType, raw: int) -> Any:
 
 
 def _locstring_value(data: bytes, offset: int, encoding: Optional[str]) -> Dict[str, Any]:
-    """Decode a CExoLocString to its StrRef and first non-empty substring."""
+    """Decodes a CExoLocString to its StrRef and first non-empty substring."""
     if offset + 12 > len(data):
         return {"StrRef": -1, "Value": ""}
     _total_size, str_ref, count = LOCSTRING_HEAD.unpack_from(data, offset)
@@ -372,7 +372,7 @@ def _expand_struct(
 
 
 def gff_to_dict(gff: GFFFile) -> Dict[str, Any]:
-    """Convert a parsed file into one nested dict rooted at the first struct.
+    """Converts a parsed file into one nested dict rooted at the first struct.
 
     Args:
         gff: The parsed file.
@@ -392,7 +392,7 @@ def read_gff(
     cache: Optional[Dict[Path, Dict[str, Any]]] = None,
     source_encoding: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Parse a GFF file into a dict (see :func:`gff_to_dict`).
+    """Parses a GFF file into a dict (see :func:`gff_to_dict`).
 
     Args:
         file_path: The GFF file.
@@ -435,7 +435,7 @@ class GFFPatcher:
     """
 
     def __init__(self, file_path: Path, text_encoding: str = "cp1251"):
-        """Bind the patcher to a file and a code page.
+        """Binds the patcher to a file and a code page.
 
         Args:
             file_path: The GFF file to modify.
@@ -452,7 +452,7 @@ class GFFPatcher:
             raise GFFPatchError(f"File not found: {self.file_path}")
 
     def patch_multiple(self, patches: List[Tuple[int, str]]) -> None:
-        """Replace the text of several CExoLocString fields in one write.
+        """Replaces the text of several CExoLocString fields in one write.
 
         Payloads land in patch order, so a repeated record offset ends up
         pointing at its last payload. Each payload holds one substring with
@@ -514,7 +514,7 @@ class GFFPatcher:
 
 
 def _substring_count(data: Union[bytes, bytearray], record_offset: int) -> int:
-    """Return the SubStringCount of the CExoLocString whose record is at *record_offset*.
+    """Returns the SubStringCount of the CExoLocString whose record is at *record_offset*.
 
     Returns 0 when the record or its payload lies outside the file.
     """
@@ -528,7 +528,7 @@ def _substring_count(data: Union[bytes, bytearray], record_offset: int) -> int:
 
 
 def _locstring_payload(encoded: bytes) -> bytes:
-    """Build a CExoLocString payload: StrRef -1 and at most one LanguageID-0 substring."""
+    """Builds a CExoLocString payload: StrRef -1 and at most one LanguageID-0 substring."""
     if not encoded:
         return LOCSTRING_HEAD.pack(8, -1, 0)
     return (

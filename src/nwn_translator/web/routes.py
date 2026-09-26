@@ -84,7 +84,7 @@ _UNSUPPORTED_LANG_DETAIL = (
 
 
 async def _stream_upload_to_file(upload: UploadFile, dest: Path) -> None:
-    """Copy the upload to *dest* in chunks.
+    """Copies the upload to *dest* in chunks.
 
     The upload middleware of the app has already limited its size.
 
@@ -98,7 +98,7 @@ async def _stream_upload_to_file(upload: UploadFile, dest: Path) -> None:
 
 
 def _client_ip(request: Request) -> str:
-    """Extract the client IP address from the request.
+    """Extracts the client IP address from the request.
 
     Trusts ``X-Forwarded-For`` only when the direct peer is listed in
     ``NWN_WEB_TRUSTED_PROXIES`` (comma-separated IPs); otherwise uses the direct
@@ -124,7 +124,7 @@ def _client_ip(request: Request) -> str:
 
 
 def _client_token(request: Request) -> str:
-    """Return the anonymous client token from the ``X-Client-Token`` header.
+    """Returns the anonymous client token from the ``X-Client-Token`` header.
 
     Falls back to the ``client_token`` query parameter because plain browser
     navigations (download links) cannot send custom headers.
@@ -147,7 +147,7 @@ def _job_from_form(
     player_gender: str,
     reasoning_effort: Optional[str],
 ) -> JobParams:
-    """Validate and normalize the job fields of a translate request.
+    """Validates and normalize the job fields of a translate request.
 
     ``max_concurrent_requests`` is clamped to ``[1, max_concurrent_from_environment()]``
     (``NWN_TRANSLATE_MAX_CONCURRENT``, 12 when unset) and takes the upper bound
@@ -203,7 +203,7 @@ def require_task_owner(
     request: Request,
     tm: TaskManager = Depends(get_task_manager),
 ) -> TranslationTask:
-    """Resolve the path's task and enforce that the caller owns it.
+    """Resolves the path's task and enforce that the caller owns it.
 
     When the task has an owner (non-empty ``client_token``), the request's token
     must match it. Tasks without an owner stay accessible.
@@ -256,7 +256,7 @@ async def start_translate(
     player_gender: str = Form("male"),
     reasoning_effort: Optional[str] = Form(None),
 ) -> TranslateResponse:
-    """Accept a .mod/.erf/.hak upload and start translating it in the background.
+    """Accepts a .mod/.erf/.hak upload and start translating it in the background.
 
     An oversized upload never reaches this handler: the app's upload middleware
     answers it with 413.
@@ -312,7 +312,7 @@ async def start_translate(
 async def task_status(
     task: TranslationTask = Depends(require_task_owner),
 ) -> TaskStatusResponse:
-    """Return a snapshot of the task state."""
+    """Returns a snapshot of the task state."""
     return TaskStatusResponse(
         task_id=task.task_id,
         status=task.status,
@@ -330,7 +330,7 @@ async def task_status(
 async def download_result(
     task: TranslationTask = Depends(require_task_owner),
 ) -> FileResponse:
-    """Download the translated module of a completed task.
+    """Downloads the translated module of a completed task.
 
     Raises:
         HTTPException: 400 when the task is not completed or its result file is gone.
@@ -348,7 +348,7 @@ async def download_result(
 async def download_log(
     task: TranslationTask = Depends(require_task_owner),
 ) -> StreamingResponse:
-    """Download the task's translation rows as JSONL.
+    """Downloads the task's translation rows as JSONL.
 
     Raises:
         HTTPException: 404 when the task has no translation rows.
@@ -372,7 +372,7 @@ async def download_log(
 async def get_translations(
     task: TranslationTask = Depends(require_task_owner),
 ) -> TranslationsResponse:
-    """Return the task's translations as editor rows grouped by source file."""
+    """Returns the task's translations as editor rows grouped by source file."""
     return TranslationsResponse(files=editor.group_rows(get_translations_by_task(task.task_id)))
 
 
@@ -382,7 +382,7 @@ async def rebuild_task(
     task: TranslationTask = Depends(require_task_owner),
     tm: TaskManager = Depends(get_task_manager),
 ) -> RebuildResponse:
-    """Rebuild the module with the editor's edits (no provider calls).
+    """Rebuilds the module with the editor's edits (no provider calls).
 
     Raises:
         HTTPException: 400 when the task is not completed or its files are gone,
@@ -407,7 +407,7 @@ async def rebuild_task(
 
 @router.get("/history", response_model=TaskHistoryResponse)
 async def task_history(request: Request) -> TaskHistoryResponse:
-    """Return the translation history of the client identified by its token."""
+    """Returns the translation history of the client identified by its token."""
     token = _client_token(request)
     if not token:
         return TaskHistoryResponse(items=[])
@@ -434,7 +434,7 @@ async def cancel_task(
     task: TranslationTask = Depends(require_task_owner),
     tm: TaskManager = Depends(get_task_manager),
 ) -> dict:
-    """Stop a running task at its next checkpoint and free the client's slot.
+    """Stops a running task at its next checkpoint and free the client's slot.
 
     Progress is lost: in-flight provider calls finish, but their results are
     discarded.
@@ -450,7 +450,7 @@ async def delete_task(
     task: TranslationTask = Depends(require_task_owner),
     tm: TaskManager = Depends(get_task_manager),
 ) -> dict:
-    """Delete a task with its files and translations.
+    """Deletes a task with its files and translations.
 
     A running job is cancelled and the client's slot freed at once; see
     :meth:`~nwn_translator.web.task_manager.TaskManager.delete`.
@@ -461,7 +461,7 @@ async def delete_task(
 
 @router.post("/test-connection", response_model=TestConnectionResponse)
 async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse:
-    """Verify an API key and model with a tiny translation."""
+    """Verifies an API key and model with a tiny translation."""
     text = "Hello, welcome to my module!"
     provider_name = detect_provider_from_key(body.api_key)
     try:
@@ -497,14 +497,14 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
 
 @router.post("/detect-provider", response_model=DetectProviderResponse)
 async def detect_provider(body: DetectProviderRequest) -> DetectProviderResponse:
-    """Infer the provider from an API key prefix (no network calls)."""
+    """Infers the provider from an API key prefix (no network calls)."""
     name = detect_provider_from_key(body.api_key)
     return DetectProviderResponse(provider=name, label=provider_label(name))
 
 
 @router.get("/models", response_model=ModelsResponse)
 async def list_models() -> ModelsResponse:
-    """Return the curated model pool with per-model OpenRouter reasoning options."""
+    """Returns the curated model pool with per-model OpenRouter reasoning options."""
     catalog = await asyncio.to_thread(refresh_catalog)
     items = [
         ModelListItem(
@@ -520,7 +520,7 @@ async def list_models() -> ModelsResponse:
 
 @router.get("/models/lookup", response_model=ModelLookupResponse)
 async def lookup_model(slug: str = Query(..., min_length=1, max_length=200)) -> ModelLookupResponse:
-    """Look up reasoning options for a custom OpenRouter model slug.
+    """Looks up reasoning options for a custom OpenRouter model slug.
 
     Raises:
         HTTPException: 400 for an invalid model slug.
@@ -538,7 +538,7 @@ async def lookup_model(slug: str = Query(..., min_length=1, max_length=200)) -> 
 
 @router.get("/config", response_model=ConfigResponse)
 async def get_config() -> ConfigResponse:
-    """Return server-side UI defaults: the default model and, locally, the ``.env`` key.
+    """Returns server-side UI defaults: the default model and, locally, the ``.env`` key.
 
     The key is exposed solely in local mode (the process bound to loopback by
     ``python -m nwn_translator.web``). A deployed instance never hands it out:

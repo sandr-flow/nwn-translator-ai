@@ -32,7 +32,7 @@ _LINE_RETRY_ATTEMPT = "Retry attempt 2 of 2."
 
 
 def _keys_exactly(keys: Sequence[str]) -> str:
-    """Return the sentence asking for exactly *keys* as string values.
+    """Returns the sentence asking for exactly *keys* as string values.
 
     Args:
         keys: Keys the answer must have; they are listed sorted.
@@ -48,7 +48,7 @@ def _keys_exactly(keys: Sequence[str]) -> str:
 
 
 def _bad_answer(bad_response: str) -> str:
-    """Return the quoted start of an unparseable answer.
+    """Returns the quoted start of an unparseable answer.
 
     Args:
         bad_response: The answer.
@@ -62,7 +62,7 @@ def _bad_answer(bad_response: str) -> str:
 
 
 def speakers_block(lines: Sequence[str]) -> str:
-    """Wrap speaker lines in the ``DIALOG SPEAKERS`` block of the system prompt.
+    """Wraps speaker lines in the ``DIALOG SPEAKERS`` block of the system prompt.
 
     Args:
         lines: Lines from :func:`~nwn_translator.context.dialog_speakers.speaker_lines`.
@@ -80,7 +80,7 @@ def speakers_block(lines: Sequence[str]) -> str:
 
 
 def dialog_user_prompt(filename: str, script: str) -> str:
-    """Ask for the translation of one dialog script.
+    """Asks for the translation of one dialog script.
 
     Args:
         filename: Dialog file name.
@@ -98,7 +98,7 @@ def dialog_user_prompt(filename: str, script: str) -> str:
 
 
 def repair_prompt(filename: str, script: str, keys: Sequence[str], bad_response: str) -> str:
-    """Ask again for valid JSON after an unparseable dialog answer.
+    """Asks again for valid JSON after an unparseable dialog answer.
 
     Args:
         filename: Dialog file name.
@@ -125,7 +125,7 @@ def token_retry_prompt(
     expected: Mapping[str, Sequence[str]],
     reports: Mapping[str, Optional["TokenMismatchReport"]],
 ) -> str:
-    """Ask again for lines that were missing or whose tokens or tags broke.
+    """Asks again for lines that were missing or whose tokens or tags broke.
 
     Args:
         filename: Dialog file name.
@@ -166,7 +166,7 @@ def line_retry_context(
     expected: Sequence[str],
     report: Optional["TokenMismatchReport"],
 ) -> str:
-    """Return the context of a single-line retry of one dialog node.
+    """Returns the context of a single-line retry of one dialog node.
 
     Args:
         key: Script key of the node.
@@ -192,7 +192,7 @@ def line_retry_context(
 
 
 def group_script(scripts: Sequence[Tuple[str, str]]) -> str:
-    """Join dialog scripts under ``=== FILE: <name> ===`` headers.
+    """Joins dialog scripts under ``=== FILE: <name> ===`` headers.
 
     Args:
         scripts: ``(file name, script)`` pairs in request order.
@@ -204,7 +204,7 @@ def group_script(scripts: Sequence[Tuple[str, str]]) -> str:
 
 
 def group_user_prompt(names: List[str], combined_script: str) -> str:
-    """Ask for the translation of several small dialogs in one request.
+    """Asks for the translation of several small dialogs in one request.
 
     Args:
         names: File names in request order.
@@ -229,7 +229,7 @@ def group_user_prompt(names: List[str], combined_script: str) -> str:
 
 
 def group_repair_prompt(names: List[str], combined_script: str, bad_response: str) -> str:
-    """Ask again for valid nested JSON after an unparseable group answer.
+    """Asks again for valid nested JSON after an unparseable group answer.
 
     Args:
         names: File names in request order.

@@ -16,7 +16,7 @@ Translations = Dict[Occurrence, str]
 
 
 def occurrence_key(resource: Union[str, Path], item_id: str) -> Occurrence:
-    """Address an archive resource occurrence, independently of its text or Tag.
+    """Addresses an archive resource occurrence, independently of its text or Tag.
 
     Args:
         resource: Resource path or file name.
@@ -52,11 +52,11 @@ class ExtractedContent:
                 item.location = str(self.source_file)
 
     def __len__(self) -> int:
-        """Return the number of extracted items."""
+        """Returns the number of extracted items."""
         return len(self.items)
 
     def __iter__(self) -> Iterator["TranslatableItem"]:
-        """Iterate over the extracted items."""
+        """Iterates over the extracted items."""
         return iter(self.items)
 
 
@@ -84,7 +84,7 @@ class TranslatableItem:
             self.metadata = {}
 
     def has_text(self) -> bool:
-        """Return whether the item holds non-blank text."""
+        """Returns whether the item holds non-blank text."""
         return bool(self.text and isinstance(self.text, str) and self.text.strip())
 
     @property
@@ -119,7 +119,7 @@ class DialogNode:
 
 
 def extract_local_string(text_data: Any) -> Optional[str]:
-    """Return the embedded text of a CExoLocString.
+    """Returns the embedded text of a CExoLocString.
 
     The embedded ``Value`` wins even when a StrRef is also set, as in the NWN
     toolset. StrRef-only strings are left to the player's ``dialog.tlk``.
@@ -138,7 +138,7 @@ def extract_local_string(text_data: Any) -> Optional[str]:
 
 
 def record_offset(struct: Dict[str, Any], field_name: str) -> int:
-    """Return the file offset of *field_name*'s field record in *struct*.
+    """Returns the file offset of *field_name*'s field record in *struct*.
 
     Args:
         struct: Parsed GFF struct carrying ``_record_offsets``.
@@ -152,7 +152,7 @@ def record_offset(struct: Dict[str, Any], field_name: str) -> int:
 
 
 def list_field(struct: Any, key: str) -> List[Any]:
-    """Return the list stored under *key*, or an empty list.
+    """Returns the list stored under *key*, or an empty list.
 
     Args:
         struct: Parsed GFF struct (anything else yields ``[]``).
@@ -171,7 +171,7 @@ class BaseExtractor(ABC):
 
     @abstractmethod
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract translatable content from a resource.
+        """Extracts translatable content from a resource.
 
         Args:
             file_path: Path of the resource.

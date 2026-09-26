@@ -207,7 +207,7 @@ def _answer_glossary(user: str) -> str:
 
 
 def fake_completion(kwargs: Dict[str, Any]) -> Tuple[str, str]:
-    """Return ``(kind, content)`` for one ``chat.completions.create`` call."""
+    """Returns ``(kind, content)`` for one ``chat.completions.create`` call."""
     messages = kwargs.get("messages") or []
     system = _content_text(messages[0].get("content")) if messages else ""
     user = _content_text(messages[-1].get("content")) if messages else ""
@@ -304,7 +304,7 @@ def _canonical_lines(records: Iterable[Any]) -> List[str]:
 
 
 def _erf_digest(path: Path) -> Dict[str, Any]:
-    """Archive digest with the build date masked, plus one digest per resource."""
+    """Archives digest with the build date masked, plus one digest per resource."""
     raw = bytearray(path.read_bytes())
     raw[32:40] = b"\0" * 8  # BuildYear, BuildDay
     count = struct.unpack_from("<I", raw, 16)[0]
@@ -337,7 +337,7 @@ def _rebuild_edits(log_lines: List[dict]) -> Dict[str, Dict[str, str]]:
 
 
 def run_one(scenario: str, module: Path, out_dir: Path, concurrency: int = 1) -> None:
-    """Translate and rebuild *module* under *scenario*; write normalized results."""
+    """Translates and rebuild *module* under *scenario*; write normalized results."""
     recorder = _Recorder()
     _install_fake_endpoint(recorder)
 

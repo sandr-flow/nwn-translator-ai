@@ -18,7 +18,7 @@ class TranslationLogWriter(Protocol):
     """Append one JSON-serializable log record per translation."""
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Persist a single log entry (e.g. one line of JSONL)."""
+        """Persists a single log entry (e.g. one line of JSONL)."""
 
 
 class FileTranslationLogWriter:
@@ -33,7 +33,7 @@ class FileTranslationLogWriter:
     """
 
     def __init__(self, path: Path) -> None:
-        """Create a writer; the file is opened by the first entry.
+        """Creates a writer; the file is opened by the first entry.
 
         Args:
             path: Log file; entries are appended to its current content.
@@ -45,7 +45,7 @@ class FileTranslationLogWriter:
         self._finalizer: Optional[weakref.finalize] = None
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Serialize *entry* as JSON and append one line to the log file.
+        """Serializes *entry* as JSON and append one line to the log file.
 
         Args:
             entry: JSON-serializable dict (e.g. original/translated pair).
@@ -62,7 +62,7 @@ class FileTranslationLogWriter:
             logger.debug("Failed to write translation log: %s", e)
 
     def close(self) -> None:
-        """Close the file; a later entry opens it again."""
+        """Closes the file; a later entry opens it again."""
         with self._lock:
             if self._finalizer is not None:
                 self._finalizer()
@@ -74,7 +74,7 @@ class NullTranslationLogWriter:
     """No-op writer for when logging is disabled."""
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Discard the entry (no-op).
+        """Discards the entry (no-op).
 
         Args:
             entry: Ignored.
@@ -86,7 +86,7 @@ def translation_log_writer_for_config(
     translation_log: Optional[Path],
     override: Optional[TranslationLogWriter] = None,
 ) -> TranslationLogWriter:
-    """Resolve the log writer of a run.
+    """Resolves the log writer of a run.
 
     Args:
         translation_log: JSONL log path, or ``None``.
@@ -103,7 +103,7 @@ def translation_log_writer_for_config(
 
 
 def write_trace(writer: TranslationLogWriter, entry: Dict[str, Any]) -> None:
-    """Write a diagnostic log entry; a writer failure never changes a result.
+    """Writes a diagnostic log entry; a writer failure never changes a result.
 
     Args:
         writer: Log writer.
@@ -116,7 +116,7 @@ def write_trace(writer: TranslationLogWriter, entry: Dict[str, Any]) -> None:
 
 
 def _trace_value(value: Any) -> Any:
-    """Convert dataclasses, tuples and paths into JSON-ready values."""
+    """Converts dataclasses, tuples and paths into JSON-ready values."""
     if is_dataclass(value) and not isinstance(value, type):
         return _trace_value(asdict(value))
     if isinstance(value, dict):
@@ -135,7 +135,7 @@ async def logged_model_call(
     trace_context: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> _Result:
-    """Call a provider task and log the request and its response.
+    """Calls a provider task and log the request and its response.
 
     The request entry records ``method.__name__`` and the call arguments, never
     provider credentials; the response entry records the result or the error type.

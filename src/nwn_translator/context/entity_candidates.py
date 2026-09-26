@@ -50,7 +50,7 @@ TYPE_TO_CANDIDATE: Dict[str, Tuple[str, str, str]] = {
 
 
 def normalize_entity_name(name: object) -> str:
-    """Return the registry key of *name*: NFKC, collapsed whitespace, casefolded."""
+    """Returns the registry key of *name*: NFKC, collapsed whitespace, casefolded."""
     text = unicodedata.normalize("NFKC", "" if name is None else str(name))
     text = _SPACE_RE.sub(" ", text).strip().casefold()
     return text
@@ -110,7 +110,7 @@ class EntityCandidate:
     alias_of: Optional[str] = None
 
     def add_evidence(self, evidence: EntityEvidence) -> None:
-        """Merge one evidence record into this candidate."""
+        """Merges one evidence record into this candidate."""
         self.evidence.append(evidence)
         self.frequency += 1
         self.is_speaker_or_dialog_actor = (
@@ -142,7 +142,7 @@ class EntityCandidate:
         return classify_entity_candidate(self.name, self.category).decision != "drop"
 
     def to_curator_record(self) -> Dict[str, object]:
-        """Return the JSON record the curator sees for this candidate."""
+        """Returns the JSON record the curator sees for this candidate."""
         filter_result = classify_entity_candidate(self.name, self.category)
         return {
             "name": self.name,
@@ -175,7 +175,7 @@ class EntityCandidateRegistry:
         context: str = "",
         is_speaker_or_dialog_actor: bool = False,
     ) -> None:
-        """Add one evidence record for *name*, creating its candidate on first sight.
+        """Adds one evidence record for *name*, creating its candidate on first sight.
 
         A new candidate starts with the deterministic filter's score and a
         ``drop`` decision when the filter drops the name. Blank names are ignored.
@@ -218,7 +218,7 @@ class EntityCandidateRegistry:
         )
 
     def extend(self, candidates: Iterable[EntityCandidate]) -> None:
-        """Replay the evidence of *candidates* (e.g. another registry's values) into this one."""
+        """Replays the evidence of *candidates* (e.g. another registry's values) into this one."""
         for candidate in candidates:
             for evidence in candidate.evidence:
                 self.add(
@@ -232,7 +232,7 @@ class EntityCandidateRegistry:
                 )
 
     def restore(self, candidates: Iterable[EntityCandidate]) -> None:
-        """Insert saved candidates as they are, keeping their curated fields.
+        """Inserts saved candidates as they are, keeping their curated fields.
 
         Unlike :meth:`extend`, nothing is recomputed: the decision, priority
         and score of a loaded ``candidates.json`` stay exactly as saved.
@@ -245,7 +245,7 @@ class EntityCandidateRegistry:
             self._items[candidate.normalized_name] = candidate
 
     def values(self) -> List[EntityCandidate]:
-        """Return the candidates sorted by normalized name."""
+        """Returns the candidates sorted by normalized name."""
         return [self._items[k] for k in sorted(self._items)]
 
     def mark_curated(
@@ -257,7 +257,7 @@ class EntityCandidateRegistry:
         priority: Optional[int] = None,
         alias_of: Optional[str] = None,
     ) -> None:
-        """Apply a curator decision to an existing candidate.
+        """Applies a curator decision to an existing candidate.
 
         Args:
             name: Candidate name (matched by normalized form); unknown names are ignored.
@@ -277,7 +277,7 @@ class EntityCandidateRegistry:
         candidate.alias_of = alias_of or None
 
     def glossary_pairs(self) -> List[Tuple[str, str]]:
-        """Return ``(name, category)`` of the candidates eligible for the glossary."""
+        """Returns ``(name, category)`` of the candidates eligible for the glossary."""
         out: List[Tuple[str, str]] = []
         for candidate in self.values():
             if candidate.eligible_for_glossary:
@@ -285,7 +285,7 @@ class EntityCandidateRegistry:
         return out
 
     def resolved_aliases(self) -> Dict[str, str]:
-        """Resolve alias chains to their root candidate.
+        """Resolves alias chains to their root candidate.
 
         Returns:
             Eligible alias name -> name of its eligible root; chains with a
@@ -316,7 +316,7 @@ class EntityCandidateRegistry:
     def from_extracted_content(
         cls, contents: Iterable[ExtractedContent]
     ) -> "EntityCandidateRegistry":
-        """Build candidates from extracted name fields and dialog speakers.
+        """Builds candidates from extracted name fields and dialog speakers.
 
         Args:
             contents: Extracted content of every resource.
@@ -337,7 +337,7 @@ def add_item_candidate(
     item: TranslatableItem,
     resource: str,
 ) -> None:
-    """Add the evidence one extracted item gives, if any.
+    """Adds the evidence one extracted item gives, if any.
 
     Dialog lines contribute their speaker; name fields listed in
     :data:`TYPE_TO_CANDIDATE` contribute their text. Everything in a ``.git``

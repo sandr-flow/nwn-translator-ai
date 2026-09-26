@@ -20,7 +20,7 @@ _Number = TypeVar("_Number", int, float)
 def _env_number(
     name: str, default: _Number, minimum: _Number, parse: Callable[[str], _Number]
 ) -> _Number:
-    """Read a numeric environment override, clamped to a lower bound.
+    """Reads a numeric environment override, clamped to a lower bound.
 
     Args:
         name: Environment variable name.
@@ -69,7 +69,7 @@ REASONING_EFFORTS: Tuple[str, ...] = ("none", "minimal", "low", "medium", "high"
 
 
 def parse_reasoning_effort(raw: Optional[str]) -> Optional[str]:
-    """Normalize a requested ``reasoning.effort``.
+    """Normalizes a requested ``reasoning.effort``.
 
     Args:
         raw: Effort name in any letter case; ``None`` or blank means "not requested".
@@ -102,7 +102,7 @@ PROMPT_CACHE_BREAKPOINTS_ENABLED: bool = os.getenv(
 
 
 def max_concurrent_from_environment() -> int:
-    """Return the number of concurrent model requests (asyncio slots, not threads).
+    """Returns the number of concurrent model requests (asyncio slots, not threads).
 
     ``NWN_TRANSLATE_MAX_CONCURRENT`` overrides the default 12 (min 1): 10-12 suits
     a gateway that answers HTTP 429, 15-20 an account tier that allows more.
@@ -185,7 +185,7 @@ class TranslationConfig:
     cancel_check: Optional[Callable[[], bool]] = None
 
     def __post_init__(self):
-        """Coerce path strings, apply the default model and normalize the effort.
+        """Coerces path strings, apply the default model and normalize the effort.
 
         Raises:
             ValueError: If *reasoning_effort* is not a known effort.
@@ -206,7 +206,7 @@ class TranslationConfig:
         self.reasoning_effort = parse_reasoning_effort(self.reasoning_effort)
 
     def raise_if_cancelled(self) -> None:
-        """Stop the run when :attr:`cancel_check` asks for it.
+        """Stops the run when :attr:`cancel_check` asks for it.
 
         Raises:
             TranslationCancelled: If ``cancel_check`` returns ``True``.
@@ -215,7 +215,7 @@ class TranslationConfig:
             raise TranslationCancelled("Translation cancelled by user")
 
     def get_api_key(self) -> str:
-        """Return the API key.
+        """Returns the API key.
 
         Returns:
             The configured key.
@@ -259,7 +259,7 @@ _LANG_TO_WINDOWS_ENCODING: dict[str, str] = {
 
 
 def target_lang_supported_for_nwn_injection(target_lang: str) -> bool:
-    """Tell whether the game can display *target_lang* after injection.
+    """Tells whether the game can display *target_lang* after injection.
 
     Args:
         target_lang: Target language name.
@@ -272,7 +272,7 @@ def target_lang_supported_for_nwn_injection(target_lang: str) -> bool:
 
 
 def module_string_encoding_for_target_lang(target_lang: Optional[str]) -> str:
-    """Return the Windows code page for GFF/NCS string bytes in *target_lang*.
+    """Returns the Windows code page for GFF/NCS string bytes in *target_lang*.
 
     Args:
         target_lang: Target language name.
@@ -288,7 +288,7 @@ def module_string_encoding_for_target_lang(target_lang: Optional[str]) -> str:
 
 
 def source_string_encoding(source_lang: Optional[str]) -> Optional[str]:
-    """Return the Windows code page for decoding module strings of *source_lang*.
+    """Returns the Windows code page for decoding module strings of *source_lang*.
 
     Args:
         source_lang: Source language name or ``"auto"``.
@@ -304,7 +304,7 @@ def source_string_encoding(source_lang: Optional[str]) -> Optional[str]:
 
 
 def sanitized_mod_stem(stem: str) -> str:
-    """Return a module file stem without underscores.
+    """Returns a module file stem without underscores.
 
     Args:
         stem: Input file stem.
@@ -316,7 +316,7 @@ def sanitized_mod_stem(stem: str) -> str:
 
 
 def lang_suffix(target_lang: str) -> str:
-    """Build a short language tag for output filenames (hyphen-separated, no underscores).
+    """Builds a short language tag for output filenames (hyphen-separated, no underscores).
 
     Args:
         target_lang: Target language name (e.g. ``"russian"``).
@@ -332,7 +332,7 @@ def create_output_path(
     target_lang: str,
     output_dir: Optional[Path] = None,
 ) -> Path:
-    """Derive the translated module's path from the input path and target language.
+    """Derives the translated module's path from the input path and target language.
 
     Args:
         input_path: Input module path.

@@ -107,7 +107,7 @@ class CountingProvider:
 
 
 def _prepare_input(input_path: Path, keep_extract: bool) -> Path:
-    """Return an extracted directory for *input_path*."""
+    """Returns an extracted directory for *input_path*."""
     if input_path.is_dir():
         return input_path
 
@@ -120,7 +120,7 @@ def _prepare_input(input_path: Path, keep_extract: bool) -> Path:
 
 
 def _iter_ncs_files(extract_dir: Path) -> List[Path]:
-    """Return NCS files in stable order."""
+    """Returns NCS files in stable order."""
     return sorted(
         (path for path in extract_dir.rglob("*.ncs") if path.is_file()),
         key=lambda path: str(path.relative_to(extract_dir)).lower(),
@@ -133,7 +133,7 @@ def _load_ncs_contents(
     limit_files: Optional[int],
     limit_items: Optional[int],
 ) -> List[ExtractedContent]:
-    """Parse and extract NCS content, optionally limiting file/item counts."""
+    """Parses and extract NCS content, optionally limiting file/item counts."""
     contents: List[ExtractedContent] = []
     item_count = 0
     for index, path in enumerate(ncs_files, 1):
@@ -164,7 +164,7 @@ def _load_ncs_contents(
 
 
 def _content_records(content: ExtractedContent) -> List[Dict[str, Any]]:
-    """Return serializable source item records for one extracted content."""
+    """Returns serializable source item records for one extracted content."""
     records = []
     for item in content.items:
         meta = item.metadata or {}
@@ -183,7 +183,7 @@ def _content_records(content: ExtractedContent) -> List[Dict[str, Any]]:
 
 
 def _combine_ncs_contents(contents: List[ExtractedContent], source_file: Path) -> ExtractedContent:
-    """Combine per-file NCS extracted content into one module-level queue."""
+    """Combines per-file NCS extracted content into one module-level queue."""
     items = []
     for content in contents:
         items.extend(content.items)
@@ -226,7 +226,7 @@ def _run_mode(
     args: argparse.Namespace,
     output_dir: Path,
 ) -> Dict[str, Any]:
-    """Run one real NCS translation mode and write per-item results."""
+    """Runs one real NCS translation mode and write per-item results."""
     config = _build_config(args, mode, output_dir)
     config.get_api_key()
     metrics = RunMetricsRecorder()
@@ -319,7 +319,7 @@ def _load_result_map(path: Path) -> Dict[str, Dict[str, Any]]:
 
 
 def _compare_modes(output_dir: Path) -> Dict[str, Any]:
-    """Compare item-id coverage and translated text between single and batch runs."""
+    """Compares item-id coverage and translated text between single and batch runs."""
     single = _load_result_map(output_dir / "single_results.jsonl")
     batch = _load_result_map(output_dir / "batch_results.jsonl")
     all_ids = sorted(set(single) | set(batch))

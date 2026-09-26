@@ -82,7 +82,7 @@ FALLBACK: Dict[str, ModelReasoning] = {
 
 
 def is_valid_model_slug(slug: str) -> bool:
-    """Tell whether *slug* looks like an OpenRouter model id.
+    """Tells whether *slug* looks like an OpenRouter model id.
 
     Args:
         slug: Candidate ``author/model`` slug, optionally with a ``:variant`` suffix.
@@ -94,7 +94,7 @@ def is_valid_model_slug(slug: str) -> bool:
 
 
 def _parse_entry(entry: dict) -> ModelReasoning:
-    """Read the ``reasoning`` object of one catalog entry."""
+    """Reads the ``reasoning`` object of one catalog entry."""
     raw = entry.get("reasoning")
     if not isinstance(raw, dict):
         return ModelReasoning(supported=False)
@@ -115,7 +115,7 @@ def _parse_entry(entry: dict) -> ModelReasoning:
 
 
 def _parse_catalog(payload: dict) -> Dict[str, ModelReasoning]:
-    """Map every model id of a ``/models`` payload to its reasoning metadata."""
+    """Maps every model id of a ``/models`` payload to its reasoning metadata."""
     parsed: Dict[str, ModelReasoning] = {}
     for entry in payload.get("data") or []:
         if not isinstance(entry, dict):
@@ -127,7 +127,7 @@ def _parse_catalog(payload: dict) -> Dict[str, ModelReasoning]:
 
 
 def reset_catalog_cache() -> None:
-    """Drop the in-memory catalog (tests)."""
+    """Drops the in-memory catalog (tests)."""
     global _catalog, _catalog_at, _catalog_live
     with _lock:
         _catalog = None
@@ -136,7 +136,7 @@ def reset_catalog_cache() -> None:
 
 
 def refresh_catalog(*, force: bool = False) -> Dict[str, ModelReasoning]:
-    """Return the model to reasoning map, fetching OpenRouter when the cache is stale.
+    """Returns the model to reasoning map, fetching OpenRouter when the cache is stale.
 
     Args:
         force: Fetch even when a live catalog younger than the TTL is cached.
@@ -177,7 +177,7 @@ def refresh_catalog(*, force: bool = False) -> Dict[str, ModelReasoning]:
 
 
 def get_known_reasoning(slug: str) -> Optional[ModelReasoning]:
-    """Return reasoning metadata for an already known slug, without network access.
+    """Returns reasoning metadata for an already known slug, without network access.
 
     Args:
         slug: Model slug.
@@ -196,7 +196,7 @@ def get_known_reasoning(slug: str) -> Optional[ModelReasoning]:
 
 
 def lookup_model_reasoning(slug: str) -> Tuple[bool, Optional[ModelReasoning]]:
-    """Look up *slug* in the catalog, fetching it when needed.
+    """Looks up *slug* in the catalog, fetching it when needed.
 
     Args:
         slug: Model slug.
@@ -213,7 +213,7 @@ def lookup_model_reasoning(slug: str) -> Tuple[bool, Optional[ModelReasoning]]:
 
 
 def allowed_efforts(info: ModelReasoning) -> List[str]:
-    """Return the efforts a model accepts, lowest first.
+    """Returns the efforts a model accepts, lowest first.
 
     Args:
         info: The model's reasoning metadata.
@@ -229,7 +229,7 @@ def allowed_efforts(info: ModelReasoning) -> List[str]:
 
 
 def reasoning_payload(info: Optional[ModelReasoning]) -> dict:
-    """Describe a model's reasoning options for the web API.
+    """Describes a model's reasoning options for the web API.
 
     Args:
         info: Reasoning metadata, or ``None`` for an unknown model.
@@ -254,7 +254,7 @@ def reasoning_payload(info: Optional[ModelReasoning]) -> dict:
 
 
 def resolve_reasoning_effort(model: str, requested: Optional[str]) -> Optional[str]:
-    """Map a requested effort onto a value the model accepts.
+    """Maps a requested effort onto a value the model accepts.
 
     A reasoning-capable model never gets the field omitted: omission enables the
     catalog default (e.g. medium on Gemini 3.8 Flash), so ``none``, a missing or a

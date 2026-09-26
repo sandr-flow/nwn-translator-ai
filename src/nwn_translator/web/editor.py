@@ -29,7 +29,7 @@ def _is_dialog(filename: str) -> bool:
 
 
 def dialog_speaker(row: Row) -> Optional[DialogSpeaker]:
-    """Return the speaker label of a dialog row.
+    """Returns the speaker label of a dialog row.
 
     Rows stored before speakers were recorded have only the extractor's context
     string, which still tells player replies, tagged lines and owner lines apart.
@@ -54,7 +54,7 @@ def dialog_speaker(row: Row) -> Optional[DialogSpeaker]:
 
 
 def row_key(filename: str, row: Row) -> RowKey:
-    """Return the editor row a translation belongs to within its file.
+    """Returns the editor row a translation belongs to within its file.
 
     Args:
         filename: Resource file of the row.
@@ -71,7 +71,7 @@ def row_key(filename: str, row: Row) -> RowKey:
 
 
 def group_rows(rows: Iterable[Row]) -> List[TranslationFileGroup]:
-    """Group translation rows into editor rows, per file in first-seen order.
+    """Groups translation rows into editor rows, per file in first-seen order.
 
     A row that stands for several identical lines lists the other ``item_id``
     values in ``duplicate_item_ids`` and is marked failed when any of them
@@ -124,7 +124,7 @@ def group_rows(rows: Iterable[Row]) -> List[TranslationFileGroup]:
 
 
 def expand_edits(rows: Iterable[Row], edits: Sequence[RebuildEdit]) -> Dict[Tuple[str, str], str]:
-    """Map each edit to every ``(file, item_id)`` its editor row stands for.
+    """Maps each edit to every ``(file, item_id)`` its editor row stands for.
 
     An edit whose ``(file, item_id)`` has no stored row applies to that item alone.
 

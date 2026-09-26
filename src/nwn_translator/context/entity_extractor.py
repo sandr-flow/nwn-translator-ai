@@ -64,7 +64,7 @@ class EntityExtractor:
         known_names: Set[str],
         progress_callback: Optional[ProgressCallback] = None,
     ) -> EntityCandidateRegistry:
-        """Return evidence-backed candidates for the names found in *items*.
+        """Returns evidence-backed candidates for the names found in *items*.
 
         Args:
             items: All extracted items (dialog and non-dialog).
@@ -101,7 +101,7 @@ class EntityExtractor:
         known_names: Set[str],
         progress_callback: Optional[ProgressCallback] = None,
     ) -> List[Tuple[str, str]]:
-        """Return ``(name, category)`` pairs for the proper nouns found in *items*.
+        """Returns ``(name, category)`` pairs for the proper nouns found in *items*.
 
         Args:
             items: All extracted items (dialog and non-dialog).
@@ -203,7 +203,7 @@ class EntityExtractor:
 
 
 def _select_texts(items: List["TranslatableItem"]) -> List[str]:
-    """Pick the unique item texts likely to embed proper nouns, in item order."""
+    """Picks the unique item texts likely to embed proper nouns, in item order."""
     seen: Set[str] = set()
     out: List[str] = []
     for item in items:
@@ -228,7 +228,7 @@ def _select_texts(items: List["TranslatableItem"]) -> List[str]:
 def _first_context_for_name(
     items: List["TranslatableItem"], folded_texts: List[str], name: str
 ) -> str:
-    """Return the first item text containing *name* (casefolded substring), clipped to 240.
+    """Returns the first item text containing *name* (casefolded substring), clipped to 240.
 
     Args:
         items: Extracted items, in order.
@@ -248,7 +248,7 @@ def _first_context_for_name(
 
 
 def _coerce_category(category: object) -> str:
-    """Normalize a model-supplied category to one of :data:`_VALID_CATEGORIES`."""
+    """Normalizes a model-supplied category to one of :data:`_VALID_CATEGORIES`."""
     if not isinstance(category, str):
         return "unknown"
     c = category.strip().lower()
@@ -256,7 +256,7 @@ def _coerce_category(category: object) -> str:
 
 
 def _parse_entities_json(raw: str) -> List[Tuple[str, str]]:
-    """Parse an entity-extraction reply into ``(name, category)`` pairs.
+    """Parses an entity-extraction reply into ``(name, category)`` pairs.
 
     The pairs come from the ``entities`` list or, failing that, the first list
     value of the object; entries without a non-empty string name are skipped.

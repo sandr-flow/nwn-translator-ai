@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 
 def _progress(phase: str, current: int, total: int, message: Optional[str]) -> None:
-    """Log one progress callback of the stage.
+    """Logs one progress callback of the stage.
 
     Args:
         phase: Progress phase.
@@ -75,7 +75,7 @@ def _progress(phase: str, current: int, total: int, message: Optional[str]) -> N
 
 
 def _build_state(args: argparse.Namespace) -> PipelineState:
-    """Create the run settings and the pipeline state from the command line.
+    """Creates the run settings and the pipeline state from the command line.
 
     Args:
         args: Command line.
@@ -108,7 +108,7 @@ def _build_state(args: argparse.Namespace) -> PipelineState:
 
 
 def _require_archive(args: argparse.Namespace, command: str) -> None:
-    """Stop unless the input is an archive file; repacking copies its header.
+    """Stops unless the input is an archive file; repacking copies its header.
 
     Args:
         args: Command line.
@@ -124,7 +124,7 @@ def _require_archive(args: argparse.Namespace, command: str) -> None:
 def _resolve_extract_dir(
     args: argparse.Namespace, state: PipelineState, *, do_extract: bool
 ) -> Path:
-    """Determine (and optionally populate) the extraction directory.
+    """Determines (and optionally populate) the extraction directory.
 
     ``--extract-dir`` wins, then an input directory, then ``<out>/extract``.
 
@@ -162,7 +162,7 @@ def _resolve_extract_dir(
 
 
 def _translatable_files(args: argparse.Namespace, state: PipelineState) -> List[Path]:
-    """List translatable files under the extraction dir, filtered by ``--only-ext``.
+    """Lists translatable files under the extraction dir, filtered by ``--only-ext``.
 
     Args:
         args: Command line.
@@ -180,7 +180,7 @@ def _translatable_files(args: argparse.Namespace, state: PipelineState) -> List[
 
 
 def _maybe_load_world_context(state: PipelineState, art_in: Path) -> None:
-    """Load world_context.json + candidates.json from *art_in* when present.
+    """Loads world_context.json + candidates.json from *art_in* when present.
 
     Args:
         state: Run state; its ``world_context`` is set when the file exists.
@@ -195,7 +195,7 @@ def _maybe_load_world_context(state: PipelineState, art_in: Path) -> None:
 
 
 def _build_extracted_map(args: argparse.Namespace, state: PipelineState) -> ExtractedMap:
-    """Extract the translatable files selected by the command line.
+    """Extracts the translatable files selected by the command line.
 
     Args:
         args: Command line.
@@ -211,7 +211,7 @@ def _build_extracted_map(args: argparse.Namespace, state: PipelineState) -> Extr
 
 
 def cmd_unpack(args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path) -> None:
-    """Unpack the archive and list its translatable files in ``files.json``.
+    """Unpacks the archive and list its translatable files in ``files.json``.
 
     Args:
         args: Command line.
@@ -229,7 +229,7 @@ def cmd_unpack(args: argparse.Namespace, state: PipelineState, art_in: Path, art
 def cmd_worldscan(
     args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path
 ) -> None:
-    """Scan the world context into ``world_context.json`` and its candidates.
+    """Scans the world context into ``world_context.json`` and its candidates.
 
     Args:
         args: Command line.
@@ -252,7 +252,7 @@ def cmd_worldscan(
 def cmd_extract(
     args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path
 ) -> None:
-    """Extract the translatable items into ``items.jsonl``.
+    """Extracts the translatable items into ``items.jsonl``.
 
     Args:
         args: Command line.
@@ -275,7 +275,7 @@ def cmd_extract(
 def cmd_entities(
     args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path
 ) -> None:
-    """Collect entity candidates into ``candidates.json`` (model requests).
+    """Collects entity candidates into ``candidates.json`` (model requests).
 
     Args:
         args: Command line.
@@ -297,7 +297,7 @@ def cmd_entities(
 def cmd_glossary(
     args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path
 ) -> None:
-    """Curate the candidates and build ``glossary.json`` (model requests).
+    """Curates the candidates and build ``glossary.json`` (model requests).
 
     The entity candidates are collected first unless the entities stage has
     run; the world context is saved again with what that collection found.
@@ -330,7 +330,7 @@ def cmd_glossary(
 def cmd_translate(
     args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path
 ) -> None:
-    """Translate the extracted items into ``translations.json`` (model requests).
+    """Translates the extracted items into ``translations.json`` (model requests).
 
     Args:
         args: Command line.
@@ -354,7 +354,7 @@ def cmd_translate(
 
 
 def cmd_inject(args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path) -> None:
-    """Patch ``translations.json`` into the unpacked files.
+    """Patches ``translations.json`` into the unpacked files.
 
     Args:
         args: Command line.
@@ -370,7 +370,7 @@ def cmd_inject(args: argparse.Namespace, state: PipelineState, art_in: Path, art
 
 
 def cmd_repack(args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path) -> None:
-    """Pack the unpacked files into a module in ``--out``.
+    """Packs the unpacked files into a module in ``--out``.
 
     Args:
         args: Command line.
@@ -389,7 +389,7 @@ def cmd_repack(args: argparse.Namespace, state: PipelineState, art_in: Path, art
 
 
 def cmd_all(args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path) -> None:
-    """Run the full chain stage-by-stage, dumping every artifact along the way.
+    """Runs the full chain stage-by-stage, dumping every artifact along the way.
 
     Args:
         args: Command line.
@@ -435,7 +435,7 @@ COMMANDS = {
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Return the command-line parser."""
+    """Returns the command-line parser."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -473,7 +473,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """Run one stage command.
+    """Runs one stage command.
 
     Args:
         argv: Command-line arguments (default: ``sys.argv[1:]``).

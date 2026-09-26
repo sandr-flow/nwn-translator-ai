@@ -223,7 +223,7 @@ class CandidateFilterResult:
 
 
 def classify_string(text: object) -> StringClassification:
-    """Classify *text* for conservative entity/glossary candidate filtering.
+    """Classifies *text* for conservative entity/glossary candidate filtering.
 
     Args:
         text: Any value; ``None`` counts as empty.
@@ -266,7 +266,7 @@ def classify_string(text: object) -> StringClassification:
 
 
 def is_valid_entity_name(name: object, category: Optional[str] = None) -> bool:
-    """Return True if a model-extracted entity is safe to add to the glossary.
+    """Returns True if a model-extracted entity is safe to add to the glossary.
 
     Args:
         name: Name returned by entity extraction.
@@ -304,7 +304,7 @@ def should_skip_entity_source_text(
     metadata: Optional[dict] = None,
     known_names: Optional[FrozenSet[str]] = None,
 ) -> bool:
-    """Return True when a TranslatableItem text should not be sent to the LLM.
+    """Returns True when a TranslatableItem text should not be sent to the LLM.
 
     Emote markup (``*gasp*``, ``*whispers* ...``) is player-facing prose and is
     allowed through when the wildcard artifact rule is the only objection.
@@ -346,7 +346,7 @@ def should_skip_entity_source_text(
 
 
 def describe_rejection(name: object, category: Optional[str] = None) -> str:
-    """Return a compact deterministic rejection reason for a log line."""
+    """Returns a compact deterministic rejection reason for a log line."""
     cls = classify_string(name)
     if cls.primary_reason:
         return cls.primary_reason
@@ -420,7 +420,7 @@ _CANDIDATE_RULES: Tuple[Tuple[CandidateDecision, str, int, _CandidateRule], ...]
 def classify_entity_candidate(
     name: object, category: Optional[str] = None
 ) -> CandidateFilterResult:
-    """Classify whether *name* may become a glossary/world-context anchor.
+    """Classifies whether *name* may become a glossary/world-context anchor.
 
     This does not decide whether the original string is translated.  It only
     controls whether the string is allowed to seed entity context.
@@ -459,7 +459,7 @@ def _classify_candidate(
 
 
 def is_generic_entity_label(name: object, category: Optional[str] = None) -> bool:
-    """Return True if *name* is a non-disambiguating generic label.
+    """Returns True if *name* is a non-disambiguating generic label.
 
     Generic labels (``Human Female``, ``Almraiven Resident``, ``dwarf merchant``)
     are shared by many distinct NPCs.  In prompt selection they must be

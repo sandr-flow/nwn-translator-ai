@@ -169,7 +169,7 @@ def trace_string_consumer(
     instructions: List[NCSInstruction],
     index_by_offset: Optional[Dict[int, int]] = None,
 ) -> Dict[str, Any]:
-    """Follow copies through bounded control flow; any technical use wins.
+    """Follows copies through bounded control flow; any technical use wins.
 
     Stack positions are relative to the initial string. Unknown instructions,
     escaped values and exhausted budgets prevent a player-only proof. Engine

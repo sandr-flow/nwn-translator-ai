@@ -56,7 +56,7 @@ _SINGLE_JSON_ATTEMPTS = 2
 
 
 def parse_single_translation(raw: str) -> str:
-    """Extract the ``translation`` value of a single-string reply.
+    """Extracts the ``translation`` value of a single-string reply.
 
     Args:
         raw: Model reply; text around the first JSON object is ignored.
@@ -81,7 +81,7 @@ def parse_single_translation(raw: str) -> str:
 def parse_batch_results(
     raw: str, items: List[TranslationItem], model: str
 ) -> List[TranslationResult]:
-    """Turn a batch reply into one result per item, addressed by position.
+    """Turns a batch reply into one result per item, addressed by position.
 
     A ``{"translation": {...}}`` wrapper around the ID map is unwrapped; positions
     are never inferred from lists, group ids or a combined string.
@@ -173,7 +173,7 @@ class OpenRouterProvider:
         reasoning_effort: Optional[str] = None,
         metrics_recorder: Optional[RunMetricsRecorder] = None,
     ) -> None:
-        """Create a provider; no network access happens here.
+        """Creates a provider; no network access happens here.
 
         Args:
             api_key: Gateway API key.
@@ -203,7 +203,7 @@ class OpenRouterProvider:
         return f"{self.get_provider_name()}(model={self.model})"
 
     def get_provider_name(self) -> str:
-        """Return the short provider id recorded in metrics.
+        """Returns the short provider id recorded in metrics.
 
         Returns:
             :attr:`PROVIDER_NAME`.
@@ -236,7 +236,7 @@ class OpenRouterProvider:
         return cast(AsyncOpenAI, self._thread_local.async_client)
 
     async def close_async_client(self) -> None:
-        """Close this thread's client; call it before the event loop shuts down.
+        """Closes this thread's client; call it before the event loop shuts down.
 
         A failing close is logged at debug level and otherwise ignored: the run's
         results do not depend on it.
@@ -252,7 +252,7 @@ class OpenRouterProvider:
 
     @staticmethod
     def make_system_message_content(stable: str, variable: str = "") -> SystemContent:
-        """Build ``messages[0].content`` from a cacheable and a per-call prompt half.
+        """Builds ``messages[0].content`` from a cacheable and a per-call prompt half.
 
         Without a variable half the content is plain text (maximally compatible
         with OpenAI-compatible gateways). Otherwise the stable half carries a
@@ -279,7 +279,7 @@ class OpenRouterProvider:
         ]
 
     async def _create(self, kwargs: Dict[str, Any], *, use_reasoning: bool) -> Any:
-        """Send one ``chat.completions.create`` with the catalog-clamped effort.
+        """Sends one ``chat.completions.create`` with the catalog-clamped effort.
 
         A model that rejects the reasoning field gets the request once more without
         it, and later requests of this provider omit it.
@@ -318,7 +318,7 @@ class OpenRouterProvider:
         use_reasoning: bool = True,
         stream: Optional[bool] = False,
     ) -> str:
-        """Send one JSON-mode chat request and return the stripped reply text.
+        """Sends one JSON-mode chat request and return the stripped reply text.
 
         Every attempt, failed or not, is recorded as one request metric.
         :meth:`_complete` is the same request retried on transient errors.
@@ -397,7 +397,7 @@ class OpenRouterProvider:
         reply: str = "",
         error: Optional[BaseException] = None,
     ) -> None:
-        """Record one request attempt when a metrics recorder is configured."""
+        """Records one request attempt when a metrics recorder is configured."""
         recorder = self.metrics_recorder
         if recorder is None:
             return
@@ -443,7 +443,7 @@ class OpenRouterProvider:
         *,
         json_attempts: int = _SINGLE_JSON_ATTEMPTS,
     ) -> TranslationResult:
-        """Translate one string.
+        """Translates one string.
 
         Race terms found in *text* are added to the prompt when no glossary block
         is given. An unparseable reply is requested again, up to *json_attempts*
@@ -520,7 +520,7 @@ class OpenRouterProvider:
         glossary_block: Optional[str] = None,
         content_profile: Optional[str] = None,
     ) -> List[TranslationResult]:
-        """Translate several strings in one request.
+        """Translates several strings in one request.
 
         Args:
             items: Items to translate; see
@@ -573,7 +573,7 @@ class OpenRouterProvider:
         temperature: float,
         use_reasoning: bool = True,
     ) -> str:
-        """Send one JSON-mode chat request with the caller's prompts.
+        """Sends one JSON-mode chat request with the caller's prompts.
 
         Args:
             system_prompt: System content, plain or from
@@ -610,7 +610,7 @@ class OpenRouterProvider:
         max_tokens: int,
         temperature: float,
     ) -> str:
-        """Send one glossary request, without retries, at the lowest effort the model allows.
+        """Sends one glossary request, without retries, at the lowest effort the model allows.
 
         ``json_object`` mode is used rather than a strict ``json_schema``: OpenRouter's
         constrained decoding hangs on models without native support (DeepSeek, Qwen).
@@ -648,7 +648,7 @@ class OpenRouterProvider:
         *,
         source_lang: str,
     ) -> Dict[str, Verdict]:
-        """Decide for each NCS string occurrence whether it is player-facing text.
+        """Decides for each NCS string occurrence whether it is player-facing text.
 
         Args:
             entries: Candidates with unique ``key`` values (see

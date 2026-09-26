@@ -533,7 +533,7 @@ _PATTERN = re.compile(
 
 
 def match_race_terms(text: str, target_lang: str) -> str:
-    """Scan *text* for known race/creature terms and return a prompt block.
+    """Scans *text* for known race/creature terms and return a prompt block.
 
     Only terms that actually appear in *text* (case-insensitive, word-boundary)
     are included.

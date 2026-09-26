@@ -22,7 +22,7 @@ def _nickname_examples(target_lang: str) -> List[Tuple[str, str, str, str]]:
 
 
 def format_nickname_examples(target_lang: str, *, indent: str = "      ") -> str:
-    """Render the nickname few-shot lines shared by translation and glossary prompts.
+    """Renders the nickname few-shot lines shared by translation and glossary prompts.
 
     Args:
         target_lang: Target language; languages without nickname examples use
@@ -234,7 +234,7 @@ def _build_default_profile_rules(target_lang: str, gender: str) -> str:
 
 
 def _build_short_label_profile_rules(target_lang: str) -> str:
-    """Compact RULES body for name/label batches (no speech style, no gender rule).
+    """Compacts RULES body for name/label batches (no speech style, no gender rule).
 
     Dropped vs. default profile:
       * bureaucratic/idiom guidance (irrelevant for labels),
@@ -257,7 +257,7 @@ def _build_short_label_profile_rules(target_lang: str) -> str:
 
 
 def _build_script_message_profile_rules(target_lang: str, gender: str) -> str:
-    """Compact RULES body for short player-visible NCS script messages."""
+    """Compacts RULES body for short player-visible NCS script messages."""
     return (
         "RULES:\n"
         "1. Translate player-visible script messages naturally. Preserve meaning, tone, "
@@ -287,7 +287,7 @@ def build_translation_system_prompt_parts(
     content_profile: str = CONTENT_PROFILE_DEFAULT,
     batch_mode: bool = False,
 ) -> Tuple[str, str]:
-    """Return ``(stable, variable)`` halves of the line-by-line / batch system prompt.
+    """Returns ``(stable, variable)`` halves of the line-by-line / batch system prompt.
 
     The *stable* half holds all rules, examples, and output instructions — it
     is byte-identical across calls in a run and can be marked as the
@@ -418,7 +418,7 @@ def build_dialog_system_prompt_parts(
     world_block: str,
     glossary_block: str = "",
 ) -> Tuple[str, str]:
-    """Return ``(stable, variable)`` halves of the contextual dialog system prompt.
+    """Returns ``(stable, variable)`` halves of the contextual dialog system prompt.
 
     ``world_block`` is per-batch (filtered to entities the batch actually
     mentions) and lives in the variable half alongside the glossary, so it

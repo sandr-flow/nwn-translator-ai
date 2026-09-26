@@ -38,7 +38,7 @@ class Injector(Protocol):
         text_encoding: str,
         source_encoding: Optional[str],
     ) -> InjectedContent:
-        """Patch *file_path* in place.
+        """Patches *file_path* in place.
 
         Args:
             file_path: Resource to patch.
@@ -57,7 +57,7 @@ class Injector(Protocol):
 def changed_translations(
     items: Sequence[TranslatableItem], translations: Translations
 ) -> Iterator[Tuple[TranslatableItem, str]]:
-    """Yield ``(item, translation)`` for items whose translation changes the text.
+    """Yields ``(item, translation)`` for items whose translation changes the text.
 
     Args:
         items: Extracted items, in extraction order.

@@ -59,7 +59,7 @@ class ResourceKind:
 def load_gff(
     path: Path, gff_cache: Optional[GffCache], source_encoding: Optional[str]
 ) -> Dict[str, Any]:
-    """Parse a GFF resource.
+    """Parses a GFF resource.
 
     Args:
         path: Resource file.
@@ -75,7 +75,7 @@ def load_gff(
 def load_ncs(
     path: Path, gff_cache: Optional[GffCache], source_encoding: Optional[str]
 ) -> Optional[Dict[str, Any]]:
-    """Parse a compiled script into the dict :class:`NcsExtractor` expects.
+    """Parses a compiled script into the dict :class:`NcsExtractor` expects.
 
     Args:
         path: Script file.
@@ -95,7 +95,7 @@ def load_ncs(
 
 
 def _gff(extractor: BaseExtractor) -> ResourceKind:
-    """Return the kind of a GFF resource handled by *extractor*."""
+    """Returns the kind of a GFF resource handled by *extractor*."""
     return ResourceKind(extractor, load_gff, inject_gff)
 
 

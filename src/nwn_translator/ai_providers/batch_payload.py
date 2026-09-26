@@ -7,7 +7,7 @@ from .base import TranslationItem
 
 
 def source_windows(entries: List[dict]) -> tuple[List[dict], List[int]]:
-    """Merge verified overlapping source excerpts of one script into shared windows.
+    """Merges verified overlapping source excerpts of one script into shared windows.
 
     Excerpts with a known ``nss_start`` are merged when their text overlaps the
     window exactly; excerpts without a position are deduplicated only when their
@@ -58,7 +58,7 @@ def source_windows(entries: List[dict]) -> tuple[List[dict], List[int]]:
 
 
 def build_batch_payload(items: List[TranslationItem]) -> Dict[str, Any]:
-    """Build the item map of a batch request.
+    """Builds the item map of a batch request.
 
     Every item is addressed by its position (``"0"``, ``"1"``, ...). A cell is the
     plain text, or ``{"text", "hint", "context"}`` when a hint or context exists.
@@ -140,7 +140,7 @@ def build_batch_payload(items: List[TranslationItem]) -> Dict[str, Any]:
 
 
 def serialize_batch_payload(items: List[TranslationItem]) -> str:
-    """Serialize :func:`build_batch_payload` exactly as the request sends it.
+    """Serializes :func:`build_batch_payload` exactly as the request sends it.
 
     Args:
         items: Batch items in output order.
@@ -152,7 +152,7 @@ def serialize_batch_payload(items: List[TranslationItem]) -> str:
 
 
 def batch_payload_chars(items: List[TranslationItem]) -> int:
-    """Measure the serialized batch payload (a size budget proxy, not a token count).
+    """Measures the serialized batch payload (a size budget proxy, not a token count).
 
     Args:
         items: Batch items.

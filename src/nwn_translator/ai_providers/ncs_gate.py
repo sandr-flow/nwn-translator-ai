@@ -19,7 +19,7 @@ GateRequest = Callable[[str, int, int], Awaitable[str]]
 
 
 def gate_user_prompt(entries: List[Dict[str, Any]], source_lang: str) -> str:
-    """Build the user message that asks for a verdict per entry.
+    """Builds the user message that asks for a verdict per entry.
 
     Excerpts of one script with a known position (``nss_start``) are merged into
     shared source windows; other excerpts stay inline as ``nss_snippet``.
@@ -61,7 +61,7 @@ def gate_user_prompt(entries: List[Dict[str, Any]], source_lang: str) -> str:
 
 
 def parse_gate_verdicts(raw: str, entries: List[Dict[str, Any]]) -> Dict[str, Verdict]:
-    """Parse the gate reply into one verdict per entry.
+    """Parses the gate reply into one verdict per entry.
 
     Parsing is strict on purpose: text around the JSON object is rejected, and
     only a JSON ``true`` approves a string. Entries without a verdict object are
@@ -100,7 +100,7 @@ async def classify_with_recovery(
     entries: List[Dict[str, Any]],
     source_lang: str,
 ) -> Dict[str, Verdict]:
-    """Ask the gate for verdicts, recovering from replies that do not parse.
+    """Asks the gate for verdicts, recovering from replies that do not parse.
 
     Each batch gets one attempt per budget of :data:`~nwn_translator.config.NCS_GATE_MAX_TOKENS`.
     If none parses, the batch is split in halves (left first), each re-keyed from

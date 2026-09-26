@@ -80,10 +80,10 @@ class TranslationProvider(Protocol):
     model: str
 
     def get_provider_name(self) -> str:
-        """Return the short provider id (``"openrouter"``, ``"polza"``)."""
+        """Returns the short provider id (``"openrouter"``, ``"polza"``)."""
 
     def make_system_message_content(self, stable: str, variable: str = "") -> SystemContent:
-        """Build ``messages[0].content`` from a cacheable and a per-call prompt half."""
+        """Builds ``messages[0].content`` from a cacheable and a per-call prompt half."""
 
     async def translate_async(
         self,
@@ -94,7 +94,7 @@ class TranslationProvider(Protocol):
         glossary_block: Optional[str] = None,
         content_profile: Optional[str] = None,
     ) -> TranslationResult:
-        """Translate one string."""
+        """Translates one string."""
 
     async def translate_batch_async(
         self,
@@ -104,7 +104,7 @@ class TranslationProvider(Protocol):
         glossary_block: Optional[str] = None,
         content_profile: Optional[str] = None,
     ) -> List[TranslationResult]:
-        """Translate several strings in one request; one result per item, in order."""
+        """Translates several strings in one request; one result per item, in order."""
 
     async def classify_ncs_translate_gate_batch_async(
         self,
@@ -112,7 +112,7 @@ class TranslationProvider(Protocol):
         *,
         source_lang: str,
     ) -> Dict[str, Dict[str, Any]]:
-        """Return ``key -> {"translate": bool, "reason": str}`` for NCS string candidates."""
+        """Returns ``key -> {"translate": bool, "reason": str}`` for NCS string candidates."""
 
     async def complete_json_chat_async(
         self,
@@ -123,7 +123,7 @@ class TranslationProvider(Protocol):
         temperature: float,
         use_reasoning: bool = True,
     ) -> str:
-        """Return the stripped reply of one JSON-mode chat request."""
+        """Returns the stripped reply of one JSON-mode chat request."""
 
     async def complete_glossary_chat_async(
         self,
@@ -134,7 +134,7 @@ class TranslationProvider(Protocol):
         max_tokens: int,
         temperature: float,
     ) -> str:
-        """Return the stripped reply of one glossary request (the caller retries)."""
+        """Returns the stripped reply of one glossary request (the caller retries)."""
 
     async def close_async_client(self) -> None:
-        """Close the HTTP client bound to the current thread's event loop."""
+        """Closes the HTTP client bound to the current thread's event loop."""

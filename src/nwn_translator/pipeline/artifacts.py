@@ -25,7 +25,7 @@ from ..glossary import Glossary
 
 
 def write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
-    """Write *data* as indented UTF-8 JSON, creating the parent directory.
+    """Writes *data* as indented UTF-8 JSON, creating the parent directory.
 
     Args:
         path: Target file.
@@ -40,7 +40,7 @@ def write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
 
 
 def _read_json(path: Path) -> Any:
-    """Read a UTF-8 JSON file.
+    """Reads a UTF-8 JSON file.
 
     Args:
         path: The file.
@@ -55,7 +55,7 @@ def _read_json(path: Path) -> Any:
 
 
 def dump_items(path: Path, contents: List[ExtractedContent]) -> None:
-    """Write extracted content as ``items.jsonl``, one row per translatable item.
+    """Writes extracted content as ``items.jsonl``, one row per translatable item.
 
     Args:
         path: Target file.
@@ -83,7 +83,7 @@ def dump_items(path: Path, contents: List[ExtractedContent]) -> None:
 
 
 def load_items(path: Path) -> List[ExtractedContent]:
-    """Read ``items.jsonl`` written by :func:`dump_items`.
+    """Reads ``items.jsonl`` written by :func:`dump_items`.
 
     Args:
         path: The artifact.
@@ -130,7 +130,7 @@ def load_items(path: Path) -> List[ExtractedContent]:
 
 
 def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, Any]:
-    """Serialize the world context registry (candidates are dumped separately).
+    """Serializes the world context registry (candidates are dumped separately).
 
     Args:
         world_context: Scanned module objects, or None.
@@ -166,7 +166,7 @@ def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, An
 
 
 def dump_world_context(path: Path, world_context: Optional[WorldContext]) -> None:
-    """Write ``world_context.json`` (see :func:`world_context_to_dict`).
+    """Writes ``world_context.json`` (see :func:`world_context_to_dict`).
 
     Args:
         path: Target file.
@@ -176,7 +176,7 @@ def dump_world_context(path: Path, world_context: Optional[WorldContext]) -> Non
 
 
 def load_world_context(path: Path) -> WorldContext:
-    """Read ``world_context.json`` back into a :class:`WorldContext`.
+    """Reads ``world_context.json`` back into a :class:`WorldContext`.
 
     Candidates are not part of this artifact; attach them separately via
     :func:`load_candidates` when needed. Registries missing from older
@@ -209,7 +209,7 @@ def load_world_context(path: Path) -> WorldContext:
 
 
 def candidate_to_dict(candidate: EntityCandidate) -> Dict[str, Any]:
-    """Serialize an entity candidate with its curation and evidence.
+    """Serializes an entity candidate with its curation and evidence.
 
     Args:
         candidate: The candidate.
@@ -236,7 +236,7 @@ def candidate_to_dict(candidate: EntityCandidate) -> Dict[str, Any]:
 
 
 def dump_candidates(path: Path, registry: Optional[EntityCandidateRegistry]) -> None:
-    """Write ``candidates.json``.
+    """Writes ``candidates.json``.
 
     Args:
         path: Target file.
@@ -247,7 +247,7 @@ def dump_candidates(path: Path, registry: Optional[EntityCandidateRegistry]) -> 
 
 
 def load_candidates(path: Path) -> EntityCandidateRegistry:
-    """Read ``candidates.json`` back into a registry.
+    """Reads ``candidates.json`` back into a registry.
 
     The curated fields (decision, priority, score) are restored exactly, not
     recomputed from the evidence.
@@ -283,7 +283,7 @@ def load_candidates(path: Path) -> EntityCandidateRegistry:
 
 
 def dump_glossary(path: Path, glossary: Optional[Glossary]) -> None:
-    """Write ``glossary.json``: version 2 with entries and aliases, keys sorted.
+    """Writes ``glossary.json``: version 2 with entries and aliases, keys sorted.
 
     Args:
         path: Target file.
@@ -298,7 +298,7 @@ def dump_glossary(path: Path, glossary: Optional[Glossary]) -> None:
 
 
 def load_glossary(path: Path) -> Glossary:
-    """Read ``glossary.json``; a file without a version holds only the entries.
+    """Reads ``glossary.json``; a file without a version holds only the entries.
 
     Args:
         path: The artifact.
@@ -316,7 +316,7 @@ def load_glossary(path: Path) -> Glossary:
 
 
 def dump_translations(path: Path, translations: Translations) -> None:
-    """Write ``translations.json``: one row per occurrence, sorted by address.
+    """Writes ``translations.json``: one row per occurrence, sorted by address.
 
     Args:
         path: Target file.
@@ -335,7 +335,7 @@ def dump_translations(path: Path, translations: Translations) -> None:
 
 
 def load_translations(path: Path) -> Translations:
-    """Read ``translations.json`` written by :func:`dump_translations`.
+    """Reads ``translations.json`` written by :func:`dump_translations`.
 
     Args:
         path: The artifact.

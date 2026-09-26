@@ -452,7 +452,7 @@ _FORMS: Dict[str, Dict[str, Any]] = {
 
 
 def _expand(forms: Dict[str, Any]) -> Dict[str, Any]:
-    """Pair a language's forms with the English sources."""
+    """Pairs a language's forms with the English sources."""
     proper = [
         (src, good, bad) for src, (good, bad) in zip(_PROPER_NAME_SOURCES, forms["proper_names"])
     ]
@@ -481,7 +481,7 @@ LANGUAGES: Tuple[str, ...] = tuple(_EXAMPLES)
 
 
 def get_examples(target_lang: str) -> Dict[str, Any]:
-    """Return the examples of *target_lang*.
+    """Returns the examples of *target_lang*.
 
     Args:
         target_lang: Target language name (case and surrounding spaces ignored).

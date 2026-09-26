@@ -26,7 +26,7 @@ _thread_state = threading.local()
 
 
 def _get_thread_loop() -> asyncio.AbstractEventLoop:
-    """Return this thread's persistent event loop, creating it on first use.
+    """Returns this thread's persistent event loop, creating it on first use.
 
     Reusing one loop per thread lets loop-bound resources (the provider's
     ``AsyncOpenAI`` client and its httpx connection pool) survive across
@@ -41,7 +41,7 @@ def _get_thread_loop() -> asyncio.AbstractEventLoop:
 
 
 def shutdown_thread_loop() -> None:
-    """Close this thread's persistent event loop (end-of-run hygiene).
+    """Closes this thread's persistent event loop (end-of-run hygiene).
 
     The next ``run_async`` call on the thread creates a fresh loop.
     """
@@ -55,7 +55,7 @@ def shutdown_thread_loop() -> None:
 
 
 def close_thread_resources(provider: TranslationProvider) -> None:
-    """Close *provider*'s HTTP client on this thread's loop, then the loop.
+    """Closes *provider*'s HTTP client on this thread's loop, then the loop.
 
     Call it when a thread has finished its ``run_async`` work: the loop, and
     the client bound to it, would otherwise stay open after the thread ends.
@@ -74,7 +74,7 @@ def close_thread_resources(provider: TranslationProvider) -> None:
 
 
 def _cancel_all_tasks(loop: asyncio.AbstractEventLoop) -> None:
-    """Cancel every remaining task on *loop* and await their cancellation."""
+    """Cancels every remaining task on *loop* and await their cancellation."""
     to_cancel = asyncio.all_tasks(loop)
     if not to_cancel:
         return
@@ -88,7 +88,7 @@ def run_async(
     *,
     timeout: Optional[float] = DEFAULT_TIMEOUT,
 ) -> T:
-    """Run an async coroutine from synchronous code on the thread's loop.
+    """Runs an async coroutine from synchronous code on the thread's loop.
 
     The loop persists between calls (see :func:`_get_thread_loop`), so async
     resources bound to it — notably the provider's HTTP client — are reused.

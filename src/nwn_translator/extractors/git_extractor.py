@@ -47,14 +47,14 @@ class _FieldRef(NamedTuple):
 
 
 def _dict_rows(struct: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
-    """Return the struct elements of the list *key*, skipping anything else."""
+    """Returns the struct elements of the list *key*, skipping anything else."""
     return [row for row in list_field(struct, key) if isinstance(row, dict)]
 
 
 def _item_row_fields(
     row: Dict[str, Any], id_prefix: str, group: str, where: str
 ) -> Iterator[_FieldRef]:
-    """Yield the fields of one inventory row or area floor item."""
+    """Yields the fields of one inventory row or area floor item."""
     for field_name, item_type, context in item_fields(row, where):
         yield _FieldRef(row, field_name, item_type, context, f"{id_prefix}_{field_name}", group)
 
@@ -62,7 +62,7 @@ def _item_row_fields(
 def _store_stock_fields(
     node: Dict[str, Any], stem: str, inst_idx: int, path: str
 ) -> Iterator[_FieldRef]:
-    """Yield a store's ``ItemList`` rows, then its nested shelves depth-first."""
+    """Yields a store's ``ItemList`` rows, then its nested shelves depth-first."""
     for j, row in enumerate(_dict_rows(node, "ItemList")):
         yield from _item_row_fields(
             row,
@@ -76,7 +76,7 @@ def _store_stock_fields(
 
 
 def _area_fields(parsed_data: Dict[str, Any], stem: str) -> Iterator[_FieldRef]:
-    """Yield every candidate field of an area in extraction order.
+    """Yields every candidate field of an area in extraction order.
 
     Each instance's own fields come first, then its nested items; the lists
     follow :data:`INSTANCE_FIELDS` order and the area floor items come last.
@@ -113,7 +113,7 @@ def _area_fields(parsed_data: Dict[str, Any], stem: str) -> Iterator[_FieldRef]:
 
 
 def _git_item(ref: _FieldRef, known_names: FrozenSet[str]) -> Optional[TranslatableItem]:
-    """Build the item for *ref*, or None when it holds no translatable text."""
+    """Builds the item for *ref*, or None when it holds no translatable text."""
     text = extract_local_string(ref.struct.get(ref.field_name))
     if text is None or not should_translate_git_string(text, ref.item_type, known_names):
         return None
@@ -147,7 +147,7 @@ class GitExtractor(BaseExtractor):
     """Area instances (``.git``): placed objects, their inventories, floor items."""
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract the visible instance strings of an area.
+        """Extracts the visible instance strings of an area.
 
         Args:
             file_path: Path of the ``.git`` resource; its directory holds the

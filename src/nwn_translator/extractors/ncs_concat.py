@@ -67,11 +67,11 @@ class ConcatChain:
     last_instr_index: int
 
     def lits(self) -> List[ConcatLit]:
-        """Return the CONSTS operands in left-to-right order."""
+        """Returns the CONSTS operands in left-to-right order."""
         return [p for p in self.parts if isinstance(p, ConcatLit)]
 
     def to_metadata(self) -> List[Dict[str, Any]]:
-        """Serialize parts for ``TranslatableItem.metadata['concat_parts']``."""
+        """Serializes parts for ``TranslatableItem.metadata['concat_parts']``."""
         out: List[Dict[str, Any]] = []
         for part in self.parts:
             if isinstance(part, ConcatLit):
@@ -94,7 +94,7 @@ _VAR = object()
 
 
 def merged_text(chain: ConcatChain) -> str:
-    """Join chain parts, replacing runtime slots with ``<VAR1>``, ``<VAR2>``, …."""
+    """Joins chain parts, replacing runtime slots with ``<VAR1>``, ``<VAR2>``, …."""
     bits: List[str] = []
     for part in chain.parts:
         if isinstance(part, ConcatLit):
@@ -105,7 +105,7 @@ def merged_text(chain: ConcatChain) -> str:
 
 
 def parts_from_metadata(raw: Sequence[Mapping[str, Any]]) -> List[ConcatPart]:
-    """Rebuild concat parts from extractor metadata."""
+    """Rebuilds concat parts from extractor metadata."""
     parts: List[ConcatPart] = []
     for cell in raw:
         if "var" in cell:
@@ -134,14 +134,14 @@ def _finalize(parts: Sequence[Union[ConcatLit, object]], end_index: int) -> Opti
 
 
 def _flatten(node: Union[_Cat, ConcatLit, object]) -> List[Union[ConcatLit, object]]:
-    """Return the parts a stack node contributes to an enclosing concat."""
+    """Returns the parts a stack node contributes to an enclosing concat."""
     if isinstance(node, _Cat):
         return list(node.parts)
     return [node]
 
 
 def find_concat_chains(ncs: NCSFile) -> Dict[int, ConcatChain]:
-    """Return concat chains keyed by the byte offset of the first CONSTS literal.
+    """Returns concat chains keyed by the byte offset of the first CONSTS literal.
 
     Calls use the same signatures as consumer tracing. Unknown instructions
     end a chain; stack copies of literals must not become runtime placeholders.
@@ -224,7 +224,7 @@ def split_concat_translation(
     parts: Sequence[ConcatPart],
     translated: str,
 ) -> Optional[List[Tuple[int, str, str]]]:
-    """Split a translated concat string back into per-CONSTS replacements.
+    """Splits a translated concat string back into per-CONSTS replacements.
 
     Each ``<VARn>`` must appear exactly once, in original order. Text between
     placeholders is assigned to the lit-run in that slot: the first CONSTS of

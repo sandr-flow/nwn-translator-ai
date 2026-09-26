@@ -55,7 +55,7 @@ class ScriptGate:
         log_writer: TranslationLogWriter,
         diagnostics: NcsDiagnostics,
     ):
-        """Create a gate for one run.
+        """Creates a gate for one run.
 
         Args:
             config: Run settings (source language, gate switch, concurrency).
@@ -69,7 +69,7 @@ class ScriptGate:
         self.diagnostics = diagnostics
 
     def decide(self, items: Sequence[TranslatableItem]) -> Dict[Occurrence, bool]:
-        """Decide every script literal among *items*.
+        """Decides every script literal among *items*.
 
         Args:
             items: Items of any kind; only script literals are decided.
@@ -121,7 +121,7 @@ class ScriptGate:
         return approvals
 
     async def _ask_all(self, pending: List[TranslatableItem]) -> List[Dict[str, Any]]:
-        """Ask the model about *pending* in concurrent chunks; one verdict per item.
+        """Asks the model about *pending* in concurrent chunks; one verdict per item.
 
         A chunk whose request fails rejects only its own candidates.
         """
@@ -156,7 +156,7 @@ class ScriptGate:
 
 
 def _gate_entry(key: str, item: TranslatableItem) -> Dict[str, Any]:
-    """Return the gate request entry of one candidate."""
+    """Returns the gate request entry of one candidate."""
     meta = item.metadata
     return {
         "key": key,
@@ -172,7 +172,7 @@ def _gate_entry(key: str, item: TranslatableItem) -> Dict[str, Any]:
 
 
 def add_script_context(approved: Sequence[TranslatableItem]) -> None:
-    """Give approved script strings the context of their script.
+    """Gives approved script strings the context of their script.
 
     Each string gets its source excerpt and the neighbouring approved strings of
     the same script (by bytecode offset) as prompt context, and joins its script's

@@ -88,7 +88,7 @@ class ProgressSink(Protocol):
     """Counter of translated items (the pipeline's progress reporter)."""
 
     def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
-        """Count more items of a file as done.
+        """Counts more items of a file as done.
 
         Args:
             by: Number of items.
@@ -197,7 +197,7 @@ class _FileProgress:
     """
 
     def __init__(self, sink: Optional[ProgressSink], budget: int, filename: str) -> None:
-        """Start the progress of one file at zero.
+        """Starts the progress of one file at zero.
 
         Args:
             sink: Progress sink, if any; without one nothing is reported.
@@ -211,7 +211,7 @@ class _FileProgress:
         self._done = 0
 
     def bump(self, by: int) -> None:
-        """Report more lines, up to what is left of the budget.
+        """Reports more lines, up to what is left of the budget.
 
         Args:
             by: Number of lines; without a budget it is reported as is.
@@ -225,7 +225,7 @@ class _FileProgress:
         self._done += delta
 
     def finish(self) -> None:
-        """Report the rest of the budget, whatever was translated."""
+        """Reports the rest of the budget, whatever was translated."""
         if self._budget:
             self.bump(self._budget - self._done)
 
@@ -249,7 +249,7 @@ class _FileRun:
     rejected: Dict[str, _Rejected] = field(default_factory=dict)
 
     def take(self, accepted: Translations) -> None:
-        """Add accepted lines and report their progress.
+        """Adds accepted lines and report their progress.
 
         Args:
             accepted: Accepted translations by occurrence.
@@ -259,7 +259,7 @@ class _FileRun:
 
 
 def _parse_answer(raw: str, label: str) -> Optional[Dict[str, Any]]:
-    """Return the first JSON object of an answer, logging an error when there is none.
+    """Returns the first JSON object of an answer, logging an error when there is none.
 
     Args:
         raw: The model's answer.
@@ -279,7 +279,7 @@ def _parse_answer(raw: str, label: str) -> Optional[Dict[str, Any]]:
 
 
 def _looks_truncated(raw: str) -> bool:
-    """Guess whether an unparseable answer stopped mid-string at ``max_tokens``.
+    """Guesses whether an unparseable answer stopped mid-string at ``max_tokens``.
 
     Only an unterminated string counts, and the strict decoder is used, so a
     raw control character earlier in the answer hides the truncation.
@@ -302,7 +302,7 @@ def _looks_truncated(raw: str) -> bool:
 
 
 def _group_part(answer: Dict[str, Any], file_path: Path) -> Any:
-    """Return the part of a grouped answer for *file_path*.
+    """Returns the part of a grouped answer for *file_path*.
 
     Keys match the file name or its stem, ignoring case and surrounding
     spaces; the first match in answer order wins.
@@ -341,7 +341,7 @@ class ContextualTranslationManager:
         glossary: Optional["Glossary"] = None,
         log_writer: Optional[TranslationLogWriter] = None,
     ) -> None:
-        """Create a manager for one run.
+        """Creates a manager for one run.
 
         Args:
             config: Run configuration.
@@ -367,7 +367,7 @@ class ContextualTranslationManager:
         dialog_files: Sequence[Tuple[Path, Dict[str, Any], int]],
         item_progress: Optional[ProgressSink] = None,
     ) -> Tuple[Translations, List[Tuple[Path, Exception]]]:
-        """Translate dialog files on a pool of ``max_concurrent_requests`` threads.
+        """Translates dialog files on a pool of ``max_concurrent_requests`` threads.
 
         Small dialogs share grouped requests. A file whose part of a grouped
         answer is missing, incomplete or has broken tokens falls back to its
@@ -514,7 +514,7 @@ class ContextualTranslationManager:
         item_progress: Optional[ProgressSink],
         accepted: Optional[Translations] = None,
     ) -> Translations:
-        """Translate the lines of one dialog that *accepted* does not cover yet.
+        """Translates the lines of one dialog that *accepted* does not cover yet.
 
         Errors are logged, not raised: the lines not accepted by then are
         added to :attr:`failed_items`. The file reports its whole item budget
@@ -566,7 +566,7 @@ class ContextualTranslationManager:
         return translations
 
     def _request_lines(self, run: _FileRun, keys: List[str]) -> None:
-        """Send the chunks of *keys*, then retry what is still missing or broken.
+        """Sends the chunks of *keys*, then retry what is still missing or broken.
 
         Accepted lines are added to *run* as they come.
 
@@ -608,7 +608,7 @@ class ContextualTranslationManager:
             self._retry_lines(run, pending)
 
     def _translate_chunk(self, run: _FileRun, chunk: Chunk, index: int, total: int) -> List[str]:
-        """Request one chunk and accept its valid lines.
+        """Requests one chunk and accept its valid lines.
 
         A failing request (a provider error after its own retries, a
         timeout) costs only this chunk: its lines stay unaccepted and are
@@ -670,7 +670,7 @@ class ContextualTranslationManager:
         return [key for key in chunk.keys if key not in answer or key in rejected]
 
     def _retry_pending(self, run: _FileRun, pending: List[str]) -> List[str]:
-        """Request the pending lines again in one token-preserving request.
+        """Requests the pending lines again in one token-preserving request.
 
         A failing request is treated like an unusable answer, so the lines
         still get their single-line retries and cleanup. A rate or budget
@@ -730,7 +730,7 @@ class ContextualTranslationManager:
         return [key for key in pending if key not in answer or key in rejected]
 
     def _retry_lines(self, run: _FileRun, keys: List[str]) -> None:
-        """Retry lines one by one; accept a cleaned answer for lines that still fail.
+        """Retries lines one by one; accept a cleaned answer for lines that still fail.
 
         Args:
             run: The file's state.
@@ -763,7 +763,7 @@ class ContextualTranslationManager:
             run.take(cleaned)
 
     def _retry_line(self, run: _FileRun, key: str, glossary_block: Optional[str]) -> bool:
-        """Request one line alone through ``translate_async``.
+        """Requests one line alone through ``translate_async``.
 
         Args:
             run: The file's state.
@@ -891,7 +891,7 @@ class ContextualTranslationManager:
         return translations, errors
 
     def _request_group(self, group: List[PreparedDialog], label: str) -> Optional[Dict[str, Any]]:
-        """Send one grouped request.
+        """Sends one grouped request.
 
         Args:
             group: The dialogs of the request.
@@ -935,7 +935,7 @@ class ContextualTranslationManager:
         trace: Dict[str, Any],
         label: str,
     ) -> Optional[Dict[str, Any]]:
-        """Send a JSON request and recover from an unparseable answer.
+        """Sends a JSON request and recover from an unparseable answer.
 
         Args:
             recovery: Steps to take when the first answer does not parse.
@@ -972,7 +972,7 @@ class ContextualTranslationManager:
     def _call_json(
         self, system: SystemContent, user: str, max_tokens: int, trace: Dict[str, Any]
     ) -> str:
-        """Send one JSON chat request (metrics phase ``dialog``) and return the reply.
+        """Sends one JSON chat request (metrics phase ``dialog``) and return the reply.
 
         Args:
             system: System message content.
@@ -999,7 +999,7 @@ class ContextualTranslationManager:
         return run_async(call())
 
     def _system_prompt(self, corpus: List[str], speakers: str) -> SystemContent:
-        """Build the system message of a dialog request.
+        """Builds the system message of a dialog request.
 
         Args:
             corpus: Texts that select the world entities and glossary terms:
@@ -1031,7 +1031,7 @@ class ContextualTranslationManager:
         *,
         allow_cleanup: bool,
     ) -> Tuple[Translations, Dict[str, _Rejected]]:
-        """Restore and validate the answered lines; log each accepted one.
+        """Restores and validate the answered lines; log each accepted one.
 
         Only *requested* keys are read: an answer may also carry the IDs of
         context-only nodes or of lines accepted earlier.
@@ -1096,7 +1096,7 @@ class ContextualTranslationManager:
     def _mark_failed(
         self, dialog: PreparedDialog, keys: List[str], translations: Translations
     ) -> None:
-        """Record the lines of *keys* that have no accepted translation.
+        """Records the lines of *keys* that have no accepted translation.
 
         Args:
             dialog: The prepared dialog.

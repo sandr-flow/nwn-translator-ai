@@ -50,7 +50,7 @@ class ModuleTranslator:
     """
 
     def __init__(self, config: TranslationConfig):
-        """Create the provider and the pipeline state of a run.
+        """Creates the provider and the pipeline state of a run.
 
         Args:
             config: Run settings.
@@ -61,7 +61,7 @@ class ModuleTranslator:
         self.metrics_recorder = self.state.metrics_recorder
 
     def translate(self) -> Path:
-        """Run every stage.
+        """Runs every stage.
 
         Returns:
             The translated module.
@@ -89,7 +89,7 @@ class ModuleTranslator:
         return self.state.glossary
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Return the run statistics; see :meth:`PipelineState.get_statistics`."""
+        """Returns the run statistics; see :meth:`PipelineState.get_statistics`."""
         return self.state.get_statistics()
 
 
@@ -100,7 +100,7 @@ def rebuild_module(
     original_mod_path: Path,
     target_lang: Optional[str] = None,
 ) -> Path:
-    """Re-inject translations and reassemble a .mod without LLM calls.
+    """Re-injects translations and reassemble a .mod without LLM calls.
 
     Translations are addressed by ``item_id``, not by original text: the
     extracted files on disk already hold the first-pass translation. Only files
@@ -156,7 +156,7 @@ def rebuild_module(
 
 
 def translate_module(config: TranslationConfig) -> Path:
-    """Translate a NWN module.
+    """Translates a NWN module.
 
     Args:
         config: Run settings.
@@ -173,7 +173,7 @@ def translate_module(config: TranslationConfig) -> Path:
 
 
 def run_translation_pipeline(config: TranslationConfig) -> Tuple[Path, ModuleTranslator]:
-    """Validate *config*, translate the module and return the translator too.
+    """Validates *config*, translate the module and return the translator too.
 
     The library entry point and the web task runner share this startup path.
 

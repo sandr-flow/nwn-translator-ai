@@ -69,7 +69,7 @@ class PreparedDialog:
         return list(self.texts)
 
     def address(self, key: str) -> Occurrence:
-        """Return the occurrence of a line: ``E3`` -> ``(file name, "stem:entry:3")``.
+        """Returns the occurrence of a line: ``E3`` -> ``(file name, "stem:entry:3")``.
 
         Args:
             key: Script key of the line.
@@ -100,7 +100,7 @@ def prepare_dialog(
     *,
     preserve_tokens: bool,
 ) -> Optional[PreparedDialog]:
-    """Build a dialog's conversation tree and sanitize its lines.
+    """Builds a dialog's conversation tree and sanitize its lines.
 
     Args:
         file_path: Path of the ``.dlg`` resource.
@@ -131,7 +131,7 @@ def prepare_dialog(
 
 
 def _terms_chars(texts: Sequence[str], target_lang: str, glossary: Optional["Glossary"]) -> int:
-    """Return the length of the glossary block a request with *texts* would carry.
+    """Returns the length of the glossary block a request with *texts* would carry.
 
     Args:
         texts: Texts of the request.
@@ -150,7 +150,7 @@ def plan_chunks(
     target_lang: str,
     glossary: Optional["Glossary"],
 ) -> List[Chunk]:
-    """Split the lines of one dialog into requests.
+    """Splits the lines of one dialog into requests.
 
     When *keys* are all the dialog's lines, the whole dialog script is
     sent; otherwise only the nodes of *keys* with their neighbours as
@@ -199,7 +199,7 @@ def pack_groups(
     target_lang: str,
     glossary: Optional["Glossary"],
 ) -> Tuple[List[List[PreparedDialog]], List[PreparedDialog]]:
-    """Pack small dialogs greedily, in order, into grouped requests.
+    """Packs small dialogs greedily, in order, into grouped requests.
 
     A group closes before a dialog that would push it past
     :data:`GROUP_TARGET_CHARS` of scripts, :data:`GROUP_MAX_FILES` files or
@@ -238,7 +238,7 @@ def plan_requests(
     target_lang: str,
     glossary: Optional["Glossary"],
 ) -> Tuple[List[PreparedDialog], List[List[PreparedDialog]]]:
-    """Choose which dialogs get their own request and which share one.
+    """Chooses which dialogs get their own request and which share one.
 
     Args:
         dialogs: Dialogs with lines to translate, in pipeline order.

@@ -63,7 +63,7 @@ _MAGNET_TOKENS = frozenset(
 
 
 def tokenize(text: str) -> Set[str]:
-    """Return the letter tokens of *text* (NFKC, casefolded; digits and ``_`` split tokens)."""
+    """Returns the letter tokens of *text* (NFKC, casefolded; digits and ``_`` split tokens)."""
     if not text:
         return set()
     normalized = unicodedata.normalize("NFKC", str(text)).casefold()
@@ -237,7 +237,7 @@ def _damerau_levenshtein_le_1(a: str, b: str) -> bool:
 
 
 def tokenize_corpus(texts: Iterable[str]) -> Set[str]:
-    """Return the union of the :func:`tokenize` tokens of *texts* (empty items skipped)."""
+    """Returns the union of the :func:`tokenize` tokens of *texts* (empty items skipped)."""
     out: Set[str] = set()
     for t in texts:
         if t:
@@ -251,7 +251,7 @@ _COMPOUND_FREQUENCY_THRESHOLD = 3
 
 @lru_cache(maxsize=16384)
 def _split_hierarchical_cached(name: str) -> Optional[Tuple[str, ...]]:
-    """Split ``A - B - C`` into its parts; ``None`` unless every part starts upper-case."""
+    """Splits ``A - B - C`` into its parts; ``None`` unless every part starts upper-case."""
     parts = tuple(p.strip() for p in _HIERARCHY_SPLIT_RE.split(name))
     if len(parts) < 2:
         return None
@@ -263,7 +263,7 @@ def _split_hierarchical_cached(name: str) -> Optional[Tuple[str, ...]]:
 def common_hierarchy_components(
     names: Iterable[str], threshold: int = _COMPOUND_FREQUENCY_THRESHOLD
 ) -> Set[str]:
-    """Return casefolded components shared by many hierarchical names.
+    """Returns casefolded components shared by many hierarchical names.
 
     A component appearing in *threshold* or more hierarchical names is
     classified as a common prefix/suffix and on its own is not enough to
@@ -292,7 +292,7 @@ def hierarchical_entry_passes(
     source_joined: str,
     common: Set[str],
 ) -> bool:
-    """Return True if a hierarchical *name* is evidenced by the source corpus.
+    """Returns True if a hierarchical *name* is evidenced by the source corpus.
 
     The full name string winning by exact substring is always sufficient.
     Otherwise at least one non-common component must appear as a literal

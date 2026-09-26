@@ -49,7 +49,7 @@ class GlossaryCurator:
         config: "TranslationConfig",
         progress_callback: Optional[ProgressCallback] = None,
     ) -> EntityCandidateRegistry:
-        """Apply the deterministic decisions, then the model's, to *registry* in place.
+        """Applies the deterministic decisions, then the model's, to *registry* in place.
 
         Args:
             registry: Candidates to curate.
@@ -154,7 +154,7 @@ def _needs_llm_curation(candidate: EntityCandidate) -> bool:
 
 
 def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str, Any]]:
-    """Parse a curator reply into decisions for the expected candidate names.
+    """Parses a curator reply into decisions for the expected candidate names.
 
     Keys match exactly, else case-insensitively; values with an unknown
     decision are skipped.
@@ -196,7 +196,7 @@ def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str
 
 
 def _optional_int(value: Any) -> Optional[int]:
-    """Return *value* as ``int``, or ``None`` when it does not convert.
+    """Returns *value* as ``int``, or ``None`` when it does not convert.
 
     ``json.loads`` reads ``Infinity`` and ``NaN``, which ``int`` rejects.
     """
@@ -207,7 +207,7 @@ def _optional_int(value: Any) -> Optional[int]:
 
 
 def _optional_str(value: Any) -> Optional[str]:
-    """Return *value* as a stripped non-empty string, or ``None``."""
+    """Returns *value* as a stripped non-empty string, or ``None``."""
     if value is None:
         return None
     text = str(value).strip()

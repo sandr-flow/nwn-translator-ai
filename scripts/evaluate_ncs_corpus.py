@@ -57,7 +57,7 @@ class BoundaryProvider:
 
 
 def load_corpus(root: Path = CORPUS):
-    """Reject changed files or incomplete labels instead of quietly scoring them."""
+    """Rejects changed files or incomplete labels instead of quietly scoring them."""
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     annotations = json.loads((root / "annotations.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == annotations["schema_version"] == 2

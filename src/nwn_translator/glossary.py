@@ -40,7 +40,7 @@ class _TermMatcher:
         self._memo: Dict[str, FrozenSet[str]] = {}
 
     def keys_in(self, text: str) -> FrozenSet[str]:
-        """Return the forms that occur in *text* as whole words."""
+        """Returns the forms that occur in *text* as whole words."""
         found = self._memo.get(text)
         if found is None:
             lowered = text.lower()
@@ -75,7 +75,7 @@ class Glossary:
     )
 
     def matching_entries(self, texts: Iterable[str]) -> Dict[str, str]:
-        """Return the entries whose source form occurs in *texts*, with their alias families.
+        """Returns the entries whose source form occurs in *texts*, with their alias families.
 
         Only explicit aliases share an entity; a shared word does not.
 
@@ -99,7 +99,7 @@ class Glossary:
         }
 
     def to_prompt_block(self, texts: Optional[Iterable[str]] = None) -> str:
-        """Render the GLOSSARY prompt block.
+        """Renders the GLOSSARY prompt block.
 
         Args:
             texts: Restrict the block to :meth:`matching_entries` of these texts;
@@ -128,7 +128,7 @@ _NO_GLOSSARY = Glossary()
 
 
 def terminology_block(texts: Iterable[str], target_lang: str, glossary: Optional[Glossary]) -> str:
-    """Render the terminology a translation prompt needs for *texts*.
+    """Renders the terminology a translation prompt needs for *texts*.
 
     The glossary is merged with the static race terms of *target_lang*, which
     win over glossary entries with the same casefolded source form. The merged
@@ -157,7 +157,7 @@ def terminology_block(texts: Iterable[str], target_lang: str, glossary: Optional
 
 
 def restore_wrapping_quotes(key: str, value: str) -> str:
-    """Give *value* back the quotation marks *key* is wrapped in.
+    """Gives *value* back the quotation marks *key* is wrapped in.
 
     A translation replaces the whole game string, so a name the module author
     wrote as ``"Thesis Paper Room"`` must keep its quotes in the patched module,

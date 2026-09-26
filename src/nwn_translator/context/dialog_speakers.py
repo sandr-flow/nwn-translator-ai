@@ -51,7 +51,7 @@ def _identity(npc: NPCInfo) -> Tuple[str, str, str, str, str]:
 
 
 def _unique(actors: Iterable[NPCInfo]) -> List[NPCInfo]:
-    """Drop repeats of one object (a blueprint and its unchanged placements)."""
+    """Drops repeats of one object (a blueprint and its unchanged placements)."""
     seen = set()
     unique: List[NPCInfo] = []
     for actor in actors:
@@ -94,7 +94,7 @@ def speaker_lines(
     node_map: Mapping[str, DialogNode],
     file_label: str = "",
 ) -> List[str]:
-    """Describe who speaks a dialog's NPC lines, for the dialog prompt.
+    """Describes who speaks a dialog's NPC lines, for the dialog prompt.
 
     The owner rarely names themself in their lines, so the relevance-filtered
     world context usually omits them and the model would have to guess the
@@ -143,7 +143,7 @@ def dialog_line_speaker(
     is_entry: bool,
     speaker_tag: str = "",
 ) -> DialogSpeaker:
-    """Resolve the speaker of one dialog line for the web editor.
+    """Resolves the speaker of one dialog line for the web editor.
 
     Several objects are listed together: names and tags are each joined with
     `` / ``, up to three, with a ``+N`` count of the rest.

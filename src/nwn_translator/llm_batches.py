@@ -66,7 +66,7 @@ AttemptObserver = Callable[[int, int], None]
 
 
 def chunks(items: Sequence[B], size: int) -> List[List[B]]:
-    """Split *items* into consecutive lists of at most *size* elements.
+    """Splits *items* into consecutive lists of at most *size* elements.
 
     Args:
         items: Items in request order.
@@ -81,7 +81,7 @@ def chunks(items: Sequence[B], size: int) -> List[List[B]]:
 def json_request(
     provider: "TranslationProvider", system_prompt: str, user_prompt: str
 ) -> Awaitable[str]:
-    """Start the JSON chat request of entity extraction and curation.
+    """Starts the JSON chat request of entity extraction and curation.
 
     Args:
         provider: Model provider.
@@ -101,7 +101,7 @@ def json_request(
 
 
 def _clip(text: str, limit: int) -> str:
-    """Shorten *text* to *limit* characters for a log line."""
+    """Shortens *text* to *limit* characters for a log line."""
     return text[:limit] + "…" if len(text) > limit else text
 
 
@@ -138,7 +138,7 @@ class LlmStage:
     max_run_timeout: float = math.inf
 
     def run_timeout(self, batch_count: int) -> float:
-        """Return the overall deadline of a run.
+        """Returns the overall deadline of a run.
 
         Args:
             batch_count: Number of batches in the run.
@@ -156,7 +156,7 @@ class LlmStage:
         *,
         concurrency: int,
     ) -> List[Union[R, BaseException]]:
-        """Run *worker* on every batch concurrently and return the results in batch order.
+        """Runs *worker* on every batch concurrently and return the results in batch order.
 
         When :meth:`run_timeout` runs out, the unfinished batches are cancelled
         and the finished ones keep their results.
@@ -216,7 +216,7 @@ class LlmStage:
         return run_async(run_all(), timeout=None)
 
     async def request(self, slot: Slot, send: Callable[[], Awaitable[str]]) -> str:
-        """Send one request while holding *slot*, tagged with the stage's metrics phase.
+        """Sends one request while holding *slot*, tagged with the stage's metrics phase.
 
         Args:
             slot: The worker's request slot (see :meth:`run`).
@@ -246,7 +246,7 @@ class LlmStage:
         name: str,
         on_attempt: Optional[AttemptObserver] = None,
     ) -> Dict[str, V]:
-        """Request the keys in *remaining* until each is answered or the attempts run out.
+        """Requests the keys in *remaining* until each is answered or the attempts run out.
 
         Every attempt asks for the keys still missing, sorted by ``str.lower``;
         the answered ones leave *remaining* in place, so the caller sees the

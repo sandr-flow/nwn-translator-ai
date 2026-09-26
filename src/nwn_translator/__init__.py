@@ -13,7 +13,7 @@ from .config import ProgressCallback, TranslationConfig, create_output_path
 
 
 def __getattr__(name):
-    """Import the pipeline entry points on first use.
+    """Imports the pipeline entry points on first use.
 
     Keeps ``import nwn_translator`` (and ``nwn_translator.config``) light: the
     pipeline imports every extractor and the provider SDK.

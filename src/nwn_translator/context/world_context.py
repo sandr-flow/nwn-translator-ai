@@ -131,7 +131,7 @@ class NPCInfo:
 
     @classmethod
     def from_creature(cls, data: Dict[str, Any], description: str = "") -> "NPCInfo":
-        """Summarize a creature struct: a ``.utc`` blueprint or a ``.git`` placement.
+        """Summarizes a creature struct: a ``.utc`` blueprint or a ``.git`` placement.
 
         Args:
             data: Parsed creature struct.
@@ -183,7 +183,7 @@ class WorldContext:
     dialog_actors_by_tag: Dict[str, List[NPCInfo]] = field(default_factory=dict)
 
     def register_dialog_actor(self, actor: NPCInfo) -> bool:
-        """Index *actor* by its Conversation and its tag for dialog speaker lookup.
+        """Indexes *actor* by its Conversation and its tag for dialog speaker lookup.
 
         Identical placements of one blueprint are indexed once.
 
@@ -208,7 +208,7 @@ class WorldContext:
         return added
 
     def register_script_owner(self, resref: object, npc: NPCInfo) -> None:
-        """Record that *npc* runs *resref* as an event script (OBJECT_SELF).
+        """Records that *npc* runs *resref* as an event script (OBJECT_SELF).
 
         Args:
             resref: Script ResRef; empty and ``****``/``nw_`` placeholders are ignored.
@@ -223,7 +223,7 @@ class WorldContext:
         owners.append(npc)
 
     def speaker_hint_for_script(self, script_stem: object) -> Optional[str]:
-        """Compact speaker metadata for NCS translation of *script_stem*.
+        """Compacts speaker metadata for NCS translation of *script_stem*.
 
         Shared blueprints (many goblins → one bark script) summarize race and
         gender instead of listing every name.
@@ -266,7 +266,7 @@ class WorldContext:
         return "Speaker (OBJECT_SELF): " + ", ".join(summary_parts)
 
     def enrich_ncs_item_context(self, item: TranslatableItem) -> None:
-        """Append the speaker hint of its script to an ``ncs_string`` item's context.
+        """Appends the speaker hint of its script to an ``ncs_string`` item's context.
 
         Args:
             item: Extracted item; other item types and scripts without an
@@ -286,7 +286,7 @@ class WorldContext:
         item.context = f"{current} {hint}".strip() if current else hint
 
     def get_all_names(self) -> List[Tuple[str, str]]:
-        """Collect every known name for the glossary, uncurated.
+        """Collects every known name for the glossary, uncurated.
 
         Returns:
             ``(name, category)`` pairs: NPC full names (``character``), then
@@ -317,7 +317,7 @@ class WorldContext:
         return out
 
     def get_glossary_names(self) -> List[Tuple[str, str]]:
-        """Return the curated glossary candidates, else every known name.
+        """Returns the curated glossary candidates, else every known name.
 
         Returns:
             The eligible candidates' ``(name, category)`` pairs, or
@@ -335,7 +335,7 @@ class WorldContext:
         target_lang: Optional[str] = None,
         source_texts: Optional[Iterable[str]] = None,
     ) -> str:
-        """Format the world context as a concise text block for the system prompt.
+        """Formats the world context as a concise text block for the system prompt.
 
         Args:
             glossary: If set, append canonical translations next to matching English names.
@@ -425,7 +425,7 @@ class _Selection:
         self._chars_left = WORLD_CONTEXT_MAX_CHARS
 
     def select(self, category: str, rows: List[_Row]) -> List[str]:
-        """Return the lines of the relevant *rows*, best first, within the remaining budget.
+        """Returns the lines of the relevant *rows*, best first, within the remaining budget.
 
         Args:
             category: Entity category of the section (``character``, ``location``,
@@ -474,7 +474,7 @@ class _Selection:
         return True
 
     def _score(self, name: str, tag: str, category: str) -> int:
-        """Rank a kept entry: literal name and tag hits first, deprioritized labels last."""
+        """Ranks a kept entry: literal name and tag hits first, deprioritized labels last."""
         decision = classify_entity_candidate(name, category).decision
         if decision == "drop":
             return -1000
@@ -500,7 +500,7 @@ class WorldScanner:
         progress_callback: Optional[ProgressCallback] = None,
         source_encoding: Optional[str] = None,
     ) -> WorldContext:
-        """Scan the directory and build world context.
+        """Scans the directory and build world context.
 
         Args:
             extract_dir: Path to directory containing extracted module files.
@@ -567,7 +567,7 @@ class WorldScanner:
 
 
 def _scan_creature(context: WorldContext, data: Dict[str, Any], resource: str) -> bool:
-    """Register a creature blueprint (.utc): script owner, NPC and name candidate.
+    """Registers a creature blueprint (.utc): script owner, NPC and name candidate.
 
     Only creatures with a conversation, a description or a first name become
     NPCs, so the prompt is not flooded with generic monsters.
@@ -609,7 +609,7 @@ def _scan_creature(context: WorldContext, data: Dict[str, Any], resource: str) -
 def _register_named(
     context: WorldContext, struct: Dict[str, Any], spec: _NamedSpec, resource: str
 ) -> bool:
-    """Register a tagged, named entity (area, item or quest) and its name candidate.
+    """Registers a tagged, named entity (area, item or quest) and its name candidate.
 
     Args:
         context: World context to populate.
@@ -632,7 +632,7 @@ def _register_named(
 
 
 def _scan_placements(context: WorldContext, data: Dict[str, Any]) -> int:
-    """Register the creatures, placeables and doors placed in an area (.git).
+    """Registers the creatures, placeables and doors placed in an area (.git).
 
     A placed instance can rename its blueprint or give it another
     Conversation, so dialog owners are looked up among the placements too.
@@ -656,7 +656,7 @@ def _scan_placements(context: WorldContext, data: Dict[str, Any]) -> int:
 
 
 def _register_dialog_actor(context: WorldContext, data: Dict[str, Any], kind: str) -> bool:
-    """Register one creature, placeable or door struct as a dialog actor.
+    """Registers one creature, placeable or door struct as a dialog actor.
 
     Args:
         context: World context to populate.

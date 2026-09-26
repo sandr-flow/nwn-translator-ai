@@ -16,7 +16,7 @@ _CONTEXT_PREVIEW_CHARS = 600
 
 
 def node_key(node: DialogNode) -> str:
-    """Return the script key of a node: ``E3`` for entry 3, ``R0`` for reply 0.
+    """Returns the script key of a node: ``E3`` for entry 3, ``R0`` for reply 0.
 
     Args:
         node: A dialog node.
@@ -28,7 +28,7 @@ def node_key(node: DialogNode) -> str:
 
 
 def speaker_label(node: DialogNode) -> str:
-    """Return the speaker shown for a node: its tag, else ``NPC`` or ``Player``.
+    """Returns the speaker shown for a node: its tag, else ``NPC`` or ``Player``.
 
     Args:
         node: A dialog node.
@@ -40,7 +40,7 @@ def speaker_label(node: DialogNode) -> str:
 
 
 def iter_nodes(tree: List[DialogNode]) -> Iterator[Tuple[str, DialogNode]]:
-    """Walk a dialog tree depth-first in pre-order, yielding each node key once.
+    """Walks a dialog tree depth-first in pre-order, yielding each node key once.
 
     The first occurrence of a key is yielded and its subtree walked; later
     occurrences (a reply linked from several entries) are skipped with their
@@ -70,7 +70,7 @@ def iter_nodes(tree: List[DialogNode]) -> Iterator[Tuple[str, DialogNode]]:
 def _render_blocks(
     nodes: Iterable[Tuple[str, DialogNode]], overrides: Mapping[str, str]
 ) -> List[str]:
-    """Render one block per node: header, text and the keys the node leads to.
+    """Renders one block per node: header, text and the keys the node leads to.
 
     Args:
         nodes: ``(key, node)`` pairs in output order.
@@ -97,7 +97,7 @@ def _render_blocks(
 def format_dialog_tree(
     tree: List[DialogNode], text_overrides: Optional[Mapping[str, str]] = None
 ) -> str:
-    """Render every node of a dialog tree, in :func:`iter_nodes` order.
+    """Renders every node of a dialog tree, in :func:`iter_nodes` order.
 
     Nodes without text are rendered too (``<<<>>>``) so that every routing
     hint points at a block.
@@ -118,7 +118,7 @@ def format_nodes(
     node_map: Dict[str, DialogNode],
     text_overrides: Optional[Mapping[str, str]] = None,
 ) -> str:
-    """Render selected nodes, followed by their neighbours as context only.
+    """Renders selected nodes, followed by their neighbours as context only.
 
     The neighbours are the selected nodes' children and parents that are not
     selected themselves: children in block order first, then parents in

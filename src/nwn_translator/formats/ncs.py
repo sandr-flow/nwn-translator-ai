@@ -191,7 +191,7 @@ class NCSFile:
 def _parse_instruction(
     data: Union[bytes, bytearray], offset: int, source_encoding: Optional[str] = None
 ) -> NCSInstruction:
-    """Parse the instruction at *offset*.
+    """Parses the instruction at *offset*.
 
     Args:
         data: Complete file bytes.
@@ -257,7 +257,7 @@ def _parse_instruction(
 
 
 def parse_ncs(file_path: Path, source_encoding: Optional[str] = None) -> NCSFile:
-    """Parse an NCS file.
+    """Parses an NCS file.
 
     Args:
         file_path: The ``.ncs`` file.
@@ -276,7 +276,7 @@ def parse_ncs(file_path: Path, source_encoding: Optional[str] = None) -> NCSFile
 
 
 def parse_ncs_bytes(raw: bytes, source_encoding: Optional[str] = None) -> NCSFile:
-    """Parse NCS bytecode.
+    """Parses NCS bytecode.
 
     Args:
         raw: Complete file contents.
@@ -319,7 +319,7 @@ def patch_ncs_string_replacements(
     text_encoding: str = "cp1251",
     source_encoding: Optional[str] = None,
 ) -> int:
-    """Replace listed string constants, addressed by offset.
+    """Replaces listed string constants, addressed by offset.
 
     Each ``(byte_offset, original_text, translated_text)`` must name a CONSTS
     instruction whose decoded text equals ``original_text``; the same literal
@@ -390,7 +390,7 @@ def patch_ncs_string_replacements(
 def _patched_bytes(
     ncs: NCSFile, patches: List[Tuple[NCSInstruction, str]], text_encoding: str
 ) -> bytearray:
-    """Splice new CONSTS into ``ncs.raw_bytes`` and fix jumps and the size field.
+    """Splices new CONSTS into ``ncs.raw_bytes`` and fix jumps and the size field.
 
     Patches are applied from the highest offset down, so an instruction's
     offset only changes after every patch below it is done. The instructions
@@ -421,7 +421,7 @@ def _patched_bytes(
 
 
 def _consts_bytes(encoded: bytes) -> bytes:
-    """Build a CONSTS instruction: ``04 05``, BE uint16 length, string bytes."""
+    """Builds a CONSTS instruction: ``04 05``, BE uint16 length, string bytes."""
     if len(encoded) > 0xFFFF:
         raise NCSPatchError(
             f"Translated string too long ({len(encoded)} bytes): "
@@ -431,7 +431,7 @@ def _consts_bytes(encoded: bytes) -> bytes:
 
 
 def _shift(instructions: List[NCSInstruction], patch_end: int, delta: int) -> None:
-    """Account for *delta* bytes inserted (or removed) at *patch_end*.
+    """Accounts for *delta* bytes inserted (or removed) at *patch_end*.
 
     A jump whose source is before *patch_end* and target at or after it grows
     by *delta*; one crossing the other way shrinks. Then every instruction at
@@ -452,7 +452,7 @@ def _shift(instructions: List[NCSInstruction], patch_end: int, delta: int) -> No
 
 
 def _jumps_land_on_instructions(ncs: NCSFile) -> bool:
-    """Check that every jump targets an instruction start or the end of the code."""
+    """Checks that every jump targets an instruction start or the end of the code."""
     valid_targets = {i.offset for i in ncs.instructions}
     if ncs.instructions:
         last = ncs.instructions[-1]

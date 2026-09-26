@@ -17,7 +17,7 @@ def inject_gff(
     text_encoding: str,
     source_encoding: Optional[str] = None,
 ) -> InjectedContent:
-    """Rewrite the CExoLocString of every translated item in one pass.
+    """Rewrites the CExoLocString of every translated item in one pass.
 
     Every GFF resource kind shares this contract: extraction records the
     field record offset of each item, and only those fields are patched.

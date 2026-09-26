@@ -53,14 +53,14 @@ class GitField:
     context: Union[str, GitContext]
 
     def context_for(self, instance: Dict[str, Any], npc_index: NpcIndex) -> str:
-        """Return the prompt context of this field on *instance*."""
+        """Returns the prompt context of this field on *instance*."""
         if isinstance(self.context, str):
             return self.context
         return self.context(instance, npc_index)
 
 
 def build_npc_index(parsed_data: Dict[str, Any]) -> NpcIndex:
-    """Map the area's NPC first names to their gender.
+    """Maps the area's NPC first names to their gender.
 
     Args:
         parsed_data: Parsed ``.git`` root struct.
@@ -81,7 +81,7 @@ def build_npc_index(parsed_data: Dict[str, Any]) -> NpcIndex:
 
 
 def npc_possessive_hint(text: str, npc_index: NpcIndex) -> str:
-    """Return a gender hint when *text* contains an NPC's possessive (``Anna's``).
+    """Returns a gender hint when *text* contains an NPC's possessive (``Anna's``).
 
     Args:
         text: Placeable name or description.
@@ -231,7 +231,7 @@ AREA_ITEM_LIST_KEY = "List"
 
 
 def item_fields(row: Dict[str, Any], where: str) -> List[Tuple[str, str, str]]:
-    """Return ``(field, metadata type, context)`` for each field of an item row.
+    """Returns ``(field, metadata type, context)`` for each field of an item row.
 
     Args:
         row: Inventory row or area floor item struct.
@@ -263,7 +263,7 @@ def should_translate_git_string(
     meta_type: str,
     known_names: Optional[FrozenSet[str]] = None,
 ) -> bool:
-    """Return True when a ``.git`` string is suitable for translation.
+    """Returns True when a ``.git`` string is suitable for translation.
 
     Code-like route labels, resrefs, placeholders and toolset terms are
     rejected. A code-like string matching a blueprint creature name is a real
@@ -286,7 +286,7 @@ def should_translate_git_string(
 
 
 def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
-    """Collect casefolded FirstName/LastName values of every ``.utc`` under *root*.
+    """Collects casefolded FirstName/LastName values of every ``.utc`` under *root*.
 
     Blueprint names are the translatability oracle for ``.git`` creature
     names: the ``.utc`` extractor translates them unfiltered, so any ``.git``
@@ -331,7 +331,7 @@ _creature_name_build_locks: Dict[Path, threading.Lock] = {}
 
 
 def _cached_creature_names(key: Path) -> Optional[FrozenSet[str]]:
-    """Return the cached oracle for *key* and mark it recently used."""
+    """Returns the cached oracle for *key* and mark it recently used."""
     with _creature_name_cache_lock:
         cached = _creature_name_cache.get(key)
         if cached is not None:
@@ -340,7 +340,7 @@ def _cached_creature_names(key: Path) -> Optional[FrozenSet[str]]:
 
 
 def get_module_creature_names(root: Path) -> FrozenSet[str]:
-    """Return the blueprint creature-name oracle of a module directory.
+    """Returns the blueprint creature-name oracle of a module directory.
 
     The oracle is cached for the process and built once per directory, even
     when extraction workers ask for it concurrently. The cached entry is
@@ -375,6 +375,6 @@ def get_module_creature_names(root: Path) -> FrozenSet[str]:
 
 
 def clear_creature_name_cache() -> None:
-    """Drop every cached blueprint-name oracle."""
+    """Drops every cached blueprint-name oracle."""
     with _creature_name_cache_lock:
         _creature_name_cache.clear()

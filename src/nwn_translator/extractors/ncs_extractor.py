@@ -57,7 +57,7 @@ _DEBUG_PHRASES = (
 def _is_definitely_not_translatable(
     text: str, proven_player: bool = False, player_candidate: bool = False
 ) -> bool:
-    """Apply the shared veto, then cheap candidate heuristics without context.
+    """Applies the shared veto, then cheap candidate heuristics without context.
 
     The veto runs with ``is_concat=True`` for every literal, so sentence
     fragments pass extraction; :func:`ncs_hard_veto_reason` rejects them at
@@ -123,7 +123,7 @@ def ncs_hard_veto_reason(
     is_concat: bool = False,
     player_candidate: bool = False,
 ) -> Optional[str]:
-    """Return a deterministic reason why an NCS string must never be translated.
+    """Returns a deterministic reason why an NCS string must never be translated.
 
     This is stricter than extraction filtering and is used as a final safety
     net before translation. NCS bytecode can contain script identifiers and
@@ -196,7 +196,7 @@ def ncs_hard_veto_reason(
 
 
 def _is_likely_translatable(text: str) -> bool:
-    """Return whether *text* looks like a player-visible sentence or short bark.
+    """Returns whether *text* looks like a player-visible sentence or short bark.
 
     Args:
         text: Literal or merged concat text.
@@ -229,7 +229,7 @@ class NcsExtractor(BaseExtractor):
         file_path: Path,
         parsed_data: Dict[str, Any],
     ) -> ExtractedContent:
-        """Extract candidate string constants from a compiled script.
+        """Extracts candidate string constants from a compiled script.
 
         Args:
             file_path: Path of the ``.ncs`` resource; a sibling ``.nss`` source,

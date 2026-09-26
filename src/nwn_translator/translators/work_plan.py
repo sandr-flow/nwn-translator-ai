@@ -43,7 +43,7 @@ SHORT_LABEL_TYPES = frozenset(
 
 
 def is_ncs_item(item: TranslatableItem) -> bool:
-    """Return whether *item* is a string literal of a compiled script.
+    """Returns whether *item* is a string literal of a compiled script.
 
     Args:
         item: Extracted occurrence.
@@ -110,7 +110,7 @@ class WorkItem:
         return content_profile([self])
 
     def translation_item(self) -> TranslationItem:
-        """Return the batch entry for this item."""
+        """Returns the batch entry for this item."""
         return TranslationItem(self.sanitized, self.item.context, self.item.metadata)
 
 
@@ -130,7 +130,7 @@ class WorkPlan:
 
 
 def content_profile(work: Sequence[WorkItem]) -> str:
-    """Return the prompt profile for a request carrying *work*.
+    """Returns the prompt profile for a request carrying *work*.
 
     The choice depends only on the mix of item types, so every profile keeps a
     stable prompt prefix for provider caches.
@@ -150,7 +150,7 @@ def content_profile(work: Sequence[WorkItem]) -> str:
 
 
 def dedup_key(work: WorkItem, terminology: Terminology) -> Tuple[Hashable, ...]:
-    """Return the key under which equal requests share one answer.
+    """Returns the key under which equal requests share one answer.
 
     Only identical text with the same context, profile, hint and terminology may
     share an answer; every occurrence keeps its own address.
@@ -174,7 +174,7 @@ def dedup_key(work: WorkItem, terminology: Terminology) -> Tuple[Hashable, ...]:
 
 
 def is_batchable(work: WorkItem, limits: BatchLimits) -> bool:
-    """Return whether *work* is short enough to share a batch request.
+    """Returns whether *work* is short enough to share a batch request.
 
     Args:
         work: Prepared item.
@@ -188,7 +188,7 @@ def is_batchable(work: WorkItem, limits: BatchLimits) -> bool:
 
 
 def batch_terminology(batch: Sequence[WorkItem], terminology: Terminology) -> Optional[str]:
-    """Return the glossary block of a batch: terms of every text and context in it.
+    """Returns the glossary block of a batch: terms of every text and context in it.
 
     Args:
         batch: Items of one request.
@@ -201,7 +201,7 @@ def batch_terminology(batch: Sequence[WorkItem], terminology: Terminology) -> Op
 
 
 def plan_work(work: Sequence[WorkItem], limits: BatchLimits, terminology: Terminology) -> WorkPlan:
-    """Split distinct strings into passthrough, single and batch requests.
+    """Splits distinct strings into passthrough, single and batch requests.
 
     Batchable strings are grouped by structural group (``translation_group``
     within a resource; ungrouped strings stand alone) in first-seen order; script
@@ -241,7 +241,7 @@ def plan_work(work: Sequence[WorkItem], limits: BatchLimits, terminology: Termin
 def pack_groups(
     groups: Sequence[List[WorkItem]], limits: BatchLimits, terminology: Terminology
 ) -> List[List[WorkItem]]:
-    """Pack structural groups into batches, keeping a group whole when it fits.
+    """Packs structural groups into batches, keeping a group whole when it fits.
 
     A group that does not fit an empty batch is split into units: its name
     fields together first (an NPC's first and last name stay in one request),

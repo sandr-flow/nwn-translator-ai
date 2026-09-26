@@ -24,7 +24,7 @@ def inject_ncs(
     text_encoding: str,
     source_encoding: Optional[str],
 ) -> InjectedContent:
-    """Replace the translated literals of a script in one patch.
+    """Replaces the translated literals of a script in one patch.
 
     A concat chain is split back into its literals; a chain whose translation
     cannot be split keeps its original text and is reported as a failure.

@@ -4,8 +4,42 @@ Converts a hierarchical dialog tree into a flat, numbered script format
 suitable for LLM contextual translation.
 """
 
-from typing import List, Set, Dict, Any, Optional
+from typing import Dict, Iterator, List, Optional, Set, Tuple
+
 from ..extractors.base import DialogNode
+
+
+def node_key(node: DialogNode) -> str:
+    """Return the script key of *node*: ``E3`` for entry 3, ``R0`` for reply 0."""
+    return f"{'E' if node.is_entry else 'R'}{node.node_id}"
+
+
+def iter_nodes(tree: List[DialogNode]) -> Iterator[Tuple[str, DialogNode]]:
+    """Walk a dialog tree depth-first in pre-order, yielding each node key once.
+
+    The first occurrence of a key is yielded and its subtree walked; later
+    occurrences (a reply linked from several entries) are skipped with their
+    subtrees. The walk is iterative, so chains longer than the recursion limit
+    work.
+
+    Args:
+        tree: Root nodes (from ``DialogExtractor.build_dialog_tree``).
+
+    Yields:
+        ``(key, node)`` pairs in walk order.
+    """
+    seen: Set[str] = set()
+    # Children are pushed in reverse so the first child is walked first; a key
+    # is checked when popped, after the previous sibling's subtree is complete.
+    stack = list(reversed(tree))
+    while stack:
+        node = stack.pop()
+        key = node_key(node)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield key, node
+        stack.extend(reversed(node.replies))
 
 
 class DialogFormatter:
@@ -32,23 +66,7 @@ class DialogFormatter:
             Formatted script string.
         """
         lines = []
-        visited = set()
-
-        # We process roots first, then all nodes discovered through BFS/DFS to
-        # ensure all referenced "Go to [E...]" blocks are eventually printed.
-        queue = list(tree)
-        nodes_to_process = []
-
-        # Flatten tree to maintain a stable order of processing (Entries first)
-        def collect_nodes(nodes: List[DialogNode]):
-            for node in nodes:
-                node_id = f"{'E' if node.is_entry else 'R'}{node.node_id}"
-                if node_id not in visited:
-                    visited.add(node_id)
-                    nodes_to_process.append(node)
-                    collect_nodes(node.replies)
-
-        collect_nodes(queue)
+        nodes_to_process = [node for _key, node in iter_nodes(tree)]
 
         if not nodes_to_process:
             return ""

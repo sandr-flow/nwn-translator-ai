@@ -20,7 +20,7 @@ from ..config import (
     TRANSLATION_MAX_TOKENS,
     TRANSLATION_TEMPERATURE,
 )
-from ..context.dialog_formatter import DialogFormatter
+from ..context.dialog_formatter import DialogFormatter, iter_nodes
 from ..context.dialog_speakers import dialog_owners, speaker_description, tagged_speakers
 from ..context.world_context import WorldContext
 from ..extractors.dialog_extractor import DialogExtractor, DialogNode, dialog_item_id
@@ -586,16 +586,7 @@ class ContextualTranslationManager:
         if not tree:
             return None
 
-        node_map: Dict[str, DialogNode] = {}
-
-        def collect_nodes(nodes: List[DialogNode]) -> None:
-            for node in nodes:
-                key = f"{'E' if node.is_entry else 'R'}{node.node_id}"
-                if key not in node_map:
-                    node_map[key] = node
-                    collect_nodes(node.replies)
-
-        collect_nodes(tree)
+        node_map: Dict[str, DialogNode] = dict(iter_nodes(tree))
 
         speakers_block = self._build_speakers_block(file_path.stem, node_map)
 

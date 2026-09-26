@@ -71,8 +71,8 @@ def run_async(
 
     Args:
         coro: The coroutine to execute.
-        timeout: Maximum seconds to wait for *coro* to complete.
-            ``None`` disables the timeout.  Default: :data:`DEFAULT_TIMEOUT`.
+        timeout: Maximum seconds to wait for *coro* to complete; ``None`` or a
+            non-positive value disables the timeout. Default: :data:`DEFAULT_TIMEOUT`.
 
     Returns:
         The coroutine's result.

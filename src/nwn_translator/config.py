@@ -55,10 +55,12 @@ NCS_GATE_TEMPERATURE: float = 0.15
 #: a truncated one) is requested once more with twice the budget before the batch is split.
 NCS_GATE_MAX_TOKENS: Tuple[int, ...] = (8192, 16384)
 
-#: Timeout (s) of one glossary LLM call; ``NWN_GLOSSARY_LLM_TIMEOUT`` overrides it (min 30).
+#: Timeout (s) of one glossary, curator or entity-extraction LLM call;
+#: ``NWN_GLOSSARY_LLM_TIMEOUT`` overrides it (min 30).
 GLOSSARY_LLM_TIMEOUT: float = _env_number("NWN_GLOSSARY_LLM_TIMEOUT", 300.0, 30.0, float)
-#: Timeout (s) of the ``run_async`` wrapper around a glossary call;
-#: ``NWN_GLOSSARY_RUN_TIMEOUT`` overrides it (min 60).
+#: Per-batch share (s) of the ``run_async`` timeout of a glossary or entity-extraction
+#: run (times the batch count, capped at 900 s); ``NWN_GLOSSARY_RUN_TIMEOUT`` overrides
+#: it (min 60).
 GLOSSARY_RUN_TIMEOUT: float = _env_number("NWN_GLOSSARY_RUN_TIMEOUT", 360.0, 60.0, float)
 
 #: OpenRouter ``reasoning.effort`` values, lowest first.
@@ -146,7 +148,8 @@ class TranslationConfig:
             enable the model's default effort) and omits the field for other models.
         verbose: Verbose progress output.
         quiet: No progress bars.
-        progress_callback: Receives progress instead of tqdm (SSE, WebSocket).
+        progress_callback: Receives ``(phase, current, total, message)`` progress
+            events instead of tqdm bars (the web task manager stores them on the task).
         cancel_check: Polled at safe points (between batches, phases and dialog files);
             returning ``True`` raises :class:`TranslationCancelled`. In-flight requests
             are not aborted; their results are discarded.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -181,6 +182,48 @@ def test_deleting_a_running_task_cancels_it_and_frees_the_slot(
     assert cancel_seen[second.json()["task_id"]] is False
     assert not workspace.exists()
     assert (task_workspace / second.json()["task_id"]).is_dir()
+
+
+def test_a_deleted_task_stays_active_until_its_workspace_is_removed(
+    client: TestClient, task_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deploy recreates the container at zero active tasks; cleanup must be done by then."""
+    started = threading.Event()
+    release = threading.Event()
+    removing = threading.Event()
+    finish_removal = threading.Event()
+    real_rmtree = shutil.rmtree
+
+    def blocking_translate(self):
+        started.set()
+        release.wait(timeout=10)
+        out = self.config.output_file
+        out.write_bytes(b"DONE")
+        return out
+
+    def slow_rmtree(path, *args, **kwargs):
+        removing.set()
+        finish_removal.wait(timeout=10)
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr("nwn_translator.main.ModuleTranslator.translate", blocking_translate)
+    files = {"file": ("run.mod", b"\x05" * 200, "application/octet-stream")}
+    data = {"api_key": "sk-x", "target_lang": "english"}
+    task_id = client.post("/api/translate", files=files, data=data).json()["task_id"]
+    assert started.wait(timeout=5)
+    assert client.delete(f"/api/tasks/{task_id}").status_code == 200
+    monkeypatch.setattr("nwn_translator.web.task_manager.shutil.rmtree", slow_rmtree)
+    try:
+        release.set()
+        assert removing.wait(timeout=5)
+        assert client.get("/api/health").json()["active_tasks"] == 1
+    finally:
+        finish_removal.set()
+    deadline = time.time() + 5.0
+    while client.get("/api/health").json()["active_tasks"] and time.time() < deadline:
+        time.sleep(0.05)
+    assert client.get("/api/health").json()["active_tasks"] == 0
+    assert not (task_workspace / task_id).exists()
 
 
 def test_health_ignores_tasks_interrupted_by_a_restart(

@@ -606,9 +606,12 @@ class TaskManager:
             with self._lock:
                 del self._workers[task.task_id]
                 deleted = task.task_id in self._orphaned
-                self._orphaned.discard(task.task_id)
             if deleted:
+                # The task stays active until its files are gone, so a deploy
+                # waiting for zero active tasks cannot cut the removal short.
                 shutil.rmtree(self.workspace_root / task.task_id, ignore_errors=True)
+                with self._lock:
+                    self._orphaned.discard(task.task_id)
 
     def _finish(self, task: TranslationTask, status: str, **fields: Any) -> None:
         """Move *task* to terminal *status* in memory and in SQLite.

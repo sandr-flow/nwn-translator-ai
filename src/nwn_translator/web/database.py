@@ -1,4 +1,10 @@
-"""SQLite persistence for web translation tasks and results."""
+"""SQLite persistence for web translation tasks and their translation rows.
+
+The web process keeps one connection (``check_same_thread=False``) shared by
+route handlers, job threads and progress callbacks; every statement runs under
+:data:`_lock`. The schema grows additively: new columns are listed in
+:data:`_ADDED_COLUMNS` and added to older databases on startup.
+"""
 
 from __future__ import annotations
 
@@ -8,13 +14,17 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from ..translation_logging import translation_log_writer_for_config
 
 logger = logging.getLogger(__name__)
 
 #: Statuses a task can no longer leave. ``interrupted`` marks a task whose
 #: worker died (process restart) so it stops looking forever-running.
 TERMINAL_STATUSES = ("completed", "failed", "cancelled", "interrupted")
+
+_TERMINAL_PLACEHOLDERS = ", ".join("?" for _ in TERMINAL_STATUSES)
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS tasks (
@@ -59,11 +69,52 @@ CREATE TABLE IF NOT EXISTS translations (
 CREATE INDEX IF NOT EXISTS idx_translations_task_id ON translations(task_id);
 """
 
+#: ``(table, column, type)`` of columns added after the first released schema, in
+#: the order they were introduced. ``translations.item_id`` has to exist before
+#: :func:`_migrate_translations_unique_key` copies it into the rebuilt table.
+_ADDED_COLUMNS: Tuple[Tuple[str, str, str], ...] = (
+    ("tasks", "model", "TEXT"),
+    ("tasks", "updated_at", "REAL"),
+    ("tasks", "progress", "REAL"),
+    ("tasks", "phase", "TEXT"),
+    ("tasks", "current_file", "TEXT"),
+    ("translations", "item_id", "TEXT"),
+    ("translations", "success", "INTEGER NOT NULL DEFAULT 1"),
+    ("translations", "speaker", "TEXT"),
+)
+
+#: Columns :func:`update_task_row` may set; the names are interpolated into SQL.
+_TASK_COLUMNS = frozenset(
+    {
+        "client_token",
+        "client_ip",
+        "created_at",
+        "status",
+        "progress",
+        "phase",
+        "current_file",
+        "input_filename",
+        "result_path",
+        "extract_dir",
+        "input_path",
+        "error",
+        "stats",
+        "target_lang",
+        "source_lang",
+        "model",
+        "updated_at",
+    }
+)
+
+#: Max error strings returned on status/history polls (full list stays in SQLite).
+_STATS_ERROR_SAMPLE_LIMIT = 5
+
 _connection: Optional[sqlite3.Connection] = None
 _lock = threading.Lock()
 
 
 def _default_db_path() -> Path:
+    """Database file from ``NWN_WEB_DB_PATH``, else ``workspace/web/translations.db``."""
     env = os.environ.get("NWN_WEB_DB_PATH", "").strip()
     if env:
         return Path(env)
@@ -71,40 +122,23 @@ def _default_db_path() -> Path:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """Add columns introduced after the initial schema (idempotent)."""
-    cur = conn.execute("PRAGMA table_info(tasks)")
-    existing = {row[1] for row in cur.fetchall()}
-    for col, typedef in [
-        ("model", "TEXT"),
-        ("updated_at", "REAL"),
-        ("progress", "REAL"),
-        ("phase", "TEXT"),
-        ("current_file", "TEXT"),
-    ]:
-        if col not in existing:
-            conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {typedef}")
-
-    cur_tr = conn.execute("PRAGMA table_info(translations)")
-    tr_cols = {row[1] for row in cur_tr.fetchall()}
-    if "item_id" not in tr_cols:
-        conn.execute("ALTER TABLE translations ADD COLUMN item_id TEXT")
-
+    """Bring an older database up to the current schema (idempotent)."""
+    existing = {
+        table: {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for table in ("tasks", "translations")
+    }
+    for table, column, typedef in _ADDED_COLUMNS:
+        if column not in existing[table]:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {typedef}")
     _migrate_translations_unique_key(conn)
-
-    cur_tr = conn.execute("PRAGMA table_info(translations)")
-    tr_cols = {row[1] for row in cur_tr.fetchall()}
-    if "success" not in tr_cols:
-        conn.execute("ALTER TABLE translations ADD COLUMN success INTEGER NOT NULL DEFAULT 1")
-    if "speaker" not in tr_cols:
-        conn.execute("ALTER TABLE translations ADD COLUMN speaker TEXT")
 
 
 def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
     """Rebuild ``translations`` if it still uses the old UNIQUE(task_id, file, original).
 
     Addressing edits by ``item_id`` requires the row identity to be
-    ``(task_id, file, item_id)`` so two identical originals in the same file no
-    longer collapse into one row.
+    ``(task_id, file, item_id)`` so two identical originals in the same file do
+    not collapse into one row.
     """
     target = ["task_id", "file", "item_id"]
     for idx in conn.execute("PRAGMA index_list(translations)").fetchall():
@@ -113,7 +147,7 @@ def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
             continue
         cols = [row[2] for row in conn.execute(f"PRAGMA index_info({name})").fetchall()]
         if cols == target:
-            return  # already migrated
+            return
 
     conn.execute("ALTER TABLE translations RENAME TO translations_old")
     conn.executescript(_SCHEMA)
@@ -128,7 +162,15 @@ def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
 
 
 def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
-    """Create tables if needed and return the singleton connection."""
+    """Open the process-wide connection, creating and migrating the schema.
+
+    Args:
+        db_path: Database file; defaults to :func:`_default_db_path`. Ignored when
+            the connection is already open.
+
+    Returns:
+        The shared connection.
+    """
     global _connection
     with _lock:
         if _connection is not None:
@@ -139,7 +181,6 @@ def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.executescript(_SCHEMA)
-        # Migrate: add columns that may be missing in older DBs
         _migrate(conn)
         conn.commit()
         _connection = conn
@@ -148,14 +189,14 @@ def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
 
 def get_db() -> sqlite3.Connection:
-    """Return the singleton connection (must call ``init_db`` first)."""
+    """Return the shared connection, opening it with :func:`init_db` on first use."""
     if _connection is None:
         return init_db()
     return _connection
 
 
 def close_db() -> None:
-    """Close the singleton connection (for tests / shutdown)."""
+    """Close the shared connection (tests / shutdown); the next use reopens it."""
     global _connection
     with _lock:
         if _connection is not None:
@@ -163,8 +204,30 @@ def close_db() -> None:
             _connection = None
 
 
+def _query(sql: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
+    """Run a SELECT under the connection lock and return the rows as dicts."""
+    db = get_db()
+    with _lock:
+        cur = db.execute(sql, params)
+        cur.row_factory = sqlite3.Row
+        return [dict(row) for row in cur.fetchall()]
+
+
+def _execute(sql: str, params: Sequence[Any] = ()) -> int:
+    """Run one write statement under the connection lock and commit it.
+
+    Returns:
+        Number of rows the statement changed.
+    """
+    db = get_db()
+    with _lock:
+        cur = db.execute(sql, params)
+        db.commit()
+        return cur.rowcount
+
+
 # ---------------------------------------------------------------------------
-# Task CRUD
+# Tasks
 # ---------------------------------------------------------------------------
 
 
@@ -178,60 +241,87 @@ def create_task_row(
     source_lang: Optional[str] = None,
     model: Optional[str] = None,
 ) -> None:
-    db = get_db()
-    with _lock:
-        db.execute(
-            "INSERT INTO tasks (task_id, client_token, client_ip, created_at, input_filename, target_lang, source_lang, model) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                task_id,
-                client_token,
-                client_ip,
-                created_at,
-                input_filename,
-                target_lang,
-                source_lang,
-                model,
-            ),
-        )
-        db.commit()
+    """Insert a new ``pending`` task.
+
+    Args:
+        task_id: Task UUID.
+        client_token: Anonymous owner token (empty for ownerless tasks).
+        client_ip: Client address that started the task.
+        created_at: Unix timestamp of creation.
+        input_filename: Name of the uploaded module.
+        target_lang: Target language.
+        source_lang: Source language (``"auto"`` when unspecified).
+        model: Model slug requested by the client.
+    """
+    _execute(
+        "INSERT INTO tasks (task_id, client_token, client_ip, created_at, input_filename, "
+        "target_lang, source_lang, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            task_id,
+            client_token,
+            client_ip,
+            created_at,
+            input_filename,
+            target_lang,
+            source_lang,
+            model,
+        ),
+    )
 
 
 def update_task_row(task_id: str, **fields: Any) -> None:
-    """Update one or more columns on a task row.
+    """Set columns of a task row; a missing row is left alone.
 
-    Supported fields: status, progress, phase, current_file, result_path,
-    extract_dir, input_path, error, stats, target_lang, source_lang,
-    updated_at, model.
+    ``stats`` dicts are stored as JSON and paths as strings.
+
+    Args:
+        task_id: Task UUID.
+        **fields: Column values; names must be columns of ``tasks`` other than
+            ``task_id``.
+
+    Raises:
+        ValueError: If a field is not a task column.
     """
     if not fields:
         return
-    # Serialize stats as JSON string
-    if "stats" in fields and fields["stats"] is not None and not isinstance(fields["stats"], str):
+    unknown = fields.keys() - _TASK_COLUMNS
+    if unknown:
+        raise ValueError(f"Unknown task columns: {sorted(unknown)}")
+    if fields.get("stats") is not None and not isinstance(fields["stats"], str):
         fields["stats"] = json.dumps(fields["stats"], ensure_ascii=False)
-    # Convert Path objects to strings
     for key in ("result_path", "extract_dir", "input_path"):
-        if key in fields and fields[key] is not None:
+        if fields.get(key) is not None:
             fields[key] = str(fields[key])
-
-    cols = ", ".join(f"{k} = ?" for k in fields)
-    vals = list(fields.values()) + [task_id]
-    db = get_db()
-    with _lock:
-        db.execute(f"UPDATE tasks SET {cols} WHERE task_id = ?", vals)  # noqa: S608
-        db.commit()
+    assignments = ", ".join(f"{column} = ?" for column in fields)
+    _execute(f"UPDATE tasks SET {assignments} WHERE task_id = ?", [*fields.values(), task_id])
 
 
-#: Max error strings returned on status/history polls (full list stays in SQLite).
-_STATS_ERROR_SAMPLE_LIMIT = 5
+def decode_stats(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Parse a stored ``tasks.stats`` value.
+
+    Returns:
+        The stats dict, or ``None`` when the column is empty or not valid JSON.
+    """
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Return a poll-safe copy of task stats without unbounded error dumps.
 
-    Keeps ``total_errors`` and a short ``errors`` sample. Nested
-    ``metrics.requests`` (per-LLM-call telemetry) is dropped from the API
-    projection; the full payload remains in the SQLite ``stats`` column.
+    Keeps ``total_errors`` and the first few ``errors``, and drops the per-call
+    ``metrics.requests`` telemetry that rows written by older versions carry. The
+    full payload stays in the SQLite ``stats`` column.
+
+    Args:
+        stats: Stats dict as stored for the task, or ``None``.
+
+    Returns:
+        The trimmed copy, or ``None`` when *stats* is ``None``.
     """
     if stats is None:
         return None
@@ -252,26 +342,16 @@ def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str,
 
 
 def get_task_row(task_id: str) -> Optional[Dict[str, Any]]:
-    db = get_db()
-    with _lock:
-        cur = db.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
-        cur.row_factory = sqlite3.Row
-        row = cur.fetchone()
-    if row is None:
-        return None
-    return dict(row)
+    """Return the task row as a dict, or ``None`` if it does not exist."""
+    rows = _query("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
+    return rows[0] if rows else None
 
 
 def list_tasks_by_token(client_token: str) -> List[Dict[str, Any]]:
-    db = get_db()
-    with _lock:
-        cur = db.execute(
-            "SELECT * FROM tasks WHERE client_token = ? ORDER BY created_at DESC",
-            (client_token,),
-        )
-        cur.row_factory = sqlite3.Row
-        rows = cur.fetchall()
-    return [dict(r) for r in rows]
+    """Return the rows of one client's tasks, newest first."""
+    return _query(
+        "SELECT * FROM tasks WHERE client_token = ? ORDER BY created_at DESC", (client_token,)
+    )
 
 
 def get_unfinished_task_rows() -> List[Dict[str, Any]]:
@@ -281,16 +361,10 @@ def get_unfinished_task_rows() -> List[Dict[str, Any]]:
     :data:`TERMINAL_STATUSES` (``pending``/``extracting``/``translating``/…) has
     no live worker after a restart and must be flipped to ``interrupted``.
     """
-    placeholders = ", ".join("?" for _ in TERMINAL_STATUSES)
-    db = get_db()
-    with _lock:
-        cur = db.execute(
-            f"SELECT * FROM tasks WHERE status NOT IN ({placeholders})",  # noqa: S608
-            TERMINAL_STATUSES,
-        )
-        cur.row_factory = sqlite3.Row
-        rows = cur.fetchall()
-    return [dict(r) for r in rows]
+    return _query(
+        f"SELECT * FROM tasks WHERE status NOT IN ({_TERMINAL_PLACEHOLDERS})",  # noqa: S608
+        TERMINAL_STATUSES,
+    )
 
 
 def get_finished_task_ids_older_than(cutoff: float) -> List[str]:
@@ -303,26 +377,25 @@ def get_finished_task_ids_older_than(cutoff: float) -> List[str]:
     Args:
         cutoff: Unix timestamp; only tasks with ``created_at`` strictly below
             it are returned.
+
+    Returns:
+        Matching task IDs.
     """
-    placeholders = ", ".join("?" for _ in TERMINAL_STATUSES)
-    db = get_db()
-    with _lock:
-        cur = db.execute(
-            f"SELECT task_id FROM tasks WHERE status IN ({placeholders}) "  # noqa: S608
-            "AND created_at < ?",
-            (*TERMINAL_STATUSES, cutoff),
-        )
-        rows = cur.fetchall()
-    return [r[0] for r in rows]
+    rows = _query(
+        f"SELECT task_id FROM tasks WHERE status IN ({_TERMINAL_PLACEHOLDERS}) "  # noqa: S608
+        "AND created_at < ?",
+        (*TERMINAL_STATUSES, cutoff),
+    )
+    return [row["task_id"] for row in rows]
 
 
 def delete_task_row(task_id: str) -> bool:
-    """Delete a task (CASCADE deletes translations). Returns True if row existed."""
-    db = get_db()
-    with _lock:
-        cur = db.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
-        db.commit()
-        return cur.rowcount > 0
+    """Delete a task; the foreign key cascades to its translation rows.
+
+    Returns:
+        ``True`` if the row existed.
+    """
+    return _execute("DELETE FROM tasks WHERE task_id = ?", (task_id,)) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -341,74 +414,62 @@ def insert_translation(
     success: bool = True,
     speaker: Optional[Dict[str, str]] = None,
 ) -> None:
-    """Insert or replace one row; *speaker* (dialog lines only) is stored as JSON."""
+    """Insert or replace the row of one ``(task_id, file, item_id)``.
+
+    Args:
+        task_id: Owning task.
+        original: Source text.
+        translated: Translation (the original for rejected lines).
+        context: Extractor context string.
+        model: Model slug that produced the translation.
+        file: Resource file name.
+        item_id: Stable per-file item identifier.
+        success: ``False`` when the model's answer was rejected.
+        speaker: Dialog speaker (``.dlg`` lines only), stored as JSON.
+    """
     speaker_json = json.dumps(speaker, ensure_ascii=False) if speaker else None
-    db = get_db()
-    with _lock:
-        db.execute(
-            "INSERT OR REPLACE INTO translations "
-            "(task_id, original, translated, context, model, file, item_id, success, speaker) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                task_id,
-                original,
-                translated,
-                context,
-                model,
-                file,
-                item_id,
-                1 if success else 0,
-                speaker_json,
-            ),
-        )
-        db.commit()
+    _execute(
+        "INSERT OR REPLACE INTO translations "
+        "(task_id, original, translated, context, model, file, item_id, success, speaker) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            task_id,
+            original,
+            translated,
+            context,
+            model,
+            file,
+            item_id,
+            1 if success else 0,
+            speaker_json,
+        ),
+    )
 
 
 def update_translation_text(task_id: str, file: str, item_id: str, translated: str) -> None:
     """Persist an editor edit: set ``translated`` for one ``(task_id, file, item_id)``.
 
-    The row already exists (the editor loads originals from this table), so this is
-    an in-place update that preserves the original text and keeps row identity stable.
+    The row already exists (the editor loads originals from this table), so this
+    is an in-place update that preserves the original text and the row identity.
     An edited line counts as translated: the user has reviewed it.
     """
-    db = get_db()
-    with _lock:
-        db.execute(
-            "UPDATE translations SET translated = ?, success = 1 "
-            "WHERE task_id = ? AND file = ? AND item_id = ?",
-            (translated, task_id, file, item_id),
-        )
-        db.commit()
+    _execute(
+        "UPDATE translations SET translated = ?, success = 1 "
+        "WHERE task_id = ? AND file = ? AND item_id = ?",
+        (translated, task_id, file, item_id),
+    )
 
 
 def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
-    """Return the task's rows; ``speaker`` is decoded (``None`` when absent)."""
-    db = get_db()
-    with _lock:
-        cur = db.execute(
-            "SELECT original, translated, context, model, file, item_id, success, speaker "
-            "FROM translations WHERE task_id = ?",
-            (task_id,),
-        )
-        cur.row_factory = sqlite3.Row
-        rows = cur.fetchall()
-    result = [dict(r) for r in rows]
-    for row in result:
+    """Return the task's translation rows with ``speaker`` decoded (``None`` when absent)."""
+    rows = _query(
+        "SELECT original, translated, context, model, file, item_id, success, speaker "
+        "FROM translations WHERE task_id = ?",
+        (task_id,),
+    )
+    for row in rows:
         row["speaker"] = json.loads(row["speaker"]) if row["speaker"] else None
-    return result
-
-
-def get_ncs_translation_map_by_task(task_id: str) -> Dict[str, str]:
-    """Return ``{item_id: translated}`` for rows that have a non-empty ``item_id``."""
-    db = get_db()
-    with _lock:
-        cur = db.execute(
-            "SELECT item_id, translated FROM translations "
-            "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
-            (task_id,),
-        )
-        rows = cur.fetchall()
-    return {row[0]: row[1] for row in rows}
+    return rows
 
 
 def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
@@ -418,65 +479,62 @@ def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
     source file plus the stable per-file ``item_id`` the extractor assigned, so
     identical originals in different files (or different nodes) stay distinct.
     """
-    db = get_db()
-    with _lock:
-        cur = db.execute(
-            "SELECT file, item_id, translated FROM translations "
-            "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
-            (task_id,),
-        )
-        rows = cur.fetchall()
+    rows = _query(
+        "SELECT file, item_id, translated FROM translations "
+        "WHERE task_id = ? AND item_id IS NOT NULL AND item_id != ''",
+        (task_id,),
+    )
     result: Dict[str, Dict[str, str]] = {}
-    for file, item_id, translated in rows:
-        result.setdefault(file or "", {})[item_id] = translated
+    for row in rows:
+        result.setdefault(row["file"] or "", {})[row["item_id"]] = row["translated"]
     return result
 
 
-def get_translation_map_by_task(task_id: str) -> Dict[str, str]:
-    """Return {original: translated} mapping for all translations in a task."""
-    db = get_db()
-    with _lock:
-        cur = db.execute(
-            "SELECT original, translated FROM translations WHERE task_id = ?",
-            (task_id,),
-        )
-        rows = cur.fetchall()
-    return {row[0]: row[1] for row in rows}
-
-
-# ---------------------------------------------------------------------------
-# SqliteTranslationLogWriter — implements TranslationLogWriter protocol
-# ---------------------------------------------------------------------------
-
-
 class SqliteTranslationLogWriter:
-    """Write translation log entries to SQLite instead of JSONL files."""
+    """Translation log writer that stores editor rows in SQLite.
+
+    Rows with an ``event`` key are diagnostics and go to the JSONL trace file
+    instead; rows without an original text are dropped.
+
+    Attributes:
+        task_id: Task the rows belong to.
+    """
 
     def __init__(self, task_id: str, trace_path: Optional[Path] = None) -> None:
-        from ..translation_logging import translation_log_writer_for_config
+        """Create the writer.
 
+        Args:
+            task_id: Task the rows belong to.
+            trace_path: JSONL file for diagnostic events; ``None`` discards them.
+        """
         self.task_id = task_id
         self._trace_writer = translation_log_writer_for_config(trace_path)
 
     def write(self, entry: Dict[str, Any]) -> None:
+        """Store one log entry.
+
+        A failed insert (e.g. the task was deleted meanwhile) is logged at debug
+        level and never interrupts the translation.
+
+        Args:
+            entry: Translation log record.
+        """
         if entry.get("event"):
             self._trace_writer.write(entry)
             return
         original = entry.get("original", "")
-        translated = entry.get("translated", "")
         if not original:
             return
-        success_raw = entry.get("success", True)
         try:
             insert_translation(
                 task_id=self.task_id,
                 original=original,
-                translated=translated,
+                translated=entry.get("translated", ""),
                 context=entry.get("context"),
                 model=entry.get("model"),
                 file=entry.get("file"),
                 item_id=entry.get("item_id"),
-                success=success_raw not in (False, 0, "0"),
+                success=entry.get("success", True) not in (False, 0, "0"),
                 speaker=entry.get("speaker"),
             )
         except Exception as e:

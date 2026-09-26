@@ -1,4 +1,4 @@
-"""SQLite translations table: ``item_id`` column and NCS map for rebuild."""
+"""SQLite translations table: ``item_id`` column and the per-file map used by rebuild."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db.init_db(tmp_path / "t.db")
 
 
-def test_insert_and_get_ncs_map(isolated_db: None) -> None:
+def test_insert_and_get_item_map(isolated_db: None) -> None:
     db.create_task_row(
         task_id="t1",
         client_token="tok",
@@ -32,8 +32,8 @@ def test_insert_and_get_ncs_map(isolated_db: None) -> None:
         file="s.ncs",
         item_id="s:off_1a",
     )
-    m = db.get_ncs_translation_map_by_task("t1")
-    assert m == {"s:off_1a": "Привет"}
+    m = db.get_item_translation_map_by_task("t1")
+    assert m == {"s.ncs": {"s:off_1a": "Привет"}}
 
     rows = db.get_translations_by_task("t1")
     assert len(rows) == 1
@@ -60,8 +60,7 @@ def test_sqlite_log_writer_ignores_diagnostic_events(isolated_db: None) -> None:
     )
 
     assert db.get_translations_by_task("t1") == []
-    assert db.get_translation_map_by_task("t1") == {}
-    assert db.get_ncs_translation_map_by_task("t1") == {}
+    assert db.get_item_translation_map_by_task("t1") == {}
 
 
 def test_sqlite_log_writer_persists_failed_row_with_original(isolated_db: None) -> None:
@@ -143,7 +142,6 @@ def test_concurrent_access_is_serialized(isolated_db: None) -> None:
                 db.update_task_row(tid, status="running")
                 row = db.get_task_row(tid)
                 assert row is not None and row["task_id"] == tid and row["status"] == "running"
-                assert db.get_ncs_translation_map_by_task(tid) == {"x": "tr"}
                 assert db.get_item_translation_map_by_task(tid) == {"a.dlg": {"x": "tr"}}
                 db.list_tasks_by_token("tok")
         except Exception as exc:  # noqa: BLE001 - the test asserts none occur
@@ -159,7 +157,7 @@ def test_concurrent_access_is_serialized(isolated_db: None) -> None:
     assert len(db.list_tasks_by_token("tok")) == 12 * 40
 
 
-def test_startup_reconciles_unfinished_tasks(isolated_db: None) -> None:
+def test_startup_reconciles_unfinished_tasks(isolated_db: None, tmp_path: Path) -> None:
     """A non-terminal row left by a dead worker becomes ``interrupted`` on init.
 
     Regression: after a restart, ``running``/``extracting`` rows had no worker but
@@ -172,7 +170,7 @@ def test_startup_reconciles_unfinished_tasks(isolated_db: None) -> None:
     db.create_task_row("done", "tok", "127.0.0.1", 2.0, "m.mod")
     db.update_task_row("done", status="completed")  # terminal -> untouched
 
-    tm = TaskManager(db_connection=db.get_db())
+    tm = TaskManager(workspace_root=tmp_path / "tasks")
 
     # DB row flipped to a terminal status; the completed row is left alone.
     assert db.get_task_row("alive")["status"] == "interrupted"
@@ -189,3 +187,13 @@ def test_startup_reconciles_unfinished_tasks(isolated_db: None) -> None:
     tm.task_ttl_seconds = -1
     tm.purge_expired()
     assert tm.get("alive") is None
+
+
+def test_update_task_row_rejects_unknown_columns(isolated_db: None) -> None:
+    """Column names are interpolated into SQL, so only real task columns may pass."""
+    db.create_task_row("t1", "tok", "127.0.0.1", 1.0, "m.mod")
+    with pytest.raises(ValueError):
+        db.update_task_row("t1", **{"client_token = 'x', status": "running"})
+    row = db.get_task_row("t1")
+    assert row is not None
+    assert (row["client_token"], row["status"]) == ("tok", "pending")

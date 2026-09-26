@@ -113,7 +113,7 @@ docker compose -f docker/docker-compose.yml up --build
 | `NWN_TRANSLATE_API_KEY` | API-ключ OpenRouter (`sk-or-...`) или POLZA.AI (`pza...`) | обязательно |
 | `NWN_TRANSLATE_MAX_CONCURRENT` | Максимум параллельных AI-запросов | `12` |
 | `NWN_TRANSLATE_PROMPT_CACHE` | Explicit prompt-cache breakpoints, `0` отключает | `1` |
-| `NWN_GLOSSARY_LLM_TIMEOUT` | Timeout одного LLM-вызова глоссария, курации или извлечения сущностей, секунд | `300` |
+| `NWN_GLOSSARY_LLM_TIMEOUT` | Timeout одного LLM-вызова глоссария, курации или извлечения сущностей, секунд; также доля одного батча в общем дедлайне курации (без верхнего предела) | `300` |
 | `NWN_GLOSSARY_RUN_TIMEOUT` | Доля одного батча в общем дедлайне построения глоссария и извлечения сущностей, секунд (дедлайн не больше 900) | `360` |
 | `NWN_WEB_HOST` | Host web-сервера | `127.0.0.1` |
 | `NWN_WEB_PORT` | Port web-сервера | `8000` |

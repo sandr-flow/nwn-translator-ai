@@ -117,7 +117,7 @@ Primary environment variables:
 | `NWN_TRANSLATE_API_KEY` | OpenRouter (`sk-or-...`) or POLZA.AI (`pza...`) API key | required |
 | `NWN_TRANSLATE_MAX_CONCURRENT` | Maximum parallel AI requests | `12` |
 | `NWN_TRANSLATE_PROMPT_CACHE` | Explicit prompt-cache breakpoints; `0` disables | `1` |
-| `NWN_GLOSSARY_LLM_TIMEOUT` | Timeout of one glossary, curation or entity-extraction LLM call, seconds | `300` |
+| `NWN_GLOSSARY_LLM_TIMEOUT` | Timeout of one glossary, curation or entity-extraction LLM call, seconds; also the per-batch share of the overall curation deadline (uncapped) | `300` |
 | `NWN_GLOSSARY_RUN_TIMEOUT` | Per-batch share of the overall deadline of glossary building and entity extraction, seconds (the deadline is capped at 900) | `360` |
 | `NWN_WEB_HOST` | Web server host | `127.0.0.1` |
 | `NWN_WEB_PORT` | Web server port | `8000` |

@@ -12,14 +12,7 @@ import pytest
 from nwn_translator.web import database as db
 
 
-@pytest.fixture
-def isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    db.close_db()
-    monkeypatch.setattr(db, "_connection", None)
-    db.init_db(tmp_path / "t.db")
-
-
-def test_insert_and_get_item_map(isolated_db: None) -> None:
+def test_insert_and_get_item_map() -> None:
     db.create_task_row(
         task_id="t1",
         client_token="tok",
@@ -42,7 +35,7 @@ def test_insert_and_get_item_map(isolated_db: None) -> None:
     assert rows[0]["item_id"] == "s:off_1a"
 
 
-def test_sqlite_log_writer_ignores_diagnostic_events(isolated_db: None) -> None:
+def test_sqlite_log_writer_ignores_diagnostic_events() -> None:
     db.create_task_row(
         task_id="t1",
         client_token="tok",
@@ -65,7 +58,7 @@ def test_sqlite_log_writer_ignores_diagnostic_events(isolated_db: None) -> None:
     assert db.get_item_translation_map_by_task("t1") == {}
 
 
-def test_sqlite_log_writer_persists_failed_row_with_original(isolated_db: None) -> None:
+def test_sqlite_log_writer_persists_failed_row_with_original() -> None:
     db.create_task_row(
         task_id="t1",
         client_token="tok",
@@ -91,7 +84,7 @@ def test_sqlite_log_writer_persists_failed_row_with_original(isolated_db: None) 
 
 
 def test_sqlite_log_writer_drops_rows_of_a_deleted_task_quietly(
-    isolated_db: None, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A job may still log rows after its task was deleted; that is not a failure."""
     writer = db.SqliteTranslationLogWriter("gone")
@@ -104,7 +97,7 @@ def test_sqlite_log_writer_drops_rows_of_a_deleted_task_quietly(
 
 
 def test_sqlite_log_writer_warns_when_a_row_is_lost(
-    isolated_db: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Any other failure loses an editor row that rebuild relies on, so it must be visible."""
 
@@ -121,10 +114,8 @@ def test_sqlite_log_writer_warns_when_a_row_is_lost(
     assert "database is locked" in caplog.records[0].getMessage()
 
 
-def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_migrate_adds_item_id_column(tmp_path: Path) -> None:
     """Older DB without ``item_id`` gets column via ``_migrate``."""
-    db.close_db()
-    monkeypatch.setattr(db, "_connection", None)
     path = tmp_path / "legacy.db"
     conn = __import__("sqlite3").connect(str(path))
     conn.executescript("""
@@ -149,7 +140,6 @@ def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyP
         """)
     conn.close()
 
-    monkeypatch.setattr(db, "_connection", None)
     db.init_db(path)
     cur = db.get_db().execute("PRAGMA table_info(translations)")
     cols = {row[1] for row in cur.fetchall()}
@@ -159,7 +149,7 @@ def test_migrate_adds_item_id_column(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert {"model", "updated_at", "progress", "phase", "current_file"} <= task_cols
 
 
-def test_concurrent_access_is_serialized(isolated_db: None) -> None:
+def test_concurrent_access_is_serialized() -> None:
     """Many threads reading/writing the shared connection must not raise or scramble.
 
     Regression: without a lock around execute/commit (and with ``row_factory`` on the
@@ -192,7 +182,7 @@ def test_concurrent_access_is_serialized(isolated_db: None) -> None:
     assert len(db.list_tasks_by_token("tok")) == 12 * 40
 
 
-def test_startup_reconciles_unfinished_tasks(isolated_db: None, tmp_path: Path) -> None:
+def test_startup_reconciles_unfinished_tasks(tmp_path: Path) -> None:
     """A non-terminal row left by a dead worker becomes ``interrupted`` on init.
 
     Regression: after a restart, ``running``/``extracting`` rows had no worker but
@@ -224,7 +214,7 @@ def test_startup_reconciles_unfinished_tasks(isolated_db: None, tmp_path: Path) 
     assert tm.get("alive") is None
 
 
-def test_count_translations_counts_every_row_under_the_lock(isolated_db: None) -> None:
+def test_count_translations_counts_every_row_under_the_lock() -> None:
     """Job threads count rows on the connection route threads share, so under its lock."""
     db.create_task_row("t1", "tok", "127.0.0.1", 1.0, "m.mod")
     db.insert_translation("t1", "A", "А", file="a.uti", item_id="1")
@@ -241,7 +231,7 @@ def test_count_translations_counts_every_row_under_the_lock(isolated_db: None) -
     assert counted == [2]  # rejected lines are editor rows too
 
 
-def test_update_task_row_rejects_unknown_columns(isolated_db: None) -> None:
+def test_update_task_row_rejects_unknown_columns() -> None:
     """Column names are interpolated into SQL, so only real task columns may pass."""
     db.create_task_row("t1", "tok", "127.0.0.1", 1.0, "m.mod")
     with pytest.raises(ValueError):

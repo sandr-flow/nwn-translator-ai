@@ -105,8 +105,8 @@ def test_running_job_leaves_the_default_executor_free(
 ) -> None:
     """Endpoints using ``asyncio.to_thread`` must answer while a translation runs.
 
-    With the job on the loop's default executor, one busy thread was enough to
-    block ``/api/models`` until the translation finished.
+    If the job ran on the loop's default executor, one busy thread would block
+    ``/api/models`` until the translation finished.
     """
     started = threading.Event()
     release = threading.Event()
@@ -881,14 +881,9 @@ def test_reject_cjk_target_lang_not_representable_in_game(client: TestClient) ->
 
 
 @pytest.fixture
-def isolated_tm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """A TaskManager with the SQLite singleton pointed at a temp file."""
-    monkeypatch.setenv("NWN_WEB_DB_PATH", str(tmp_path / "web.db"))
-    db.close_db()
-    monkeypatch.setattr(db, "_connection", None)
-    yield TaskManager(workspace_root=tmp_path / "tasks")
-    db.close_db()
-    monkeypatch.setattr(db, "_connection", None)
+def isolated_tm(tmp_path: Path) -> TaskManager:
+    """A TaskManager with its own workspace; ``conftest`` isolates the database."""
+    return TaskManager(workspace_root=tmp_path / "tasks")
 
 
 class TestOneJobPerIpSlot:
@@ -1137,8 +1132,8 @@ def test_second_request_during_upload_gets_429(
     """The IP slot is claimed before the upload, not after it.
 
     The first request is held inside the (mocked) upload; a second request from
-    the same IP must be rejected immediately instead of slipping through the
-    old check-then-act window that spanned the whole upload.
+    the same IP must be rejected immediately instead of slipping through a
+    check-then-act window around the upload.
     """
     upload_started = threading.Event()
     release_upload = threading.Event()

@@ -34,6 +34,7 @@ from ..ai_providers.openrouter_models import (
     reasoning_payload,
     refresh_catalog,
 )
+from . import editor
 from .deps import web_task_manager
 from .database import (
     compact_stats_for_api,
@@ -49,12 +50,10 @@ from .schemas import (
     ConfigResponse,
     DetectProviderRequest,
     DetectProviderResponse,
-    DialogSpeaker,
     ModelLookupResponse,
     ModelReasoningInfo,
     ModelsResponse,
     ModelListItem,
-    RebuildEdit,
     RebuildRequest,
     RebuildResponse,
     TaskHistoryItem,
@@ -63,8 +62,6 @@ from .schemas import (
     TestConnectionRequest,
     TestConnectionResponse,
     TranslateResponse,
-    TranslationFileGroup,
-    TranslationItem,
     TranslationsResponse,
 )
 
@@ -402,121 +399,12 @@ async def download_log(
     )
 
 
-#: Context the dialog extractor gives a line with an explicit ``Speaker`` tag.
-_TAGGED_DIALOG_LINE_RE = re.compile(r"\(speaker: (.+)\)$")
-
-
-def _dialog_speaker(row: Dict[str, Any]) -> Optional[DialogSpeaker]:
-    """Speaker label of a dialog row.
-
-    Rows stored before speakers were recorded have only the extractor's context
-    string, which still tells player replies, tagged lines and owner lines apart.
-    """
-    if row.get("speaker"):
-        return DialogSpeaker.model_validate(row["speaker"])
-    context = row.get("context") or ""
-    if context.startswith("Player reply in "):
-        return DialogSpeaker(kind="player")
-    tagged = _TAGGED_DIALOG_LINE_RE.search(context)
-    if tagged:
-        return DialogSpeaker(kind="npc", tag=tagged.group(1))
-    if context.startswith("NPC dialog line in "):
-        return DialogSpeaker(kind="owner_unknown")
-    return None
-
-
-def _editor_row_key(filename: str, entry: Dict[str, Any]) -> Tuple[str, ...]:
-    """Editor row of a translation: one per dialog node, otherwise one per distinct text.
-
-    Dialog lines keep their own rows because the same text can have different
-    speakers; elsewhere identical lines of a file share a row unless they got
-    different translations.
-    """
-    item_id = entry.get("item_id") or ""
-    if filename.lower().endswith(".dlg") and item_id:
-        return ("node", item_id)
-    return ("text", entry["original"], entry["translated"])
-
-
-def _expand_edits_to_rows(task_id: str, edits: List[RebuildEdit]) -> Dict[Tuple[str, str], str]:
-    """Map each edit to every ``(file, item_id)`` its editor row stands for."""
-    row_items: Dict[Tuple[str, Tuple[str, ...]], List[str]] = {}
-    row_of_item: Dict[Tuple[str, str], Tuple[str, Tuple[str, ...]]] = {}
-    for entry in get_translations_by_task(task_id):
-        filename = entry.get("file") or "unknown"
-        item_id = entry.get("item_id") or ""
-        if not entry["original"] or not item_id:
-            continue
-        row = (filename, _editor_row_key(filename, entry))
-        row_items.setdefault(row, []).append(item_id)
-        row_of_item[(filename, item_id)] = row
-
-    expanded: Dict[Tuple[str, str], str] = {}
-    for edit in edits:
-        edited_row = row_of_item.get((edit.file, edit.item_id))
-        for item_id in row_items[edited_row] if edited_row is not None else [edit.item_id]:
-            expanded[(edit.file, item_id)] = edit.translated
-    return expanded
-
-
 @router.get("/tasks/{task_id}/translations", response_model=TranslationsResponse)
 async def get_translations(
     task: TranslationTask = Depends(require_task_owner),
 ) -> TranslationsResponse:
-    """Return structured translation data grouped by source file for the editor.
-
-    Rows follow :func:`_editor_row_key`. A row that stands for several identical
-    lines lists the other ``item_id`` values in ``duplicate_item_ids``; the
-    rebuild applies an edit of the row to all of them.
-    """
-    rows = get_translations_by_task(task.task_id)
-    if not rows:
-        return TranslationsResponse(files=[])
-
-    groups: dict[str, list[TranslationItem]] = {}
-    rows_by_key: dict[str, dict[tuple[str, ...], TranslationItem]] = {}
-    text_to_files: dict[str, list[str]] = {}
-
-    for entry in rows:
-        original = entry["original"]
-        translated = entry["translated"]
-        filename = entry.get("file") or "unknown"
-        if not original:
-            continue
-        if filename not in groups:
-            groups[filename] = []
-            rows_by_key[filename] = {}
-        item_id = entry.get("item_id") or ""
-        failed = entry.get("success", 1) in (0, False, "0")
-        is_dialog = filename.lower().endswith(".dlg")
-        row_key = _editor_row_key(filename, entry)
-        row = rows_by_key[filename].get(row_key)
-        if row is not None:
-            if item_id and item_id != row.item_id and item_id not in row.duplicate_item_ids:
-                row.duplicate_item_ids.append(item_id)
-            row.failed = row.failed or failed
-            continue
-        row = TranslationItem(
-            original=original,
-            translated=translated,
-            item_id=item_id,
-            failed=failed,
-            speaker=_dialog_speaker(entry) if is_dialog else None,
-        )
-        rows_by_key[filename][row_key] = row
-        groups[filename].append(row)
-        files_with_text = text_to_files.setdefault(original, [])
-        if filename not in files_with_text:
-            files_with_text.append(filename)
-
-    for filename, items in groups.items():
-        for item in items:
-            all_files = text_to_files.get(item.original, [])
-            if len(all_files) > 1:
-                item.shared_with = [f for f in all_files if f != filename]
-
-    files = [TranslationFileGroup(filename=fn, items=items) for fn, items in groups.items()]
-    return TranslationsResponse(files=files)
+    """Return the task's translations as editor rows grouped by source file."""
+    return TranslationsResponse(files=editor.group_rows(get_translations_by_task(task.task_id)))
 
 
 @router.post("/tasks/{task_id}/rebuild", response_model=RebuildResponse)
@@ -538,7 +426,7 @@ async def rebuild_task(
     # user's edits on top. An edit addresses one (file, item_id) and reaches every
     # identical line its editor row stands for.
     translations_by_item_id = get_item_translation_map_by_task(task_id)
-    edited = _expand_edits_to_rows(task_id, body.edits)
+    edited = editor.expand_edits(get_translations_by_task(task_id), body.edits)
     for (filename, item_id), translated in edited.items():
         translations_by_item_id.setdefault(filename, {})[item_id] = translated
 

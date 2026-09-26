@@ -15,8 +15,9 @@ def strip_json_markdown_fences(raw: str, *, case_sensitive: bool = False) -> str
 
     Args:
         raw: Model reply.
-        case_sensitive: Recognise the ``json`` tag only in lower case, as the
-            provider parsers do; an upper-case ``JSON`` tag then stays in the text.
+        case_sensitive: Recognise the ``json`` tag only in lower case, as
+            :func:`load_first_json_object` does; an upper-case ``JSON`` tag then
+            stays in the text.
 
     Returns:
         The stripped reply.

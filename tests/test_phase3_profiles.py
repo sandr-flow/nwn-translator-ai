@@ -14,10 +14,7 @@ import pytest
 
 from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-from src.nwn_translator.prompts import (
-    build_translation_system_prompt,
-    build_translation_system_prompt_parts,
-)
+from src.nwn_translator.prompts import build_translation_system_prompt_parts
 from src.nwn_translator.prompts._builder import (
     CONTENT_PROFILE_DEFAULT,
     CONTENT_PROFILE_SHORT_LABEL,
@@ -76,9 +73,9 @@ class TestShortLabelProfileShrinkage:
         assert "GLOSSARY USAGE" in stable
 
     def test_default_profile_is_unchanged_without_explicit_arg(self):
-        """Passing no profile must match the explicit default one (backwards compat)."""
-        no_arg = build_translation_system_prompt("russian", "male")
-        explicit = build_translation_system_prompt(
+        """Passing no profile must match the explicit default one."""
+        no_arg = build_translation_system_prompt_parts("russian", "male")
+        explicit = build_translation_system_prompt_parts(
             "russian", "male", content_profile=CONTENT_PROFILE_DEFAULT
         )
         assert no_arg == explicit

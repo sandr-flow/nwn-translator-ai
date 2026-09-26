@@ -131,9 +131,11 @@ def parse_batch_results(
 class OpenRouterProvider:
     """Translation provider for OpenRouter and other OpenAI-compatible gateways.
 
-    Every request goes through :meth:`_complete`: JSON response format, catalog-
-    clamped reasoning effort, error mapping and one request metric per attempt.
-    Any slug listed on https://openrouter.ai/models can be used as the model.
+    Every request goes through :meth:`_complete_once`: JSON response format,
+    catalog-clamped reasoning effort, error mapping and one request metric per
+    attempt. Every task except the glossary request sends it through
+    :meth:`_complete`, which retries transient errors. Any slug listed on
+    https://openrouter.ai/models can be used as the model.
 
     Attributes:
         BASE_URL: API base URL; subclasses target another gateway.
@@ -234,13 +236,17 @@ class OpenRouterProvider:
         return cast(AsyncOpenAI, self._thread_local.async_client)
 
     async def close_async_client(self) -> None:
-        """Close this thread's client; call it before the event loop shuts down."""
+        """Close this thread's client; call it before the event loop shuts down.
+
+        A failing close is logged at debug level and otherwise ignored: the run's
+        results do not depend on it.
+        """
         client = getattr(self._thread_local, "async_client", None)
         if client is not None:
             try:
                 await client.close()
             except Exception:
-                pass
+                logger.debug("Closing the %s client failed", self.PROVIDER_LABEL, exc_info=True)
             self._thread_local.async_client = None
             self._thread_local.client_loop = self._NO_LOOP_CACHED
 
@@ -365,11 +371,13 @@ class OpenRouterProvider:
             if isinstance(exc, TRANSIENT_ERRORS):
                 raise
             raise map_api_error(exc, self.PROVIDER_LABEL) from exc
-        record(response=response)
         try:
-            return (response.choices[0].message.content or "").strip()
-        except Exception as exc:  # a reply without choices
+            reply = (response.choices[0].message.content or "").strip()
+        except (AttributeError, IndexError, TypeError) as exc:  # a reply without choices
+            record(response=response, error=exc)
             raise map_api_error(exc, self.PROVIDER_LABEL) from exc
+        record(response=response, reply=reply)
+        return reply
 
     #: :meth:`_complete_once` retried on transient errors. The retry repeats only the
     #: failed request, never the requests a task already completed (JSON attempts,
@@ -386,6 +394,7 @@ class OpenRouterProvider:
         glossary_chars: int,
         started: float,
         response: Any = None,
+        reply: str = "",
         error: Optional[BaseException] = None,
     ) -> None:
         """Record one request attempt when a metrics recorder is configured."""
@@ -396,10 +405,6 @@ class OpenRouterProvider:
         user_chars = len(user or "")
         prompt_chars = stable_chars + variable_chars + user_chars
         usage_in, usage_out = usage_tokens(response)
-        try:
-            reply = (response.choices[0].message.content or "").strip()
-        except Exception:
-            reply = ""
         recorder.record(
             LLMRequestMetric(
                 request_id=recorder.next_request_id(),
@@ -456,6 +461,8 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted after retries.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout, after retries.
+            InternalServerError: HTTP >= 500, after retries.
         """
         if not text or not text.strip():
             return TranslationResult(translated="", original=text, success=True)
@@ -526,6 +533,8 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted after retries.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout, after retries.
+            InternalServerError: HTTP >= 500, after retries.
         """
         if not items:
             return []
@@ -575,6 +584,8 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted after retries.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout, after retries.
+            InternalServerError: HTTP >= 500, after retries.
         """
         return await self._complete(
             system_prompt,
@@ -594,7 +605,7 @@ class OpenRouterProvider:
         max_tokens: int,
         temperature: float,
     ) -> str:
-        """Send one glossary request, without retries or reasoning.
+        """Send one glossary request, without retries, at the lowest effort the model allows.
 
         ``json_object`` mode is used rather than a strict ``json_schema``: OpenRouter's
         constrained decoding hangs on models without native support (DeepSeek, Qwen).
@@ -646,6 +657,8 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted after retries.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout, after retries.
+            InternalServerError: HTTP >= 500, after retries.
         """
 
         async def request(user_prompt: str, max_tokens: int, batch_size: int) -> str:

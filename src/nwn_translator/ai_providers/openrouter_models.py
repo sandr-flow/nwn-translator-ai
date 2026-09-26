@@ -202,21 +202,14 @@ def lookup_model_reasoning(slug: str) -> Tuple[bool, Optional[ModelReasoning]]:
         slug: Model slug.
 
     Returns:
-        ``(found, info)``; ``(False, None)`` when the slug is absent.
+        ``(found, info)``; ``(False, None)`` when the slug is absent from the
+        catalog (from :data:`FALLBACK` while OpenRouter is unreachable).
     """
     key = (slug or "").strip()
     if not key:
         return False, None
-    catalog = refresh_catalog()
-    if key in catalog:
-        return True, catalog[key]
-    with _lock:
-        live = _catalog_live
-    if not live:
-        catalog = refresh_catalog(force=True)
-        if key in catalog:
-            return True, catalog[key]
-    return False, None
+    info = refresh_catalog().get(key)
+    return info is not None, info
 
 
 def allowed_efforts(info: ModelReasoning) -> List[str]:
@@ -278,8 +271,6 @@ def resolve_reasoning_effort(model: str, requested: Optional[str]) -> Optional[s
     info = get_known_reasoning(model)
     if info is None:
         return requested
-    if not info.supported:
-        return None
     allowed = allowed_efforts(info)
     if not allowed:
         return None

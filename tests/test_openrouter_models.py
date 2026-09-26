@@ -111,6 +111,21 @@ def test_refresh_catalog_falls_back_on_http_error():
     assert catalog["google/gemini-3.8-flash"] == FALLBACK["google/gemini-3.8-flash"]
 
 
+def test_lookup_fetches_the_catalog_once_when_openrouter_is_down():
+    mock_client = MagicMock()
+    mock_client.get.side_effect = httpx.ConnectError("nope")
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    with patch(
+        "src.nwn_translator.ai_providers.openrouter_models.httpx.Client",
+        return_value=mock_client,
+    ):
+        assert lookup_model_reasoning("vendor/unknown") == (False, None)
+        found, info = lookup_model_reasoning("google/gemini-3.8-flash")
+    assert mock_client.get.call_count == 2  # one fetch per lookup, no immediate retry
+    assert found is True and info == FALLBACK["google/gemini-3.8-flash"]
+
+
 def test_unrestricted_mandatory_drops_none():
     info = ModelReasoning(supported=True, mandatory=True, supported_efforts=None)
     assert "none" not in allowed_efforts(info)

@@ -114,6 +114,11 @@ async def classify_with_recovery(
 
     Returns:
         ``key -> {"translate": bool, "reason": str}`` for every entry.
+
+    Raises:
+        Exception: Any error of *request* (``RateLimitError``, ``OpenRouterError``,
+            or a transient API error after retries) propagates unchanged; only
+            replies that do not parse are recovered.
     """
     if not entries:
         return {}

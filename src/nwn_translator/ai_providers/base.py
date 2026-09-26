@@ -69,7 +69,9 @@ class TranslationProvider(Protocol):
     """The model operations the pipeline uses.
 
     The five task methods keep their names and keyword arguments: the translation
-    log records ``method.__name__`` and the call arguments of every request.
+    log records ``method.__name__`` and the call arguments of every request. The
+    arguments, results and errors of every method are documented on the
+    implementation, :class:`~nwn_translator.ai_providers.openrouter_provider.OpenRouterProvider`.
 
     Attributes:
         model: Model slug sent with every request.

@@ -54,6 +54,12 @@ ExtractedMap = Dict[Path, Tuple[Dict[str, Any], ExtractedContent, str]]
 
 _Result = TypeVar("_Result")
 
+#: Errors listed one by one in the verbose run summary; the rest are counted.
+_SUMMARY_ERRORS_SHOWN = 10
+
+#: Rule line framing the run summary in the log.
+_SUMMARY_RULE = "=" * 50
+
 
 def _new_run_stats() -> Dict[str, Any]:
     """Return empty run statistics, in the key order of the stats dict."""
@@ -852,21 +858,21 @@ def stage_repack(state: PipelineState) -> Path:
 def _log_summary(state: PipelineState) -> None:
     """Log the processed files, translated items and errors of the run."""
     errors = state.stats["errors"]
-    logger.info("=" * 50)
+    logger.info(_SUMMARY_RULE)
     logger.info("Translation Summary")
-    logger.info("=" * 50)
+    logger.info(_SUMMARY_RULE)
     logger.info("Files processed: %s", state.stats["files_processed"])
     logger.info("Items translated: %s", state.stats["items_translated"])
     if errors:
         logger.warning("Errors: %d", len(errors))
         if state.config.verbose:
-            for error in errors[:10]:
+            for error in errors[:_SUMMARY_ERRORS_SHOWN]:
                 logger.warning("  - %s", error)
-            if len(errors) > 10:
-                logger.warning("  ... and %d more", len(errors) - 10)
+            if len(errors) > _SUMMARY_ERRORS_SHOWN:
+                logger.warning("  ... and %d more", len(errors) - _SUMMARY_ERRORS_SHOWN)
     else:
         logger.info("No errors!")
-    logger.info("=" * 50)
+    logger.info(_SUMMARY_RULE)
 
 
 def run_pipeline(state: PipelineState) -> Path:

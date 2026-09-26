@@ -278,8 +278,6 @@ def resolve_reasoning_effort(model: str, requested: Optional[str]) -> Optional[s
     info = get_known_reasoning(model)
     if info is None:
         return requested
-    if not info.supported:
-        return None
     allowed = allowed_efforts(info)
     if not allowed:
         return None

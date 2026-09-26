@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
+from openai import APIStatusError, BadRequestError
 
 from nwn_translator.ai_providers.base import RateLimitError
 from nwn_translator.ai_providers.openrouter_provider import (
@@ -56,6 +58,19 @@ class TestOpenRouterBudgetRetry:
                 Exception("402 in_flight_budget_exhausted Retry-After: 120")
             )
         assert exc_info.value.retry_after_seconds == 120.0
+
+    def test_status_code_decides_over_digits_in_the_message(self) -> None:
+        request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        too_long = BadRequestError(
+            "This endpoint's maximum context length is 1048576 tokens; you requested 1402913",
+            response=httpx.Response(400, request=request),
+            body=None,
+        )
+        assert not _is_rate_or_budget_error(str(too_long), too_long)
+        budget = APIStatusError(
+            "Payment required", response=httpx.Response(402, request=request), body=None
+        )
+        assert _is_rate_or_budget_error(str(budget), budget)
 
     def test_map_other_errors_stay_openrouter(self) -> None:
         provider = OpenRouterProvider.__new__(OpenRouterProvider)

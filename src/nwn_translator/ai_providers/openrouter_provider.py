@@ -122,10 +122,14 @@ def _wait_with_retry_after(retry_state: Any) -> float:
 
 
 def _is_rate_or_budget_error(error_msg: str, exc: Exception) -> bool:
-    """True for HTTP 429/402 and OpenRouter in-flight budget exhaustion."""
+    """True for HTTP 429/402 and OpenRouter in-flight budget exhaustion.
+
+    The message is searched only when the error carries no HTTP status: a 400
+    whose text merely contains "429" or "402" (a token count) is not a rate limit.
+    """
     status = getattr(exc, "status_code", None)
-    if status in (429, 402):
-        return True
+    if status is not None:
+        return status in (429, 402)
     lower = error_msg.lower()
     if "rate_limit" in lower or "429" in lower:
         return True

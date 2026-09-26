@@ -96,7 +96,7 @@ def test_stages_record_candidates_metrics_and_terminology_trace() -> None:
 def test_glossary_overall_timeout_keeps_the_run_going(monkeypatch) -> None:
     import nwn_translator.glossary_builder as builder
 
-    monkeypatch.setattr(builder, "_STAGE", replace(builder._STAGE, batch_timeout=0.05))
+    monkeypatch.setattr(builder, "_STAGE", replace(builder._STAGE, run_timeout_per_batch=0.05))
 
     class _Stalled(_Provider):
         async def complete_glossary_chat_async(self, system_prompt, user_prompt, **kwargs):

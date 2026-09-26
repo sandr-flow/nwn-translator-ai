@@ -286,7 +286,7 @@ class TestExtractIntegration:
 
         import src.nwn_translator.context.entity_extractor as module
 
-        monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, batch_timeout=0.1))
+        monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, run_timeout_per_batch=0.1))
 
         class _SecondBatchStalls(_FakeProvider):
             async def complete_json_chat_async(self, system_prompt, user_prompt, **_kw):

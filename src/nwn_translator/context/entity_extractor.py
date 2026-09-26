@@ -48,7 +48,7 @@ _STAGE = LlmStage(
     phase="entity_extraction",
     label="Entity extraction",
     batch_size=50,
-    batch_timeout=GLOSSARY_RUN_TIMEOUT,
+    run_timeout_per_batch=GLOSSARY_RUN_TIMEOUT,
     max_run_timeout=RUN_TIMEOUT_CAP,
 )
 

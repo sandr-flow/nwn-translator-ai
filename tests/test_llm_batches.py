@@ -12,7 +12,7 @@ from nwn_translator.telemetry import current_llm_phase
 
 
 def _stage(**overrides) -> LlmStage:
-    values = dict(phase="test_phase", label="Test", batch_size=2, batch_timeout=10.0)
+    values = dict(phase="test_phase", label="Test", batch_size=2, run_timeout_per_batch=10.0)
     values.update(overrides)
     return LlmStage(**values)
 
@@ -37,12 +37,12 @@ class TestChunks:
 
 class TestRunTimeout:
     def test_scales_with_batches_up_to_the_cap(self):
-        stage = _stage(batch_timeout=360.0, max_run_timeout=900.0)
+        stage = _stage(run_timeout_per_batch=360.0, max_run_timeout=900.0)
         assert stage.run_timeout(1) == 360.0
         assert stage.run_timeout(3) == 900.0
 
     def test_uncapped_by_default(self):
-        assert _stage(batch_timeout=300.0).run_timeout(4) == 1200.0
+        assert _stage(run_timeout_per_batch=300.0).run_timeout(4) == 1200.0
 
 
 class TestRun:
@@ -65,7 +65,7 @@ class TestRun:
                 await asyncio.sleep(5)
             return batch
 
-        results = _stage(batch_timeout=0.1).run(["a", "b", "c"], worker, concurrency=3)
+        results = _stage(run_timeout_per_batch=0.1).run(["a", "b", "c"], worker, concurrency=3)
 
         assert (results[0], results[2]) == ("a", "c")
         assert isinstance(results[1], TimeoutError)

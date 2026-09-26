@@ -33,7 +33,7 @@ _STAGE = LlmStage(
     phase="glossary_curation",
     label="Glossary curation",
     batch_size=80,
-    batch_timeout=GLOSSARY_LLM_TIMEOUT,
+    run_timeout_per_batch=GLOSSARY_LLM_TIMEOUT,
     max_attempts=2,
     slot_per_batch=True,
 )

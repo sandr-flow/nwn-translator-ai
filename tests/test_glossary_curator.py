@@ -99,7 +99,7 @@ def test_overall_timeout_keeps_decisions_of_finished_batches(monkeypatch):
 
     import src.nwn_translator.glossary_curator as module
 
-    monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, batch_timeout=0.1))
+    monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, run_timeout_per_batch=0.1))
     registry = EntityCandidateRegistry()
     names = [f"Guild of {a.upper()}{b}" for a, b in product("abcdefghi", repeat=2)][:81]
     for name in names:

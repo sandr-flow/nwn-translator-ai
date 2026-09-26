@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Ceiling of the overall budget of entity extraction and glossary building (seconds).
+#: Ceiling of the overall deadline of entity extraction and glossary building (seconds).
 RUN_TIMEOUT_CAP = 900.0
 
 B = TypeVar("B")
@@ -113,6 +113,9 @@ class LlmStage:
         phase: ``llm_phase`` label of the stage's requests in the run metrics.
         label: Stage name in log lines.
         batch_size: Maximum items per batch.
+        run_timeout_per_batch: What each batch adds to the overall deadline of
+            :meth:`run` (seconds). No single batch is held to it: one batch
+            may use the time of others.
         max_attempts: Requests per batch in :meth:`fill_keys`; each retry asks
             only for the keys still missing.
         retry_on_error: Retry after a failed request; otherwise the batch stops
@@ -121,22 +124,30 @@ class LlmStage:
             request and keeps it until its last, so its retry runs before
             other batches start; otherwise each request waits for a slot of
             its own.
-        batch_timeout: Overall time budget per batch (seconds).
-        max_run_timeout: Ceiling of the overall budget of one :meth:`run`.
+        max_run_timeout: Ceiling of the overall deadline of one :meth:`run`
+            (seconds).
     """
 
     phase: str
     label: str
     batch_size: int
-    batch_timeout: float
+    run_timeout_per_batch: float
     max_attempts: int = 1
     retry_on_error: bool = False
     slot_per_batch: bool = False
     max_run_timeout: float = math.inf
 
     def run_timeout(self, batch_count: int) -> float:
-        """Overall time budget of a run over *batch_count* batches (seconds)."""
-        return min(self.batch_timeout * batch_count, self.max_run_timeout)
+        """Return the overall deadline of a run.
+
+        Args:
+            batch_count: Number of batches in the run.
+
+        Returns:
+            :attr:`run_timeout_per_batch` times *batch_count*, capped at
+            :attr:`max_run_timeout` (seconds).
+        """
+        return min(self.run_timeout_per_batch * batch_count, self.max_run_timeout)
 
     def run(
         self,

@@ -205,7 +205,7 @@ class TestGlossaryPartialFailure:
 
         import src.nwn_translator.glossary_builder as module
 
-        monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, batch_timeout=0.1))
+        monkeypatch.setattr(module, "_STAGE", replace(module._STAGE, run_timeout_per_batch=0.1))
 
         async def fake_glossary(system_prompt, user_prompt, *, glossary_keys, **kwargs):
             if len(glossary_keys) < 80:

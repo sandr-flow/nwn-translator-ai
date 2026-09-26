@@ -501,9 +501,14 @@ class ContextualTranslationManager:
     def _translate_chunk(self, run: _FileRun, chunk: Chunk, index: int, total: int) -> List[str]:
         """Request one chunk and accept its valid lines.
 
+        A failing request (a provider error after its own retries, a
+        timeout) costs only this chunk: its lines stay unaccepted and are
+        reported as failed, while the other chunks are still requested.
+
         Returns:
             Keys of the chunk that are missing from the answer or were
-            rejected; all of them when the answer never parsed.
+            rejected, to be retried; all of them when the answer never
+            parsed, none when the request failed.
         """
         dialog = run.dialog
         name = dialog.file_path.name
@@ -516,14 +521,20 @@ class ContextualTranslationManager:
                 len(chunk.keys),
                 len(chunk.script),
             )
-        answer = self._request_json(
-            _CHUNK_RECOVERY,
-            self._system_prompt([chunk.script, dialog.file_path.stem], run.speakers),
-            dialog_user_prompt(name, chunk.script),
-            lambda raw: repair_prompt(name, chunk.script, chunk.keys, raw),
-            trace={"file": name},
-            label=name,
-        )
+        try:
+            answer = self._request_json(
+                _CHUNK_RECOVERY,
+                self._system_prompt([chunk.script, dialog.file_path.stem], run.speakers),
+                dialog_user_prompt(name, chunk.script),
+                lambda raw: repair_prompt(name, chunk.script, chunk.keys, raw),
+                trace={"file": name},
+                label=name,
+            )
+        except TranslationCancelled:
+            raise
+        except Exception as exc:
+            logger.error("%s: dialog chunk %d/%d request failed: %s", name, index, total, exc)
+            return []
         if answer is None:
             logger.error(
                 "%s: dialog translation chunk %d/%d failed after retries (invalid JSON).",
@@ -539,6 +550,9 @@ class ContextualTranslationManager:
 
     def _retry_pending(self, run: _FileRun, pending: List[str]) -> List[str]:
         """Request the pending lines again in one token-preserving request.
+
+        A failing request is treated like an unusable answer, so the lines
+        still get their single-line retries and cleanup.
 
         Args:
             run: The file's state.
@@ -562,14 +576,21 @@ class ContextualTranslationManager:
             {key: dialog.handlers[key].get_expected_artifact_sequence() for key in pending},
             {key: run.rejected[key].report for key in pending if key in run.rejected},
         )
-        answer = self._request_json(
-            _PENDING_RECOVERY,
-            self._system_prompt([script, dialog.file_path.stem], run.speakers),
-            prompt,
-            None,
-            trace={"file": name},
-            label=name,
-        )
+        answer: Optional[Dict[str, Any]]
+        try:
+            answer = self._request_json(
+                _PENDING_RECOVERY,
+                self._system_prompt([script, dialog.file_path.stem], run.speakers),
+                prompt,
+                None,
+                trace={"file": name},
+                label=name,
+            )
+        except TranslationCancelled:
+            raise
+        except Exception as exc:
+            logger.error("%s: pending dialog retry request failed: %s", name, exc)
+            answer = None
         if not answer:
             return pending
         accepted, rejected = self._accept(dialog, answer, pending, allow_cleanup=False)

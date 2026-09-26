@@ -395,7 +395,35 @@ def test_generic_api_error_still_degrades_to_partial_result(caplog):
 
     assert result == {}
     assert ("test.dlg", "test:entry:1") in manager.failed_items
-    assert "Contextual translation failed" in caplog.text
+    assert "dialog chunk 1/1 request failed: network exploded" in caplog.text
+    assert len(provider.calls) == 1
+
+
+def test_failing_chunk_does_not_stop_the_other_chunks(monkeypatch):
+    monkeypatch.setattr(dialog_plan, "CHUNK_MAX_KEYS", 1)
+    provider = _FakeProvider([TimeoutError("run_async timed out"), '{"R2":"Кто ты?"}'])
+    manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+
+    result = _translate(manager, "test.dlg", _hello_who())
+
+    assert result == {("test.dlg", "test:reply:2"): "Кто ты?"}
+    assert manager.failed_items == {("test.dlg", "test:entry:1")}
+    assert len(provider.calls) == 2
+
+
+def test_failing_pending_retry_still_retries_lines_one_by_one():
+    tree = DialogNode(node_id=1, text="Hello there", is_entry=True)
+    provider = _LineRetryFake(
+        ["{}", RuntimeError("provider down")], lambda text: text.replace("Hello", "Привет")
+    )
+    manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+
+    result = _translate(manager, "test.dlg", tree)
+
+    assert result == {("test.dlg", "test:entry:1"): "Привет there"}
+    assert len(provider.calls) == 2
+    assert len(provider.line_calls) == 1
+    assert manager.failed_items == set()
 
 
 class _KeyedFakeProvider(_FakeProvider):

@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from nwn_translator.config import TranslationConfig
-from nwn_translator.file_handlers.ncs_parser import parse_ncs
+from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.main import (
     ModuleTranslator,
     inject_translations_into_file,

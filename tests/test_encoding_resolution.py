@@ -3,19 +3,24 @@
 import struct
 from pathlib import Path
 
-from nwn_translator.config import source_string_encoding
-from nwn_translator.file_handlers.gff_handler import read_gff, write_gff
-from nwn_translator.file_handlers.gff_parser import decode_module_text
-from nwn_translator.file_handlers.gff_patcher import GFFPatcher
-from nwn_translator.file_handlers.ncs_parser import (
+from nwn_translator.config import _LANG_TO_WINDOWS_ENCODING, source_string_encoding
+from nwn_translator.formats.gff import GFFPatcher, read_gff
+from nwn_translator.formats.ncs import (
     NCS_HEADER,
     OP_CONST,
     OP_RETN,
     TYPE_STRING,
     parse_ncs,
     parse_ncs_bytes,
+    patch_ncs_string_replacements,
 )
-from nwn_translator.file_handlers.ncs_patcher import patch_ncs_string_replacements
+from nwn_translator.formats.text_codec import (
+    MODULE_ENCODINGS,
+    decode_fixed_ascii,
+    decode_module_text,
+    encode_module_text,
+)
+from tests.support.gff_writer import write_gff
 
 
 class TestSourceStringEncoding:
@@ -35,6 +40,10 @@ class TestSourceStringEncoding:
 
     def test_unknown_language_means_detect(self) -> None:
         assert source_string_encoding("klingon") is None
+
+    def test_target_code_pages_are_the_writable_module_encodings(self) -> None:
+        """Every offered language maps to a page the patchers accept, and back."""
+        assert set(_LANG_TO_WINDOWS_ENCODING.values()) == MODULE_ENCODINGS
 
 
 class TestDecodeModuleText:
@@ -72,6 +81,33 @@ class TestDecodeModuleText:
         raw = "Привет".encode("cp1251")
         assert decode_module_text(raw, "no-such-codec") == "Привет"
 
+    def test_bytes_undefined_in_both_cascade_pages_fall_back_to_latin1(self) -> None:
+        # 0x98 is undefined in cp1251, 0x81 in cp1252.
+        assert decode_module_text(b"\x98\x81", None) == "\x98\x81"
+
+    def test_fixed_ascii_stops_at_first_nul_and_drops_non_ascii(self) -> None:
+        assert decode_fixed_ascii(b"na\xefme\x00junk\x00\x00") == "name"
+
+
+class TestEncodeModuleText:
+    """Shared byte-encoding rule for GFF and NCS string payloads."""
+
+    def test_em_dash_becomes_hyphen(self) -> None:
+        text = "модуль — для этого не требуется"
+        assert encode_module_text(text, "cp1251") == "модуль - для этого не требуется".encode(
+            "cp1251"
+        )
+
+    def test_en_dash_becomes_hyphen(self) -> None:
+        assert encode_module_text("1–2 игрока", "cp1251") == "1-2 игрока".encode("cp1251")
+
+    def test_romanian_comma_below_becomes_cedilla_on_cp1250(self) -> None:
+        assert encode_module_text("Știință", "cp1250") == "Ştiinţă".encode("cp1250")
+
+    def test_unencodable_characters_are_dropped(self) -> None:
+        assert encode_module_text("Привет 😀 мир", "cp1251") == "Привет  мир".encode("cp1251")
+        assert encode_module_text("Ωmega", "cp1252") == b"mega"
+
 
 class TestGFFReadWithSourceEncoding:
     """File-level: parser threads the hint down to CExoLocString decoding."""
@@ -82,7 +118,7 @@ class TestGFFReadWithSourceEncoding:
         parsed = read_gff(gff_path)
         record_offset = parsed["_record_offsets"]["LocalizedName"]
         patcher = GFFPatcher(gff_path, text_encoding="cp1252")
-        patcher.patch_local_string(record_offset, "Bonjour, étranger")
+        patcher.patch_multiple([(record_offset, "Bonjour, étranger")])
         return gff_path
 
     def test_cp1252_field_reads_correctly_with_hint(self, tmp_path: Path) -> None:

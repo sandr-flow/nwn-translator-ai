@@ -22,8 +22,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from nwn_translator.ai_providers.base import BaseAIProvider
 from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
-from nwn_translator.file_handlers.ncs_concat import find_concat_chains, merged_text
-from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
+from nwn_translator.extractors.ncs_concat import find_concat_chains, merged_text
+from nwn_translator.formats.ncs import parse_ncs_bytes
 from nwn_translator.translators.translation_manager import TranslationManager
 
 CORPUS = ROOT / "tests/fixtures/ncs_selection"

@@ -56,7 +56,7 @@ def read_raw_resources(mod_path: Path) -> Tuple[list, Dict[Tuple[str, int], byte
 
     Returns ``(entries, {(res_ref_lower, res_type_id): raw_bytes})``.
     """
-    from nwn_translator.file_handlers.erf_reader import ERFReader
+    from nwn_translator.formats.erf import ERFReader
 
     reader = ERFReader(mod_path)
     entries = reader.read_entries()
@@ -65,16 +65,14 @@ def read_raw_resources(mod_path: Path) -> Tuple[list, Dict[Tuple[str, int], byte
         for entry in entries:
             handle.seek(entry.offset)
             raw[(entry.res_ref.lower(), entry.res_type)] = handle.read(entry.size)
-    reader.cleanup()
     return entries, raw
 
 
 def extract_module(mod_path: Path, dest: Path) -> Path:
     """Extract *mod_path* into *dest* and return *dest*."""
-    from nwn_translator.file_handlers.erf_reader import ERFReader
+    from nwn_translator.formats.erf import ERFReader
 
     reader = ERFReader(mod_path)
     reader.read_entries()
     reader.extract_all(dest)
-    reader.cleanup()
     return dest

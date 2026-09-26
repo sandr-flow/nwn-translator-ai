@@ -23,11 +23,8 @@ from ..config import (
     module_string_encoding_for_target_lang,
     source_string_encoding,
 )
-from ..file_handlers import (
-    ERFReader,
-    create_mod_from_directory,
-    read_gff,
-)
+from ..formats.erf import ERFReader, create_mod_from_directory
+from ..formats.gff import read_gff
 from ..extractors import get_extractor_for_file
 from ..injectors import get_injector_for_content
 from ..injectors.base import InjectedContent
@@ -111,7 +108,7 @@ def load_parsed_and_extracted(
 ) -> Optional[Tuple[Dict[str, Any], ExtractedContent]]:
     """Parse *file_path* and run the extractor; return data or ``None`` if skipped."""
     if file_ext == ".ncs":
-        from ..file_handlers.ncs_parser import parse_ncs, NCSParseError
+        from ..formats.ncs import parse_ncs, NCSParseError
 
         try:
             ncs_file = parse_ncs(file_path, source_encoding=source_encoding)

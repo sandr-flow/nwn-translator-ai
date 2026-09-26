@@ -11,7 +11,7 @@ from nwn_translator.config import TranslationCancelled, TranslationConfig
 from nwn_translator.context.entity_candidates import EntityCandidateRegistry
 from nwn_translator.context.world_context import NPCInfo, WorldContext
 from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-from nwn_translator.file_handlers.ncs_parser import parse_ncs
+from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.glossary import Glossary
 from nwn_translator.pipeline import artifacts
 from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_inject

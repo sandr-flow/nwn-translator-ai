@@ -11,7 +11,7 @@ import struct
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .nss_index import classify_engine_arg
-from ..file_handlers.ncs_parser import (
+from ..formats.ncs import (
     NCSInstruction,
     OP_ADD,
     OP_CONST,
@@ -175,7 +175,7 @@ def trace_string_consumer(
     Returns:
         Bytecode context dict consumed by the NCS extractor and the model gate.
     """
-    from ..file_handlers import ncs_parser as op
+    from ..formats import ncs as op
 
     context: Dict[str, Any] = {
         "next_action": None,

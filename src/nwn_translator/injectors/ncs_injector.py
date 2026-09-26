@@ -1,6 +1,6 @@
 """NCS script injector for writing translated strings back into bytecode.
 
-Delegates the actual binary patching to :mod:`~nwn_translator.file_handlers.ncs_patcher`.
+Delegates the actual binary patching to :mod:`~nwn_translator.formats.ncs`.
 """
 
 import logging
@@ -9,8 +9,8 @@ from ..extractors.base import Translations
 from typing import Any, Dict, Optional
 
 from .base import BaseInjector, InjectedContent
-from ..file_handlers.ncs_concat import parts_from_metadata, split_concat_translation
-from ..file_handlers.ncs_patcher import NCSPatchError, patch_ncs_string_replacements
+from ..extractors.ncs_concat import parts_from_metadata, split_concat_translation
+from ..formats.ncs import NCSPatchError, patch_ncs_string_replacements
 
 logger = logging.getLogger(__name__)
 

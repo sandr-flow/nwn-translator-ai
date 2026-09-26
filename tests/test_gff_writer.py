@@ -1,7 +1,7 @@
-"""Round-trip tests for GFF v3.2 writer.
+"""Round-trip tests for the GFF V3.2 fixture writer.
 
 These tests verify that GFFWriter.to_bytes() produces a valid binary that,
-when re-parsed by GFFParser, yields a dict equivalent to what was written.
+when re-parsed by parse_gff(), yields a dict equivalent to what was written.
 """
 
 import struct
@@ -10,14 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from src.nwn_translator.file_handlers.gff_writer import GFFWriter, GFFWriteError, write_gff_bytes
-from src.nwn_translator.file_handlers.gff_handler import GFFHandler, GFFHandlerError
-from src.nwn_translator.file_handlers.gff_parser import (
-    GFFParser,
-    GFFType,
-    gff_to_dict,
-    parse_gff,
-)
+from nwn_translator.formats.gff import GFFType, parse_gff, read_gff
+from tests.support.gff_writer import GFFWriter, write_gff, write_gff_bytes
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -29,8 +23,8 @@ def _roundtrip(data: dict) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".gff", delete=False) as f:
         tmp = Path(f.name)
     try:
-        GFFHandler.write(tmp, data)
-        return GFFHandler.read(tmp)
+        write_gff(tmp, data)
+        return read_gff(tmp)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -320,7 +314,7 @@ class TestGFFParsedDictRewrite:
         parsed = _roundtrip({"StructType": "UTC", "Conversation": "bob"})
         parsed["_field_types"]["Conversation"] = int(GFFType.CExoString)
         out = tmp_path / "a.utc"
-        GFFHandler.write(out, parsed)
+        write_gff(out, parsed)
         field = parse_gff(out).structs[0].fields["Conversation"]
         assert field.type == GFFType.CExoString
         assert field.value == "bob"
@@ -328,7 +322,7 @@ class TestGFFParsedDictRewrite:
     def test_struct_id_key_sets_the_struct_id(self, tmp_path):
         data = {"StructType": "DLG", "EntryList": [{"_struct_id": 5, "Text": _loc("A")}]}
         out = tmp_path / "a.dlg"
-        GFFHandler.write(out, data)
+        write_gff(out, data)
         gff = parse_gff(out)
         entry_index = gff.structs[0].fields["EntryList"].value[0]
         assert gff.structs[entry_index].struct_id == 5
@@ -336,25 +330,25 @@ class TestGFFParsedDictRewrite:
 
 
 # ---------------------------------------------------------------------------
-# GFFHandler.write integration
+# write_gff / read_gff integration
 # ---------------------------------------------------------------------------
 
 
-class TestGFFHandlerWrite:
-    """Integration tests using GFFHandler.write()."""
+class TestWriteGffReadGff:
+    """Integration tests using write_gff() and read_gff()."""
 
     def test_write_then_read_returns_same_type(self, tmp_path):
-        """GFFHandler.write + read preserves StructType."""
+        """write_gff + read_gff preserves StructType."""
         data = {"StructType": "JRL", "Categories": []}
         out = tmp_path / "journal.jrl"
-        GFFHandler.write(out, data)
-        result = GFFHandler.read(out)
+        write_gff(out, data)
+        result = read_gff(out)
         assert result.get("StructType") == "JRL"
 
     def test_write_creates_file(self, tmp_path):
-        """GFFHandler.write() must create a file at the given path."""
+        """write_gff() must create a file at the given path."""
         data = {"StructType": "UTI", "LocalizedName": {"StrRef": -1, "Value": "Helm"}}
         out = tmp_path / "helm.uti"
-        GFFHandler.write(out, data)
+        write_gff(out, data)
         assert out.exists()
         assert out.stat().st_size > 160

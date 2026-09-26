@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..extractors.base import Translations
-from ..file_handlers.gff_patcher import GFFPatcher
+from ..formats.gff import GFFPatcher
 from .base import BaseInjector, InjectedContent
 
 

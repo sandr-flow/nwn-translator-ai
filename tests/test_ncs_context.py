@@ -7,7 +7,7 @@ import pytest
 from nwn_translator.extractors.ncs_context import TYPE_STRING_STRING, trace_string_consumer
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
 from nwn_translator.extractors.nss_index import classify_engine_arg
-from nwn_translator.file_handlers.ncs_parser import OP_EQUAL, OP_NEQUAL, parse_ncs_bytes
+from nwn_translator.formats.ncs import OP_EQUAL, OP_NEQUAL, parse_ncs_bytes
 from tests.test_ncs import (
     _action,
     _consti,
@@ -167,7 +167,7 @@ def test_unproven_natural_word_remains_a_gate_candidate(tmp_path):
 
 
 def test_same_text_in_internal_and_spoken_slots_is_patched_selectively(tmp_path):
-    from nwn_translator.file_handlers.ncs_patcher import patch_ncs_string_replacements
+    from nwn_translator.formats.ncs import patch_ncs_string_replacements
 
     text = "A shared phrase."
     raw = (

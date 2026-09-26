@@ -8,7 +8,7 @@ import pytest
 
 from scripts.evaluate_ncs_corpus import CORPUS, STAGES, evaluate, load_corpus, summarize
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
-from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
+from nwn_translator.formats.ncs import parse_ncs_bytes
 
 
 def test_corpus_evidence_is_resolvable():

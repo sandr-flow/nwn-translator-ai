@@ -11,8 +11,8 @@ from typing import Any, Dict
 
 from nwn_translator.extractors.git_extractor import GitExtractor
 from nwn_translator.extractors.git_fields import collect_git_strings_missing_from_translations
-from nwn_translator.file_handlers.gff_handler import read_gff
-from nwn_translator.file_handlers.gff_writer import write_gff
+from nwn_translator.formats.gff import read_gff
+from tests.support.gff_writer import write_gff
 from nwn_translator.main import rebuild_module
 from nwn_translator.pipeline.stages import (
     inject_translations_into_file,

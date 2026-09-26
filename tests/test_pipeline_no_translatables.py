@@ -7,8 +7,7 @@ the input) instead of returning a path that was never written.
 from pathlib import Path
 
 from nwn_translator.config import TranslationConfig
-from nwn_translator.file_handlers.erf_reader import ERFReader
-from nwn_translator.file_handlers.erf_writer import ERFWriter
+from nwn_translator.formats.erf import ERFReader, ERFWriter
 from nwn_translator.pipeline.stages import PipelineState, run_pipeline
 
 

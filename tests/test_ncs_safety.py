@@ -6,9 +6,8 @@ import pytest
 
 from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
-from nwn_translator.file_handlers.ncs_concat import find_concat_chains, merged_text
-from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
-from nwn_translator.file_handlers.ncs_patcher import NCSPatchError, patch_ncs_string_replacements
+from nwn_translator.extractors.ncs_concat import find_concat_chains, merged_text
+from nwn_translator.formats.ncs import NCSPatchError, parse_ncs_bytes, patch_ncs_string_replacements
 from nwn_translator.injectors.ncs_injector import NcsInjector
 from tests.test_ncs import _action, _add_ss, _consti, _consto, _consts, _header, _retn
 from tests.test_translation_manager import _make_config, _make_provider

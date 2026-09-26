@@ -10,17 +10,18 @@ never loop, and ``.git`` extraction is unaffected by the newly visible
 
 import struct
 
-from src.nwn_translator.extractors.git_extractor import GitExtractor
-from src.nwn_translator.file_handlers.gff_handler import read_gff, write_gff
-from src.nwn_translator.file_handlers.gff_parser import (
+from nwn_translator.extractors.git_extractor import GitExtractor
+from nwn_translator.formats.gff import (
     GFFFile,
-    GFFParser,
+    GFFPatcher,
     GFFStruct,
     GFFType,
     GFFValue,
     _expand_struct,
+    parse_gff,
+    read_gff,
 )
-from src.nwn_translator.file_handlers.gff_patcher import GFFPatcher
+from tests.support.gff_writer import write_gff
 
 
 def _write_wrapper_gff(tmp_path, filename="wrapper.uti"):
@@ -70,7 +71,7 @@ class TestDirectStructFieldParsing:
     def test_on_disk_field_type_is_spec_14(self, tmp_path):
         """The 12-byte field record on disk must carry type id 14, not 16."""
         path = _write_wrapper_gff(tmp_path)
-        gff = GFFParser(path).parse()
+        gff = parse_gff(path)
         raw = path.read_bytes()
 
         wrapper_field = gff.structs[0].fields["Wrapper"]
@@ -100,7 +101,7 @@ class TestDirectStructFieldPatching:
         parsed = read_gff(path)
         offset = parsed["Wrapper"]["_record_offsets"]["LocalizedName"]
 
-        GFFPatcher(path, text_encoding="cp1251").patch_local_string(offset, "Древний клинок")
+        GFFPatcher(path, text_encoding="cp1251").patch_multiple([(offset, "Древний клинок")])
 
         reread = read_gff(path)
         assert reread["Wrapper"]["LocalizedName"]["Value"] == "Древний клинок"
@@ -110,7 +111,7 @@ class TestDirectStructFieldPatching:
         parsed = read_gff(path)
         offset = parsed["Wrapper"]["_record_offsets"]["LocalizedName"]
 
-        GFFPatcher(path, text_encoding="cp1251").patch_local_string(offset, "Древний клинок")
+        GFFPatcher(path, text_encoding="cp1251").patch_multiple([(offset, "Древний клинок")])
 
         reread = read_gff(path)
         assert reread["Wrapper"]["Charges"] == 3
@@ -125,9 +126,7 @@ class TestMalformedStructIndices:
     def _gff_with_structs(struct_fields_list):
         gff = GFFFile()
         for fields in struct_fields_list:
-            st = GFFStruct(struct_id=0, data_offset=0, field_count=len(fields))
-            st.fields = fields
-            gff.structs.append(st)
+            gff.structs.append(GFFStruct(struct_id=0, fields=fields))
         return gff
 
     def test_self_reference_stays_int(self):

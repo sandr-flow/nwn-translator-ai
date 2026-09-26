@@ -121,7 +121,7 @@ def test_failure_is_scoped_to_one_occurrence_of_equal_text():
     ],
 )
 def test_inject_and_rebuild_keep_identical_fields_independent(tmp_path, extension, data):
-    from nwn_translator.file_handlers.gff_writer import write_gff
+    from tests.support.gff_writer import write_gff
     from nwn_translator.pipeline.stages import (
         load_parsed_and_extracted,
         inject_translations_into_file,

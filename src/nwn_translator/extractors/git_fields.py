@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set
 
 from ..context.string_filters import should_skip_entity_source_text
-from ..file_handlers.gff_handler import read_gff
+from ..formats.gff import read_gff
 
 logger = logging.getLogger(__name__)
 

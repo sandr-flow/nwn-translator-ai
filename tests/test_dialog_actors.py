@@ -15,7 +15,7 @@ from nwn_translator.context.dialog_speakers import (
 )
 from nwn_translator.context.world_context import NPCInfo, WorldContext, WorldScanner
 from nwn_translator.extractors.base import DialogNode
-from nwn_translator.file_handlers.gff_writer import write_gff
+from tests.support.gff_writer import write_gff
 from nwn_translator.translators.context_translator import ContextualTranslationManager
 
 OWNER_UNKNOWN = {"kind": "owner_unknown", "name": "", "tag": ""}

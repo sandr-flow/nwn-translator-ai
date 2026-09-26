@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 from nwn_translator.config import TRANSLATABLE_TYPES, TranslationConfig
-from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
+from nwn_translator.formats.ncs import parse_ncs_bytes
 from nwn_translator.pipeline.stages import (
     PipelineState,
     load_parsed_and_extracted,

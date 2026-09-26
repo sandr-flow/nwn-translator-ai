@@ -3,39 +3,28 @@ import struct
 
 import pytest
 
-from src.nwn_translator.file_handlers.gff_handler import read_gff, write_gff
-from src.nwn_translator.file_handlers.gff_patcher import (
+from nwn_translator.formats.gff import (
+    HEADER,
+    LOCSTRING_HEAD,
+    SUBSTRING_HEAD,
+    GFFHeader,
     GFFPatcher,
     GFFPatchError,
-    sanitize_for_module_encoding,
+    read_gff,
 )
-
-
-def test_sanitize_replaces_unicode_dashes_for_cp1251():
-    text = "модуль — для этого не требуется"
-    sanitized = sanitize_for_module_encoding(text, "cp1251")
-    assert sanitized == "модуль - для этого не требуется"
-
-
-def test_sanitize_replaces_en_dash_for_cp1251():
-    text = "1–2 игрока"
-    sanitized = sanitize_for_module_encoding(text, "cp1251")
-    assert sanitized == "1-2 игрока"
+from tests.support.gff_writer import write_gff
 
 
 def _read_locstring_payload(path, record_offset):
     """Return (str_ref, [(language_id, text_bytes)]) for the field at *record_offset*."""
     data = path.read_bytes()
-    fielddata_offset = struct.unpack_from("<I", data, 32)[0]
     data_or_offset = struct.unpack_from("<I", data, record_offset + 8)[0]
-    off = fielddata_offset + data_or_offset
-    str_ref = struct.unpack_from("<i", data, off + 4)[0]
-    count = struct.unpack_from("<I", data, off + 8)[0]
+    off = GFFHeader.read(data).field_data_offset + data_or_offset
+    _total_size, str_ref, count = LOCSTRING_HEAD.unpack_from(data, off)
     subs = []
-    p = off + 12
+    p = off + LOCSTRING_HEAD.size
     for _ in range(count):
-        lang_id = struct.unpack_from("<I", data, p)[0]
-        length = struct.unpack_from("<I", data, p + 4)[0]
+        lang_id, length = SUBSTRING_HEAD.unpack_from(data, p)
         subs.append((lang_id, data[p + 8 : p + 8 + length]))
         p += 8 + length
     return str_ref, subs
@@ -45,24 +34,28 @@ def _splice_substrings(path, record_offset, substrings, str_ref=-1):
     """Replace the locstring payload at *record_offset* with *substrings*.
 
     ``substrings`` is ``[(language_id, text)]``; text is encoded as cp1252.
-    Reuses the patcher's insert-at-end-of-FieldData mechanics so the result is
-    a structurally valid GFF with a genuinely multi-substring field.
+    The payload is appended to the field data block the way the patcher does
+    it, so the result is a structurally valid GFF with a genuinely
+    multi-substring field.
     """
     encoded = [(lang_id, text.encode("cp1252")) for lang_id, text in substrings]
-    total_size = 4 + 4 + sum(8 + len(raw) for _, raw in encoded)
-    payload = bytearray()
-    payload += struct.pack("<I", total_size)
-    payload += struct.pack("<i", str_ref)
-    payload += struct.pack("<I", len(encoded))
-    for lang_id, raw in encoded:
-        payload += struct.pack("<I", lang_id)
-        payload += struct.pack("<I", len(raw))
-        payload += raw
+    payload = LOCSTRING_HEAD.pack(
+        8 + sum(8 + len(raw) for _, raw in encoded), str_ref, len(encoded)
+    )
+    payload += b"".join(SUBSTRING_HEAD.pack(lang_id, len(raw)) + raw for lang_id, raw in encoded)
 
-    patcher = GFFPatcher(path)
     data = bytearray(path.read_bytes())
-    new_data = patcher._apply_payload_at_fielddata_end(data, record_offset, payload)
-    path.write_bytes(new_data)
+    header = GFFHeader.read(data)
+    insert_at = header.field_data_offset + header.field_data_size
+    struct.pack_into("<I", data, record_offset + 8, header.field_data_size)
+    data[insert_at:insert_at] = payload
+    updates = {"field_data_size": header.field_data_size + len(payload)}
+    if header.field_indices_size:
+        updates["field_indices_offset"] = header.field_indices_offset + len(payload)
+    if header.list_indices_size:
+        updates["list_indices_offset"] = header.list_indices_offset + len(payload)
+    HEADER.pack_into(data, 0, *header._replace(**updates))
+    path.write_bytes(bytes(data))
 
 
 class TestPatchMultipleSingleSplice:
@@ -107,6 +100,34 @@ class TestPatchMultipleSingleSplice:
         assert parsed["LastName"]["Value"] == "Второй"
         assert parsed["Description"]["Value"] == "Длинное описание для сдвига блоков"
 
+    def test_payload_bytes(self, tmp_path):
+        """The payload is appended at the old field data end with StrRef -1 and LanguageID 0."""
+        path = tmp_path / "bytes.utc"
+        write_gff(path, {"StructType": "UTC", "FirstName": {"StrRef": 7, "Value": "Hero"}})
+        offset = read_gff(path)["_record_offsets"]["FirstName"]
+        before = path.read_bytes()
+        header = GFFHeader.read(before)
+
+        GFFPatcher(path, text_encoding="cp1251").patch_multiple([(offset, "Герой")])
+
+        after = path.read_bytes()
+        payload = struct.pack("<IiIII", 16 + 5, -1, 1, 0, 5) + "Герой".encode("cp1251")
+        insert_at = header.field_data_offset + header.field_data_size
+        assert after[insert_at : insert_at + len(payload)] == payload
+        assert len(after) == len(before) + len(payload)
+        assert struct.unpack_from("<I", after, offset + 8)[0] == header.field_data_size
+        assert GFFHeader.read(after).field_data_size == header.field_data_size + len(payload)
+
+    def test_empty_text_writes_no_substring(self, tmp_path):
+        path = tmp_path / "empty.utc"
+        write_gff(path, {"StructType": "UTC", "FirstName": {"StrRef": -1, "Value": "Hero"}})
+        offset = read_gff(path)["_record_offsets"]["FirstName"]
+
+        GFFPatcher(path, text_encoding="cp1251").patch_multiple([(offset, "")])
+
+        assert _read_locstring_payload(path, offset) == (-1, [])
+        assert read_gff(path)["FirstName"] == {"StrRef": -1, "Value": ""}
+
     def test_duplicate_offset_last_wins(self, tmp_path):
         """Two patches on one field leave the last text visible."""
         path = tmp_path / "dup.utc"
@@ -129,6 +150,26 @@ class TestPatchMultipleSingleSplice:
                 [patches[0], (0, "bad"), patches[1]]
             )
         assert path.read_bytes() == before
+
+
+class TestPatcherValidation:
+    """Invalid arguments fail with explicit messages."""
+
+    def test_unsupported_encoding(self, tmp_path):
+        path = tmp_path / "a.utc"
+        write_gff(path, {"StructType": "UTC", "Tag": "a"})
+        with pytest.raises(GFFPatchError, match="Unsupported module text encoding: 'utf-8'"):
+            GFFPatcher(path, text_encoding="utf-8")
+
+    def test_missing_file(self, tmp_path):
+        with pytest.raises(GFFPatchError, match="File not found"):
+            GFFPatcher(tmp_path / "absent.utc")
+
+    def test_file_shorter_than_header(self, tmp_path):
+        path = tmp_path / "tiny.utc"
+        path.write_bytes(b"UTC V3.2")
+        with pytest.raises(GFFPatchError, match="too small"):
+            GFFPatcher(path).patch_multiple([(56, "x")])
 
 
 class TestMultiSubstringCollapse:
@@ -158,7 +199,7 @@ class TestMultiSubstringCollapse:
         path, offset = self._make_gendered_file(tmp_path)
 
         with caplog.at_level(logging.WARNING):
-            GFFPatcher(path, text_encoding="cp1251").patch_local_string(offset, "Привет")
+            GFFPatcher(path, text_encoding="cp1251").patch_multiple([(offset, "Привет")])
 
         assert "overwriting 2 substrings" in caplog.text
         assert "gendered.utc" in caplog.text
@@ -174,7 +215,7 @@ class TestMultiSubstringCollapse:
         offset = read_gff(path)["_record_offsets"]["FirstName"]
 
         with caplog.at_level(logging.WARNING):
-            GFFPatcher(path, text_encoding="cp1251").patch_local_string(offset, "Герой")
+            GFFPatcher(path, text_encoding="cp1251").patch_multiple([(offset, "Герой")])
 
         assert "substrings" not in caplog.text
         _str_ref, subs = _read_locstring_payload(path, offset)
@@ -192,7 +233,7 @@ class TestMultiSubstringCollapse:
         )
 
         with caplog.at_level(logging.WARNING):
-            GFFPatcher(path, text_encoding="cp1251").patch_local_string(offset, "Стопка книг")
+            GFFPatcher(path, text_encoding="cp1251").patch_multiple([(offset, "Стопка книг")])
 
         assert "overwriting 3 substrings" in caplog.text
         _str_ref, subs = _read_locstring_payload(path, offset)

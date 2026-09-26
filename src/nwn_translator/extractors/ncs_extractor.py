@@ -12,8 +12,8 @@ from .base import BaseExtractor, ExtractedContent, TranslatableItem
 from .ncs_context import trace_string_consumer
 from .nss_index import read_script_source, snippet_with_position
 from ..context.string_filters import ENGINE_TAG_PREFIXES
-from ..file_handlers.ncs_parser import NCSFile
-from ..file_handlers.ncs_concat import find_concat_chains, merged_text
+from ..formats.ncs import NCSFile
+from .ncs_concat import find_concat_chains, merged_text
 
 # ---------------------------------------------------------------------------
 # Pattern-based heuristics

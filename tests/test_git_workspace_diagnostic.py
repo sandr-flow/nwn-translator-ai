@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from src.nwn_translator.extractors.base import extract_local_string
-from src.nwn_translator.file_handlers.gff_handler import read_gff
+from src.nwn_translator.formats.gff import read_gff
 from src.nwn_translator.extractors.git_fields import (
     INSTANCE_LISTS,
     INSTANCE_NESTED_ITEM_LISTS,

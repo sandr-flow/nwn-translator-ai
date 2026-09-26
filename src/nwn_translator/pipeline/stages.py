@@ -68,17 +68,23 @@ def _new_run_stats() -> Dict[str, Any]:
 def find_translatable_files(directory: Path) -> List[Path]:
     """Return the files under *directory* whose kind can be translated.
 
+    File order decides batch composition, so it must not depend on the file
+    system: the files are sorted by upper-cased relative path, the order in
+    which NTFS lists a directory. A Linux run thus sends the same requests as
+    a Windows run.
+
     Args:
         directory: Unpacked module.
 
     Returns:
-        Translatable files in ``rglob`` order.
+        Translatable files, sorted.
     """
-    return [
+    files = [
         path
         for path in directory.rglob("*")
         if path.is_file() and path.suffix.lower() in TRANSLATABLE_TYPES
     ]
+    return sorted(files, key=lambda path: str(path.relative_to(directory)).upper())
 
 
 def load_parsed_and_extracted(

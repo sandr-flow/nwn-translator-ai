@@ -314,8 +314,7 @@ def lang_suffix(target_lang: str) -> str:
     Returns:
         Tag string like ``"-rus"`` or ``"-de"``.
     """
-    tag = target_lang[:3].lower() if len(target_lang) > 3 else target_lang.lower()
-    return f"-{tag}"
+    return f"-{target_lang[:3].lower()}"
 
 
 def create_output_path(

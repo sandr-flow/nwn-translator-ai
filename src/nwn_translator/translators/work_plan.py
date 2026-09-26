@@ -18,7 +18,6 @@ from ..prompts._builder import (
     CONTENT_PROFILE_SCRIPT_MESSAGE,
     CONTENT_PROFILE_SHORT_LABEL,
 )
-from .ncs_diagnostics import is_ncs_item
 from .token_handler import TokenHandler, TokenMismatchReport, has_translatable_content
 
 #: Terminology lookup: the glossary block for some texts, or None when nothing matches.
@@ -41,6 +40,18 @@ SHORT_LABEL_TYPES = frozenset(
         "journal_category_name",
     }
 )
+
+
+def is_ncs_item(item: TranslatableItem) -> bool:
+    """Return whether *item* is a string literal of a compiled script.
+
+    Args:
+        item: Extracted occurrence.
+
+    Returns:
+        True for the ``ncs_string`` items of the script extractor.
+    """
+    return item.metadata.get("type") == "ncs_string"
 
 
 @dataclass(frozen=True)
@@ -163,13 +174,29 @@ def dedup_key(work: WorkItem, terminology: Terminology) -> Tuple[Hashable, ...]:
 
 
 def is_batchable(work: WorkItem, limits: BatchLimits) -> bool:
-    """Return whether *work* is short enough to share a batch request."""
+    """Return whether *work* is short enough to share a batch request.
+
+    Args:
+        work: Prepared item.
+        limits: Batch budgets.
+
+    Returns:
+        True when the sanitized text is within the item limit of its kind.
+    """
     limit = limits.ncs_item_chars if work.is_ncs else limits.text_chars
     return len(work.sanitized) <= limit
 
 
 def batch_terminology(batch: Sequence[WorkItem], terminology: Terminology) -> Optional[str]:
-    """Return the glossary block of a batch: terms of every text and context in it."""
+    """Return the glossary block of a batch: terms of every text and context in it.
+
+    Args:
+        batch: Items of one request.
+        terminology: Glossary lookup of the run.
+
+    Returns:
+        The glossary block, or None when no term matches.
+    """
     return terminology(text for w in batch for text in (w.sanitized, w.item.context))
 
 

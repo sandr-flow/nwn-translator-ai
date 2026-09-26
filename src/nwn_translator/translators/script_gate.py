@@ -17,7 +17,8 @@ from ..config import TranslationConfig
 from ..extractors.base import Occurrence, TranslatableItem
 from ..extractors.ncs_extractor import ncs_hard_veto_reason
 from ..translation_logging import TranslationLogWriter, logged_model_call
-from .ncs_diagnostics import NcsDiagnostics, is_ncs_item
+from .ncs_diagnostics import NcsDiagnostics
+from .work_plan import is_ncs_item
 
 logger = logging.getLogger(__name__)
 

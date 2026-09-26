@@ -36,11 +36,6 @@ def new_ncs_diagnostics() -> Dict[str, Any]:
     return {**{name: 0 for name in NCS_COUNTERS}, "samples": []}
 
 
-def is_ncs_item(item: TranslatableItem) -> bool:
-    """Return whether *item* is a string literal of a compiled script."""
-    return item.metadata.get("type") == "ncs_string"
-
-
 def add_sample(
     diagnostics: Dict[str, Any],
     sample: Dict[str, Any],

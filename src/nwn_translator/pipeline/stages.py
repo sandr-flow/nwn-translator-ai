@@ -31,6 +31,7 @@ from ..ai_providers.openrouter_provider import OpenRouterProvider
 from ..translators.translation_manager import TranslationManager
 from ..extractors.base import Translations
 from ..translators.context_translator import ContextualTranslationManager
+from ..translators.ncs_diagnostics import NCS_COUNTERS, add_sample
 from ..context.dialog_speakers import dialog_line_speaker
 from ..context.world_context import WorldScanner, WorldContext
 from ..context.entity_extractor import EntityExtractor
@@ -192,9 +193,6 @@ class PipelineState:
     _gff_cache: Dict[Path, Dict[str, Any]] = field(default_factory=dict)
     stats: Dict[str, Any] = field(default_factory=_new_stats)
     _stats_lock: threading.Lock = field(default_factory=threading.Lock)
-    #: Delta-tracking cursors for cumulative manager stats.
-    _prev_items: int = 0
-    _prev_errors: int = 0
 
     # ── setup helpers ──────────────────────────────────────────────────
     def _source_encoding(self) -> Optional[str]:
@@ -343,35 +341,23 @@ class PipelineState:
         except Exception as exc:
             logger.debug("Failed to write NCS patch diagnostic event: %s", exc)
 
-    def _sync_manager_stats(self, manager: "TranslationManager") -> None:
-        """Merge delta from the shared TranslationManager stats into run stats."""
+    def merge_manager_stats(self, manager_stats: Dict[str, Any]) -> None:
+        """Add the statistics of a finished translation manager to the run.
+
+        Every counter is added in full, so each manager is merged exactly once.
+
+        Args:
+            manager_stats: ``TranslationManager.stats`` after its last request.
+        """
         with self._stats_lock:
-            items_now = manager.stats["items_translated"]
-            errors_now = len(manager.stats["errors"])
-            self.stats["items_translated"] += items_now - self._prev_items
-            self.stats["errors"].extend(manager.stats["errors"][self._prev_errors :])
-            manager_ncs = manager.stats.get("ncs_diagnostics") or {}
-            if manager_ncs:
-                ncs_stats = self.stats.setdefault("ncs_diagnostics", _new_ncs_diagnostics())
-                for key in (
-                    "total",
-                    "extracted",
-                    "approved",
-                    "skipped_hard_veto",
-                    "skipped_fail_closed",
-                    "translated",
-                    "timeout",
-                    "retry_recovered",
-                    "failed",
-                ):
-                    ncs_stats[key] = int(ncs_stats.get(key, 0)) + int(manager_ncs.get(key, 0))
-                samples = ncs_stats.setdefault("samples", [])
-                for sample in manager_ncs.get("samples", []):
-                    if len(samples) >= 50:
-                        break
-                    samples.append(sample)
-            self._prev_items = items_now
-            self._prev_errors = errors_now
+            self.stats["items_translated"] += manager_stats["items_translated"]
+            self.stats["errors"].extend(manager_stats["errors"])
+            run_ncs = self.stats["ncs_diagnostics"]
+            manager_ncs = manager_stats["ncs_diagnostics"]
+            for name in NCS_COUNTERS:
+                run_ncs[name] += manager_ncs[name]
+            for sample in manager_ncs["samples"]:
+                add_sample(run_ncs, sample)
 
     # ── output / teardown helpers ──────────────────────────────────────
     def _resolve_output_path(self, extract_dir: Path) -> Path:
@@ -631,8 +617,6 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
 
     # Initialize translation managers for Phase B (need glossary).
     manager = TranslationManager(state.config, state.provider, glossary=state.glossary)
-    state._prev_items = 0
-    state._prev_errors = 0
     context_manager: Optional[ContextualTranslationManager]
     if use_context_manager and state.world_context is not None:
         context_manager = ContextualTranslationManager(
@@ -668,7 +652,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
         non_dialog_translations = manager.translate_content(combined, item_progress=item_progress)
         if non_dialog_translations:
             all_translations.update(non_dialog_translations)
-        state._sync_manager_stats(manager)
+        state.merge_manager_stats(manager.stats)
 
     # B-2: Translate dialog files (contextual, concurrent across files)
     if dialog_files:

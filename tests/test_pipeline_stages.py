@@ -15,6 +15,7 @@ from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.glossary import Glossary
 from nwn_translator.pipeline import artifacts
 from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_inject
+from nwn_translator.translators.ncs_diagnostics import new_ncs_diagnostics
 
 from tests.test_ncs import _consts, _retn, _write_ncs
 
@@ -270,3 +271,23 @@ def test_extract_keeps_input_order_regardless_of_completion_order(
     state = PipelineState(config=config, provider=Mock())
 
     assert list(stage_extract(state, files)) == files
+
+
+def test_manager_statistics_are_merged_once_per_manager(tmp_path: Path) -> None:
+    """Every manager adds all its counters; a second manager is not offset by the first."""
+
+    def manager_stats(items: int, error: str, ncs_total: int, sample: dict) -> dict:
+        ncs = new_ncs_diagnostics()
+        ncs["total"] = ncs["translated"] = ncs_total
+        ncs["samples"].append(sample)
+        return {"items_translated": items, "errors": [error], "ncs_diagnostics": ncs}
+
+    state = _det_state(tmp_path)
+    state.merge_manager_stats(manager_stats(3, "first", 2, {"file": "a.ncs"}))
+    state.merge_manager_stats(manager_stats(1, "second", 5, {"file": "b.ncs"}))
+
+    assert state.stats["items_translated"] == 4
+    assert state.stats["errors"] == ["first", "second"]
+    ncs = state.stats["ncs_diagnostics"]
+    assert (ncs["total"], ncs["translated"], ncs["failed"]) == (7, 7, 0)
+    assert ncs["samples"] == [{"file": "a.ncs"}, {"file": "b.ncs"}]

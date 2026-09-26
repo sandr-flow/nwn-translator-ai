@@ -104,7 +104,7 @@ def test_world_context_roundtrip_keeps_dialog_actors(tmp_path: Path) -> None:
 
 
 def test_world_context_without_dialog_actors_still_loads(tmp_path: Path) -> None:
-    """Artifacts written before dialog actors were saved load with empty registries."""
+    """Artifacts written before dialog actors and script owners were saved still load."""
     path = tmp_path / "world_context.json"
     path.write_text('{"npcs": {}, "areas": {}}', encoding="utf-8")
 
@@ -112,6 +112,25 @@ def test_world_context_without_dialog_actors_still_loads(tmp_path: Path) -> None
 
     assert loaded.dialog_actors_by_conversation == {}
     assert loaded.dialog_actors_by_tag == {}
+    assert loaded.script_owners == {}
+
+
+def test_world_context_roundtrip_keeps_script_owners(tmp_path: Path) -> None:
+    """Script strings get the same speaker hint from a reloaded world context."""
+    wc = WorldContext()
+    marta = NPCInfo("MARTA", "Marta", "", "", "Human", "Female", "marta_talk")
+    goblins = [NPCInfo(f"GOB{i}", "", "", "", "Goblin", "Male", "") for i in range(2)]
+    wc.register_script_owner("marta_spawn", marta)
+    for goblin in goblins:
+        wc.register_script_owner("gob_bark", goblin)
+
+    path = tmp_path / "world_context.json"
+    artifacts.dump_world_context(path, wc)
+    loaded = artifacts.load_world_context(path)
+
+    assert loaded.script_owners == wc.script_owners
+    for script in ("marta_spawn", "gob_bark"):
+        assert loaded.speaker_hint_for_script(script) == wc.speaker_hint_for_script(script)
 
 
 def test_candidates_roundtrip_preserves_curation(tmp_path: Path) -> None:

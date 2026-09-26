@@ -111,7 +111,15 @@ def load_items(path: Path) -> List[ExtractedContent]:
 
 
 def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, Any]:
-    """Serialize the world context registry (candidates are dumped separately)."""
+    """Serialize the world context registry (candidates are dumped separately).
+
+    Args:
+        world_context: Scanned module objects, or None.
+
+    Returns:
+        JSON-ready registries (empty for None). Script owners keep their order:
+        it decides the speaker hint of a script.
+    """
     if world_context is None:
         return {}
     # An actor is indexed by Conversation and by tag; store each once.
@@ -131,6 +139,10 @@ def world_context_to_dict(world_context: Optional[WorldContext]) -> Dict[str, An
         "items": dict(sorted(world_context.items.items())),
         "extracted_names": list(world_context.extracted_names),
         "dialog_actors": [actors[key] for key in sorted(actors)],
+        "script_owners": {
+            script: [asdict(owner) for owner in owners]
+            for script, owners in sorted(world_context.script_owners.items())
+        },
     }
 
 
@@ -143,7 +155,14 @@ def load_world_context(path: Path) -> WorldContext:
     """Read ``world_context.json`` back into a :class:`WorldContext`.
 
     Candidates are not part of this artifact; attach them separately via
-    :func:`load_candidates` when needed.
+    :func:`load_candidates` when needed. Registries missing from older
+    artifacts (dialog actors, script owners) load empty.
+
+    Args:
+        path: ``world_context.json``.
+
+    Returns:
+        The world context without candidates.
     """
     data = _read_json(path)
     wc = WorldContext()
@@ -155,6 +174,10 @@ def load_world_context(path: Path) -> WorldContext:
     wc.extracted_names = [tuple(pair) for pair in data.get("extracted_names", [])]
     for actor in data.get("dialog_actors", []):
         wc.register_dialog_actor(NPCInfo(**actor))
+    wc.script_owners = {
+        script: [NPCInfo(**owner) for owner in owners]
+        for script, owners in data.get("script_owners", {}).items()
+    }
     return wc
 
 

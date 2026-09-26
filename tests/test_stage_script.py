@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from nwn_translator.formats.erf import ERFReader, ERFWriter
+from nwn_translator.pipeline import artifacts
 from scripts import stage
 
 from tests.support.gff_writer import write_gff_bytes
@@ -66,6 +67,27 @@ def test_repack_without_the_archive_stops_with_a_message(tmp_path: Path) -> None
         _run(
             "repack", "--extract-dir", str(work / "extract"), "--out", str(work), tmp_path=tmp_path
         )
+
+
+def test_worldscan_also_saves_the_scan_candidates(tmp_path: Path) -> None:
+    """'entities --from' needs the creature names the scan found."""
+    module = _module(tmp_path)
+    work = tmp_path / "work"
+    _run("unpack", str(module), "--out", str(work), tmp_path=tmp_path)
+    creature = {
+        "Tag": "MARTA",
+        "FirstName": {"StrRef": -1, "Value": "Marta"},
+        "Conversation": "talk",
+        "ScriptSpawn": "greet",
+    }
+    (work / "extract" / "marta.utc").write_bytes(write_gff_bytes(creature, file_type="UTC"))
+
+    _run("worldscan", "--extract-dir", str(work / "extract"), "--out", str(work), tmp_path=tmp_path)
+
+    candidates = artifacts.load_candidates(work / "candidates.json")
+    assert [c.name for c in candidates.values()] == ["Marta"]
+    world = artifacts.load_world_context(work / "world_context.json")
+    assert [owner.tag for owner in world.script_owners["greet"]] == ["MARTA"]
 
 
 def test_only_ext_restricts_extraction_to_one_file_type(tmp_path: Path) -> None:

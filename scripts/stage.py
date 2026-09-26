@@ -164,10 +164,16 @@ def cmd_unpack(args: argparse.Namespace, state: PipelineState, art_in: Path, art
 def cmd_worldscan(
     args: argparse.Namespace, state: PipelineState, art_in: Path, art_out: Path
 ) -> None:
-    """Scan the world context into ``world_context.json``."""
+    """Scan the world context into ``world_context.json`` and its candidates."""
     _resolve_extract_dir(args, state, do_extract=False)
     stage_worldscan(state)
     artifacts.dump_world_context(art_out / "world_context.json", state.world_context)
+    # The scan's own name candidates (creatures, areas, items, journal) live
+    # only in the registry; 'entities --from' needs them.
+    artifacts.dump_candidates(
+        art_out / "candidates.json",
+        state.world_context.candidates if state.world_context else None,
+    )
     logger.info("Wrote %s", art_out / "world_context.json")
 
 

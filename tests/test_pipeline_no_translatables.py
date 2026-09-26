@@ -46,7 +46,7 @@ def test_no_translatable_files_outputs_copy_of_input(tmp_path: Path) -> None:
     assert [e.res_ref for e in entries] == ["cleanup"]
 
 
-def test_run_closes_the_log_file_it_opened(tmp_path: Path) -> None:
+def test_run_closes_the_log_file_it_opened(tmp_path: Path, opened_files) -> None:
     input_mod = tmp_path / "empty.mod"
     _build_mod_without_translatables(input_mod)
     log = tmp_path / "log.jsonl"
@@ -64,4 +64,5 @@ def test_run_closes_the_log_file_it_opened(tmp_path: Path) -> None:
 
     run_pipeline(state)
 
+    assert [handle.closed for handle in opened_files(log)] == [True]
     log.rename(tmp_path / "moved.jsonl")  # fails on Windows while a handle is open

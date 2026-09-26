@@ -8,7 +8,7 @@ strings and metadata reach prompts, the web database and the output module, so
 any difference is a behaviour change.
 
 Regenerate the fixture only for an intended change:
-``NWN_UPDATE_EXTRACTOR_SNAPSHOT=1 pytest tests/test_extractor_snapshot.py``.
+``NWN_UPDATE_EXTRACTOR_SNAPSHOT=1 pytest tests/extractors/test_extractor_snapshot.py``.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from nwn_translator.extractors import git_fields
 from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.pipeline.stages import load_parsed_and_extracted
 from nwn_translator.resources import RESOURCE_KINDS
-from tests.test_ncs import _action, _add_ss, _consts, _cptopsp, _retn, _write_ncs
+from tests.support.ncs import action, add_ss, consts, cptopsp, retn, write_ncs
 
-FIXTURE = Path(__file__).parent / "fixtures" / "extractor_snapshot.json"
+FIXTURE = Path(__file__).parents[1] / "fixtures" / "extractor_snapshot.json"
 
 
 def _loc(value: str, strref: int = -1) -> Dict[str, Any]:
@@ -355,22 +355,22 @@ GIT_AREA: Dict[str, Any] = {
 
 
 def _write_script(tmp_path: Path) -> Path:
-    path = _write_ncs(
+    path = write_ncs(
         tmp_path,
         "scene.ncs",
-        _consts("Welcome to the inn, friend!"),
-        _action(221, 1),
-        _consts("NW_INNKEEPER"),
-        _action(200, 1),
-        _consts("Congrats to ye, "),
-        _cptopsp(-8),
-        _add_ss(),
-        _consts(". How do ye feel?"),
-        _add_ss(),
-        _action(221, 1),
-        _consts("   "),
-        _consts("You look tired."),
-        _retn(),
+        consts("Welcome to the inn, friend!"),
+        action(221, 1),
+        consts("NW_INNKEEPER"),
+        action(200, 1),
+        consts("Congrats to ye, "),
+        cptopsp(-8),
+        add_ss(),
+        consts(". How do ye feel?"),
+        add_ss(),
+        action(221, 1),
+        consts("   "),
+        consts("You look tired."),
+        retn(),
     )
     path.with_suffix(".nss").write_text(
         "void main()\n{\n"

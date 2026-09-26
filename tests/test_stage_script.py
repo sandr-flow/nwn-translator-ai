@@ -10,7 +10,7 @@ from nwn_translator.pipeline import artifacts
 from scripts import stage
 
 from tests.support.gff_writer import write_gff_bytes
-from tests.test_ncs import _consts, _retn, _write_ncs
+from tests.support.ncs import consts as _consts, retn as _retn, write_ncs as _write_ncs
 
 
 def _module(tmp_path: Path) -> Path:

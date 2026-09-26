@@ -9,7 +9,7 @@ prompt code must leave every hash unchanged.
 
 After an intended prompt change regenerate the fixture with::
 
-    python tests/test_prompt_snapshots.py --update
+    python tests/prompts/test_prompt_snapshots.py --update
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import Any, Dict, List
 import pytest
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from openai.resources.chat.completions import AsyncCompletions
 
@@ -39,7 +39,7 @@ from nwn_translator.prompts import (
     build_glossary_system_prompt,
 )
 
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "prompt_snapshots.json"
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "prompt_snapshots.json"
 
 #: Every target language with its own examples in ``prompts.examples``.
 LANGUAGES = (

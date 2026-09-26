@@ -27,7 +27,7 @@ from nwn_translator.pipeline.stages import (
 from nwn_translator.translators.ncs_diagnostics import new_ncs_diagnostics
 
 from tests.test_context_translation import _FakeProvider
-from tests.test_ncs import _consts, _retn, _write_ncs
+from tests.support.ncs import consts as _consts, retn as _retn, write_ncs as _write_ncs
 
 # ── artifact roundtrips (synthetic data) ────────────────────────────────
 

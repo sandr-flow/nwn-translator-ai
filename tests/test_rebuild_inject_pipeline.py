@@ -20,7 +20,7 @@ from nwn_translator.pipeline import stages
 from nwn_translator.pipeline.stages import PipelineState, stage_inject, stage_translate
 
 from tests.support.stub_managers import stub_translation_managers
-from tests.test_ncs import _consts, _retn, _write_ncs
+from tests.support.ncs import consts as _consts, retn as _retn, write_ncs as _write_ncs
 
 
 class CapturingWriter:
@@ -160,7 +160,7 @@ def test_translate_stage_logs_the_rejections_of_both_managers(tmp_path: Path, mo
 
 def test_ncs_item_id_stable_after_length_changing_patch(tmp_path: Path) -> None:
     """CONSTS index ids survive a length-changing patch of an earlier string."""
-    from tests.test_ncs import _action
+    from tests.support.ncs import action as _action
 
     path = _write_ncs(
         tmp_path,

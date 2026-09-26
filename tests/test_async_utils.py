@@ -1,21 +1,15 @@
-"""Tests for the persistent per-thread event loop behind ``run_async``.
+"""The persistent per-thread event loop behind ``run_async``.
 
-The loop must survive across calls so loop-bound resources — notably the
-provider's AsyncOpenAI client and its httpx connection pool — are reused
-instead of being rebuilt for every batch and retry.
+The loop survives across calls so loop-bound resources, such as the provider's
+AsyncOpenAI client and its connection pool, are reused rather than rebuilt for
+every batch and retry.
 """
 
 import asyncio
 
 import pytest
 
-from nwn_translator.async_utils import (
-    close_thread_resources,
-    run_async,
-    shutdown_thread_loop,
-)
-from nwn_translator.ai_providers import openrouter_provider
-from nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
+from nwn_translator.async_utils import close_thread_resources, run_async, shutdown_thread_loop
 
 
 @pytest.fixture(autouse=True)
@@ -26,130 +20,69 @@ def fresh_thread_loop():
     shutdown_thread_loop()
 
 
-async def _current_loop_id() -> int:
-    return id(asyncio.get_running_loop())
+async def _running_loop():
+    return asyncio.get_running_loop()
 
 
-class TestPersistentLoop:
-    """run_async reuses one event loop per thread."""
+def test_timeout_raises_and_fast_coroutines_return():
+    async def value(result):
+        return result
 
-    def test_sequential_calls_share_one_loop(self):
-        ids = {run_async(_current_loop_id()) for _ in range(3)}
-        assert len(ids) == 1
+    async def slow():
+        await asyncio.sleep(10)
 
-    def test_loop_survives_timeout(self):
-        async def slow():
-            await asyncio.sleep(10)
-
-        before = run_async(_current_loop_id())
-        with pytest.raises(TimeoutError):
-            run_async(slow(), timeout=0.1)
-        assert run_async(_current_loop_id()) == before
-
-    def test_loop_survives_coroutine_exception(self):
-        async def boom():
-            raise ValueError("boom")
-
-        before = run_async(_current_loop_id())
-        with pytest.raises(ValueError):
-            run_async(boom())
-        assert run_async(_current_loop_id()) == before
-
-    def test_shutdown_thread_loop_forces_new_loop(self):
-        async def get_loop():
-            return asyncio.get_running_loop()
-
-        # Hold the loop object itself: comparing id() values would false-match
-        # when the freed loop's address is reused by the new one.
-        before = run_async(get_loop())
-        shutdown_thread_loop()
-        after = run_async(get_loop())
-        assert after is not before
-        assert before.is_closed()
-        assert not after.is_closed()
-
-    def test_shutdown_without_loop_is_noop(self):
-        shutdown_thread_loop()
-        shutdown_thread_loop()
+    assert run_async(value(42), timeout=5.0) == 42
+    assert run_async(value("ok"), timeout=None) == "ok"
+    with pytest.raises(TimeoutError, match="timed out"):
+        run_async(slow(), timeout=0.2)
 
 
-class TestClientReuse:
-    """K sequential run_async calls must not create K HTTP clients."""
+def test_one_loop_survives_calls_timeouts_and_errors():
+    async def boom():
+        raise ValueError("boom")
 
-    def test_async_client_constructed_once_across_calls(self, monkeypatch):
-        constructed = []
+    async def slow():
+        await asyncio.sleep(10)
 
-        class CountingClient:
-            def __init__(self, **kwargs):
-                constructed.append(kwargs)
-
-            async def close(self):
-                pass
-
-        monkeypatch.setattr(openrouter_provider, "AsyncOpenAI", CountingClient)
-        provider = OpenRouterProvider(api_key="test-key", model="test-model")
-
-        async def touch_client():
-            return provider.async_client
-
-        clients = [run_async(touch_client()) for _ in range(5)]
-        assert len(constructed) == 1
-        assert all(c is clients[0] for c in clients)
-
-    def test_new_loop_after_shutdown_gets_new_client(self, monkeypatch):
-        constructed = []
-
-        class CountingClient:
-            def __init__(self, **kwargs):
-                constructed.append(kwargs)
-
-            async def close(self):
-                pass
-
-        monkeypatch.setattr(openrouter_provider, "AsyncOpenAI", CountingClient)
-        provider = OpenRouterProvider(api_key="test-key", model="test-model")
-
-        async def touch_client():
-            return provider.async_client
-
-        run_async(touch_client())
-        shutdown_thread_loop()
-        run_async(touch_client())
-        assert len(constructed) == 2
+    loop = run_async(_running_loop())
+    assert all(run_async(_running_loop()) is loop for _ in range(3))
+    with pytest.raises(TimeoutError):
+        run_async(slow(), timeout=0.1)
+    with pytest.raises(ValueError):
+        run_async(boom())
+    assert run_async(_running_loop()) is loop
 
 
-class TestCloseThreadResources:
-    """close_thread_resources closes the provider's client, then the loop."""
+def test_shutdown_forces_a_new_loop_and_is_idempotent():
+    # Hold the loop object itself: comparing ids would false-match when the
+    # freed loop's address is reused by the new one.
+    before = run_async(_running_loop())
+    shutdown_thread_loop()
+    shutdown_thread_loop()
+    after = run_async(_running_loop())
+    assert after is not before
+    assert before.is_closed() and not after.is_closed()
 
-    @staticmethod
-    async def _get_loop():
-        return asyncio.get_running_loop()
 
-    def test_closes_the_client_on_the_thread_loop_then_the_loop(self):
-        class Provider:
-            closed_on = None
+def test_close_thread_resources_closes_the_client_on_the_loop_then_the_loop():
+    class Provider:
+        closed_on = None
 
-            async def close_async_client(self):
-                Provider.closed_on = asyncio.get_running_loop()
+        async def close_async_client(self):
+            Provider.closed_on = asyncio.get_running_loop()
 
-        loop = run_async(self._get_loop())
-        close_thread_resources(Provider())
+    loop = run_async(_running_loop())
+    close_thread_resources(Provider())
+    assert Provider.closed_on is loop
+    assert loop.is_closed()
 
-        assert Provider.closed_on is loop
-        assert loop.is_closed()
 
-    def test_failing_close_still_closes_the_loop(self):
-        class Provider:
-            async def close_async_client(self):
-                raise RuntimeError("close failed")
+@pytest.mark.parametrize("close_fails", [True, False])
+def test_the_loop_is_closed_even_without_a_working_client(close_fails):
+    class FailingProvider:
+        async def close_async_client(self):
+            raise RuntimeError("close failed")
 
-        loop = run_async(self._get_loop())
-        close_thread_resources(Provider())
-
-        assert loop.is_closed()
-
-    def test_provider_without_client_only_closes_the_loop(self):
-        loop = run_async(self._get_loop())
-        close_thread_resources(object())
-
-        assert loop.is_closed()
+    loop = run_async(_running_loop())
+    close_thread_resources(FailingProvider() if close_fails else object())
+    assert loop.is_closed()

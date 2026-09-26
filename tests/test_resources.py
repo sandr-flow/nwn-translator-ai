@@ -31,7 +31,7 @@ from nwn_translator.resources import (
     load_gff,
     load_ncs,
 )
-from tests.test_ncs import _action, _consts, _retn, _write_ncs
+from tests.support.ncs import action as _action, consts as _consts, retn as _retn, write_ncs as _write_ncs
 
 EXPECTED_EXTRACTORS = {
     ".dlg": DialogExtractor,

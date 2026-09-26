@@ -36,7 +36,7 @@ from typing import (
 
 from ..ai_providers import TranslationProvider
 from ..ai_providers.base import RateLimitError, SystemContent
-from ..async_utils import run_async, shutdown_thread_loop
+from ..async_utils import close_thread_resources, run_async
 from ..config import (
     TRANSLATION_MAX_TOKENS,
     TRANSLATION_TEMPERATURE,
@@ -417,11 +417,7 @@ class ContextualTranslationManager:
                     except BaseException as exc:
                         future.set_exception(exc)
         finally:
-            try:
-                run_async(self.provider.close_async_client(), timeout=30.0)
-            except Exception:
-                logger.debug("Closing a dialog worker's HTTP client failed", exc_info=True)
-            shutdown_thread_loop()
+            close_thread_resources(self.provider)
 
     def _translate_single(
         self, dialog: PreparedDialog, item_progress: Optional[ProgressSink]

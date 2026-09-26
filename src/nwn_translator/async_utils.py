@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 #: Generous upper bound; individual callers can override.
 DEFAULT_TIMEOUT: float = 300.0
 
+#: Seconds allowed for closing a provider's HTTP client when a thread is done.
+CLOSE_CLIENT_TIMEOUT: float = 30.0
+
 _thread_state = threading.local()
 
 
@@ -46,6 +49,28 @@ def shutdown_thread_loop() -> None:
     if not loop.is_closed():
         loop.close()
     asyncio.set_event_loop(None)
+
+
+def close_thread_resources(provider: object) -> None:
+    """Close *provider*'s HTTP client on this thread's loop, then the loop.
+
+    Call it when a thread has finished its ``run_async`` work: the loop, and
+    the client bound to it, would otherwise stay open after the thread ends.
+    A failure to close the client is logged at debug level; the loop is
+    closed anyway.
+
+    Args:
+        provider: Model provider; its ``close_async_client`` coroutine is
+            awaited when it has one.
+    """
+    close = getattr(provider, "close_async_client", None)
+    try:
+        if close is not None:
+            run_async(close(), timeout=CLOSE_CLIENT_TIMEOUT)
+    except Exception:
+        logger.debug("Closing the provider's HTTP client failed", exc_info=True)
+    finally:
+        shutdown_thread_loop()
 
 
 def _cancel_all_tasks(loop: asyncio.AbstractEventLoop) -> None:

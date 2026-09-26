@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-from .text_codec import decode_module_text, encode_module_text
+from .text_codec import MODULE_ENCODINGS, decode_module_text, encode_module_text
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,8 @@ def patch_ncs_string_replacements(
     Args:
         file_path: The ``.ncs`` file.
         replacements: Replacement specs; entries with unchanged text are skipped.
-        text_encoding: Code page of the written string bytes.
+        text_encoding: Code page of the written string bytes, one of
+            :data:`~.text_codec.MODULE_ENCODINGS`.
         source_encoding: Code page for decoding the existing strings; must match
             the one used at extraction or the original-text checks fail.
 
@@ -337,13 +338,16 @@ def patch_ncs_string_replacements(
         Number of CONSTS instructions patched.
 
     Raises:
-        NCSPatchError: On a duplicate or wrong offset, a text mismatch, an
-            overlong string, or a patched file that no longer parses or jumps
-            outside instruction boundaries; the file is then left unchanged.
+        NCSPatchError: On an unsupported encoding, a duplicate or wrong
+            offset, a text mismatch, an overlong string, or a patched file that
+            no longer parses or jumps outside instruction boundaries; the file
+            is then left unchanged.
     """
     file_path = Path(file_path)
     if not replacements:
         return 0
+    if text_encoding not in MODULE_ENCODINGS:
+        raise NCSPatchError(f"Unsupported module text encoding: {text_encoding!r}")
 
     ncs = parse_ncs(file_path, source_encoding=source_encoding)
     by_offset = {instruction.offset: instruction for instruction in ncs.instructions}

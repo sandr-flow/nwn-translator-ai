@@ -533,6 +533,22 @@ class TestNCSPatcher:
         assert vals.count("FirstOnly") == 1
         assert vals.count("Same") == 1
 
+    def test_consts_bytes_use_the_module_codec(self, tmp_path):
+        """CONSTS carry a BE length and the text encoded like GFF strings (dash -> '-')."""
+        path = _write_ncs(tmp_path, "enc.ncs", _consts("Hi"), _retn())
+        patch_ncs_string_replacements(path, [(8, "Hi", "Да — нет")], text_encoding="cp1251")
+        encoded = "Да - нет".encode("cp1251")
+        expected = struct.pack(">BBH", OP_CONST, TYPE_STRING, len(encoded)) + encoded + _retn()
+        assert path.read_bytes() == _header() + expected
+
+    def test_unsupported_encoding_rejected(self, tmp_path):
+        """Only the module code pages are writable, as for GFF strings."""
+        path = _write_ncs(tmp_path, "enc.ncs", _consts("Hi"), _retn())
+        before = path.read_bytes()
+        with pytest.raises(NCSPatchError, match="Unsupported module text encoding: 'utf-8'"):
+            patch_ncs_string_replacements(path, [(8, "Hi", "Hello")], text_encoding="utf-8")
+        assert path.read_bytes() == before
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Patcher: preamble size field

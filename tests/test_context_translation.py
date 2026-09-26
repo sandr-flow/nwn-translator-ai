@@ -474,6 +474,46 @@ def test_rate_limit_in_the_pending_retry_skips_the_line_retries():
     assert provider.line_calls == []
 
 
+def test_error_outside_a_request_keeps_accepted_lines_and_fails_the_rest(monkeypatch, caplog):
+    def broken_prompt(*_args, **_kwargs):
+        raise RuntimeError("prompt exploded")
+
+    monkeypatch.setattr(context_module, "token_retry_prompt", broken_prompt)
+    provider = _FakeProvider(['{"E1":"Привет"}'])
+    manager = ContextualTranslationManager(_make_config(), provider, WorldContext())
+    progress = _CountingProgress()
+
+    caplog.set_level(logging.ERROR)
+    translations, errors = manager.translate_dialogs(
+        [(Path("test.dlg"), _dlg(_hello_who()), 2)], item_progress=progress
+    )
+
+    assert errors == []
+    assert translations == {("test.dlg", "test:entry:1"): "Привет"}
+    assert manager.failed_items == {("test.dlg", "test:reply:2")}
+    assert len(provider.calls) == 1
+    assert progress.total == 2
+    assert "Contextual translation failed for test.dlg: prompt exploded" in caplog.text
+
+
+def test_pending_retry_answer_keeps_lines_accepted_earlier():
+    """The pending retry reads only the keys it asked for, like a chunk answer."""
+    writer = _RecordingWriter()
+    provider = _FakeProvider(['{"E1":"Привет"}', '{"R2":"Кто ты?", "E1":"OVERWRITE"}'])
+    manager = ContextualTranslationManager(
+        _make_config(translation_log_writer=writer), provider, WorldContext()
+    )
+
+    result = _translate(manager, "test.dlg", _hello_who())
+
+    assert result == {
+        ("test.dlg", "test:entry:1"): "Привет",
+        ("test.dlg", "test:reply:2"): "Кто ты?",
+    }
+    assert "keys exactly R2" in provider.calls[1]["user_prompt"]
+    assert [row["translated"] for row in writer.rows()] == ["Привет", "Кто ты?"]
+
+
 class _KeyedFakeProvider(_FakeProvider):
     """Return the response whose marker substring appears in the user prompt.
 

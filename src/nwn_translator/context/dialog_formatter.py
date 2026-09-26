@@ -1,4 +1,4 @@
-"""Render dialog trees as the numbered scripts sent to the model.
+"""Dialog trees rendered as the numbered scripts sent to the model.
 
 A node is addressed by its key: ``E{i}`` for NPC entry *i* and ``R{i}`` for
 player reply *i*, where *i* is the node's index in ``EntryList`` /

@@ -50,7 +50,14 @@ TYPE_TO_CANDIDATE: Dict[str, Tuple[str, str, str]] = {
 
 
 def normalize_entity_name(name: object) -> str:
-    """Returns the registry key of *name*: NFKC, collapsed whitespace, casefolded."""
+    """Returns the registry key of *name*.
+
+    Args:
+        name: Observed name; ``None`` counts as empty.
+
+    Returns:
+        *name* NFKC-normalized, with whitespace collapsed, stripped and casefolded.
+    """
     text = unicodedata.normalize("NFKC", "" if name is None else str(name))
     text = _SPACE_RE.sub(" ", text).strip().casefold()
     return text
@@ -110,7 +117,11 @@ class EntityCandidate:
     alias_of: Optional[str] = None
 
     def add_evidence(self, evidence: EntityEvidence) -> None:
-        """Merges one evidence record into this candidate."""
+        """Merges one evidence record into this candidate.
+
+        Args:
+            evidence: The observation to add.
+        """
         self.evidence.append(evidence)
         self.frequency += 1
         self.is_speaker_or_dialog_actor = (
@@ -136,13 +147,22 @@ class EntityCandidate:
 
     @property
     def eligible_for_glossary(self) -> bool:
-        """Whether this candidate may seed the run-wide glossary."""
+        """Whether this candidate may seed the run-wide glossary.
+
+        Neither curation nor the deterministic filter dropped it, and it is
+        not ``local_only``.
+        """
         if self.curation_decision in {"drop", "local_only"}:
             return False
         return classify_entity_candidate(self.name, self.category).decision != "drop"
 
     def to_curator_record(self) -> Dict[str, object]:
-        """Returns the JSON record the curator sees for this candidate."""
+        """Returns the JSON record the curator sees for this candidate.
+
+        Returns:
+            Name, category, sources, frequency, contexts, the filter's
+            technical flags and the speaker flag.
+        """
         filter_result = classify_entity_candidate(self.name, self.category)
         return {
             "name": self.name,
@@ -159,9 +179,11 @@ class EntityCandidateRegistry:
     """Mutable registry that deduplicates candidates by normalized name."""
 
     def __init__(self) -> None:
+        """Creates an empty registry."""
         self._items: Dict[str, EntityCandidate] = {}
 
     def __bool__(self) -> bool:
+        """Tells whether the registry holds any candidate."""
         return bool(self._items)
 
     def add(
@@ -218,7 +240,12 @@ class EntityCandidateRegistry:
         )
 
     def extend(self, candidates: Iterable[EntityCandidate]) -> None:
-        """Replays the evidence of *candidates* (e.g. another registry's values) into this one."""
+        """Replays the evidence of *candidates* into this registry.
+
+        Args:
+            candidates: Candidates of another registry; each evidence record is
+                added again through :meth:`add`.
+        """
         for candidate in candidates:
             for evidence in candidate.evidence:
                 self.add(
@@ -245,7 +272,11 @@ class EntityCandidateRegistry:
             self._items[candidate.normalized_name] = candidate
 
     def values(self) -> List[EntityCandidate]:
-        """Returns the candidates sorted by normalized name."""
+        """Returns the candidates.
+
+        Returns:
+            All candidates, sorted by normalized name.
+        """
         return [self._items[k] for k in sorted(self._items)]
 
     def mark_curated(
@@ -277,7 +308,12 @@ class EntityCandidateRegistry:
         candidate.alias_of = alias_of or None
 
     def glossary_pairs(self) -> List[Tuple[str, str]]:
-        """Returns ``(name, category)`` of the candidates eligible for the glossary."""
+        """Returns the glossary requests of the eligible candidates.
+
+        Returns:
+            ``(name, category)`` of every candidate eligible for the glossary,
+            sorted by normalized name.
+        """
         out: List[Tuple[str, str]] = []
         for candidate in self.values():
             if candidate.eligible_for_glossary:

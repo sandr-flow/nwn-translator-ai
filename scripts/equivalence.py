@@ -304,7 +304,7 @@ def _canonical_lines(records: Iterable[Any]) -> List[str]:
 
 
 def _erf_digest(path: Path) -> Dict[str, Any]:
-    """Archives digest with the build date masked, plus one digest per resource."""
+    """Returns the archive digest with the build date masked, plus one digest per resource."""
     raw = bytearray(path.read_bytes())
     raw[32:40] = b"\0" * 8  # BuildYear, BuildDay
     count = struct.unpack_from("<I", raw, 16)[0]

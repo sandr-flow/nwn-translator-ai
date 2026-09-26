@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
-    """System prompt for extracting proper nouns from game texts.
+    """Builds the system prompt for extracting proper nouns from game texts.
 
     Entity extraction finds character, location and organization names embedded
     in dialogs, descriptions and sign text, which the world scan never sees as
@@ -95,7 +95,7 @@ def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
 
 
 def build_entity_extraction_user_prompt(texts: Iterable[str]) -> str:
-    """User prompt listing the texts of one entity-extraction batch.
+    """Builds the user prompt listing the texts of one entity-extraction batch.
 
     Args:
         texts: Texts of the batch, numbered from 0 in the prompt.
@@ -112,7 +112,7 @@ def build_entity_extraction_user_prompt(texts: Iterable[str]) -> str:
 
 
 def build_curator_system_prompt(target_lang: str) -> str:
-    """System prompt of the glossary candidate curator.
+    """Builds the system prompt of the glossary candidate curator.
 
     Args:
         target_lang: Target language name, inserted as given.
@@ -139,7 +139,7 @@ def build_curator_system_prompt(target_lang: str) -> str:
 
 
 def build_curator_user_prompt(records: Mapping[str, Mapping[str, object]]) -> str:
-    """User prompt of one curation request.
+    """Builds the user prompt of one curation request.
 
     Args:
         records: Candidate name -> curator record, in request order.
@@ -156,7 +156,7 @@ def build_curator_user_prompt(records: Mapping[str, Mapping[str, object]]) -> st
 
 
 def build_glossary_system_prompt(target_lang: str) -> str:
-    """System prompt for glossary proper-name translation.
+    """Builds the system prompt for glossary proper-name translation.
 
     Args:
         target_lang: Target language name; selects the few-shot examples.
@@ -217,7 +217,7 @@ def build_glossary_name_line(
     candidate: Optional["EntityCandidate"] = None,
     npcs: Iterable["NPCInfo"] = (),
 ) -> str:
-    """One name of a glossary request with its hints in parentheses.
+    """Builds the line of one name of a glossary request, with its hints in parentheses.
 
     Args:
         name: Source form to translate.
@@ -246,7 +246,7 @@ def build_glossary_name_line(
 
 
 def build_glossary_user_prompt(name_lines: Iterable[str], accepted: Mapping[str, str]) -> str:
-    """User prompt of one glossary request.
+    """Builds the user prompt of one glossary request.
 
     Args:
         name_lines: Lines from :func:`build_glossary_name_line`.

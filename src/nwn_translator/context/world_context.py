@@ -31,7 +31,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Entry budget of a relevance-filtered WORLD CONTEXT block.
 WORLD_CONTEXT_MAX_ENTRIES = 30
+#: Approximate character budget of a relevance-filtered WORLD CONTEXT block.
 WORLD_CONTEXT_MAX_CHARS = 12000
 
 #: Area instance lists (.git) whose objects can own or speak in a dialog.
@@ -94,7 +96,7 @@ UTC_SCRIPT_FIELDS: Tuple[str, ...] = (
 
 
 def _local_string(struct: Dict[str, Any], key: str) -> str:
-    """Embedded text of the CExoLocString field *key*, or ``""``."""
+    """Returns the embedded text of the CExoLocString field *key*, or ``""``."""
     return extract_local_string(struct.get(key, {})) or ""
 
 
@@ -223,7 +225,7 @@ class WorldContext:
         owners.append(npc)
 
     def speaker_hint_for_script(self, script_stem: object) -> Optional[str]:
-        """Compacts speaker metadata for NCS translation of *script_stem*.
+        """Returns a compact speaker hint for the script strings of *script_stem*.
 
         Shared blueprints (many goblins → one bark script) summarize race and
         gender instead of listing every name.
@@ -338,8 +340,10 @@ class WorldContext:
         """Formats the world context as a concise text block for the system prompt.
 
         Args:
-            glossary: If set, append canonical translations next to matching English names.
-            target_lang: Short label for those hints (e.g. ``russian`` → ``RUS``).
+            glossary: Glossary whose canonical translations are appended next
+                to matching names.
+            target_lang: Target language, shortened to the label of those
+                translations (e.g. ``russian`` → ``RUS``).
             source_texts: When provided, only entities relevant to the source
                 corpus are emitted (see :mod:`.relevance`), ranked and capped
                 at :data:`WORLD_CONTEXT_MAX_ENTRIES` entries and about
@@ -361,10 +365,12 @@ class WorldContext:
         entries = glossary.entries if glossary else {}
 
         def gloss(name: str) -> str:
+            """Returns the inline glossary hint of *name*, or ``""``."""
             translation = entries.get(name.strip())
             return f" [{label}: {translation}]" if translation else ""
 
         def name_rows(mapping: Dict[str, str]) -> List[_Row]:
+            """Returns the rows of a tag -> name section, sorted by tag."""
             return [
                 (name, tag, f"  * {name} (Tag: {tag}){gloss(name)}")
                 for tag, name in sorted(mapping.items())
@@ -405,7 +411,7 @@ class WorldContext:
 
 
 def _target_lang_label(target_lang: Optional[str]) -> str:
-    """Short label for inline glossary hints: ``RUS`` for russian, ``TL`` when unknown."""
+    """Returns the label of inline glossary hints: ``RUS`` for russian, ``TL`` when unknown."""
     if not target_lang or not str(target_lang).strip():
         return "TL"
     t = str(target_lang).strip()
@@ -418,6 +424,12 @@ class _Selection:
     """Relevance filter and shared budget of one WORLD CONTEXT block."""
 
     def __init__(self, texts: List[str], hierarchy_names: List[str]) -> None:
+        """Indexes the source corpus and starts the shared budget.
+
+        Args:
+            texts: Source texts of the prompt.
+            hierarchy_names: Area, quest and item names, for the hierarchy check.
+        """
         self._index = SourceTokenIndex(tokenize_corpus(texts))
         self._joined = "\n".join(str(t) for t in texts if t).casefold()
         self._common = common_hierarchy_components(hierarchy_names)
@@ -456,7 +468,7 @@ class _Selection:
         return selected
 
     def _keep(self, name: str, tag: str, category: str) -> bool:
-        """Whether the entry is evidenced by the source corpus."""
+        """Tells whether the entry is evidenced by the source corpus."""
         joined = " ".join(c for c in (name, tag) if c)
         if not joined:
             return False
@@ -503,9 +515,9 @@ class WorldScanner:
         """Scans the directory and builds the world context.
 
         Args:
-            extract_dir: Path to directory containing extracted module files.
-            gff_cache: Optional shared parse cache (same object as ModuleTranslator).
-                Must be read with the same *source_encoding* everywhere it is shared.
+            extract_dir: Directory of the extracted module files.
+            gff_cache: Parse cache shared by the run's stages, if any. Must be
+                read with the same *source_encoding* everywhere it is shared.
             progress_callback: Optional progress reporter (every 20 files).
             source_encoding: Declared code page for module string bytes.
 

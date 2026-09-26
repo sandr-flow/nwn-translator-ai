@@ -276,7 +276,7 @@ class PipelineState:
             add_sample(run_ncs, sample)
 
     def record_ncs_patch_failure(self, file_path: Path, error: str) -> None:
-        """Counts a script whose translations could not be patched in, and log it.
+        """Counts a script whose translations could not be patched in, and logs it.
 
         Args:
             file_path: The script.

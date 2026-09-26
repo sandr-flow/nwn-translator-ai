@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+#: System prompt of every NCS gate request.
 NCS_GATE_SYSTEM_PROMPT = (
     "You are a safety gate for translating string literals from compiled "
     "Neverwinter Nights (NWN) NWScript bytecode. Your job: decide whether "
@@ -102,7 +103,7 @@ def build_gate_user_prompt(
     entries: Dict[str, Dict[str, Any]],
     sources: Dict[str, List[Dict[str, Any]]],
 ) -> str:
-    """User message of one gate request.
+    """Builds the user message of one gate request.
 
     Args:
         source_lang: Source language label.

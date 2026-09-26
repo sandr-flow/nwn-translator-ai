@@ -30,6 +30,7 @@ _PREFIX_MIN = 4
 _FUZZY_MIN = 6
 _DISTINCTIVE_MIN = 6
 
+#: Common prompt, routing and game words that never count as evidence on their own.
 _MAGNET_TOKENS = frozenset(
     {
         "action",
@@ -63,7 +64,15 @@ _MAGNET_TOKENS = frozenset(
 
 
 def tokenize(text: str) -> Set[str]:
-    """Returns the letter tokens of *text* (NFKC, casefolded; digits and ``_`` split tokens)."""
+    """Returns the letter tokens of *text*.
+
+    Args:
+        text: Any text.
+
+    Returns:
+        The runs of letters of the NFKC-normalized, casefolded text; digits
+        and ``_`` split tokens.
+    """
     if not text:
         return set()
     normalized = unicodedata.normalize("NFKC", str(text)).casefold()
@@ -72,7 +81,7 @@ def tokenize(text: str) -> Set[str]:
 
 @lru_cache(maxsize=16384)
 def _entity_tokens_cached(text: str) -> FrozenSet[str]:
-    """Cached tokenization for entity names (repeated across filter calls)."""
+    """Returns the :func:`tokenize` tokens of an entity name, cached across filter calls."""
     return frozenset(tokenize(text))
 
 
@@ -88,6 +97,11 @@ class SourceTokenIndex:
     __slots__ = ("tokens", "by_len")
 
     def __init__(self, tokens: Set[str]):
+        """Buckets the fuzzy-eligible tokens by length.
+
+        Args:
+            tokens: Source tokens (see :func:`tokenize_corpus`).
+        """
         self.tokens = tokens
         self.by_len: Dict[int, List[str]] = {}
         for token in tokens:
@@ -96,7 +110,7 @@ class SourceTokenIndex:
 
 
 def _variant_in_tokens(token: str, tokens: Set[str]) -> bool:
-    """Whether a plural/possessive-style variant (+s, +es, -s, -es) of *token* is a source token."""
+    """Tells whether a plural/possessive variant (+s, +es, -s, -es) of *token* is a source token."""
     if len(token) < _PREFIX_MIN:
         return False
     if token + "s" in tokens or token + "es" in tokens:
@@ -109,7 +123,7 @@ def _variant_in_tokens(token: str, tokens: Set[str]) -> bool:
 
 
 def _fuzzy_in_index(token: str, index: SourceTokenIndex) -> bool:
-    """Whether a source token is within Damerau-Levenshtein distance 1 of a long *token*."""
+    """Tells whether a source token is within Damerau-Levenshtein distance 1 of a long *token*."""
     if len(token) < _FUZZY_MIN:
         return False
     for length in (len(token) - 1, len(token), len(token) + 1):
@@ -120,7 +134,7 @@ def _fuzzy_in_index(token: str, index: SourceTokenIndex) -> bool:
 
 
 def is_relevant(entity_text: str, source_tokens: Union[Set[str], SourceTokenIndex]) -> bool:
-    """True if *entity_text* is strongly evidenced by *source_tokens*.
+    """Tells whether *entity_text* is strongly evidenced by *source_tokens*.
 
     Args:
         entity_text: Entity name (and tag) to look for.
@@ -129,7 +143,7 @@ def is_relevant(entity_text: str, source_tokens: Union[Set[str], SourceTokenInde
             the same corpus should build the index once.
 
     Returns:
-        Whether the entity passes the conservative matching rules of this module.
+        ``True`` when the entity passes the conservative matching rules of this module.
     """
     if isinstance(source_tokens, SourceTokenIndex):
         index = source_tokens
@@ -187,17 +201,17 @@ def is_relevant(entity_text: str, source_tokens: Union[Set[str], SourceTokenInde
 
 
 def _is_distinctive_token(token: str) -> bool:
-    """Long enough and not a magnet token, so a near match counts as evidence."""
+    """Tells whether *token* is long and not a magnet, so a near match counts as evidence."""
     return len(token) >= _DISTINCTIVE_MIN and not _is_magnet_token(token)
 
 
 def _is_magnet_token(token: str) -> bool:
-    """Common prompt/game word that never counts as evidence on its own."""
+    """Tells whether *token* is a common word that never counts as evidence on its own."""
     return token in _MAGNET_TOKENS
 
 
 def _damerau_levenshtein_le_1(a: str, b: str) -> bool:
-    """True iff Damerau-Levenshtein distance between *a* and *b* is <= 1.
+    """Tells whether the Damerau-Levenshtein distance between *a* and *b* is at most 1.
 
     Cheaper than computing the full distance: we only need a yes/no for
     distance in {0, 1}, so we walk the strings once and bail on the second
@@ -218,7 +232,7 @@ def _damerau_levenshtein_le_1(a: str, b: str) -> bool:
             if j == i + 1 and a[i] == b[j] and a[j] == b[i]:
                 return True
         return False
-    # One insertion / deletion. Make `a` the longer one.
+    # One insertion / deletion. Make ``a`` the longer one.
     if la < lb:
         a, b = b, a
         la, lb = lb, la
@@ -237,7 +251,14 @@ def _damerau_levenshtein_le_1(a: str, b: str) -> bool:
 
 
 def tokenize_corpus(texts: Iterable[str]) -> Set[str]:
-    """Returns the union of the :func:`tokenize` tokens of *texts* (empty items skipped)."""
+    """Returns the tokens of a source corpus.
+
+    Args:
+        texts: Source texts; empty items are skipped.
+
+    Returns:
+        The union of the :func:`tokenize` tokens of *texts*.
+    """
     out: Set[str] = set()
     for t in texts:
         if t:
@@ -292,11 +313,11 @@ def hierarchical_entry_passes(
     source_joined: str,
     common: Set[str],
 ) -> bool:
-    """Returns True if a hierarchical *name* is evidenced by the source corpus.
+    """Tells whether a hierarchical *name* is evidenced by the source corpus.
 
-    The full name string winning by exact substring is always sufficient.
-    Otherwise at least one non-common component must appear as a literal
-    substring in the source corpus.  Names whose only matching component is
+    The full name occurring as a substring is always sufficient. Otherwise at
+    least one non-common component must appear as a literal substring in the
+    source corpus. Names whose only matching component is
     a common prefix shared with many other entries (e.g. the city name) never
     pass; substring match on the whole component avoids the
     ``Loom Avenue`` ↔ ``Dock Ward gates`` false positive that token-level
@@ -308,7 +329,7 @@ def hierarchical_entry_passes(
         common: Output of :func:`common_hierarchy_components`.
 
     Returns:
-        Whether the name is evidenced.
+        ``True`` when the name is evidenced.
     """
     parts = _split_hierarchical_cached(str(name)) if name else None
     if not parts:

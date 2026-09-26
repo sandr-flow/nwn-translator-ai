@@ -19,25 +19,44 @@ _MAX_LISTED_OWNERS = 3
 
 
 class DialogSpeaker(TypedDict):
-    """Editor label for one dialog line."""
+    """Editor label for one dialog line.
 
-    #: ``npc`` (a creature, placeable or door), ``player`` (a reply) or
-    #: ``owner_unknown`` (an owner line of a dialog that no scanned object
-    #: uses, e.g. one started from a script).
+    Attributes:
+        kind: ``npc`` (a creature, placeable or door), ``player`` (a reply) or
+            ``owner_unknown`` (an owner line of a dialog that no scanned object
+            uses, e.g. one started from a script).
+        name: Object name (the tag when it has none); empty when the tag is
+            unknown.
+        tag: Object tag.
+    """
+
     kind: str
-    #: Object name (the tag when it has none); empty when the tag is unknown.
     name: str
     tag: str
 
 
 def speaker_name(npc: NPCInfo) -> str:
-    """First and last name, or the tag for an object without a localized name."""
+    """Returns the name of a speaking object.
+
+    Args:
+        npc: Creature, placeable or door.
+
+    Returns:
+        First and last name, or the tag for an object without a localized name.
+    """
     name = " ".join(str(p).strip() for p in (npc.first_name, npc.last_name) if p and str(p).strip())
     return name or npc.tag
 
 
 def speaker_description(npc: NPCInfo) -> str:
-    """Name with race and gender for a creature, or with the object kind, for the prompt."""
+    """Describes a speaking object for the dialog prompt.
+
+    Args:
+        npc: Creature, placeable or door.
+
+    Returns:
+        The name with race and gender for a creature, or with the object kind.
+    """
     if npc.kind == "creature":
         traits = ", ".join(t for t in (npc.race, npc.gender) if t)
     else:
@@ -47,6 +66,7 @@ def speaker_description(npc: NPCInfo) -> str:
 
 
 def _identity(npc: NPCInfo) -> Tuple[str, str, str, str, str]:
+    """Returns what tells two speaking objects apart in the prompt and the editor."""
     return (npc.kind, npc.tag, speaker_name(npc), npc.race, npc.gender)
 
 
@@ -63,7 +83,17 @@ def _unique(actors: Iterable[NPCInfo]) -> List[NPCInfo]:
 
 
 def dialog_owners(world_context: Optional[WorldContext], dlg_stem: str) -> List[NPCInfo]:
-    """Objects whose ``Conversation`` resref matches *dlg_stem* (case-insensitive)."""
+    """Returns the owners of a dialog.
+
+    Args:
+        world_context: Scanned module objects, if any.
+        dlg_stem: Dialog resource name without extension.
+
+    Returns:
+        Objects whose ``Conversation`` resref matches *dlg_stem*
+        case-insensitively: creature blueprints first, then the other actors,
+        without repeats.
+    """
     if world_context is None:
         return []
     stem_key = dlg_stem.strip().casefold()
@@ -76,7 +106,16 @@ def dialog_owners(world_context: Optional[WorldContext], dlg_stem: str) -> List[
 
 
 def tagged_speakers(world_context: Optional[WorldContext], tag: str) -> List[NPCInfo]:
-    """Objects tagged *tag*: the creature blueprint first, then placed objects."""
+    """Returns the objects a ``Speaker`` tag names.
+
+    Args:
+        world_context: Scanned module objects, if any.
+        tag: Speaker tag of a dialog entry.
+
+    Returns:
+        Objects tagged *tag*: the creature blueprint first, then the other
+        actors, without repeats.
+    """
     if world_context is None or not tag:
         return []
     blueprint = world_context.npcs.get(tag)
@@ -126,6 +165,7 @@ def speaker_lines(
 
 
 def _join_listed(values: Iterable[str]) -> str:
+    """Joins distinct non-empty values with `` / ``, up to three, plus a ``+N`` count."""
     unique = list(dict.fromkeys(value for value in values if value))
     listed = " / ".join(unique[:_MAX_LISTED_OWNERS])
     hidden = len(unique) - _MAX_LISTED_OWNERS
@@ -133,6 +173,7 @@ def _join_listed(values: Iterable[str]) -> str:
 
 
 def _label_order(npc: NPCInfo) -> Tuple[str, str, str]:
+    """Returns the sort key of speaking objects in an editor label."""
     return (speaker_name(npc), npc.tag, npc.kind)
 
 
@@ -147,6 +188,15 @@ def dialog_line_speaker(
 
     Several objects are listed together: names and tags are each joined with
     `` / ``, up to three, with a ``+N`` count of the rest.
+
+    Args:
+        world_context: Scanned module objects, if any.
+        dlg_stem: Dialog resource name without extension.
+        is_entry: ``True`` for an NPC entry, ``False`` for a player reply.
+        speaker_tag: ``Speaker`` field of the entry (empty for the owner).
+
+    Returns:
+        The editor label of the line.
     """
     if not is_entry:
         return {"kind": "player", "name": "", "tag": ""}

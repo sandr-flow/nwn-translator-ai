@@ -54,7 +54,7 @@ _STAGE = LlmStage(
 
 
 class EntityExtractor:
-    """Find proper nouns embedded in item texts via the model."""
+    """Model-based finder of the proper nouns embedded in item texts."""
 
     def extract_candidates(
         self,
@@ -131,6 +131,7 @@ class EntityExtractor:
         async def extract_batch(
             slot: "Slot", number: int, batch: List[str]
         ) -> Optional[List[Tuple[str, str]]]:
+            """Requests one batch; ``None`` when the request fails."""
             if progress_callback:
                 progress_callback(
                     "scanning",

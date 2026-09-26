@@ -26,7 +26,11 @@ from ..ai_providers import TranslationProvider, TranslationResult
 from ..config import TranslationConfig
 from ..extractors.base import ExtractedContent, Occurrence, TranslatableItem, Translations
 from ..glossary import Glossary, restore_wrapping_quotes, terminology_block
-from ..translation_logging import translation_log_writer_for_config, write_trace
+from ..translation_logging import (
+    TranslationLogWriter,
+    translation_log_writer_for_config,
+    write_trace,
+)
 from .model_calls import CallLimits, ModelCaller
 from .ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
 from .script_gate import ScriptGate, add_script_context
@@ -87,6 +91,7 @@ class TranslationManager:
         config: TranslationConfig,
         provider: TranslationProvider,
         glossary: Optional[Glossary] = None,
+        log_writer: Optional[TranslationLogWriter] = None,
     ):
         """Create a manager for one run.
 
@@ -94,16 +99,19 @@ class TranslationManager:
             config: Run settings.
             provider: Model provider.
             glossary: Proper-name glossary offered to the model, if any.
+            log_writer: Log writer of the run; by default the one *config*
+                names.
         """
         self.config = config
         self.provider = provider
         self.glossary = glossary
         self.batch_limits = BatchLimits()
         self.call_limits = CallLimits()
-        self._log_writer = translation_log_writer_for_config(
-            config.translation_log,
-            config.translation_log_writer,
-        )
+        if log_writer is None:
+            log_writer = translation_log_writer_for_config(
+                config.translation_log, config.translation_log_writer
+            )
+        self._log_writer = log_writer
         self.stats: Dict[str, Any] = {
             "items_translated": 0,
             "errors": [],

@@ -1,5 +1,6 @@
 """Tests for pipeline seam (de)serialization and isolated stage execution."""
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -7,10 +8,12 @@ from unittest.mock import Mock
 
 import pytest
 
+from nwn_translator.ai_providers import TranslationResult
 from nwn_translator.config import TranslationCancelled, TranslationConfig
 from nwn_translator.context.entity_candidates import EntityCandidateRegistry
 from nwn_translator.context.world_context import NPCInfo, WorldContext
 from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.formats.ncs import parse_ncs
 from nwn_translator.glossary import Glossary
 from nwn_translator.pipeline import artifacts, stages
@@ -19,9 +22,11 @@ from nwn_translator.pipeline.stages import (
     find_translatable_files,
     stage_extract,
     stage_inject,
+    stage_translate,
 )
 from nwn_translator.translators.ncs_diagnostics import new_ncs_diagnostics
 
+from tests.test_context_translation import _FakeProvider
 from tests.test_ncs import _consts, _retn, _write_ncs
 
 # ── artifact roundtrips (synthetic data) ────────────────────────────────
@@ -398,3 +403,51 @@ def test_manager_statistics_are_merged_once_per_manager(tmp_path: Path) -> None:
     ncs = state.stats["ncs_diagnostics"]
     assert (ncs["total"], ncs["translated"], ncs["failed"]) == (7, 7, 0)
     assert ncs["samples"] == [{"file": "a.ncs"}, {"file": "b.ncs"}]
+
+
+class _BatchAndDialogProvider(_FakeProvider):
+    """Answers dialog chats from a queue and translates every batch item as "Меч"."""
+
+    async def translate_batch_async(self, items, **kwargs):
+        return [TranslationResult(original=item.original, translated="Меч") for item in items]
+
+
+def test_translate_stage_writes_its_log_through_one_handle(tmp_path: Path, opened_files) -> None:
+    """The stage's editor rows and the requests of both managers share the run's writer."""
+    log = tmp_path / "log.jsonl"
+    config = TranslationConfig(api_key="k", input_file=tmp_path / "m.mod", translation_log=log)
+    state = PipelineState(config=config, provider=_BatchAndDialogProvider(['{"E0": "Привет."}']))
+    state.extract_dir = tmp_path
+    state.world_context = WorldContext()
+    dlg_data = {
+        "StructType": "DLG",
+        "StartingList": [{"Index": 0}],
+        "EntryList": [{"Text": {"StrRef": -1, "Value": "Hello."}, "RepliesList": []}],
+        "ReplyList": [],
+    }
+    dlg_path = tmp_path / "talk.dlg"
+    uti_path = tmp_path / "sword.uti"
+    item = ExtractedContent(
+        content_type="item",
+        items=[TranslatableItem(text="Sword", item_id="sword:name", location=str(uti_path))],
+        source_file=uti_path,
+    )
+
+    stage_translate(
+        state,
+        {
+            dlg_path: (dlg_data, DialogExtractor().extract(dlg_path, dlg_data), ".dlg"),
+            uti_path: ({}, item, ".uti"),
+        },
+    )
+    state.close_log()
+
+    lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    requests = [line["method"] for line in lines if line.get("event") == "model_request"]
+    assert sorted(requests) == ["complete_json_chat_async", "translate_batch_async"]
+    assert {line["item_id"] for line in lines if "original" in line} >= {
+        "sword:name",
+        "talk:entry:0",
+    }
+    appends = [handle for handle in opened_files(log) if handle.mode == "a"]
+    assert [handle.closed for handle in appends] == [True]

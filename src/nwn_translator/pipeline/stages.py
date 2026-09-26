@@ -39,8 +39,8 @@ from ..resources import RESOURCE_KINDS, TRANSLATABLE_TYPES
 from ..telemetry import RunMetricsRecorder
 from ..translation_logging import (
     FileTranslationLogWriter,
-    NullTranslationLogWriter,
     TranslationLogWriter,
+    translation_log_writer_for_config,
     write_trace,
 )
 from ..translators.context_translator import ContextualTranslationManager
@@ -180,7 +180,8 @@ class PipelineState:
         glossary: Proper-name glossary (context mode).
         gff_cache: Parsed GFF resources by path, shared by the stages.
         stats: Run statistics; see :meth:`get_statistics`.
-        trace: Translation log of the run.
+        trace: Translation log of the run, shared by the stages and the
+            translation managers.
     """
 
     config: TranslationConfig
@@ -193,26 +194,23 @@ class PipelineState:
     gff_cache: Dict[Path, Dict[str, Any]] = field(default_factory=dict)
     stats: Dict[str, Any] = field(default_factory=_new_run_stats)
     trace: TranslationLogWriter = field(init=False)
-    _log_file: Optional[FileTranslationLogWriter] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Choose the translation log writer the stages share.
+        """Choose the translation log writer of the run.
 
         An injected writer (``config.translation_log_writer``) belongs to the
         caller; the file named by ``config.translation_log`` is opened by the
         run and closed by :meth:`close_log` when :func:`run_pipeline` ends.
         """
-        if self.config.translation_log_writer is not None:
-            self.trace = self.config.translation_log_writer
-        elif self.config.translation_log is not None:
-            self.trace = self._log_file = FileTranslationLogWriter(self.config.translation_log)
-        else:
-            self.trace = NullTranslationLogWriter()
+        self.trace = translation_log_writer_for_config(
+            self.config.translation_log, self.config.translation_log_writer
+        )
 
     def close_log(self) -> None:
         """Close the log file the run opened; an injected writer belongs to its caller."""
-        if self._log_file is not None:
-            self._log_file.close()
+        opened_by_run = self.trace is not self.config.translation_log_writer
+        if opened_by_run and isinstance(self.trace, FileTranslationLogWriter):
+            self.trace.close()
 
     @classmethod
     def create(cls, config: TranslationConfig) -> "PipelineState":
@@ -672,7 +670,9 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
     translations: Translations = {}
     failed: Set[Occurrence] = set()
     if non_dialog_items:
-        manager = TranslationManager(state.config, state.provider, glossary=state.glossary)
+        manager = TranslationManager(
+            state.config, state.provider, glossary=state.glossary, log_writer=state.trace
+        )
         combined = ExtractedContent(
             content_type="combined",
             items=non_dialog_items,
@@ -687,7 +687,11 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
         state.config.raise_if_cancelled()
         assert state.world_context is not None
         dialog_manager = ContextualTranslationManager(
-            state.config, state.provider, state.world_context, glossary=state.glossary
+            state.config,
+            state.provider,
+            state.world_context,
+            glossary=state.glossary,
+            log_writer=state.trace,
         )
         dialog_translations, dialog_errors = dialog_manager.translate_dialogs(
             [(fp, extracted_map[fp][0], len(extracted_map[fp][1].items)) for fp in dialog_files],

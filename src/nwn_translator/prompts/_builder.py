@@ -33,11 +33,9 @@ def _format_nickname_examples(target_lang: str, *, indent: str = "      ") -> st
     return "\n".join(lines)
 
 
-#: Deterministic content profile used by :func:`build_translation_system_prompt_parts`
-#: to swap between compact and full rule sets.  Phase 3.4: ``short_label`` skips
-#: speech-style and player-gender rules (irrelevant for names/tags) so the cached
-#: stable prefix of name-heavy batches shrinks by a few hundred tokens without
-#: changing behaviour for dialog/description calls.
+#: Content profiles of :func:`build_translation_system_prompt_parts`: ``default`` (full
+#: rules), ``short_label`` (names and labels: no speech-style or player-gender rules, a
+#: shorter cached prefix) and ``script_message`` (short player-visible NCS messages).
 CONTENT_PROFILE_DEFAULT = "default"
 CONTENT_PROFILE_SHORT_LABEL = "short_label"
 CONTENT_PROFILE_SCRIPT_MESSAGE = "script_message"
@@ -77,8 +75,6 @@ _GLOSSARY_RULE_BODY = (
 
 _GLOSSARY_RULE_TRANSLATION_DEFAULT = f"7. {_GLOSSARY_RULE_BODY}"
 _GLOSSARY_RULE_TRANSLATION_SHORT = f"6. {_GLOSSARY_RULE_BODY}"
-#: Legacy alias kept for callers / tests that imported the old constant.
-_GLOSSARY_RULE_TRANSLATION = _GLOSSARY_RULE_TRANSLATION_DEFAULT
 
 _GLOSSARY_RULE_DIALOG = (
     "5. GLOSSARY USAGE (if a GLOSSARY section follows the rules) \u2014 the "
@@ -289,21 +285,24 @@ def build_translation_system_prompt_parts(
     The *stable* half holds all rules, examples, and output instructions — it
     is byte-identical across calls in a run and can be marked as the
     cache-breakpoint boundary for providers that support prompt caching
-    (Anthropic, Gemini 2.5, Grok) and also qualifies as a stable prefix for
-    automatic caches (OpenAI, DeepSeek).
+    (Anthropic, Gemini, Grok) and also qualifies as a stable prefix for
+    automatic caches (OpenAI, DeepSeek). The *variable* half holds the GLOSSARY
+    section (may include per-call race-term hints) and is the only portion that
+    changes between calls.
 
-    The *variable* half holds the GLOSSARY section (may include per-call
-    race-term hints) and is the only portion that changes between calls.
+    Args:
+        target_lang: Target language name; selects the few-shot examples.
+        gender: Player character gender (``"male"`` / ``"female"``).
+        glossary_block: GLOSSARY section for the variable half.
+        content_profile: :data:`CONTENT_PROFILE_DEFAULT`,
+            :data:`CONTENT_PROFILE_SHORT_LABEL` or :data:`CONTENT_PROFILE_SCRIPT_MESSAGE`;
+            unknown values fall back to the default. It must depend only on the
+            content-type mix of the caller's batch, otherwise cache hits are lost.
+        batch_mode: Ask for a flat ID map instead of a single ``translation`` key
+            and close the stable half with the BATCH MODE rules.
 
-    *batch_mode* asks for a flat ID map instead of a single ``translation`` key
-    and closes the stable half with the BATCH MODE rules.
-
-    *content_profile* selects one of a small, deterministic set of rule
-    bodies (Phase 3.4 — dynamic few-shot).  It MUST depend only on the
-    content-type mix of the caller's batch; otherwise cache hits are lost.
-    Valid values: :data:`CONTENT_PROFILE_DEFAULT`,
-    :data:`CONTENT_PROFILE_SHORT_LABEL`,
-    :data:`CONTENT_PROFILE_SCRIPT_MESSAGE`.
+    Returns:
+        ``(stable, variable)``; *variable* is the stripped glossary block or ``""``.
     """
     if content_profile not in _VALID_CONTENT_PROFILES:
         content_profile = CONTENT_PROFILE_DEFAULT
@@ -404,25 +403,6 @@ def build_batch_user_prompt(source_lang: str, payload_json: str) -> str:
         f"Translate the items from {source_lang}. Return only a flat object of numeric "
         "item IDs and translated strings. Shared groups are context only.\n\n"
     ) + payload_json
-
-
-def build_translation_system_prompt(
-    target_lang: str,
-    gender: str,
-    glossary_block: str = "",
-    *,
-    content_profile: str = CONTENT_PROFILE_DEFAULT,
-) -> str:
-    """System prompt for line-by-line / batch translation (stable + variable concatenated)."""
-    stable, variable = build_translation_system_prompt_parts(
-        target_lang,
-        gender,
-        glossary_block,
-        content_profile=content_profile,
-    )
-    if variable:
-        return f"{stable}\n\n{variable}"
-    return stable
 
 
 def build_dialog_system_prompt_parts(

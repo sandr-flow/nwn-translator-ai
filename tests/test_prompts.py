@@ -14,9 +14,9 @@ from src.nwn_translator.prompts import (
     build_dialog_system_prompt_parts,
     build_entity_extraction_system_prompt,
     build_glossary_system_prompt,
-    build_translation_system_prompt,
     build_translation_system_prompt_parts,
 )
+from src.nwn_translator.ai_providers import openrouter_provider
 from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from src.nwn_translator.prompts._builder import (
     CONTENT_PROFILE_SCRIPT_MESSAGE,
@@ -111,27 +111,27 @@ _LANG_MARKERS = {
 
 
 class TestTranslationPrompt:
-    """build_translation_system_prompt uses the right language examples."""
+    """build_translation_system_prompt_parts uses the right language examples."""
 
     @pytest.mark.parametrize("lang", ALL_LANGS)
     def test_prompt_builds_without_error(self, lang: str):
-        prompt = build_translation_system_prompt(lang, "male")
+        prompt, _ = build_translation_system_prompt_parts(lang, "male")
         assert isinstance(prompt, str)
         assert len(prompt) > 100
 
     @pytest.mark.parametrize("lang", ALL_LANGS)
     def test_prompt_mentions_target_lang(self, lang: str):
-        prompt = build_translation_system_prompt(lang, "male")
+        prompt, _ = build_translation_system_prompt_parts(lang, "male")
         assert lang in prompt.lower()
 
     @pytest.mark.parametrize("lang,marker", list(_LANG_MARKERS.items()))
     def test_prompt_contains_own_marker(self, lang: str, marker: str):
-        prompt = build_translation_system_prompt(lang, "male")
+        prompt, _ = build_translation_system_prompt_parts(lang, "male")
         assert marker in prompt, f"{lang} prompt missing its marker '{marker}'"
 
     @pytest.mark.parametrize("lang", NON_RUSSIAN_LANGS)
     def test_no_russian_leakage(self, lang: str):
-        prompt = build_translation_system_prompt(lang, "male")
+        prompt, _ = build_translation_system_prompt_parts(lang, "male")
         # Check that Russian-specific examples don't appear
         assert "Таверна Копья" not in prompt, f"Russian example leaked into {lang} prompt"
         assert "Болото Мертвецов" not in prompt, f"Russian example leaked into {lang} prompt"
@@ -141,13 +141,12 @@ class TestTranslationPrompt:
     @pytest.mark.parametrize("lang", ALL_LANGS)
     def test_prompt_with_glossary(self, lang: str):
         glossary = "GLOSSARY:\n- Dark Ranger = Test Ranger\n"
-        prompt = build_translation_system_prompt(lang, "male", glossary_block=glossary)
-        assert "GLOSSARY" in prompt
-        assert "Dark Ranger" in prompt
+        _, variable = build_translation_system_prompt_parts(lang, "male", glossary_block=glossary)
+        assert variable == glossary.strip()
 
     @pytest.mark.parametrize("gender", ["male", "female"])
     def test_gender_in_prompt(self, gender: str):
-        prompt = build_translation_system_prompt("polish", gender)
+        prompt, _ = build_translation_system_prompt_parts("polish", gender)
         assert gender in prompt
 
     def test_script_message_profile_contains_ncs_safety_rules(self):
@@ -210,7 +209,7 @@ class TestDialogPrompt:
 
 class TestTranslationOutputRules:
     def test_forbids_empty_and_requires_escaped_newlines(self):
-        prompt = build_translation_system_prompt("english", "male")
+        prompt, _ = build_translation_system_prompt_parts("english", "male")
         assert "Never return an empty translation" in prompt
         assert "escape line breaks as \\n" in prompt
 
@@ -330,8 +329,6 @@ class TestSystemMessageContent:
 
     def test_env_flag_disables_breakpoint(self, monkeypatch):
         """When NWN_TRANSLATE_PROMPT_CACHE=0 the helper falls back to a plain string."""
-        from src.nwn_translator.ai_providers import openrouter_provider
-
         monkeypatch.setattr(openrouter_provider, "PROMPT_CACHE_BREAKPOINTS_ENABLED", False)
         content = OpenRouterProvider.make_system_message_content("STABLE", "VAR")
         assert isinstance(content, str)
@@ -361,7 +358,7 @@ class TestCrossLanguageIsolation:
             for other_lang in ALL_LANGS:
                 if other_lang == lang:
                     continue
-                other_prompt = build_translation_system_prompt(other_lang, "male")
+                other_prompt, _ = build_translation_system_prompt_parts(other_lang, "male")
                 assert (
                     marker not in other_prompt
                 ), f"Marker '{marker}' from {lang} found in {other_lang} prompt"

@@ -12,6 +12,7 @@ from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
 from nwn_translator.glossary import Glossary, terminology_block
 from nwn_translator.pipeline.artifacts import dump_glossary, load_glossary
 from nwn_translator.translators.translation_manager import TranslationManager
+from nwn_translator.translators.work_plan import BatchLimits
 
 
 def test_alias_family_survives_artifact_and_shared_translation(tmp_path):
@@ -103,12 +104,10 @@ def test_numbered_labels_and_prefix_names_reach_provider_intact():
     assert result == {item.key: "TR:" + item.text for item in items}
 
 
-def test_glossary_budget_splits_requests_without_dropping_terms(monkeypatch):
-    import nwn_translator.translators.translation_manager as module
-
-    monkeypatch.setattr(module, "GLOSSARY_MAX_CHARS", 600)
+def test_glossary_budget_splits_requests_without_dropping_terms():
     glossary = Glossary({f"Entity {i}": "Long canonical form " * 8 for i in range(8)})
     manager, provider = _manager(glossary)
+    manager.batch_limits = BatchLimits(glossary_chars=600)
     items = [
         TranslatableItem(name, "item", str(i), "items.git")
         for i, name in enumerate(glossary.entries)

@@ -12,7 +12,9 @@ import pytest
 from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
 from src.nwn_translator.translators.token_handler import TokenHandler, has_translatable_content
+from src.nwn_translator.translators.model_calls import CallLimits
 from src.nwn_translator.translators.translation_manager import TranslationManager
+from src.nwn_translator.translators.work_plan import BatchLimits, WorkItem, is_batchable
 
 
 def _expected(content, answers):
@@ -469,9 +471,7 @@ class TestNcsFailClosed:
 
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_approve_all)
         manager = TranslationManager(_make_config(), provider)
-        manager._ITEM_TIMEOUT = 0.01
-        manager._GATHER_TIMEOUT = 1.0
-        manager._RUN_ASYNC_TIMEOUT = 2.0
+        manager.call_limits = CallLimits(item_timeout=0.01, min_pass_timeout=2.0)
 
         result = manager.translate_content(content)
 
@@ -515,9 +515,7 @@ class TestNcsFailClosed:
 
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_approve_all)
         manager = TranslationManager(_make_config(), provider)
-        manager._ITEM_TIMEOUT = 0.01
-        manager._GATHER_TIMEOUT = 1.0
-        manager._RUN_ASYNC_TIMEOUT = 2.0
+        manager.call_limits = CallLimits(item_timeout=0.01, min_pass_timeout=2.0)
 
         result = manager.translate_content(content)
 
@@ -574,8 +572,7 @@ class TestNcsBatchTranslation:
         sent_items = provider.translate_batch_async.call_args.kwargs["items"]
         assert [item.original for item in sent_items] == ["The gate opens."]
 
-    def test_ncs_dynamic_batch_sizes_and_single_fallback_by_length(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_BATCH_PAYLOAD_BUDGET", 100000)
+    def test_ncs_dynamic_batch_sizes_and_single_fallback_by_length(self):
         short_items = [
             _make_ncs_item(f"Short player line {i}.", item_id=f"script:short_{i}", offset=i)
             for i in range(21)
@@ -637,6 +634,7 @@ class TestNcsBatchTranslation:
 
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate)
         manager = TranslationManager(_make_config(), provider)
+        manager.batch_limits = BatchLimits(payload_chars=100000)
 
         result = manager.translate_content(content)
 
@@ -673,13 +671,12 @@ class TestNcsBatchTranslation:
         assert len(calls) == expected_calls
         for call in calls:
             batch = call.kwargs["items"]
-            assert len(batch) <= manager._BATCH_MAX_ITEMS
-            assert sum(len(i.original) for i in batch) <= manager._BATCH_TEXT_BUDGET
-            assert batch_payload_chars(batch) <= manager._BATCH_PAYLOAD_BUDGET
+            assert len(batch) <= manager.batch_limits.max_items
+            assert sum(len(i.original) for i in batch) <= manager.batch_limits.text_chars
+            assert batch_payload_chars(batch) <= manager.batch_limits.payload_chars
         provider.translate_async.assert_not_called()
 
-    def test_ncs_batch_budget_counts_context(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_BATCH_PAYLOAD_BUDGET", 1000)
+    def test_ncs_batch_budget_counts_context(self):
         items = []
         for index in range(5):
             item = _make_ncs_item(f"Player line {index}.", item_id="line:0", offset=0)
@@ -689,6 +686,7 @@ class TestNcsBatchTranslation:
         content = ExtractedContent("combined", items, Path("module"))
         provider = _make_provider({item.text: f"TR:{item.text}" for item in items})
         manager = TranslationManager(_make_config(), provider)
+        manager.batch_limits = BatchLimits(payload_chars=1000)
 
         result = manager.translate_content(content)
 
@@ -861,9 +859,7 @@ class TestNcsBatchTranslation:
 
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate)
         manager = TranslationManager(_make_config(), provider)
-        manager._BATCH_CALL_TIMEOUT = 0.01
-        manager._ITEM_TIMEOUT = 1.0
-        manager._RUN_ASYNC_TIMEOUT = 2.0
+        manager.call_limits = CallLimits(item_timeout=1.0, batch_timeout=0.01, min_pass_timeout=2.0)
 
         result = manager.translate_content(content)
 
@@ -991,25 +987,22 @@ class TestBatchEligibility:
     """Strings within the text budget share requests; longer ones go individually."""
 
     @staticmethod
-    def _item_data(sanitized: str, item: TranslatableItem) -> dict:
-        return {"sanitized": sanitized, "item": item}
+    def _batchable(sanitized: str, item: TranslatableItem) -> bool:
+        work = WorkItem(item=item, sanitized=sanitized, handler=TokenHandler())
+        return is_batchable(work, BatchLimits())
 
     def test_batch_eligibility_boundaries(self):
         desc = TranslatableItem(text="x", metadata={"type": "placeable_description"})
-        budget = TranslationManager._BATCH_TEXT_BUDGET
-        assert TranslationManager._is_batchable(self._item_data("x" * budget, desc))
-        assert not TranslationManager._is_batchable(self._item_data("x" * (budget + 1), desc))
+        budget = BatchLimits().text_chars
+        assert self._batchable("x" * budget, desc)
+        assert not self._batchable("x" * (budget + 1), desc)
 
         untyped = TranslatableItem(text="Sword")
-        assert TranslationManager._is_batchable(self._item_data("Sword", untyped))
+        assert self._batchable("Sword", untyped)
 
-        ncs_limit = TranslationManager._NCS_BATCH_MAX_LENGTH
-        assert TranslationManager._is_batchable(
-            self._item_data("x" * ncs_limit, _make_ncs_item("x"))
-        )
-        assert not TranslationManager._is_batchable(
-            self._item_data("x" * (ncs_limit + 1), _make_ncs_item("x"))
-        )
+        ncs_limit = BatchLimits().ncs_item_chars
+        assert self._batchable("x" * ncs_limit, _make_ncs_item("x"))
+        assert not self._batchable("x" * (ncs_limit + 1), _make_ncs_item("x"))
 
     def test_profiles_pack_separately_and_oversized_goes_individually(self):
         very_short = TranslatableItem(
@@ -1113,8 +1106,7 @@ class TestBatchEligibility:
         assert provider.translate_batch_async.call_count == 1
         assert provider.translate_async.call_count == 1  # individual fallback
 
-    def test_medium_batches_respect_char_budget(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_BATCH_TEXT_BUDGET", 300)
+    def test_medium_batches_respect_char_budget(self):
         texts = [
             f"A fairly long unique description number {i} that easily clears the "
             "short threshold and lands in the medium tier of the batch splitter."
@@ -1122,6 +1114,7 @@ class TestBatchEligibility:
         ]
         provider = _make_provider({t: f"Перевод {i}" for i, t in enumerate(texts)})
         manager = TranslationManager(_make_config(), provider)
+        manager.batch_limits = BatchLimits(text_chars=300)
         content = ExtractedContent(
             content_type="placeable",
             items=[
@@ -1157,8 +1150,7 @@ class TestGenericTimeoutRetry:
             source_file=Path("x.utp"),
         )
 
-    def test_timeout_then_success_recovers(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_ITEM_TIMEOUT", 0.05)
+    def test_timeout_then_success_recovers(self):
         long_text = "A remarkably long placeable description sentence. " * 22
         calls = {"n": 0}
 
@@ -1171,6 +1163,7 @@ class TestGenericTimeoutRetry:
         provider = Mock()
         provider.translate_async = AsyncMock(side_effect=slow_then_fast)
         manager = TranslationManager(_make_config(), provider)
+        manager.call_limits = CallLimits(item_timeout=0.05)
 
         content = self._long_item(long_text)
         result = manager.translate_content(content)
@@ -1179,8 +1172,7 @@ class TestGenericTimeoutRetry:
         assert calls["n"] == 2
         assert manager.stats["errors"] == []
 
-    def test_double_timeout_records_error(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_ITEM_TIMEOUT", 0.05)
+    def test_double_timeout_records_error(self):
         long_text = "A remarkably long placeable description sentence. " * 22
 
         async def always_slow(text, source_lang, target_lang, **kwargs):
@@ -1190,6 +1182,7 @@ class TestGenericTimeoutRetry:
         provider = Mock()
         provider.translate_async = AsyncMock(side_effect=always_slow)
         manager = TranslationManager(_make_config(), provider)
+        manager.call_limits = CallLimits(item_timeout=0.05)
 
         content = self._long_item(long_text)
         result = manager.translate_content(content)
@@ -1288,22 +1281,6 @@ class TestBatchDedupBySanitized:
         provider.close_async_client = AsyncMock(return_value=None)
 
         manager = TranslationManager(_make_config(), provider)
-
-        from src.nwn_translator.translators.token_handler import sanitize_text
-
-        uncached = []
-        for item in items:
-            sanitized, handler = sanitize_text(item.text, preserve_tokens=True)
-            uncached.append(
-                {
-                    "item": item,
-                    "sanitized": sanitized,
-                    "full_sanitized": sanitized,
-                    "handler": handler,
-                }
-            )
-
-        translations: dict = {}
         translations = manager.translate_content(content)
 
         assert provider.translate_batch_async.call_count == 1
@@ -1479,7 +1456,7 @@ class TestNcsSampleOrder:
         provider.translate_batch_async = AsyncMock(side_effect=hanging_batch)
         provider.translate_async = AsyncMock(side_effect=translate_async)
         manager = TranslationManager(_make_config(), provider)
-        manager._BATCH_CALL_TIMEOUT = 0.01
+        manager.call_limits = CallLimits(batch_timeout=0.01)
 
         result = manager.translate_content(ExtractedContent("ncs", items, Path("s.ncs")))
 
@@ -1624,7 +1601,7 @@ class TestRequestTexts:
 class TestTokenMismatchRecovery:
     """Token/tag mismatches trigger retries and cleanup, not English fallback."""
 
-    def test_invalid_inline_tags_retry_to_exact_match_and_cache(self):
+    def test_invalid_inline_tags_retry_to_exact_match(self, caplog):
         text = "<StartHighlight>[Shudder.]</Start>"
         content = ExtractedContent(
             content_type="dialog",
@@ -1664,9 +1641,9 @@ class TestTokenMismatchRecovery:
 
         assert result[_key(content, text)] == "<StartHighlight>[Вздрогнуть.]</Start>"
         assert provider.translate_async.call_count == 2
-        assert len(list(manager.translation_cache.items())) == 1
+        assert "accepted cleaned translation" not in caplog.text
 
-    def test_cleanup_only_result_is_not_cached(self):
+    def test_repeated_mismatch_is_accepted_only_after_cleanup(self, caplog):
         text = "<StartHighlight>[Shudder.]</Start>"
         broken = "<StartAction>[Вздрогнуть.]</StartAction>"
         content = ExtractedContent(
@@ -1692,4 +1669,4 @@ class TestTokenMismatchRecovery:
         # Initial call + 1 retry reproducing the identical mismatch short-circuits
         # the remaining retry and goes straight to cleanup.
         assert provider.translate_async.call_count == 2
-        assert len(list(manager.translation_cache.items())) == 0
+        assert "accepted cleaned translation" in caplog.text

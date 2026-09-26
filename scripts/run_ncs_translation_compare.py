@@ -15,6 +15,7 @@ import shutil
 import sys
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -97,16 +98,6 @@ class CountingProvider:
 
     async def close_async_client(self) -> None:
         await self.wrapped.close_async_client()
-
-
-class SingleNcsTranslationManager(TranslationManager):
-    """Legacy-style manager: approved NCS strings always use single-call translation."""
-
-    @staticmethod
-    def _is_batchable(item_data: dict) -> bool:
-        if TranslationManager._is_ncs_item(item_data["item"]):
-            return False
-        return TranslationManager._is_batchable(item_data)
 
 
 def _load_env_file(path: Optional[Path]) -> None:
@@ -257,8 +248,10 @@ def _run_mode(
             metrics_recorder=metrics,
         )
     )
-    manager_cls = SingleNcsTranslationManager if mode == "single" else TranslationManager
-    manager = manager_cls(config, provider)
+    manager = TranslationManager(config, provider)
+    if mode == "single":
+        # No script string fits a batch: every approved one gets its own request.
+        manager.batch_limits = replace(manager.batch_limits, ncs_item_chars=0)
 
     started = time.monotonic()
     status = "completed"

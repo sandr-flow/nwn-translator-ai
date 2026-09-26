@@ -25,7 +25,7 @@ from nwn_translator.prompts import (
     build_glossary_system_prompt,
     build_translation_system_prompt_parts,
 )
-from nwn_translator.translators.translation_manager import _unescape_literal_newlines
+from nwn_translator.translators.translation_manager import unescape_literal_newlines
 from nwn_translator.web.database import compact_stats_for_api
 
 
@@ -226,8 +226,8 @@ class TestGlossaryPersonalPolicy:
 class TestAcceptFixes:
     def test_unescape_literal_newlines(self) -> None:
         original = "Mine\nStaff only"
-        assert _unescape_literal_newlines(original, "Шахта\\nТолько") == "Шахта\nТолько"
-        assert _unescape_literal_newlines("No break", "a\\nb") == "a\\nb"
+        assert unescape_literal_newlines(original, "Шахта\\nТолько") == "Шахта\nТолько"
+        assert unescape_literal_newlines("No break", "a\\nb") == "a\\nb"
 
     def test_restore_wrapping_quotes(self) -> None:
         assert (

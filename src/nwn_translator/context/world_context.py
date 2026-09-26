@@ -425,7 +425,16 @@ class _Selection:
         self._chars_left = WORLD_CONTEXT_MAX_CHARS
 
     def select(self, category: str, rows: List[_Row]) -> List[str]:
-        """Return the lines of the relevant *rows*, best first, within the remaining budget."""
+        """Return the lines of the relevant *rows*, best first, within the remaining budget.
+
+        Args:
+            category: Entity category of the section (``character``, ``location``,
+                ``quest`` or ``item``).
+            rows: Candidate entries of one section.
+
+        Returns:
+            The selected lines; the shared budget shrinks by what they take.
+        """
         scored = [
             (self._score(name, tag, category), line)
             for name, tag, line in rows
@@ -563,6 +572,11 @@ def _scan_creature(context: WorldContext, data: Dict[str, Any], resource: str) -
     Only creatures with a conversation, a description or a first name become
     NPCs, so the prompt is not flooded with generic monsters.
 
+    Args:
+        context: World context to populate.
+        data: Parsed creature blueprint.
+        resource: File name of the blueprint (candidate evidence).
+
     Returns:
         ``True`` when the creature was added to ``context.npcs``.
     """
@@ -597,6 +611,12 @@ def _register_named(
 ) -> bool:
     """Register a tagged, named entity (area, item or quest) and its name candidate.
 
+    Args:
+        context: World context to populate.
+        struct: Area or item blueprint, or one journal category.
+        spec: Where the entity goes and how its candidate is labelled.
+        resource: File name of the struct (candidate evidence).
+
     Returns:
         ``True`` when the struct had both a tag and a name.
     """
@@ -617,6 +637,10 @@ def _scan_placements(context: WorldContext, data: Dict[str, Any]) -> int:
     A placed instance can rename its blueprint or give it another
     Conversation, so dialog owners are looked up among the placements too.
 
+    Args:
+        context: World context to populate.
+        data: Parsed area instance file.
+
     Returns:
         Number of dialog actors added to the context.
     """
@@ -633,6 +657,11 @@ def _scan_placements(context: WorldContext, data: Dict[str, Any]) -> int:
 
 def _register_dialog_actor(context: WorldContext, data: Dict[str, Any], kind: str) -> bool:
     """Register one creature, placeable or door struct as a dialog actor.
+
+    Args:
+        context: World context to populate.
+        data: Blueprint or placed instance struct.
+        kind: ``creature``, ``placeable`` or ``door``.
 
     Returns:
         ``True`` if the actor was new to the context.

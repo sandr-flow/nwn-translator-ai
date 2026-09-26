@@ -226,7 +226,8 @@ class LlmStage:
             The model reply.
 
         Raises:
-            TimeoutError: When the request exceeds ``GLOSSARY_LLM_TIMEOUT``.
+            asyncio.TimeoutError: When the request exceeds ``GLOSSARY_LLM_TIMEOUT``
+                (the builtin ``TimeoutError`` on Python 3.11+).
             Exception: Whatever the provider raises.
         """
         async with slot:

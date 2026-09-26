@@ -228,7 +228,16 @@ def _select_texts(items: List["TranslatableItem"]) -> List[str]:
 def _first_context_for_name(
     items: List["TranslatableItem"], folded_texts: List[str], name: str
 ) -> str:
-    """Return the first item text containing *name* (casefolded substring), clipped to 240."""
+    """Return the first item text containing *name* (casefolded substring), clipped to 240.
+
+    Args:
+        items: Extracted items, in order.
+        folded_texts: Casefolded text of each item, parallel to *items*.
+        name: Name to look for.
+
+    Returns:
+        The item text with newlines flattened, or ``""`` when no text contains *name*.
+    """
     needle = (name or "").casefold()
     if not needle:
         return ""
@@ -249,9 +258,16 @@ def _coerce_category(category: object) -> str:
 def _parse_entities_json(raw: str) -> List[Tuple[str, str]]:
     """Parse an entity-extraction reply into ``(name, category)`` pairs.
 
-    The reply is decoded with :func:`~nwn_translator.json_utils.load_brace_span`.
     The pairs come from the ``entities`` list or, failing that, the first list
     value of the object; entries without a non-empty string name are skipped.
+
+    Args:
+        raw: Model reply, decoded with
+            :func:`~nwn_translator.json_utils.load_brace_span`.
+
+    Returns:
+        Stripped names with their normalized category, in reply order; empty
+        when the reply does not decode to an object holding such a list.
     """
     if not raw or not raw.strip():
         return []

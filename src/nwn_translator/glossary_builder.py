@@ -145,6 +145,11 @@ class GlossaryBuilder:
                     temperature=GLOSSARY_TEMPERATURE,
                 )
 
+            # Built from the batch dict exactly like this: the iteration order
+            # of the set decides the order of the "Already accepted forms" JSON
+            # a retry sends, which must stay byte-identical.
+            remaining = set(batch.keys())
+
             def report(attempt: int, answered: int) -> None:
                 if not progress_callback:
                     return
@@ -155,9 +160,6 @@ class GlossaryBuilder:
                     message = f"Glossary {label}: attempt {attempt} failed, retrying…"
                 progress_callback("scanning", number - 1, len(batches), message)
 
-            # Built from the batch dict exactly like this: the set's iteration
-            # order decides the order of the accepted forms a retry repeats (KI-008).
-            remaining = set(batch.keys())
             entries = await _STAGE.fill_keys(
                 slot,
                 remaining,
@@ -220,6 +222,14 @@ def _pack_alias_families(
 
     Families keep the order of their first name; a family larger than *size*
     gets a batch of its own.
+
+    Args:
+        names: Names in request order.
+        aliases: Alias -> canonical name; a name missing here is its own family.
+        size: Maximum batch length for families that fit.
+
+    Returns:
+        The batches, each a list of names.
     """
     families: Dict[str, List[str]] = {}
     for name in names:
@@ -243,7 +253,15 @@ class _NameHints:
                 self._npcs.setdefault(key, []).append(npc)
 
     def line(self, name: str, category: str) -> str:
-        """Render the request line of *name* with its candidate and NPC hints."""
+        """Render the request line of *name* with its candidate and NPC hints.
+
+        Args:
+            name: Requested name.
+            category: Glossary category of the name.
+
+        Returns:
+            The line for the glossary user prompt.
+        """
         return build_glossary_name_line(
             name, category, self._candidates.get(name), self._npcs.get(name, ())
         )

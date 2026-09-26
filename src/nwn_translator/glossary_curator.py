@@ -158,6 +158,15 @@ def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str
 
     Keys match exactly, else case-insensitively; values with an unknown
     decision are skipped.
+
+    Args:
+        raw: Model reply, decoded with
+            :func:`~nwn_translator.json_utils.load_brace_span`.
+        expected_keys: Candidate names still awaiting a decision.
+
+    Returns:
+        Candidate name -> ``decision``, ``reason``, ``priority`` and
+        ``alias_of``, in reply order; empty when the reply does not decode.
     """
     if not raw or not raw.strip():
         return {}

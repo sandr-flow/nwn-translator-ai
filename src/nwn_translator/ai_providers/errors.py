@@ -91,8 +91,8 @@ def wait_with_retry_after(retry_state: RetryCallState) -> float:
 
 
 #: Decorator retrying a coroutine on :data:`TRANSIENT_ERRORS` with
-#: :func:`wait_with_retry_after`; the last error is re-raised. ``functools.wraps``
-#: keeps the wrapped method's ``__name__``, which the translation log records.
+#: :func:`wait_with_retry_after`; the last error is re-raised. It wraps one request
+#: (``OpenRouterProvider._complete``), never a whole task.
 TRANSIENT_RETRY = retry(
     stop=stop_after_attempt(TRANSIENT_ATTEMPTS),
     wait=wait_with_retry_after,
@@ -112,8 +112,9 @@ def is_rate_or_budget_error(exc: BaseException) -> bool:
         exc: Exception raised by a request.
 
     Returns:
-        ``True`` for HTTP 429/402, or for a status-less error mentioning a rate
-        limit, 429, 402 or ``in_flight_budget``.
+        ``True`` for HTTP 429/402, or for a status-less error whose message
+        contains ``rate_limit``, ``429``, ``402`` or ``in_flight_budget`` in any
+        letter case.
     """
     status = getattr(exc, "status_code", None)
     if status is not None:

@@ -51,7 +51,10 @@ def llm_phase(phase: str) -> Iterator[None]:
 
 @dataclass
 class LLMRequestMetric:
-    """One physical LLM request attempt.
+    """One LLM request attempt.
+
+    A resend without a ``reasoning`` field the model rejected belongs to the same
+    attempt: one metric covers both HTTP requests and their combined latency.
 
     Attributes:
         request_id: Opaque unique id.

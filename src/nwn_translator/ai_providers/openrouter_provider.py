@@ -131,9 +131,11 @@ def parse_batch_results(
 class OpenRouterProvider:
     """Translation provider for OpenRouter and other OpenAI-compatible gateways.
 
-    Every request goes through :meth:`_complete`: JSON response format, catalog-
-    clamped reasoning effort, error mapping and one request metric per attempt.
-    Any slug listed on https://openrouter.ai/models can be used as the model.
+    Every request goes through :meth:`_complete_once`: JSON response format,
+    catalog-clamped reasoning effort, error mapping and one request metric per
+    attempt. Every task except the glossary request sends it through
+    :meth:`_complete`, which retries transient errors. Any slug listed on
+    https://openrouter.ai/models can be used as the model.
 
     Attributes:
         BASE_URL: API base URL; subclasses target another gateway.
@@ -456,6 +458,8 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted after retries.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout, after retries.
+            InternalServerError: HTTP >= 500, after retries.
         """
         if not text or not text.strip():
             return TranslationResult(translated="", original=text, success=True)
@@ -526,6 +530,8 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted after retries.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout, after retries.
+            InternalServerError: HTTP >= 500, after retries.
         """
         if not items:
             return []
@@ -575,6 +581,8 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted after retries.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout, after retries.
+            InternalServerError: HTTP >= 500, after retries.
         """
         return await self._complete(
             system_prompt,
@@ -594,7 +602,7 @@ class OpenRouterProvider:
         max_tokens: int,
         temperature: float,
     ) -> str:
-        """Send one glossary request, without retries or reasoning.
+        """Send one glossary request, without retries, at the lowest effort the model allows.
 
         ``json_object`` mode is used rather than a strict ``json_schema``: OpenRouter's
         constrained decoding hangs on models without native support (DeepSeek, Qwen).
@@ -646,6 +654,8 @@ class OpenRouterProvider:
         Raises:
             RateLimitError: Rate limit or budget exhausted after retries.
             OpenRouterError: Non-transient API error.
+            APIConnectionError: Connection failure or timeout, after retries.
+            InternalServerError: HTTP >= 500, after retries.
         """
 
         async def request(user_prompt: str, max_tokens: int, batch_size: int) -> str:

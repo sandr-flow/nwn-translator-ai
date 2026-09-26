@@ -245,20 +245,39 @@ class TaskManager:
             self._tasks[row["task_id"]] = TranslationTask.from_row({**row, "status": "interrupted"})
 
     def workspace_for_task(self, task_id: str) -> Path:
-        """Return the task's workspace directory, creating it if needed."""
+        """Return the task's workspace directory, creating it if needed.
+
+        Args:
+            task_id: Task UUID.
+
+        Returns:
+            The workspace directory.
+        """
         path = self.workspace_root / task_id
         path.mkdir(parents=True, exist_ok=True)
         return path
 
     def get(self, task_id: str) -> Optional[TranslationTask]:
-        """Return the in-memory task, or ``None``."""
+        """Return the in-memory task.
+
+        Args:
+            task_id: Task UUID.
+
+        Returns:
+            The task, or ``None`` if it is not in memory.
+        """
         with self._lock:
             return self._tasks.get(task_id)
 
     def find(self, task_id: str) -> Optional[TranslationTask]:
         """Return the task from memory, else rebuilt from its SQLite row.
 
-        Finished tasks of an earlier process exist only in the database.
+        Tasks that finished under an earlier process exist only in the
+        database; the ones it left unfinished are loaded as ``interrupted`` at
+        startup.
+
+        Args:
+            task_id: Task UUID.
 
         Returns:
             The task, or ``None`` if it exists nowhere.
@@ -366,7 +385,12 @@ class TaskManager:
             return True
 
     def release_active(self, client_ip: str, task_id: str) -> None:
-        """Free *client_ip*'s slot if *task_id* holds it."""
+        """Free *client_ip*'s slot if *task_id* holds it.
+
+        Args:
+            client_ip: Client IP address.
+            task_id: Task that may hold the slot.
+        """
         with self._lock:
             if self._active_by_ip.get(client_ip) == task_id:
                 del self._active_by_ip[client_ip]
@@ -378,6 +402,9 @@ class TaskManager:
         a live job while the worker waits on an in-flight provider call; the
         worker still sets the final status. The slot is not held until then,
         because a hung provider call can take minutes to time out.
+
+        Args:
+            task: Running task.
         """
         task.request_cancel()
         task.status = "cancelling"
@@ -424,6 +451,10 @@ class TaskManager:
             task: A completed task whose ``extract_dir`` and ``result_path`` exist.
             edits: Edits from the editor.
             target_lang: Language that drives the string encoding.
+
+        Raises:
+            Exception: Whatever :func:`~nwn_translator.main.rebuild_module`
+                raises, in which case no edit is stored, and database errors.
         """
         assert task.extract_dir is not None and task.result_path is not None
         with self._rebuild_lock(task.task_id):
@@ -467,6 +498,12 @@ class TaskManager:
 
         The callback updates the task's phase, status and monotonic weighted
         progress, and mirrors them into SQLite.
+
+        Args:
+            task: Task the callback reports for.
+
+        Returns:
+            The callback, called as ``(phase, current, total, message=None)``.
         """
 
         def callback(
@@ -492,11 +529,12 @@ class TaskManager:
         return callback
 
     def _persist_progress(self, task: TranslationTask, phase: str, message: Optional[str]) -> None:
-        """Mirror in-flight progress into SQLite, throttled by time.
+        """Mirror in-flight progress into SQLite.
 
-        The history list and clients polling a task after a reconnect read the
-        row, so it has to follow the running job, not keep its extraction-time
-        state.
+        A phase change is written at once, other updates at most every
+        :data:`PROGRESS_PERSIST_INTERVAL_SECONDS`. The history list reads the
+        row's ``status``, so the row has to follow the running job instead of
+        keeping its extraction-time state; status polls read the in-memory task.
 
         Args:
             task: Task whose current state should be persisted.
@@ -549,6 +587,11 @@ class TaskManager:
 
         The task ends ``completed``, ``cancelled`` or ``failed``, its IP slot is
         released and the worker is unregistered.
+
+        Args:
+            task: Task that owns the job.
+            job: Validated job settings.
+            input_path: Uploaded module inside the task workspace.
         """
         try:
             base = self.workspace_for_task(task.task_id)
@@ -645,10 +688,10 @@ class TaskManager:
 
         Workspace directories (uploaded module, extraction temp, result) are
         deleted; DB rows and translations are kept, so the client history and
-        the translation editor keep working while download/rebuild degrade to
-        their "files unavailable" errors. Expired tasks come from the DB, not
-        the in-memory dict: finished tasks are not reloaded into memory after a
-        restart, but their workspace files survive it.
+        the translation editor keep working, while download answers 400 ("result
+        file not ready") and rebuild 400 ("extracted files unavailable"). Expired
+        tasks come from the DB, not the in-memory dict: finished tasks are not
+        reloaded into memory after a restart, but their workspace files survive it.
         """
         now = time.time()
         with self._lock:
@@ -676,7 +719,11 @@ class TaskManager:
                 logger.warning("Failed to purge workspace %s: %s", task_dir, e)
 
     async def purge_periodically(self, interval_seconds: float = PURGE_INTERVAL_SECONDS) -> None:
-        """Run :meth:`purge_expired` every *interval_seconds* until cancelled."""
+        """Run :meth:`purge_expired` every *interval_seconds* until cancelled.
+
+        Args:
+            interval_seconds: Pause between two purges.
+        """
         while True:
             await asyncio.sleep(interval_seconds)
             self.purge_expired()

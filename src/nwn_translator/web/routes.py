@@ -149,10 +149,24 @@ def _job_from_form(
 ) -> JobParams:
     """Validate and normalize the job fields of a translate request.
 
-    ``max_concurrent_requests`` is capped at the server's
-    ``NWN_TRANSLATE_MAX_CONCURRENT``, which is also the value when omitted: the
-    number sizes the job's thread pools and semaphores, so a client may lower it
-    but not raise it.
+    ``max_concurrent_requests`` is clamped to ``[1, max_concurrent_from_environment()]``
+    (``NWN_TRANSLATE_MAX_CONCURRENT``, 12 when unset) and takes the upper bound
+    when omitted: the number sizes the job's thread pools and semaphores, so a
+    client may lower it but not raise it.
+
+    Args:
+        api_key: Provider API key.
+        target_lang: Requested target language.
+        source_lang: Requested source language; blank means ``"auto"``.
+        model: Model slug; ``None`` selects the provider default.
+        preserve_tokens: Protect NWN tokens.
+        use_context: Build world context and glossary first.
+        max_concurrent_requests: Requested parallelism, or ``None``.
+        player_gender: Player gender; blank means ``"male"``.
+        reasoning_effort: Raw reasoning effort value.
+
+    Returns:
+        The validated job parameters.
 
     Raises:
         HTTPException: 400 for a language NWN cannot display or an unknown
@@ -193,6 +207,14 @@ def require_task_owner(
 
     When the task has an owner (non-empty ``client_token``), the request's token
     must match it. Tasks without an owner stay accessible.
+
+    Args:
+        task_id: Task id from the path.
+        request: Incoming request (carries the client token).
+        tm: Task manager.
+
+    Returns:
+        The task.
 
     Raises:
         HTTPException: 400 for a malformed task id, 404 if the task does not
@@ -308,7 +330,11 @@ async def task_status(
 async def download_result(
     task: TranslationTask = Depends(require_task_owner),
 ) -> FileResponse:
-    """Download the translated module of a completed task."""
+    """Download the translated module of a completed task.
+
+    Raises:
+        HTTPException: 400 when the task is not completed or its result file is gone.
+    """
     if task.status != "completed" or not task.result_path or not task.result_path.is_file():
         raise HTTPException(status_code=400, detail="Файл результата ещё не готов")
     return FileResponse(
@@ -322,7 +348,11 @@ async def download_result(
 async def download_log(
     task: TranslationTask = Depends(require_task_owner),
 ) -> StreamingResponse:
-    """Download the task's translation rows as JSONL."""
+    """Download the task's translation rows as JSONL.
+
+    Raises:
+        HTTPException: 404 when the task has no translation rows.
+    """
     rows = get_translations_by_task(task.task_id)
     if not rows:
         raise HTTPException(status_code=404, detail="Лог недоступен")
@@ -420,7 +450,11 @@ async def delete_task(
     task: TranslationTask = Depends(require_task_owner),
     tm: TaskManager = Depends(get_task_manager),
 ) -> dict:
-    """Delete a task from history."""
+    """Delete a task with its files and translations.
+
+    A running job is cancelled and the client's slot freed at once; see
+    :meth:`~nwn_translator.web.task_manager.TaskManager.delete`.
+    """
     tm.delete(task.task_id)
     return {"ok": True}
 
@@ -484,7 +518,11 @@ async def list_models() -> ModelsResponse:
 
 @router.get("/models/lookup", response_model=ModelLookupResponse)
 async def lookup_model(slug: str = Query(..., min_length=1, max_length=200)) -> ModelLookupResponse:
-    """Look up reasoning options for a custom OpenRouter model slug."""
+    """Look up reasoning options for a custom OpenRouter model slug.
+
+    Raises:
+        HTTPException: 400 for an invalid model slug.
+    """
     key = slug.strip()
     if not is_valid_model_slug(key):
         raise HTTPException(status_code=400, detail="Invalid model slug")

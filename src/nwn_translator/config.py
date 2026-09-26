@@ -322,7 +322,8 @@ def lang_suffix(target_lang: str) -> str:
         target_lang: Target language name (e.g. ``"russian"``).
 
     Returns:
-        ``"-"`` plus the first three letters of the name, e.g. ``"-rus"`` for ``"russian"``.
+        ``"-"`` plus the first three letters of the name, lower-cased, e.g.
+        ``"-rus"`` for ``"russian"``.
     """
     return f"-{target_lang[:3].lower()}"
 

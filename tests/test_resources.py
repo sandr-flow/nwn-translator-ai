@@ -31,7 +31,7 @@ from nwn_translator.resources import (
     load_gff,
     load_ncs,
 )
-from tests.support.ncs import action as _action, consts as _consts, retn as _retn, write_ncs as _write_ncs
+from tests.support.ncs import action, consts, retn, write_ncs
 
 EXPECTED_EXTRACTORS = {
     ".dlg": DialogExtractor,
@@ -65,9 +65,7 @@ def test_each_extension_has_its_extractor_loader_and_injector(ext):
 
 
 def _speech_script(tmp_path: Path) -> Path:
-    return _write_ncs(
-        tmp_path, "speech.ncs", _consts("Hello there, friend!"), _action(221, 1), _retn()
-    )
+    return write_ncs(tmp_path, "speech.ncs", consts("Hello there, friend!"), action(221, 1), retn())
 
 
 def test_extension_lookup_ignores_case(tmp_path):

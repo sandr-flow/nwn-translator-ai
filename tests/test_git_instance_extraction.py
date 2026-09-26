@@ -1,18 +1,21 @@
-"""Tests for .git instance string collection and ItemList patching."""
+"""Tests for .git instance string extraction and ItemList patching."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.nwn_translator.extractors.git_fields import (
-    INSTANCE_LISTS,
-    collect_git_strings_missing_from_translations,
-)
+from src.nwn_translator.extractors.git_extractor import GitExtractor
+from src.nwn_translator.extractors.git_fields import INSTANCE_LISTS
+from src.nwn_translator.injectors.gff_injector import inject_gff
 
 
-class TestCollectGitStrings:
-    def test_collects_placeable_loc_name_not_in_templates(self):
-        # Use a player-facing name: the .git filter (etape 3) now rejects
-        # code-like CamelCase labels such as "OnlyInGit" as resref-looking.
+def _extracted_texts(gff):
+    return {item.text for item in GitExtractor().extract(Path("area.git"), gff).items}
+
+
+class TestExtractGitStrings:
+    def test_extracts_placeable_loc_name(self):
+        # A player-facing name: the .git filter rejects code-like CamelCase
+        # labels such as "OnlyInGit" as resref-looking.
         gff = {
             "Placeable List": [
                 {
@@ -21,25 +24,10 @@ class TestCollectGitStrings:
                 }
             ]
         }
-        existing = {"TemplateName": "T"}
-        found = collect_git_strings_missing_from_translations(gff, existing)
+        found = _extracted_texts(gff)
         assert "Old Wooden Chest" in found
-        assert "TemplateName" not in found
 
-    def test_skips_strings_already_in_translation_map(self):
-        gff = {
-            "Creature List": [
-                {
-                    "FirstName": {"StrRef": -1, "Value": "Bob"},
-                    "LastName": {"StrRef": -1, "Value": "Smith"},
-                }
-            ]
-        }
-        existing = {"Bob": "Боб", "Smith": "Смит"}
-        found = collect_git_strings_missing_from_translations(gff, existing)
-        assert not found
-
-    def test_collects_nested_item_list_strings(self):
+    def test_extracts_nested_item_list_strings(self):
         gff = {
             "Placeable List": [
                 {
@@ -59,12 +47,12 @@ class TestCollectGitStrings:
                 }
             ]
         }
-        found = collect_git_strings_missing_from_translations(gff, {})
+        found = _extracted_texts(gff)
         assert "Chest" in found
         assert "Scroll Case" in found
         assert "Holds scrolls." in found
 
-    def test_collects_equip_item_list_strings(self):
+    def test_extracts_equip_item_list_strings(self):
         gff = {
             "Creature List": [
                 {
@@ -103,7 +91,7 @@ class TestCollectGitStrings:
                 }
             ]
         }
-        found = collect_git_strings_missing_from_translations(gff, {})
+        found = _extracted_texts(gff)
         assert "Grandma" in found
         assert "Grandma's Armor" in found
         assert "Worn by Grandma." in found
@@ -112,7 +100,7 @@ class TestCollectGitStrings:
         assert "A fearsome axe." in found
         assert "Grandma's axe." in found
 
-    def test_collects_nested_store_list_itemlist_strings(self):
+    def test_extracts_nested_store_list_itemlist_strings(self):
         """Merchant shelves: StoreList instance contains nested StoreList with ItemList."""
         gff = {
             "StoreList": [
@@ -141,12 +129,12 @@ class TestCollectGitStrings:
                 }
             ]
         }
-        found = collect_git_strings_missing_from_translations(gff, {})
+        found = _extracted_texts(gff)
         assert "Tavern" in found
         assert "Coffee" in found
         assert "Cappuchino" in found
 
-    def test_collects_store_list_loc_name(self):
+    def test_extracts_store_list_loc_name(self):
         gff = {
             "StoreList": [
                 {
@@ -155,10 +143,10 @@ class TestCollectGitStrings:
                 }
             ]
         }
-        found = collect_git_strings_missing_from_translations(gff, {})
+        found = _extracted_texts(gff)
         assert "Coffee Merchant" in found
 
-    def test_collects_waypoint_map_note_labels(self):
+    def test_extracts_waypoint_map_note_labels(self):
         gff = {
             "WaypointList": [
                 {
@@ -167,11 +155,11 @@ class TestCollectGitStrings:
                 }
             ]
         }
-        found = collect_git_strings_missing_from_translations(gff, {})
+        found = _extracted_texts(gff)
         assert "City Gate" in found
         assert "WP_CityGate" not in found
 
-    def test_collects_store_list_nested_item_list_strings(self):
+    def test_extracts_store_list_nested_item_list_strings(self):
         gff = {
             "StoreList": [
                 {
@@ -192,24 +180,22 @@ class TestCollectGitStrings:
                 }
             ]
         }
-        found = collect_git_strings_missing_from_translations(gff, {})
+        found = _extracted_texts(gff)
         assert "Arms Dealer" in found
         assert "Iron Longsword" in found
         assert "A sturdy blade." in found
 
 
-from src.nwn_translator.extractors.git_extractor import GitExtractor
-from src.nwn_translator.injectors.gff_injector import GffInjector
-
-
 def _inject_fixture(path, data, answers):
     content = GitExtractor().extract(path, data)
     translations = {item.key: answers[item.text] for item in content.items if item.text in answers}
-    return (
-        GffInjector()
-        .inject(path, data, translations, {"extracted_items": content.items})
-        .items_updated
-    )
+    return inject_gff(
+        path,
+        content.items,
+        translations,
+        content_type=content.content_type,
+        text_encoding="cp1251",
+    ).items_updated
 
 
 class TestPatchGitInventory:
@@ -414,27 +400,3 @@ class TestPatchGitInventory:
         assert "Description" in INSTANCE_LISTS["StoreList"]
         assert "LocName" in INSTANCE_LISTS["StoreList"]
         assert "LocalizedName" in INSTANCE_LISTS["StoreList"]
-
-
-class TestEmoteStrings:
-    def test_collects_emote_texts_for_patch_side_symmetry(self):
-        """The patch-side fallback collector accepts the same emote strings the
-        extractor now emits — otherwise their translations would be dropped."""
-        gff = {
-            "TriggerList": [
-                {"LocalizedName": {"StrRef": -1, "Value": "*gasp*"}},
-                {
-                    "LocalizedName": {
-                        "StrRef": -1,
-                        "Value": "// * * * SCENE: Drinking dwarves  * * *",
-                    }
-                },
-            ],
-            "Placeable List": [
-                {"Description": {"StrRef": -1, "Value": "*The lever is stuck*"}},
-            ],
-        }
-        found = collect_git_strings_missing_from_translations(gff, {})
-        assert "*gasp*" in found
-        assert "*The lever is stuck*" in found
-        assert not any(t.startswith("//") for t in found)

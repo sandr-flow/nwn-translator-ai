@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from nwn_translator.config import TRANSLATABLE_TYPES
+from nwn_translator.resources import TRANSLATABLE_TYPES
 from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.file_handlers.gff_handler import read_gff
 from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes

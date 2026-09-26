@@ -1,403 +1,171 @@
-"""Extractor for area instance (.git) files.
+"""Extractor for area instance files (``.git``).
 
-Walks the same structure as :mod:`~nwn_translator.extractors.git_fields` so
-strings are translated in Phase A/B and patched in :func:`patch_git_file`.
+Walks the instance lists declared in :mod:`~nwn_translator.extractors.git_fields`,
+the inventories nested in instances, the recursive shelves of stores and the
+items on the area floor. Every item keeps its field record offset, so the
+shared GFF injector patches exactly the extracted fields.
 """
 
-from __future__ import annotations
-
-from pathlib import Path
 import json
-from typing import Any, Dict, FrozenSet, List, Optional
+from pathlib import Path
+from typing import Any, Dict, FrozenSet, Iterator, List, NamedTuple, Optional
 
+from ..nwn_constants import gender_label, race_label
+from .base import (
+    BaseExtractor,
+    ExtractedContent,
+    TranslatableItem,
+    extract_local_string,
+    list_field,
+    record_offset,
+)
+from .creature_extractor import name_fields, name_fields_suffix
 from .git_fields import (
-    AREA_ITEM_FIELDS,
     AREA_ITEM_LIST_KEY,
-    INSTANCE_LISTS,
+    INSTANCE_FIELDS,
     INSTANCE_NESTED_ITEM_LISTS,
-    ITEM_INVENTORY_FIELDS,
-    _iter_area_item_entries,
-    _iter_nested_item_entries,
-    _meta_type_for_instance_field,
-    _meta_type_for_inventory_field,
+    build_npc_index,
     get_module_creature_names,
+    item_fields,
     should_translate_git_string,
 )
-from ..nwn_constants import race_label, gender_label, base_item_label
-from .base import BaseExtractor, ExtractedContent, TranslatableItem, extract_local_string
+
+_NPC_NAME_TYPES = frozenset({"creature_first_name", "creature_last_name"})
+_INVENTORY = "inventory instance"
+_AREA_FLOOR = "placed on the area floor"
 
 
-def _build_npc_name_index(
-    parsed_data: Dict[str, Any],
-) -> Dict[str, str]:
-    """Build a mapping of NPC first names to their gender from Creature List.
+class _FieldRef(NamedTuple):
+    """A candidate CExoLocString field and how to address it."""
 
-    Returns ``{first_name_lower: gender_label}`` for all creatures with
-    a non-empty first name and a recognised gender.  Used to enrich context
-    for placeables/descriptions that mention an NPC possessively (``X's …``).
+    struct: Dict[str, Any]
+    field_name: str
+    item_type: str
+    context: str
+    item_id: str
+    group: str
+
+
+def _dict_rows(struct: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
+    """Return the struct elements of the list *key*, skipping anything else."""
+    return [row for row in list_field(struct, key) if isinstance(row, dict)]
+
+
+def _item_row_fields(
+    row: Dict[str, Any], id_prefix: str, group: str, where: str
+) -> Iterator[_FieldRef]:
+    """Yield the fields of one inventory row or area floor item."""
+    for field_name, item_type, context in item_fields(row, where):
+        yield _FieldRef(row, field_name, item_type, context, f"{id_prefix}_{field_name}", group)
+
+
+def _store_stock_fields(
+    node: Dict[str, Any], stem: str, inst_idx: int, path: str
+) -> Iterator[_FieldRef]:
+    """Yield a store's ``ItemList`` rows, then its nested shelves depth-first."""
+    for j, row in enumerate(_dict_rows(node, "ItemList")):
+        yield from _item_row_fields(
+            row,
+            f"{stem}_StoreList_{inst_idx}_{path}_il{j}",
+            f"StoreList[{inst_idx}]{path}.ItemList[{j}]",
+            _INVENTORY,
+        )
+    for k, child in enumerate(list_field(node, "StoreList")):
+        if isinstance(child, dict):
+            yield from _store_stock_fields(child, stem, inst_idx, f"{path}.StoreList[{k}]")
+
+
+def _area_fields(parsed_data: Dict[str, Any], stem: str) -> Iterator[_FieldRef]:
+    """Yield every candidate field of an area in extraction order.
+
+    Each instance's own fields come first, then its nested items; the lists
+    follow :data:`INSTANCE_FIELDS` order and the area floor items come last.
     """
-    index: Dict[str, str] = {}
-    creatures = parsed_data.get("Creature List", [])
-    if not isinstance(creatures, list):
-        return index
-    for creature in creatures:
-        if not isinstance(creature, dict):
-            continue
-        first = extract_local_string(creature.get("FirstName", {})) or ""
-        first = first.strip()
-        if not first:
-            continue
-        gend = gender_label(creature.get("Gender", -1))
-        if gend:
-            index[first.lower()] = gend
-    return index
-
-
-def _npc_possessive_hint(
-    text: str,
-    npc_index: Dict[str, str],
-) -> str:
-    """If *text* contains ``<Name>'s``, return a context hint about that NPC's gender."""
-    if not npc_index or "'s" not in text:
-        return ""
-    for name_lower, gend in npc_index.items():
-        needle = name_lower + "'s"
-        if needle in text.lower():
-            original_name = text[
-                text.lower().index(name_lower) : text.lower().index(name_lower) + len(name_lower)
-            ]
-            return f" (contains possessive of NPC '{original_name}', gender: {gend})"
-    return ""
-
-
-def _build_instance_context(
-    list_key: str,
-    field_name: str,
-    instance: Dict[str, Any],
-    npc_index: Optional[Dict[str, str]] = None,
-) -> str:
-    """Build an enriched context string using metadata from the instance struct."""
-    if list_key == "Creature List":
-        race = race_label(instance.get("Race", -1))
-        gend = gender_label(instance.get("Gender", -1))
-        traits = ", ".join(filter(None, [race, gend]))
-        if field_name == "FirstName":
-            base = "NPC first name"
-            if traits:
-                return f"{base} ({traits}, area instance). Translate ONLY this name, do not add surname."
-            return f"{base} (area instance). Translate ONLY this name, do not add surname."
-        if field_name == "LastName":
-            base = "NPC last name or title"
-            if traits:
-                return f"{base} ({traits}, area instance). Translate ONLY this, do not prepend first name."
-            return f"{base} (area instance). Translate ONLY this, do not prepend first name."
-        if field_name == "Description":
-            first = extract_local_string(instance.get("FirstName", {})) or ""
-            last = extract_local_string(instance.get("LastName", {})) or ""
-            full_name = " ".join(filter(None, [first, last]))
-            parts = filter(None, [f"name: {full_name}" if full_name else "", traits])
-            detail = ", ".join(parts)
-            if detail:
-                return f"Creature description ({detail}, area instance)"
-            return "Creature description (area instance)"
-
-    if list_key == "Placeable List":
-        text = extract_local_string(instance.get("LocName", {})) or ""
-        if field_name == "LocName":
-            hint = _npc_possessive_hint(text, npc_index) if npc_index else ""
-            return f"Placeable name (area instance){hint}"
-        plc_name = text
-        if field_name == "Description" and plc_name:
-            desc_text = extract_local_string(instance.get("Description", {})) or ""
-            hint = _npc_possessive_hint(desc_text, npc_index) if npc_index else ""
-            return f"Description of placeable '{plc_name}'{hint}"
-        return "Placeable description (area instance)"
-
-    if list_key == "Door List":
-        if field_name in ("LocName", "LocalizedName"):
-            return "Door name (area instance)"
-        return "Door description (area instance)"
-
-    if list_key == "TriggerList":
-        trig_type = instance.get("Type", 0)
-        if field_name == "LocalizedName":
-            if trig_type == 1:
-                return (
-                    "Area transition tooltip, shown when the player hovers over "
-                    "the transition (area instance)"
+    npc_index = build_npc_index(parsed_data)
+    for list_key, fields in INSTANCE_FIELDS.items():
+        for inst_idx, instance in enumerate(list_field(parsed_data, list_key)):
+            if not isinstance(instance, dict):
+                continue
+            group = f"{list_key}[{inst_idx}]"
+            for field in fields:
+                yield _FieldRef(
+                    instance,
+                    field.name,
+                    field.item_type,
+                    field.context_for(instance, npc_index),
+                    f"{stem}_{list_key}_{inst_idx}_{field.name}",
+                    group,
                 )
-            if trig_type == 2 or instance.get("TrapFlag"):
-                return "Trap name, shown when the trap is detected (area instance)"
-            return (
-                "Generic trigger name. Often retrieved by scripts via "
-                "GetLocalizedName() and shown to the player as floating text / "
-                'SpeakString when crossing the trigger. Quoted text in "…" is an '
-                "NPC one-liner; bracketed text in […] is an internal thought / "
-                "narrator comment — preserve the surrounding punctuation."
-            )
-        return "Trigger description (area instance)"
-
-    if list_key == "WaypointList":
-        if field_name == "LocalizedName":
-            return "Waypoint name (area instance)"
-        if field_name == "MapNote":
-            return "Waypoint map note label (area instance)"
-        return "Waypoint description (area instance)"
-
-    if list_key == "Encounter List":
-        if field_name == "LocalizedName":
-            return (
-                "Encounter group label (area instance). Often a toolset-style "
-                "classifier (e.g. 'Orc, Low Group') — translate as a short "
-                "label, not a sentence."
-            )
-
-    if list_key == "StoreList":
-        if field_name in ("LocName", "LocalizedName"):
-            return "Store name (area instance)"
-        return "Store description (area instance)"
-
-    return f"Area instance field ({list_key}.{field_name})"
+            if list_key == "StoreList":
+                yield from _store_stock_fields(instance, stem, inst_idx, "")
+            for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(list_key, []):
+                for j, row in enumerate(_dict_rows(instance, nested_key)):
+                    yield from _item_row_fields(
+                        row,
+                        f"{stem}_{list_key}_{inst_idx}_{nested_key}_{j}",
+                        f"{group}.{nested_key}[{j}]",
+                        _INVENTORY,
+                    )
+    for idx, row in enumerate(_dict_rows(parsed_data, AREA_ITEM_LIST_KEY)):
+        yield from _item_row_fields(
+            row, f"{stem}_{AREA_ITEM_LIST_KEY}_{idx}", f"{AREA_ITEM_LIST_KEY}[{idx}]", _AREA_FLOOR
+        )
 
 
-def _build_area_item_context(
-    field_name: str,
-    area_item: Dict[str, Any],
-) -> str:
-    """Context for a loose item dropped on the area floor (top-level ``List``)."""
-    bi = base_item_label(area_item.get("BaseItem", -1))
-    item_name = extract_local_string(area_item.get("LocalizedName", {})) or ""
-
-    if field_name == "LocalizedName":
-        if bi:
-            return f"Item name ({bi}, placed on the area floor)"
-        return "Item name (placed on the area floor)"
-
-    if field_name == "Description":
-        if bi and item_name:
-            return f"Description of {bi} '{item_name}' (placed on the area floor)"
-        if item_name:
-            return f"Item description for '{item_name}' (placed on the area floor)"
-        return "Item description (placed on the area floor)"
-
-    if field_name == "DescIdentified":
-        if bi and item_name:
-            return f"Identified description of {bi} '{item_name}' " "(placed on the area floor)"
-        if item_name:
-            return f"Item identified description for '{item_name}' " "(placed on the area floor)"
-        return "Item identified description (placed on the area floor)"
-
-    return f"Area floor item field ({field_name})"
-
-
-def _build_inventory_context(
-    field_name: str,
-    inv_item: Dict[str, Any],
-) -> str:
-    """Build an enriched context string for an inventory / equipped item field."""
-    bi = base_item_label(inv_item.get("BaseItem", -1))
-    item_name = extract_local_string(inv_item.get("LocalizedName", {})) or ""
-
-    if field_name == "LocalizedName":
-        if bi:
-            return f"Item name ({bi}, inventory instance)"
-        return "Item name (inventory instance)"
-
-    if field_name == "Description":
-        if bi and item_name:
-            return f"Description of {bi} '{item_name}' (inventory instance)"
-        if item_name:
-            return f"Item description for '{item_name}' (inventory instance)"
-        return "Item description (inventory instance)"
-
-    if field_name == "DescIdentified":
-        if bi and item_name:
-            return f"Identified description of {bi} '{item_name}' (inventory instance)"
-        if item_name:
-            return f"Item identified description for '{item_name}' (inventory instance)"
-        return "Item identified description (inventory instance)"
-
-    return f"Item field ({field_name})"
+def _git_item(ref: _FieldRef, known_names: FrozenSet[str]) -> Optional[TranslatableItem]:
+    """Build the item for *ref*, or None when it holds no translatable text."""
+    text = extract_local_string(ref.struct.get(ref.field_name))
+    if text is None or not should_translate_git_string(text, ref.item_type, known_names):
+        return None
+    context = ref.context
+    metadata: Dict[str, Any] = {
+        "type": ref.item_type,
+        "git_field": ref.field_name,
+        "translation_group": ref.group,
+    }
+    if ref.item_type in _NPC_NAME_TYPES:
+        names = name_fields(ref.struct)
+        context += name_fields_suffix(names)
+        race = race_label(ref.struct.get("Race", -1))
+        gender = gender_label(ref.struct.get("Gender", -1))
+        metadata.update(
+            name_fields=names,
+            name_field=ref.field_name,
+            name_group=ref.group,
+            gender=gender,
+            shared_context=(
+                f"NPC area instance ({race}, {gender}). Name fields: "
+                + json.dumps(names, ensure_ascii=False)
+            ),
+            batch_context="",
+        )
+    metadata["record_offset"] = record_offset(ref.struct, ref.field_name)
+    return TranslatableItem(text=text, context=context, item_id=ref.item_id, metadata=metadata)
 
 
 class GitExtractor(BaseExtractor):
-    """Extractor for .git (placed instances + nested inventories)."""
+    """Area instances (``.git``): placed objects, their inventories, floor items."""
 
-    SUPPORTED_TYPES = [".git"]
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
+        """Extract the visible instance strings of an area.
 
-    def _extract_nested_store_inventory(
-        self,
-        store_node: Dict[str, Any],
-        file_path: Path,
-        stem: str,
-        inst_idx: int,
-        path_suffix: str,
-        items: List[TranslatableItem],
-        known_names: Optional[FrozenSet[str]] = None,
-    ) -> None:
-        """Recurse store instance: ItemList rows + nested StoreList shelves."""
-        for j, inv_item in enumerate(_iter_nested_item_entries(store_node, "ItemList")):
-            for inv_field in ITEM_INVENTORY_FIELDS:
-                meta_type = _meta_type_for_inventory_field(inv_field)
-                ctx_label = _build_inventory_context(inv_field, inv_item)
-                self._append_loc_string_item(
-                    inv_item,
-                    inv_field,
-                    file_path,
-                    meta_type=meta_type,
-                    context=ctx_label,
-                    item_id=(f"{stem}_StoreList_{inst_idx}_{path_suffix}_il{j}_{inv_field}"),
-                    name_group=f"StoreList[{inst_idx}]{path_suffix}.ItemList[{j}]",
-                    items=items,
-                    known_names=known_names,
-                )
-        children = store_node.get("StoreList", [])
-        if not isinstance(children, list):
-            return
-        for k, child in enumerate(children):
-            if isinstance(child, dict):
-                self._extract_nested_store_inventory(
-                    child,
-                    file_path,
-                    stem,
-                    inst_idx,
-                    f"{path_suffix}.StoreList[{k}]",
-                    items,
-                    known_names,
-                )
+        Args:
+            file_path: Path of the ``.git`` resource; its directory holds the
+                module blueprints consulted by the name oracle.
+            parsed_data: Parsed GFF root struct.
 
-    def _append_loc_string_item(
-        self,
-        struct: Dict[str, Any],
-        field_name: str,
-        file_path: Path,
-        *,
-        meta_type: str,
-        context: str,
-        item_id: str,
-        items: List[TranslatableItem],
-        known_names: Optional[FrozenSet[str]] = None,
-        name_group: Optional[str] = None,
-    ) -> None:
-        field_obj = struct.get(field_name)
-        if not isinstance(field_obj, dict):
-            return
-        text = self._extract_text_from_local_string(field_obj)
-        if text is None or not should_translate_git_string(text, meta_type, known_names):
-            return
-        name_metadata = {}
-        if meta_type in {"creature_first_name", "creature_last_name"}:
-            fields = {
-                field: extract_local_string(struct.get(field, {})) or ""
-                for field in ("FirstName", "LastName")
-            }
-            context += " NPC name fields: " + json.dumps(fields, ensure_ascii=False)
-            name_metadata = {
-                "name_fields": fields,
-                "name_field": field_name,
-                "name_group": name_group,
-                "gender": gender_label(struct.get("Gender", -1)),
-                "shared_context": (
-                    f"NPC area instance ({race_label(struct.get('Race', -1))}, "
-                    f"{gender_label(struct.get('Gender', -1))}). Name fields: "
-                    + json.dumps(fields, ensure_ascii=False)
-                ),
-                "batch_context": "",
-            }
-        items.append(
-            TranslatableItem(
-                text=text,
-                context=context,
-                item_id=item_id,
-                location=str(file_path),
-                metadata={
-                    "type": meta_type,
-                    "git_field": field_name,
-                    "translation_group": name_group,
-                    **name_metadata,
-                    "record_offset": struct.get("_record_offsets", {}).get(field_name, 0),
-                },
-            )
-        )
-
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any],
-    ) -> ExtractedContent:
-        items: List[TranslatableItem] = []
+        Returns:
+            The extracted items, one translation group per instance or item row.
+        """
         stem = file_path.stem
-
-        npc_index = _build_npc_name_index(parsed_data)
         # Blueprint-name oracle: creature names from the module's .utc files
         # rescue code-like-looking real names (McGee, DeVir) from the filters.
         known_names = get_module_creature_names(file_path.parent)
-
-        for list_key, field_names in INSTANCE_LISTS.items():
-            instances = parsed_data.get(list_key, [])
-            if not isinstance(instances, list):
-                continue
-            for inst_idx, instance in enumerate(instances):
-                if not isinstance(instance, dict):
-                    continue
-                for field_name in field_names:
-                    meta_type = _meta_type_for_instance_field(list_key, field_name)
-                    ctx_label = _build_instance_context(list_key, field_name, instance, npc_index)
-                    self._append_loc_string_item(
-                        instance,
-                        field_name,
-                        file_path,
-                        meta_type=meta_type,
-                        context=ctx_label,
-                        name_group=f"{list_key}[{inst_idx}]",
-                        item_id=f"{stem}_{list_key}_{inst_idx}_{field_name}",
-                        items=items,
-                        known_names=known_names,
-                    )
-
-                if list_key == "StoreList":
-                    self._extract_nested_store_inventory(
-                        instance, file_path, stem, inst_idx, "", items, known_names
-                    )
-                else:
-                    for nested_key in INSTANCE_NESTED_ITEM_LISTS.get(list_key, []):
-                        for j, inv_item in enumerate(
-                            _iter_nested_item_entries(instance, nested_key)
-                        ):
-                            for inv_field in ITEM_INVENTORY_FIELDS:
-                                meta_type = _meta_type_for_inventory_field(inv_field)
-                                ctx_label = _build_inventory_context(inv_field, inv_item)
-                                self._append_loc_string_item(
-                                    inv_item,
-                                    inv_field,
-                                    file_path,
-                                    meta_type=meta_type,
-                                    context=ctx_label,
-                                    name_group=f"{list_key}[{inst_idx}].{nested_key}[{j}]",
-                                    item_id=(
-                                        f"{stem}_{list_key}_{inst_idx}_{nested_key}_"
-                                        f"{j}_{inv_field}"
-                                    ),
-                                    items=items,
-                                    known_names=known_names,
-                                )
-
-        for area_idx, area_item in enumerate(_iter_area_item_entries(parsed_data)):
-            for area_field in AREA_ITEM_FIELDS:
-                meta_type = _meta_type_for_inventory_field(area_field)
-                ctx_label = _build_area_item_context(area_field, area_item)
-                self._append_loc_string_item(
-                    area_item,
-                    area_field,
-                    file_path,
-                    meta_type=meta_type,
-                    context=ctx_label,
-                    item_id=(f"{stem}_{AREA_ITEM_LIST_KEY}_{area_idx}_{area_field}"),
-                    name_group=f"{AREA_ITEM_LIST_KEY}[{area_idx}]",
-                    items=items,
-                    known_names=known_names,
-                )
-
+        items = []
+        for ref in _area_fields(parsed_data, stem):
+            item = _git_item(ref, known_names)
+            if item is not None:
+                items.append(item)
         return ExtractedContent(
             content_type="git_instance",
             items=items,

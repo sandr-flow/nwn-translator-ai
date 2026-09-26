@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from src.nwn_translator.extractors.base import (
-    BaseExtractor,
     ExtractedContent,
     TranslatableItem,
     DialogNode,
@@ -13,24 +12,23 @@ from src.nwn_translator.extractors.base import (
 from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
 from src.nwn_translator.extractors.journal_extractor import JournalExtractor
 from src.nwn_translator.extractors.item_extractor import ItemExtractor
-from src.nwn_translator.extractors.area_extractor import (
+from src.nwn_translator.extractors.simple_extractors import (
     PlaceableExtractor,
     DoorExtractor,
     EncounterExtractor,
     StoreExtractor,
     TriggerExtractor,
 )
+from src.nwn_translator.resources import RESOURCE_KINDS
 
 
 class TestDialogExtractor:
     """Tests for DialogExtractor."""
 
-    def test_can_extract_dlg_files(self):
-        """Test that extractor can handle .dlg files."""
-        extractor = DialogExtractor()
-        assert extractor.can_extract(".dlg")
-        assert extractor.can_extract(".DLG")
-        assert not extractor.can_extract(".uti")
+    def test_registered_for_dlg_files(self):
+        """The resource registry routes .dlg files, and only those, here."""
+        assert isinstance(RESOURCE_KINDS[".dlg"].extractor, DialogExtractor)
+        assert not isinstance(RESOURCE_KINDS[".uti"].extractor, DialogExtractor)
 
     def test_extract_simple_dialog(self):
         """Test extracting a simple dialog."""
@@ -215,21 +213,18 @@ class TestBuildDialogTree:
         assert entry.is_entry is True
         assert entry.speaker == "Guard"
         assert entry.node_id == 0
-        assert entry.metadata == {"type": "entry"}
         reply = entry.replies[0]
         assert reply.is_entry is False
         assert reply.speaker == "Player"
-        assert reply.metadata == {"type": "reply"}
 
 
 class TestJournalExtractor:
     """Tests for JournalExtractor."""
 
-    def test_can_extract_jrl_files(self):
-        """Test that extractor can handle .jrl files."""
-        extractor = JournalExtractor()
-        assert extractor.can_extract(".jrl")
-        assert not extractor.can_extract(".dlg")
+    def test_registered_for_jrl_files(self):
+        """The resource registry routes .jrl files, and only those, here."""
+        assert isinstance(RESOURCE_KINDS[".jrl"].extractor, JournalExtractor)
+        assert not isinstance(RESOURCE_KINDS[".dlg"].extractor, JournalExtractor)
 
     def test_extract_journal_categories(self):
         """Test extracting journal categories."""
@@ -285,11 +280,10 @@ class TestJournalExtractor:
 class TestItemExtractor:
     """Tests for ItemExtractor."""
 
-    def test_can_extract_uti_files(self):
-        """Test that extractor can handle .uti files."""
-        extractor = ItemExtractor()
-        assert extractor.can_extract(".uti")
-        assert not extractor.can_extract(".dlg")
+    def test_registered_for_uti_files(self):
+        """The resource registry routes .uti files, and only those, here."""
+        assert isinstance(RESOURCE_KINDS[".uti"].extractor, ItemExtractor)
+        assert not isinstance(RESOURCE_KINDS[".dlg"].extractor, ItemExtractor)
 
     def test_extract_item_with_name_and_description(self):
         """Test extracting item name and description."""
@@ -435,8 +429,8 @@ class TestPlaceableExtractorLocName:
 
 
 class TestEncounterExtractor:
-    def test_can_extract_ute_files(self):
-        assert EncounterExtractor().can_extract(".ute")
+    def test_registered_for_ute_files(self):
+        assert isinstance(RESOURCE_KINDS[".ute"].extractor, EncounterExtractor)
 
     def test_extract_encounter_name_and_description(self):
         extractor = EncounterExtractor()

@@ -14,13 +14,27 @@ from .nss_index import classify_engine_arg
 from ..file_handlers.ncs_parser import (
     NCSInstruction,
     OP_ADD,
+    OP_COMP,
     OP_CONST,
+    OP_CPDOWNSP,
     OP_CPTOPBP,
     OP_CPTOPSP,
+    OP_DESTRUCT,
     OP_EQUAL,
+    OP_JMP,
+    OP_JNZ,
+    OP_JSR,
+    OP_JZ,
+    OP_LOGAND,
+    OP_MOD,
+    OP_MOVSP,
+    OP_NEG,
     OP_NEQUAL,
     OP_NOP,
+    OP_NOT,
+    OP_RETN,
     OP_RSADD,
+    OP_STORE_STATE,
     TYPE_FLOAT,
     TYPE_INT,
     TYPE_OBJECT,
@@ -141,16 +155,11 @@ _TRACE_WINDOW = 64
 _SCALAR_TYPES = {TYPE_INT, TYPE_FLOAT, TYPE_STRING, TYPE_OBJECT}
 
 # A routine can have both player and internal arguments (PostString/CreateArea).
-# These sets describe the routine; proof still requires a particular argument.
+# This set describes the routine; proof still requires a particular argument.
 PLAYER_FACING_ACTIONS: Set[int] = {
     routine
     for routine, (name, params, _) in ACTION_SIGNATURES.items()
     if any(classify_engine_arg(name, arg) == "player" for arg in range(len(params)))
-}
-NON_PLAYER_ACTIONS: Set[int] = {
-    routine
-    for routine, (name, params, _) in ACTION_SIGNATURES.items()
-    if any(classify_engine_arg(name, arg) == "internal" for arg in range(len(params)))
 }
 
 
@@ -173,10 +182,15 @@ def trace_string_consumer(
             to avoid rebuilding the map per call.
 
     Returns:
-        Bytecode context dict consumed by the NCS extractor and the model gate.
+        Bytecode context, serialized verbatim into the model gate prompt (key
+        order included): ``next_action`` / ``next_action_name`` /
+        ``argument_index`` (last engine call that consumed the value),
+        ``consumer_proven``, ``compare_nearby``, ``distance`` (instructions
+        from the string to that consumer), ``role`` (``"player"``,
+        ``"internal"``, ``"compare"`` or None when unproven),
+        ``player_use_seen`` and ``player_action_nearby`` (a player-facing
+        routine within the next 64 instructions).
     """
-    from ..file_handlers import ncs_parser as op
-
     context: Dict[str, Any] = {
         "next_action": None,
         "next_action_name": None,
@@ -230,7 +244,7 @@ def trace_string_consumer(
             if idx == instr_index:
                 tokens.add(sp)
             sp += 4
-        elif instr.opcode in (OP_CPTOPSP, op.OP_CPDOWNSP):
+        elif instr.opcode in (OP_CPTOPSP, OP_CPDOWNSP):
             offset, size = struct.unpack(">iH", instr.args)
             if not size or size % 4 or offset % 4 or offset + size > 0:
                 incomplete = True
@@ -251,7 +265,7 @@ def trace_string_consumer(
                 incomplete = True
                 continue
             sp += size
-        elif instr.opcode == op.OP_MOVSP:
+        elif instr.opcode == OP_MOVSP:
             amount = struct.unpack(">i", instr.args)[0]
             if amount % 4 or amount > 0:
                 incomplete = True
@@ -272,7 +286,7 @@ def trace_string_consumer(
                 )
                 return context
             sp += 4
-        elif op.OP_LOGAND <= instr.opcode <= op.OP_MOD and instr.type_byte in (
+        elif OP_LOGAND <= instr.opcode <= OP_MOD and instr.type_byte in (
             0x20,
             0x21,
             0x25,
@@ -282,11 +296,11 @@ def trace_string_consumer(
                 incomplete = True
                 continue
             sp += 4
-        elif instr.opcode in (op.OP_NEG, op.OP_COMP, op.OP_NOT):
+        elif instr.opcode in (OP_NEG, OP_COMP, OP_NOT):
             if sp - 4 in tokens or instr.type_byte not in (TYPE_INT, TYPE_FLOAT):
                 incomplete = True
                 continue
-        elif instr.opcode == op.OP_DESTRUCT:
+        elif instr.opcode == OP_DESTRUCT:
             size, offset, kept = struct.unpack(">HHH", instr.args)
             if any(n % 4 for n in (size, offset, kept)) or offset + kept > size:
                 incomplete = True
@@ -324,25 +338,25 @@ def trace_string_consumer(
                     else:
                         incomplete = True
             sp += result_slots * 4
-        elif instr.opcode in (op.OP_JMP, op.OP_JSR, op.OP_JZ, op.OP_JNZ):
+        elif instr.opcode in (OP_JMP, OP_JSR, OP_JZ, OP_JNZ):
             target = by_offset.get(instr.offset + (instr.jump_offset or 0))
             if target is None:
                 incomplete = True
                 continue
-            if instr.opcode in (op.OP_JZ, op.OP_JNZ):
+            if instr.opcode in (OP_JZ, OP_JNZ):
                 if pop(4):
                     incomplete = True
                     continue
                 pending.append((next_idx, sp, frozenset(tokens), returns))
-            elif instr.opcode == op.OP_JSR:
+            elif instr.opcode == OP_JSR:
                 returns = returns + (next_idx,)
             next_idx = target
-        elif instr.opcode == op.OP_RETN:
+        elif instr.opcode == OP_RETN:
             if not returns:
                 incomplete |= bool(tokens)
                 continue
             next_idx, returns = returns[-1], returns[:-1]
-        elif instr.opcode == op.OP_STORE_STATE:
+        elif instr.opcode == OP_STORE_STATE:
             bp_size, sp_size = struct.unpack(">II", instr.args)
             target = by_offset.get(instr.offset + instr.type_byte)
             if target is None or bp_size % 4 or sp_size % 4:

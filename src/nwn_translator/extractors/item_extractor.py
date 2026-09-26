@@ -1,130 +1,110 @@
-"""Item extractor for NWN item files.
+"""Extractor for item blueprints (``.uti``) and shared item description contexts.
 
-This module handles extraction of item names and descriptions from .uti GFF files.
+The description contexts are also used for item instances in area files
+(:mod:`~nwn_translator.extractors.git_fields`).
 """
 
 from pathlib import Path
 from typing import Any, Dict, List
 
 from ..nwn_constants import base_item_label
-from .base import BaseExtractor, ExtractedContent, TranslatableItem
+from .base import (
+    BaseExtractor,
+    ExtractedContent,
+    TranslatableItem,
+    extract_local_string,
+    record_offset,
+)
+
+#: Description field -> (label with a known base item, generic label).
+_DESCRIPTION_LABELS = {
+    "Description": ("Description of", "Item description"),
+    "DescIdentified": ("Identified description of", "Item identified description"),
+}
+
+
+def item_description_context(field_name: str, base_item: str, name: str) -> str:
+    """Return the prompt context of an item description.
+
+    Args:
+        field_name: ``"Description"`` or ``"DescIdentified"``.
+        base_item: Base item label (empty when unknown).
+        name: Item name (empty when the item has none).
+
+    Returns:
+        The context string.
+    """
+    typed_label, generic_label = _DESCRIPTION_LABELS[field_name]
+    if base_item and name:
+        return f"{typed_label} {base_item} '{name}'"
+    if name:
+        return f"{generic_label} for '{name}'"
+    return generic_label
 
 
 class ItemExtractor(BaseExtractor):
-    """Extractor for item (.uti) files."""
-
-    SUPPORTED_TYPES = [".uti"]
+    """Item blueprint (``.uti``): name, description and identified description."""
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract item content from a .uti file.
+        """Extract the name and descriptions of an item blueprint.
 
         Args:
-            file_path: Path to the .uti file
-            parsed_data: Parsed GFF data
+            file_path: Path of the ``.uti`` resource.
+            parsed_data: Parsed GFF root struct.
 
         Returns:
-            ExtractedContent with item data
+            Up to three items sharing one translation group.
         """
-        items = []
-
-        # Extract item name
-        name_obj = parsed_data.get("LocalizedName", {})
-        name = self._extract_text_from_local_string(name_obj)
-
-        # Extract item description (flavor text)
-        desc_obj = parsed_data.get("Description", {})
-        description = self._extract_text_from_local_string(desc_obj)
-
-        # Extract identified description (when item is identified)
-        identified_desc_obj = parsed_data.get("DescIdentified", {})
-        identified_description = self._extract_text_from_local_string(identified_desc_obj)
-
-        # Get tag and base item type for context
         tag = parsed_data.get("Tag", file_path.stem)
         base_item = base_item_label(parsed_data.get("BaseItem", -1))
-
-        # Create item for name
-        if name:
-            name_ctx = (
-                f"Game item name ({base_item}). Translate the name naturally."
-                if base_item
-                else "Game item name. Translate the name naturally."
-            )
-            items.append(
-                TranslatableItem(
-                    text=name,
-                    context=name_ctx,
-                    item_id=f"{tag}_name",
-                    location=str(file_path),
-                    metadata={
-                        "type": "item_name",
-                        "record_offset": parsed_data.get("_record_offsets", {}).get(
-                            "LocalizedName", 0
-                        ),
-                        "tag": tag,
-                    },
+        name = extract_local_string(parsed_data.get("LocalizedName", {}))
+        name_context = (
+            f"Game item name ({base_item}). Translate the name naturally."
+            if base_item
+            else "Game item name. Translate the name naturally."
+        )
+        fields = (
+            ("LocalizedName", "item_name", "name", name_context),
+            (
+                "Description",
+                "item_description",
+                "description",
+                item_description_context("Description", base_item, name or ""),
+            ),
+            (
+                "DescIdentified",
+                "item_identified_description",
+                "identified_description",
+                item_description_context("DescIdentified", base_item, name or ""),
+            ),
+        )
+        items: List[TranslatableItem] = []
+        for field_name, item_type, id_suffix, context in fields:
+            text = extract_local_string(parsed_data.get(field_name, {}))
+            if text:
+                items.append(
+                    TranslatableItem(
+                        text=text,
+                        context=context,
+                        item_id=f"{tag}_{id_suffix}",
+                        metadata={
+                            "type": item_type,
+                            "record_offset": record_offset(parsed_data, field_name),
+                            "tag": tag,
+                        },
+                    )
                 )
-            )
-
-        # Create item for description
-        if description:
-            if base_item and name:
-                desc_ctx = f"Description of {base_item} '{name}'"
-            elif name:
-                desc_ctx = f"Item description for '{name}'"
-            else:
-                desc_ctx = "Item description"
-            items.append(
-                TranslatableItem(
-                    text=description,
-                    context=desc_ctx,
-                    item_id=f"{tag}_description",
-                    location=str(file_path),
-                    metadata={
-                        "type": "item_description",
-                        "record_offset": parsed_data.get("_record_offsets", {}).get(
-                            "Description", 0
-                        ),
-                        "tag": tag,
-                    },
-                )
-            )
-
-        # Create item for identified description
-        if identified_description:
-            if base_item and name:
-                idesc_ctx = f"Identified description of {base_item} '{name}'"
-            elif name:
-                idesc_ctx = f"Item identified description for '{name}'"
-            else:
-                idesc_ctx = "Item identified description"
-            items.append(
-                TranslatableItem(
-                    text=identified_description,
-                    context=idesc_ctx,
-                    item_id=f"{tag}_identified_description",
-                    location=str(file_path),
-                    metadata={
-                        "type": "item_identified_description",
-                        "record_offset": parsed_data.get("_record_offsets", {}).get(
-                            "DescIdentified", 0
-                        ),
-                        "tag": tag,
-                    },
-                )
-            )
 
         for item in items:
-            item.metadata["translation_group"] = "root"
-            item.metadata["shared_context"] = f"Game item (name: {name or ''}, type: {base_item})."
-            item.metadata["batch_context"] = ""
+            item.metadata.update(
+                translation_group="root",
+                shared_context=f"Game item (name: {name or ''}, type: {base_item}).",
+                batch_context="",
+            )
 
         return ExtractedContent(
             content_type="item",
             items=items,
             source_file=file_path,
-            metadata={
-                "tag": tag,
-                "item_count": len(items),
-            },
+            metadata={"tag": tag, "item_count": len(items)},
         )

@@ -9,7 +9,7 @@ import pytest
 from src.nwn_translator.ai_providers.openrouter_provider import OpenRouterProvider
 from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.extractors.dialog_extractor import DialogExtractor
-from src.nwn_translator.injectors.gff_injector import GffInjector
+from src.nwn_translator.injectors.gff_injector import inject_gff
 from src.nwn_translator.translators.token_handler import TokenHandler
 
 
@@ -76,16 +76,18 @@ class TestDialogExtractionAndInjection:
             "Hello, innkeeper.": "Hola, posadero.",
         }
 
-        injector = GffInjector()
-        result = injector.inject(
+        result = inject_gff(
             file_path,
-            original_gff,
+            extracted.items,
             {item.key: translations[item.text] for item in extracted.items},
-            {"extracted_items": extracted.items},
+            content_type=extracted.content_type,
+            text_encoding="cp1252",
         )
 
         assert result.modified
         assert result.items_updated == 2
+        assert result.metadata == {"type": "dialog"}
+        mock_patcher_cls.assert_called_once_with(file_path, text_encoding="cp1252")
         mock_patcher.patch_multiple.assert_called_once()
         patches = mock_patcher.patch_multiple.call_args[0][0]
         assert set(patches) == {

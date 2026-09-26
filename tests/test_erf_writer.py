@@ -16,7 +16,7 @@ from src.nwn_translator.file_handlers.erf_writer import (
     create_mod_from_directory,
 )
 from src.nwn_translator.file_handlers.erf_reader import ERFEntry, ERFReader, ERFHeader
-from src.nwn_translator.config import TRANSLATABLE_TYPES
+from src.nwn_translator.resources import TRANSLATABLE_TYPES
 
 # ---------------------------------------------------------------------------
 # Helpers

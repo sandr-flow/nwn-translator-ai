@@ -38,7 +38,7 @@ def _manifest_language(corpus_module: Path) -> str:
 
 def _extract_all_items(extract_dir: Path, encoding: str):
     """Yield (path, parsed_data, extracted) for every translatable file."""
-    from nwn_translator.config import TRANSLATABLE_TYPES
+    from nwn_translator.resources import TRANSLATABLE_TYPES
 
     for path in sorted(extract_dir.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in TRANSLATABLE_TYPES:

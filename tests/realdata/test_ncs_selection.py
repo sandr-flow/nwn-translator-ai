@@ -8,7 +8,7 @@ from nwn_translator.extractors.ncs_extractor import NcsExtractor
 from nwn_translator.file_handlers.erf_reader import ERFReader
 from nwn_translator.file_handlers.ncs_parser import parse_ncs_bytes
 from nwn_translator.config import TranslationConfig
-from nwn_translator.injectors.ncs_injector import NcsInjector
+from nwn_translator.injectors.ncs_injector import inject_ncs
 from nwn_translator.translators.translation_manager import TranslationManager
 from ._mock_provider import MARKER, MockTranslateProvider
 
@@ -100,15 +100,13 @@ def test_ncs_selection_and_patch(corpus_module, tmp_path, with_sources):
             approved = manager.translate_content(result)
             assert wanted <= provider.seen, "Reviewed speech must reach the production gate"
             assert {item.text for item in result.items if item.key in approved} == wanted
-            injection = NcsInjector().inject(
+            injection = inject_ncs(
                 path,
-                {},
+                result.items,
                 approved,
-                {
-                    "extracted_items": result.items,
-                    "module_text_encoding": "cp1252",
-                    "module_source_encoding": "cp1252",
-                },
+                content_type=result.content_type,
+                text_encoding="cp1252",
+                source_encoding="cp1252",
             )
             assert not injection.metadata.get("ncs_patch_failed")
             patched_raw = path.read_bytes()

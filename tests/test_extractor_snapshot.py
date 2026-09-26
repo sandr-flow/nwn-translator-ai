@@ -23,6 +23,7 @@ import pytest
 from nwn_translator.extractors import git_fields
 from nwn_translator.file_handlers.ncs_parser import parse_ncs
 from nwn_translator.pipeline.stages import load_parsed_and_extracted
+from nwn_translator.resources import RESOURCE_KINDS
 from tests.test_ncs import _action, _add_ss, _consts, _cptopsp, _retn, _write_ncs
 
 FIXTURE = Path(__file__).parent / "fixtures" / "extractor_snapshot.json"
@@ -392,35 +393,7 @@ def _dump(extracted: Any) -> Dict[str, Any]:
 
 
 def _snapshot(tmp_path: Path) -> Dict[str, Any]:
-    from nwn_translator.extractors import (
-        AreaExtractor,
-        CreatureExtractor,
-        DialogExtractor,
-        DoorExtractor,
-        EncounterExtractor,
-        GitExtractor,
-        ItemExtractor,
-        JournalExtractor,
-        ModuleExtractor,
-        NcsExtractor,
-        PlaceableExtractor,
-        StoreExtractor,
-        TriggerExtractor,
-    )
-
-    by_ext = {
-        ".are": AreaExtractor(),
-        ".utt": TriggerExtractor(),
-        ".utp": PlaceableExtractor(),
-        ".utd": DoorExtractor(),
-        ".ute": EncounterExtractor(),
-        ".utm": StoreExtractor(),
-        ".ifo": ModuleExtractor(),
-        ".utc": CreatureExtractor(),
-        ".uti": ItemExtractor(),
-        ".jrl": JournalExtractor(),
-        ".dlg": DialogExtractor(),
-    }
+    by_ext = {ext: kind.extractor for ext, kind in RESOURCE_KINDS.items()}
     snapshot: Dict[str, Any] = {}
     for name, filename, data in SIMPLE_CASES:
         path = tmp_path / filename
@@ -431,13 +404,13 @@ def _snapshot(tmp_path: Path) -> Dict[str, Any]:
     area_dir = tmp_path / "area"
     area_dir.mkdir()
     git_path = area_dir / "tavern.git"
-    extracted = GitExtractor().extract(git_path, GIT_AREA)
+    extracted = by_ext[".git"].extract(git_path, GIT_AREA)
     assert all(item.location == str(git_path) for item in extracted.items)
     snapshot["git"] = _dump(extracted)
 
     script = _write_script(tmp_path)
     ncs_data = {"_ncs_file": parse_ncs(script), "_source_encoding": None}
-    extracted = NcsExtractor().extract(script, ncs_data)
+    extracted = by_ext[".ncs"].extract(script, ncs_data)
     assert all(item.location == str(script) for item in extracted.items)
     snapshot["ncs"] = _dump(extracted)
     loaded = load_parsed_and_extracted(script, ".ncs", None)

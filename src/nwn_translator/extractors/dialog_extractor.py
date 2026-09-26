@@ -1,7 +1,4 @@
-"""Dialog extractor for NWN dialog files.
-
-This module handles extraction of dialog trees from .dlg GFF files.
-Dialog trees are complex structures with entries, replies, and links between them.
+"""Extractor for dialogs (``.dlg``): flat node items and the conversation tree.
 
 NWN .dlg GFF structure:
     Root fields:
@@ -23,92 +20,78 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .base import BaseExtractor, ExtractedContent, TranslatableItem, DialogNode
+from .base import (
+    BaseExtractor,
+    DialogNode,
+    ExtractedContent,
+    TranslatableItem,
+    extract_local_string,
+    list_field,
+    record_offset,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class DialogExtractor(BaseExtractor):
-    """Extractor for dialog (.dlg) files."""
+def dialog_item_id(stem: str, is_entry: bool, index: object) -> str:
+    """Return the item id of a dialog node.
 
-    SUPPORTED_TYPES = [".dlg"]
+    Args:
+        stem: Dialog resource name without extension.
+        is_entry: True for an ``EntryList`` node, False for a ``ReplyList`` node.
+        index: Position of the node in its list.
+
+    Returns:
+        ``{stem}:entry:{index}`` or ``{stem}:reply:{index}``.
+    """
+    return f"{stem}:{'entry' if is_entry else 'reply'}:{index}"
+
+
+class DialogExtractor(BaseExtractor):
+    """Dialog (``.dlg``): every NPC entry and player reply with text."""
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract dialog content from a .dlg file.
-
-        Produces one TranslatableItem per dialog node (entry or reply) that
-        contains non-empty text, with a stable item_id for round-tripping.
+        """Extract one item per dialog node with embedded text.
 
         Args:
-            file_path: Path to the .dlg file
-            parsed_data: Parsed GFF data from gff_to_dict
+            file_path: Path of the ``.dlg`` resource.
+            parsed_data: Parsed GFF root struct.
 
         Returns:
-            ExtractedContent with one TranslatableItem per text node
+            All entry items in list order, then all reply items.
         """
-        entry_list = self._get_list_value(parsed_data, "EntryList")
-        reply_list = self._get_list_value(parsed_data, "ReplyList")
-
-        items: List[TranslatableItem] = []
         stem = file_path.stem
+        entry_list = list_field(parsed_data, "EntryList")
+        reply_list = list_field(parsed_data, "ReplyList")
+        items: List[TranslatableItem] = []
 
-        record_offsets = parsed_data.get("_record_offsets", {})
-
-        # Extract all entry texts
-        for i, entry in enumerate(entry_list):
-            if not isinstance(entry, dict):
-                continue
-            text = self._extract_text_from_local_string(entry.get("Text", {}))
-            if not text:
-                continue
-            speaker = entry.get("Speaker", "")
-            items.append(
-                TranslatableItem(
-                    text=text,
-                    context=(
+        for is_entry, nodes in ((True, entry_list), (False, reply_list)):
+            for i, node in enumerate(nodes):
+                if not isinstance(node, dict):
+                    continue
+                text = extract_local_string(node.get("Text", {}))
+                if not text:
+                    continue
+                if is_entry:
+                    speaker = node.get("Speaker", "")
+                    context = (
                         f"Dialog line in {stem}.dlg (speaker: {speaker})"
                         if speaker
                         else f"NPC dialog line in {stem}.dlg"
-                    ),
-                    item_id=f"{stem}:entry:{i}",
-                    location=str(file_path),
-                    metadata={
-                        "type": "entry",
-                        "index": i,
-                        "speaker": speaker,
-                        "record_offset": (
-                            entry.get("_record_offsets", {}).get("Text", 0)
-                            if isinstance(entry.get("_record_offsets"), dict)
-                            else 0
-                        ),
-                    },
+                    )
+                    metadata = {"type": "entry", "index": i, "speaker": speaker}
+                else:
+                    context = f"Player reply in {stem}.dlg"
+                    metadata = {"type": "reply", "index": i}
+                metadata["record_offset"] = record_offset(node, "Text")
+                items.append(
+                    TranslatableItem(
+                        text=text,
+                        context=context,
+                        item_id=dialog_item_id(stem, is_entry, i),
+                        metadata=metadata,
+                    )
                 )
-            )
-
-        # Extract all reply texts
-        for i, reply in enumerate(reply_list):
-            if not isinstance(reply, dict):
-                continue
-            text = self._extract_text_from_local_string(reply.get("Text", {}))
-            if not text:
-                continue
-            items.append(
-                TranslatableItem(
-                    text=text,
-                    context=f"Player reply in {stem}.dlg",
-                    item_id=f"{stem}:reply:{i}",
-                    location=str(file_path),
-                    metadata={
-                        "type": "reply",
-                        "index": i,
-                        "record_offset": (
-                            reply.get("_record_offsets", {}).get("Text", 0)
-                            if isinstance(reply.get("_record_offsets"), dict)
-                            else 0
-                        ),
-                    },
-                )
-            )
 
         return ExtractedContent(
             content_type="dialog",
@@ -122,102 +105,70 @@ class DialogExtractor(BaseExtractor):
         )
 
     def build_dialog_tree(self, parsed_data: Dict[str, Any]) -> List[DialogNode]:
-        """Build a hierarchical dialog tree from flat GFF data.
+        """Build the conversation tree reachable from ``StartingList``.
 
-        Useful for generating a human-readable dialog preview, but extraction
-        uses the flat approach (see extract()) which is safer for translation.
-
-        The walk is iterative: recursion depth would otherwise scale with the
-        conversation length, and long cutscene chains can exceed Python's
-        recursion limit. Non-struct entries/replies are skipped with a warning.
+        This tree is the input of contextual dialog translation. Each entry is
+        attached once, on the first path that reaches it (depth-first, in link
+        order); later links to it, including back-edges of loops, are dropped.
+        The walk is iterative because long cutscene chains would exceed
+        Python's recursion limit. Non-struct nodes are skipped with a warning.
 
         Args:
-            parsed_data: Parsed GFF data
+            parsed_data: Parsed GFF root struct.
 
         Returns:
-            List of root DialogNode objects reachable from StartingList
+            Root nodes in ``StartingList`` order.
         """
-        entry_list = self._get_list_value(parsed_data, "EntryList")
-        reply_list = self._get_list_value(parsed_data, "ReplyList")
-        starting_list = self._get_list_value(parsed_data, "StartingList")
-
-        # Index by position
-        entries: Dict[int, Dict[str, Any]] = {i: e for i, e in enumerate(entry_list)}
-        replies: Dict[int, Dict[str, Any]] = {i: r for i, r in enumerate(reply_list)}
-
+        nodes_by_kind: Dict[bool, Dict[Any, Any]] = {
+            True: dict(enumerate(list_field(parsed_data, "EntryList"))),
+            False: dict(enumerate(list_field(parsed_data, "ReplyList"))),
+        }
         tree: List[DialogNode] = []
-        visited_entries: Set[int] = set()
+        visited_entries: Set[Any] = set()
 
         # Work items: (is_entry, node_id, parent); parent None = root of the tree.
         # A LIFO stack with children pushed in reverse order reproduces the
         # depth-first order of the recursive walk, including the visited check
         # firing only after the previous sibling's subtree is fully built.
-        stack: List[Tuple[bool, Any, Optional[DialogNode]]] = []
-        for link in reversed(starting_list):
-            if not isinstance(link, dict):
-                continue
-            entry_idx = link.get("Index")
-            if entry_idx is None:
-                # Try direct integer (some tool versions store index directly)
-                continue
-            stack.append((True, entry_idx, None))
-
+        stack: List[Tuple[bool, Any, Optional[DialogNode]]] = [
+            (True, link["Index"], None)
+            for link in reversed(list_field(parsed_data, "StartingList"))
+            if isinstance(link, dict) and link.get("Index") is not None
+        ]
         while stack:
             is_entry, node_id, parent = stack.pop()
-
+            nodes = nodes_by_kind[is_entry]
+            if node_id not in nodes:
+                continue
             if is_entry:
-                if node_id not in entries or node_id in visited_entries:
+                if node_id in visited_entries:
                     continue
                 visited_entries.add(node_id)
-                data = entries[node_id]
-                if not isinstance(data, dict):
-                    logger.warning(
-                        "Dialog entry %s is not a struct (%s); skipping node",
-                        node_id,
-                        type(data).__name__,
-                    )
-                    continue
-                node = DialogNode(
-                    node_id=node_id,
-                    text=self._extract_text_from_local_string(data.get("Text") or {}) or "",
-                    speaker=data.get("Speaker", ""),
-                    is_entry=True,
-                    metadata={"type": "entry"},
+            data = nodes[node_id]
+            if not isinstance(data, dict):
+                logger.warning(
+                    "Dialog %s %s is not a struct (%s); skipping node",
+                    "entry" if is_entry else "reply",
+                    node_id,
+                    type(data).__name__,
                 )
-                # Each entry has a RepliesList of link structs: {Index: <reply_index>, ...}
-                links = data.get("RepliesList") or []
-            else:
-                if node_id not in replies:
-                    continue
-                data = replies[node_id]
-                if not isinstance(data, dict):
-                    logger.warning(
-                        "Dialog reply %s is not a struct (%s); skipping node",
-                        node_id,
-                        type(data).__name__,
-                    )
-                    continue
-                node = DialogNode(
-                    node_id=node_id,
-                    text=self._extract_text_from_local_string(data.get("Text") or {}) or "",
-                    speaker="Player",
-                    is_entry=False,
-                    metadata={"type": "reply"},
-                )
-                # Each reply has an EntriesList of link structs: {Index: <entry_index>, ...}
-                links = data.get("EntriesList") or []
-
+                continue
+            node = DialogNode(
+                node_id=node_id,
+                text=extract_local_string(data.get("Text") or {}) or "",
+                speaker=data.get("Speaker", "") if is_entry else "Player",
+                is_entry=is_entry,
+            )
             if parent is None:
                 tree.append(node)
             else:
                 parent.replies.append(node)
 
+            # Entries link to replies through RepliesList, replies to entries
+            # through EntriesList; each link struct carries the target Index.
+            links = data.get("RepliesList" if is_entry else "EntriesList") or []
             for link in reversed(links):
-                if not isinstance(link, dict):
-                    continue
-                child_idx = link.get("Index")
-                if child_idx is None:
-                    continue
-                stack.append((not is_entry, child_idx, node))
+                if isinstance(link, dict) and link.get("Index") is not None:
+                    stack.append((not is_entry, link["Index"], node))
 
         return tree

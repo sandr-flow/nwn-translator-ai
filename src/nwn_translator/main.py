@@ -22,10 +22,10 @@ from tqdm import tqdm  # noqa: F401  (kept: pre-existing import)
 
 from .config import (
     TranslationConfig,
-    TRANSLATABLE_TYPES,
     create_output_path,
     module_string_encoding_for_target_lang,
 )
+from .resources import TRANSLATABLE_TYPES
 from .file_handlers import (
     create_mod_from_directory,
 )

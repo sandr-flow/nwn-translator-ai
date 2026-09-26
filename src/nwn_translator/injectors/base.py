@@ -1,24 +1,22 @@
-"""Base injector interface and data structures.
+"""Injection result and the helpers shared by the injectors."""
 
-This module defines the abstract interface that all injectors must implement.
-"""
-
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from ..extractors.base import Translations
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, Optional, Protocol, Sequence, Tuple
+
+from ..extractors.base import TranslatableItem, Translations
 
 
 @dataclass
 class InjectedContent:
-    """Result of content injection.
+    """Result of writing translations into one resource.
 
     Attributes:
-        source_file: Path to source file
-        modified: Whether any changes were made
-        items_updated: Number of items updated
-        metadata: Additional metadata
+        source_file: Patched resource.
+        modified: Whether the file was changed.
+        items_updated: Number of patched occurrences.
+        metadata: ``{"type": content type}`` plus failure details; it is
+            recorded in the ``injection_result`` translation-log event.
     """
 
     source_file: Path
@@ -27,43 +25,48 @@ class InjectedContent:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class BaseInjector(ABC):
-    """Abstract base class for content injectors.
+class Injector(Protocol):
+    """Write the translations of extracted items back into a resource file."""
 
-    All injectors must implement this interface to ensure consistent behavior.
-    """
-
-    def __init__(self):
-        """Initialize the injector."""
-
-    def can_inject(self, content_type: str) -> bool:
-        """Check if this injector can handle the given content type.
-
-        Args:
-            content_type: Type of content (dialog, journal, item, etc.)
-
-        Returns:
-            True if this injector can handle this content type
-        """
-        return content_type in getattr(self, "SUPPORTED_TYPES", [])
-
-    @abstractmethod
-    def inject(
+    def __call__(
         self,
         file_path: Path,
-        parsed_data: Dict[str, Any],
+        items: Sequence[TranslatableItem],
         translations: Translations,
-        metadata: Optional[Dict[str, Any]] = None,
+        *,
+        content_type: str,
+        text_encoding: str,
+        source_encoding: Optional[str],
     ) -> InjectedContent:
-        """Inject translated content back into GFF data.
+        """Patch *file_path* in place.
 
         Args:
-            file_path: Path to the file
-            parsed_data: Original GFF data dictionary
-            translations: Dictionary mapping (resource, item_id) to translated text
-            metadata: Additional metadata about the translation
+            file_path: Resource to patch.
+            items: Items extracted from the file, in extraction order.
+            translations: Translated text by occurrence.
+            content_type: Content type of the extraction, reported back.
+            text_encoding: Code page of the written strings.
+            source_encoding: Code page used to decode the file at extraction
+                (None when detected).
 
         Returns:
-            InjectedContent with injection results
+            The injection result.
         """
-        pass
+
+
+def changed_translations(
+    items: Sequence[TranslatableItem], translations: Translations
+) -> Iterator[Tuple[TranslatableItem, str]]:
+    """Yield ``(item, translation)`` for items whose translation changes the text.
+
+    Args:
+        items: Extracted items, in extraction order.
+        translations: Translated text by occurrence.
+
+    Yields:
+        Items with a translation that differs from their source text.
+    """
+    for item in items:
+        translated = translations.get(item.key)
+        if translated is not None and translated != item.text:
+            yield item, translated

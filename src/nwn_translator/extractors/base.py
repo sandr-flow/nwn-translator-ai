@@ -1,31 +1,44 @@
-"""Base extractor interface and data structures.
+"""Data types shared by extraction, translation and injection.
 
-This module defines the abstract interface that all extractors must implement.
+Extractors turn a parsed resource into :class:`TranslatableItem` rows grouped in
+an :class:`ExtractedContent`. Each item is addressed by its
+:data:`Occurrence` — the archive resource name plus the extractor's stable
+``item_id`` — which keys translations, failures, persistence and injection.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 Occurrence = tuple[str, str]
 Translations = Dict[Occurrence, str]
 
 
 def occurrence_key(resource: Union[str, Path], item_id: str) -> Occurrence:
-    """Address an archive resource occurrence, independently of its text or Tag."""
+    """Address an archive resource occurrence, independently of its text or Tag.
+
+    Args:
+        resource: Resource path or file name.
+        item_id: Extractor-assigned id, unique within the resource.
+
+    Returns:
+        ``(file name, item_id)``.
+    """
     return Path(resource).name, item_id
 
 
 @dataclass
 class ExtractedContent:
-    """Container for extracted content from NWN files.
+    """Translatable items extracted from one resource.
 
     Attributes:
-        content_type: Type of content (dialog, journal, item, etc.)
-        items: List of extracted translatable items
-        source_file: Path to source file
-        metadata: Additional metadata about the extraction
+        content_type: Resource kind label (``dialog``, ``journal``, ``item``, …).
+            It is reported in the injection result.
+        items: Extracted items in resource order. For GFF resources this order
+            is also the order in which patches are applied.
+        source_file: Path of the extracted resource.
+        metadata: Resource-level details (counts, tags), kept for artifacts.
     """
 
     content_type: str
@@ -39,24 +52,25 @@ class ExtractedContent:
                 item.location = str(self.source_file)
 
     def __len__(self) -> int:
-        """Return number of items extracted."""
+        """Return the number of extracted items."""
         return len(self.items)
 
-    def __iter__(self):
-        """Iterate over extracted items."""
+    def __iter__(self) -> Iterator["TranslatableItem"]:
+        """Iterate over the extracted items."""
         return iter(self.items)
 
 
 @dataclass
 class TranslatableItem:
-    """Represents a single translatable item extracted from a file.
+    """One translatable string occurrence.
 
     Attributes:
-        text: The actual text to translate
-        context: Context information for translation
-        item_id: Unique identifier for the item
-        location: Location information (e.g., dialog node ID)
-        metadata: Additional metadata
+        text: Source text.
+        context: Prompt context describing where the text appears.
+        item_id: Stable id, unique within the resource.
+        location: Resource path; :class:`ExtractedContent` fills it in.
+        metadata: Item details for batching, prompts and injection (``type``,
+            ``record_offset`` for GFF fields, ``offset`` for scripts, …).
     """
 
     text: str
@@ -65,17 +79,21 @@ class TranslatableItem:
     location: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.metadata is None:
             self.metadata = {}
 
     def has_text(self) -> bool:
-        """Check if item has translatable text."""
+        """Return whether the item holds non-blank text."""
         return bool(self.text and isinstance(self.text, str) and self.text.strip())
 
     @property
     def key(self) -> Occurrence:
-        """Stable address used for results, failures, persistence, and injection."""
+        """Stable address used for results, failures, persistence, and injection.
+
+        Raises:
+            ValueError: If the item has no location or no item_id.
+        """
         if not self.location or not self.item_id:
             raise ValueError("Translation occurrences require a resource and item_id")
         return occurrence_key(self.location, self.item_id)
@@ -83,15 +101,14 @@ class TranslatableItem:
 
 @dataclass
 class DialogNode:
-    """Represents a node in a dialog tree.
+    """A node of a dialog tree.
 
     Attributes:
-        node_id: Unique ID for this node
-        text: The text content
-        speaker: Speaker identifier
-        is_entry: Whether this is a starting entry (True) or reply (False)
-        replies: List of replies (for entries) or next entries (for replies)
-        metadata: Additional metadata
+        node_id: Index of the node in ``EntryList`` or ``ReplyList``.
+        text: Node text (empty when the node has none).
+        speaker: Speaker tag for entries, ``"Player"`` for replies.
+        is_entry: True for NPC entries, False for player replies.
+        replies: Child nodes (replies of an entry, entries following a reply).
     """
 
     node_id: int
@@ -99,208 +116,68 @@ class DialogNode:
     speaker: Optional[str] = None
     is_entry: bool = True
     replies: List["DialogNode"] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-def extract_local_string(text_data: Dict[str, Any]) -> Optional[str]:
-    """Extract text from a LocalString (CExoLocString) structure.
+def extract_local_string(text_data: Any) -> Optional[str]:
+    """Return the embedded text of a CExoLocString.
 
-    Returns the embedded Value when non-empty, regardless of whether
-    a StrRef is also set. This matches NWN editor behaviour where text
-    is embedded even when a TLK reference exists.
+    The embedded ``Value`` wins even when a StrRef is also set, as in the NWN
+    toolset. StrRef-only strings are left to the player's ``dialog.tlk``.
 
     Args:
-        text_data: GFF LocalString dictionary with StrRef and Value keys
+        text_data: Parsed CExoLocString (``{"StrRef": …, "Value": …}``).
 
     Returns:
-        Extracted text string, or None if no text is available
+        The non-empty ``Value``, or None when there is none or *text_data* is
+        not a CExoLocString.
     """
     if not isinstance(text_data, dict):
         return None
-
     value = text_data.get("Value", "")
     return value if value else None
 
 
-ContextBuilder = Union[str, Callable[[str], str]]
+def record_offset(struct: Dict[str, Any], field_name: str) -> int:
+    """Return the file offset of *field_name*'s field record in *struct*.
+
+    Args:
+        struct: Parsed GFF struct carrying ``_record_offsets``.
+        field_name: GFF field label.
+
+    Returns:
+        The offset, or 0 when the parser recorded none.
+    """
+    offset: int = struct.get("_record_offsets", {}).get(field_name, 0)
+    return offset
+
+
+def list_field(struct: Any, key: str) -> List[Any]:
+    """Return the list stored under *key*, or an empty list.
+
+    Args:
+        struct: Parsed GFF struct (anything else yields ``[]``).
+        key: GFF list field label.
+
+    Returns:
+        The list value, or ``[]`` when *struct* is not a struct or the value is
+        not a list.
+    """
+    value = struct.get(key, []) if isinstance(struct, dict) else []
+    return value if isinstance(value, list) else []
 
 
 class BaseExtractor(ABC):
-    """Abstract base class for content extractors.
-
-    All extractors must implement this interface to ensure consistent behavior.
-    """
-
-    def __init__(self):
-        """Initialize the extractor."""
-
-    def can_extract(self, file_type: str) -> bool:
-        """Check if this extractor can handle the given file type.
-
-        Args:
-            file_type: File extension (e.g., ".dlg", ".uti")
-
-        Returns:
-            True if this extractor can handle this file type
-        """
-        return file_type.lower() in getattr(self, "SUPPORTED_TYPES", [])
+    """Select the translatable strings of one resource kind."""
 
     @abstractmethod
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract translatable content from a file.
+        """Extract translatable content from a resource.
 
         Args:
-            file_path: Path to the file
-            parsed_data: Parsed GFF data dictionary
+            file_path: Path of the resource.
+            parsed_data: Loaded resource: the parsed GFF dict, or for scripts
+                the dict built by the NCS loader.
 
         Returns:
-            ExtractedContent with translatable items
+            The extracted items.
         """
-        pass
-
-    def _extract_text_from_local_string(self, text_data: Dict[str, Any]) -> Optional[str]:
-        """Delegate to module-level :func:`extract_local_string`."""
-        return extract_local_string(text_data)
-
-    def _safe_get(self, data: Dict[str, Any], key: str, default: Any = None) -> Any:
-        """Safely get a value from a dictionary.
-
-        Args:
-            data: Dictionary to get value from
-            key: Key to retrieve
-            default: Default value if key not found
-
-        Returns:
-            Value or default
-        """
-        return data.get(key, default) if isinstance(data, dict) else default
-
-    def _get_list_value(self, data: Dict[str, Any], key: str) -> List[Any]:
-        """Get a list value from dictionary, returning empty list if not found.
-
-        Args:
-            data: Dictionary to get value from
-            key: Key to retrieve
-
-        Returns:
-            List value or empty list
-        """
-        value = self._safe_get(data, key, [])
-        return value if isinstance(value, list) else []
-
-    def _make_name_item(
-        self,
-        parsed_data: Dict[str, Any],
-        file_path: Path,
-        name_field: str,
-        context_prefix: str,
-        item_type: str,
-    ) -> Optional["TranslatableItem"]:
-        """Build a single TranslatableItem from a CExoLocString name field.
-
-        This helper centralises the repeated pattern found across simple
-        object extractors (trigger, placeable, door, store, …):
-        read a localised-string field, extract text, wrap in a
-        TranslatableItem.  Returns *None* when no text is found.
-
-        Args:
-            parsed_data: Parsed GFF data dict.
-            file_path: Source file path (used to derive tag fallback).
-            name_field: GFF field key for the CExoLocString (e.g. "Name").
-            context_prefix: Human-readable label for the context string
-                (e.g. "Trigger", "Door").
-            item_type: Metadata ``type`` value (e.g. "trigger_name").
-
-        Returns:
-            TranslatableItem or None if no text is available.
-        """
-        tag = parsed_data.get("Tag", file_path.stem)
-        text_obj = parsed_data.get(name_field, {})
-        text = self._extract_text_from_local_string(text_obj)
-        if not text:
-            return None
-        return TranslatableItem(
-            text=text,
-            context=f"{context_prefix} name in game (tag: {tag}). Translate naturally.",
-            item_id=f"{tag}_name",
-            location=str(file_path),
-            metadata={
-                "type": item_type,
-                "tag": tag,
-                "record_offset": parsed_data.get("_record_offsets", {}).get(name_field, 0),
-            },
-        )
-
-    def _first_localized_text(
-        self,
-        parsed_data: Dict[str, Any],
-        field_names: Sequence[str],
-    ) -> Optional[str]:
-        """Return the first non-empty localized string among *field_names*."""
-        for field_name in field_names:
-            text = self._extract_text_from_local_string(parsed_data.get(field_name, {}))
-            if text:
-                return text
-        return None
-
-
-class SimpleLocalizedExtractor(BaseExtractor):
-    """Declarative extractor for simple single-struct GFF resources."""
-
-    CONTENT_TYPE = ""
-    TAG_FIELD = "Tag"
-    FIELD_SPECS: Sequence[Dict[str, Any]] = ()
-
-    def _should_extract(self, parsed_data: Dict[str, Any]) -> bool:
-        """Return whether extraction should proceed for *parsed_data*."""
-        return True
-
-    def _build_context(self, context: ContextBuilder, tag: str) -> str:
-        return context(tag) if callable(context) else context
-
-    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract items described by :attr:`FIELD_SPECS`."""
-        tag = parsed_data.get(self.TAG_FIELD, file_path.stem)
-        items: List[TranslatableItem] = []
-
-        if not self._should_extract(parsed_data):
-            return ExtractedContent(
-                content_type=self.CONTENT_TYPE,
-                items=items,
-                source_file=file_path,
-                metadata={"tag": tag, "item_count": 0},
-            )
-
-        for spec in self.FIELD_SPECS:
-            fields_raw = spec.get("fields", ())
-            fields = (fields_raw,) if isinstance(fields_raw, str) else tuple(fields_raw)
-            field_name = next(
-                (f for f in fields if self._extract_text_from_local_string(parsed_data.get(f, {}))),
-                None,
-            )
-            if field_name is None:
-                continue
-            text = self._extract_text_from_local_string(parsed_data.get(field_name, {}))
-            if not text:
-                continue
-
-            items.append(
-                TranslatableItem(
-                    text=text,
-                    context=self._build_context(spec["context"], tag),
-                    item_id=f"{tag}_{spec['item_suffix']}",
-                    location=str(file_path),
-                    metadata={
-                        "type": spec["item_type"],
-                        "tag": tag,
-                        "record_offset": parsed_data.get("_record_offsets", {}).get(field_name, 0),
-                    },
-                )
-            )
-
-        return ExtractedContent(
-            content_type=self.CONTENT_TYPE,
-            items=items,
-            source_file=file_path,
-            metadata={"tag": tag, "item_count": len(items)},
-        )

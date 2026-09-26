@@ -26,12 +26,10 @@ from ..config import (
 from ..file_handlers import (
     ERFReader,
     create_mod_from_directory,
-    read_gff,
 )
-from ..extractors import get_extractor_for_file
-from ..injectors import get_injector_for_content
 from ..injectors.base import InjectedContent
 from ..extractors.base import ExtractedContent, TranslatableItem
+from ..resources import RESOURCE_KINDS, TRANSLATABLE_TYPES
 from ..ai_providers.openrouter_provider import OpenRouterProvider
 from ..translators.translation_manager import TranslationManager
 from ..extractors.base import Translations
@@ -109,29 +107,29 @@ def load_parsed_and_extracted(
     gff_cache: Optional[Dict[Path, Dict[str, Any]]],
     source_encoding: Optional[str] = None,
 ) -> Optional[Tuple[Dict[str, Any], ExtractedContent]]:
-    """Parse *file_path* and run the extractor; return data or ``None`` if skipped."""
-    if file_ext == ".ncs":
-        from ..file_handlers.ncs_parser import parse_ncs, NCSParseError
+    """Load *file_path* and extract its translatable items.
 
-        try:
-            ncs_file = parse_ncs(file_path, source_encoding=source_encoding)
-        except NCSParseError as e:
-            logger.debug("Skipping unparseable NCS file %s: %s", file_path.name, e)
-            return None
-        parsed_data: Dict[str, Any] = {"_ncs_file": ncs_file, "_source_encoding": source_encoding}
-    else:
-        parsed_data = read_gff(file_path, cache=gff_cache, source_encoding=source_encoding)
+    Args:
+        file_path: Resource file.
+        file_ext: Extension selecting the resource kind (any case).
+        gff_cache: Parse cache shared by the run, if any.
+        source_encoding: Code page of the strings (None to detect).
 
-    extractor = get_extractor_for_file(file_ext)
-    if not extractor:
+    Returns:
+        ``(parsed data, extracted content)``, or None when the kind is not
+        translatable, the file cannot be loaded or it has nothing to translate.
+    """
+    kind = RESOURCE_KINDS.get(file_ext.lower())
+    if kind is None:
         logger.debug("No extractor for %s: %s", file_ext, file_path.name)
         return None
-
-    extracted = extractor.extract(file_path, parsed_data)
+    parsed_data = kind.load(file_path, gff_cache, source_encoding)
+    if parsed_data is None:
+        return None
+    extracted = kind.extractor.extract(file_path, parsed_data)
     if not extracted.items:
         logger.debug("No translatable content in: %s", file_path.name)
         return None
-
     return parsed_data, extracted
 
 
@@ -145,20 +143,33 @@ def inject_translations_into_file(
     target_lang: Optional[str] = None,
     source_encoding: Optional[str] = None,
 ) -> Optional[InjectedContent]:
-    """Run the appropriate injector for *extracted* (shared by Phase C and rebuild).
+    """Write the translations of *extracted* into *file_path* (injection and rebuild).
 
-    *source_encoding* must match the decode used when *extracted* was produced:
-    injectors that re-read file bytes (NCS) compare decoded text against the
-    extracted originals.
+    Args:
+        file_path: Resource file to patch in place.
+        parsed_data: Loaded resource; unused, injectors patch the file by the
+            offsets recorded in *extracted*.
+        extracted: Items extracted from the file.
+        translations: Translated text by occurrence.
+        log_updates: Log the number of patched items.
+        target_lang: Target language; selects the code page of written text.
+        source_encoding: Decode used when *extracted* was produced. Script
+            injection re-reads the file and compares against the originals.
+
+    Returns:
+        The injection result, or None when the file kind is not translatable.
     """
-    injector = get_injector_for_content(extracted.content_type)
-    if not injector:
+    kind = RESOURCE_KINDS.get(file_path.suffix.lower())
+    if kind is None:
         return None
-    inject_metadata = {**(extracted.metadata or {}), "type": extracted.content_type}
-    inject_metadata["module_text_encoding"] = module_string_encoding_for_target_lang(target_lang)
-    inject_metadata["module_source_encoding"] = source_encoding
-    inject_metadata["extracted_items"] = extracted.items
-    result: InjectedContent = injector.inject(file_path, parsed_data, translations, inject_metadata)
+    result = kind.inject(
+        file_path,
+        extracted.items,
+        translations,
+        content_type=extracted.content_type,
+        text_encoding=module_string_encoding_for_target_lang(target_lang),
+        source_encoding=source_encoding,
+    )
     if log_updates and result.modified:
         logger.info("Updated %s: %s items", file_path.name, result.items_updated)
     return result
@@ -229,16 +240,12 @@ class PipelineState:
         return extract_dir
 
     def _find_translatable_files(self, directory: Path) -> List[Path]:
-        """Find all translatable files in *directory*."""
-        from ..config import TRANSLATABLE_TYPES
-
-        translatable_files = []
-        for file_path in directory.rglob("*"):
-            if file_path.is_file():
-                ext = file_path.suffix.lower()
-                if ext in TRANSLATABLE_TYPES:
-                    translatable_files.append(file_path)
-        return translatable_files
+        """Return the translatable files under *directory*, in ``rglob`` order."""
+        return [
+            file_path
+            for file_path in directory.rglob("*")
+            if file_path.is_file() and file_path.suffix.lower() in TRANSLATABLE_TYPES
+        ]
 
     def _extract_file(
         self,

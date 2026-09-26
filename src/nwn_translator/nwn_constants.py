@@ -49,7 +49,7 @@ _GENDER_MAP = {
 }
 
 # ---------------------------------------------------------------------------
-# baseitems.2da — standard rows (NWN:EE 1.69+)
+# baseitems.2da — standard rows (NWN 1.69 and NWN:EE)
 # ---------------------------------------------------------------------------
 _BASE_ITEM_MAP = {
     0: "Shortsword",
@@ -128,15 +128,36 @@ _BASE_ITEM_MAP = {
 
 
 def race_label(race_id: int) -> str:
-    """Human-readable race label. Returns ``''`` for unknown/custom IDs."""
+    """Return the racialtypes.2da label of a race.
+
+    Args:
+        race_id: ``Race`` field of a creature.
+
+    Returns:
+        The label, or ``""`` for unknown or custom rows.
+    """
     return _RACE_MAP.get(race_id, "")
 
 
 def gender_label(gender_id: int) -> str:
-    """Human-readable gender label. Returns ``''`` for unknown/custom IDs."""
+    """Return the gender.2da label of a gender.
+
+    Args:
+        gender_id: ``Gender`` field of a creature.
+
+    Returns:
+        The label, or ``""`` for unknown or custom rows.
+    """
     return _GENDER_MAP.get(gender_id, "")
 
 
 def base_item_label(base_item_id: int) -> str:
-    """Human-readable base item type. Returns ``''`` for unknown/custom IDs."""
+    """Return the baseitems.2da label of an item type.
+
+    Args:
+        base_item_id: ``BaseItem`` field of an item.
+
+    Returns:
+        The label, or ``""`` for unknown or custom rows.
+    """
     return _BASE_ITEM_MAP.get(base_item_id, "")

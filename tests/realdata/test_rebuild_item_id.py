@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from nwn_translator.config import TRANSLATABLE_TYPES, TranslationConfig
+from nwn_translator.config import TranslationConfig
+from nwn_translator.resources import TRANSLATABLE_TYPES
 from nwn_translator.main import rebuild_module
 from nwn_translator.pipeline.stages import (
     PipelineState,

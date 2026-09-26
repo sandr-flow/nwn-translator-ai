@@ -94,10 +94,15 @@ _NSS_SNIPPET_CHAR_CAP = 2000
 
 
 def classify_engine_arg(func: str, arg: int) -> Optional[str]:
-    """Verdict for a string sitting at argument ``arg`` of engine call ``func``.
+    """Classify a string passed as argument *arg* of engine routine *func*.
 
-    Returns ``"player"``, ``"internal"``, or ``None`` when the function is not
-    a known engine consumer (author-defined or irrelevant).
+    Args:
+        func: Engine routine name.
+        arg: Zero-based argument position.
+
+    Returns:
+        ``"player"`` (shown to the player), ``"internal"`` (tag, resref,
+        variable name, …) or None when the argument is not a known consumer.
     """
     if (func, arg) in PLAYER_ARG_POSITIONS:
         return "player"
@@ -110,18 +115,21 @@ def classify_engine_arg(func: str, arg: int) -> Optional[str]:
     return None
 
 
-def snippet_for_text(text: str, nss_content: str) -> Optional[str]:
-    """Return a ±N-line window around the first literal occurrence of ``text``.
-
-    Used to feed the LLM gate enough source context to decide whether the
-    literal is player-facing or a technical identifier. Returns ``None`` when
-    the literal is not found verbatim in ``nss_content``.
-    """
-    return snippet_with_position(text, nss_content)[0]
-
-
 def snippet_with_position(text: str, nss_content: str) -> tuple[Optional[str], Optional[int]]:
-    """Return the source excerpt and its normalized character offset."""
+    """Return the source lines around the first quoted occurrence of *text*.
+
+    The excerpt gives the model gate enough source context to decide whether
+    a literal is player-facing: 20 lines on each side of the hit, trimmed to
+    2000 characters centred on the hit line.
+
+    Args:
+        text: Literal text, searched as ``"text"`` verbatim.
+        nss_content: Script source; line endings are normalized to LF.
+
+    Returns:
+        ``(excerpt, character offset of the excerpt in the normalized
+        source)``, or ``(None, None)`` when the literal is not found.
+    """
     nss_content = nss_content.replace("\r\n", "\n").replace("\r", "\n")
     needle = f'"{text}"'
     idx = nss_content.find(needle)
@@ -155,7 +163,18 @@ def snippet_with_position(text: str, nss_content: str) -> tuple[Optional[str], O
 
 
 def read_script_source(file_path: Path, encoding: str) -> str:
-    """Read only the matching script; never borrow context from another file."""
+    """Read the ``.nss`` source next to a compiled script.
+
+    Only the matching script is read; context is never borrowed from another
+    file.
+
+    Args:
+        file_path: Path of the ``.ncs`` resource.
+        encoding: Code page of the source; undecodable bytes are replaced.
+
+    Returns:
+        The source text, or ``""`` when there is no readable source.
+    """
     try:
         return file_path.with_suffix(".nss").read_bytes().decode(encoding, errors="replace")
     except OSError:

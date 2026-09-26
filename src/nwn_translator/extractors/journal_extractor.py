@@ -30,6 +30,9 @@ class JournalExtractor(BaseExtractor):
         items: List[TranslatableItem] = []
         categories = list_field(parsed_data, "Categories")
         for i, category in enumerate(categories):
+            # The parser keeps out-of-range struct references as raw ints.
+            if not isinstance(category, dict):
+                continue
             quest_name = extract_local_string(category.get("Name", {})) or ""
             group = f"category[{i}]"
             shared_context = f"Journal quest: {quest_name}."
@@ -59,6 +62,8 @@ class JournalExtractor(BaseExtractor):
                 else f"Journal entry in category {i}"
             )
             for j, entry in enumerate(list_field(category, "EntryList")):
+                if not isinstance(entry, dict):
+                    continue
                 text = extract_local_string(entry.get("Text", {})) or ""
                 if not text.strip():
                     continue

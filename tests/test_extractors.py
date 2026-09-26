@@ -276,6 +276,26 @@ class TestJournalExtractor:
         # 1 category name + 1 entry text
         assert len(result.items) >= 2
 
+    def test_non_struct_categories_and_entries_are_skipped(self):
+        """Out-of-range struct references stay raw ints; they must not abort the file."""
+        parsed_data = {
+            "Categories": [
+                7,
+                {
+                    "Name": {"StrRef": -1, "Value": "Side Quest"},
+                    "EntryList": [3, {"ID": 1, "Text": {"StrRef": -1, "Value": "Found it."}}],
+                },
+            ]
+        }
+
+        result = JournalExtractor().extract(Path("test.jrl"), parsed_data)
+
+        assert [(item.item_id, item.text) for item in result.items] == [
+            ("category_1_name", "Side Quest"),
+            ("entry_1_1", "Found it."),
+        ]
+        assert result.metadata == {"category_count": 2}
+
 
 class TestItemExtractor:
     """Tests for ItemExtractor."""

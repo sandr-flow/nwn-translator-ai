@@ -10,7 +10,7 @@ of the entities that dialog mentions.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..config import ProgressCallback
 from ..extractors.base import TranslatableItem, extract_local_string
@@ -43,15 +43,33 @@ _GIT_DIALOG_ACTOR_LISTS: Tuple[Tuple[str, str], ...] = (
 #: Blueprints of non-creature objects that can own a dialog.
 _DIALOG_OBJECT_KINDS: Dict[str, str] = {".utp": "placeable", ".utd": "door"}
 
-#: A named world entity: ``(WorldContext registry, name field, category, candidate source)``.
-_NamedSpec = Tuple[str, str, str, str]
+
+@dataclass(frozen=True)
+class _NamedSpec:
+    """How the world scan registers a tagged, named entity.
+
+    Attributes:
+        count: Key of the entity kind in the scan summary counts.
+        registry: The ``WorldContext`` dict (tag -> name) the entity goes into.
+        name_field: CExoLocString field holding the name.
+        category: Category of the name candidate.
+        source: Evidence source of the name candidate.
+    """
+
+    count: str
+    registry: Callable[["WorldContext"], Dict[str, str]]
+    name_field: str
+    category: str
+    source: str
+
+
 #: Blueprints registered by tag and name.
 _NAMED_BLUEPRINTS: Dict[str, _NamedSpec] = {
-    ".are": ("areas", "Name", "location", "are_name"),
-    ".uti": ("items", "LocalizedName", "item", "uti_name"),
+    ".are": _NamedSpec("areas", lambda ctx: ctx.areas, "Name", "location", "are_name"),
+    ".uti": _NamedSpec("items", lambda ctx: ctx.items, "LocalizedName", "item", "uti_name"),
 }
 #: Journal categories (``.jrl`` ``Categories`` structs) register quests the same way.
-_JOURNAL_CATEGORY: _NamedSpec = ("quests", "Name", "quest", "jrl_category")
+_JOURNAL_CATEGORY = _NamedSpec("quests", lambda ctx: ctx.quests, "Name", "quest", "jrl_category")
 
 #: One WORLD CONTEXT entry: ``(name, tag, rendered line)``.
 _Row = Tuple[str, str, str]
@@ -510,14 +528,14 @@ class WorldScanner:
                 if ext == ".utc":
                     counts["npcs"] += _scan_creature(context, data, resource)
                 elif ext == ".jrl":
-                    counts["quests"] += sum(
+                    counts[_JOURNAL_CATEGORY.count] += sum(
                         _register_named(context, category, _JOURNAL_CATEGORY, resource)
                         for category in data.get("Categories", [])
                         if isinstance(category, dict)
                     )
                 elif ext in _NAMED_BLUEPRINTS:
                     spec = _NAMED_BLUEPRINTS[ext]
-                    counts[spec[0]] += _register_named(context, data, spec, resource)
+                    counts[spec.count] += _register_named(context, data, spec, resource)
                 elif ext == ".git":
                     counts["actors"] += _scan_placements(context, data)
                 else:
@@ -582,14 +600,13 @@ def _register_named(
     Returns:
         ``True`` when the struct had both a tag and a name.
     """
-    registry, name_field, category, source = spec
     tag = struct.get("Tag", "")
-    name = _local_string(struct, name_field)
+    name = _local_string(struct, spec.name_field)
     if not (tag and name):
         return False
-    getattr(context, registry)[tag] = name
+    spec.registry(context)[tag] = name
     context.candidates.add(
-        name, category=category, source=source, resource=resource, field=name_field
+        name, category=spec.category, source=spec.source, resource=resource, field=spec.name_field
     )
     return True
 

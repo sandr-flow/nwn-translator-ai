@@ -64,7 +64,7 @@ def test_items_roundtrip(tmp_path: Path) -> None:
 
 def test_items_roundtrip_keeps_unicode_line_separators(tmp_path: Path) -> None:
     """U+2028 and U+0085 stay unescaped in JSONL; they are not line breaks."""
-    text = "First second\u0085third\r\nfourth"
+    text = "First\u2028second\u0085third\r\nfourth"
     contents = [
         ExtractedContent(
             content_type="item",

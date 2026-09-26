@@ -40,7 +40,14 @@ def write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
 
 
 def _read_json(path: Path) -> Any:
-    """Read a UTF-8 JSON file."""
+    """Read a UTF-8 JSON file.
+
+    Args:
+        path: The file.
+
+    Returns:
+        The decoded value.
+    """
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 

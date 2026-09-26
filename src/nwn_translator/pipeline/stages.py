@@ -418,6 +418,12 @@ def _unpack(state: PipelineState) -> Path:
     The system temporary directory is used when ``config.temp_dir`` does not
     exist. Without ``skip_cleanup`` the directory is a :attr:`PipelineState.temp_dir`
     that :func:`run_pipeline` removes.
+
+    Args:
+        state: Run state; its ``temp_dir`` is set unless ``skip_cleanup``.
+
+    Returns:
+        The directory holding the unpacked resources.
     """
     config = state.config
     parent = config.temp_dir if config.temp_dir.exists() else None
@@ -480,7 +486,16 @@ def stage_worldscan(state: PipelineState) -> None:
 def _extract_file(
     state: PipelineState, file_path: Path
 ) -> Optional[Tuple[Dict[str, Any], ExtractedContent, str]]:
-    """Load one file and extract its items, for :func:`stage_extract`."""
+    """Load one file and extract its items, for :func:`stage_extract`.
+
+    Args:
+        state: Run state (parse cache, source code page).
+        file_path: Resource file.
+
+    Returns:
+        ``(parsed data, extracted content, lower-case extension)``, or None
+        when the file has nothing to translate.
+    """
     file_ext = file_path.suffix.lower()
     loaded = load_parsed_and_extracted(
         file_path, file_ext, state.gff_cache, source_encoding=state.source_encoding
@@ -766,7 +781,17 @@ def _inject_file(
     translations: Translations,
     file_path: Path,
 ) -> Optional[InjectedContent]:
-    """Patch the translations of one extracted file, for :func:`stage_inject`."""
+    """Patch the translations of one extracted file, for :func:`stage_inject`.
+
+    Args:
+        state: Run state (target language, source code page).
+        extracted_map: Extracted files.
+        translations: Translation per occurrence.
+        file_path: The file to patch; a key of *extracted_map*.
+
+    Returns:
+        The injection result, or None when the file kind is not translatable.
+    """
     parsed_data, extracted, _ext = extracted_map[file_path]
     return inject_translations_into_file(
         file_path,
@@ -856,7 +881,11 @@ def stage_repack(state: PipelineState) -> Path:
 
 
 def _log_summary(state: PipelineState) -> None:
-    """Log the processed files, translated items and errors of the run."""
+    """Log the processed files, translated items and errors of the run.
+
+    Args:
+        state: Finished run; the errors are listed only with ``config.verbose``.
+    """
     errors = state.stats["errors"]
     logger.info(_SUMMARY_RULE)
     logger.info("Translation Summary")

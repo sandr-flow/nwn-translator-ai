@@ -176,7 +176,6 @@ def run_translation_pipeline(config: TranslationConfig) -> Tuple[Path, ModuleTra
     """Validate *config*, translate the module and return the translator too.
 
     The library entry point and the web task runner share this startup path.
-    ``config.api_key`` is set to the resolved key.
 
     Args:
         config: Run settings.
@@ -193,7 +192,7 @@ def run_translation_pipeline(config: TranslationConfig) -> Tuple[Path, ModuleTra
         raise ValueError(f"Input file not found: {config.input_file}")
     if config.input_file.suffix.lower() not in _ARCHIVE_SUFFIXES:
         raise ValueError("Input file must be a .mod, .erf, or .hak file")
-    config.api_key = config.get_api_key()
+    config.get_api_key()  # raises ValueError without a key, before any work
 
     translator = ModuleTranslator(config)
     return translator.translate(), translator

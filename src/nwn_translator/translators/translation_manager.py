@@ -1,60 +1,67 @@
-"""Translation manager for orchestrating the translation process.
+"""Batch translation of every non-dialog string of a module.
 
-This module manages the translation workflow, coordinating between extractors,
-AI providers, and injectors.
+:class:`TranslationManager` takes the extracted occurrences of a run, lets the
+script gate decide which script literals may change, sends each distinct request
+once (see :mod:`.work_plan` and :mod:`.model_calls`) and fans every accepted answer
+out to all occurrences that share it. An answer is accepted only when it carries
+exactly the source's tokens and tags; otherwise the request is retried and the
+last answer is finally cleaned up.
 """
 
-import asyncio
 import logging
-import re
-import threading
 from dataclasses import replace
-from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
     Callable,
     Dict,
+    Hashable,
     Iterable,
     List,
     Optional,
+    Protocol,
     Set,
-    cast,
 )
 
-from tqdm import tqdm
-
+from ..ai_providers import TranslationProvider, TranslationResult
 from ..config import TranslationConfig
-from ..glossary import GLOSSARY_MAX_CHARS, restore_wrapping_quotes, terminology_block
-from ..prompts._builder import (
-    CONTENT_PROFILE_DEFAULT,
-    CONTENT_PROFILE_SCRIPT_MESSAGE,
-    CONTENT_PROFILE_SHORT_LABEL,
-)
-from ..prompts.token_retry import (
-    PRESERVE_INLINE_MARKUP,
-    PRESERVE_PLACEHOLDERS,
-    expected_artifacts_line,
-    previous_mismatch_lines,
-)
-from ..translation_logging import logged_model_call, translation_log_writer_for_config, write_trace
-from ..extractors.ncs_extractor import ncs_hard_veto_reason
+from ..extractors.base import ExtractedContent, Occurrence, TranslatableItem, Translations
+from ..glossary import Glossary, restore_wrapping_quotes, terminology_block
+from ..translation_logging import translation_log_writer_for_config, write_trace
+from .model_calls import CallLimits, ModelCaller
+from .ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
+from .script_gate import ScriptGate, add_script_context
+from .token_handler import sanitize_text
+from .work_plan import BatchLimits, WorkItem, dedup_key, plan_work
 
 if TYPE_CHECKING:
     from ..context.dialog_speakers import DialogSpeaker
-    from ..glossary import Glossary
-from ..ai_providers import TranslationItem, TranslationProvider, TranslationResult
-from ..ai_providers.batch_payload import batch_payload_chars
-from ..extractors.base import ExtractedContent, Occurrence, Translations
-from .token_handler import TokenHandler, sanitize_text
+
+logger = logging.getLogger(__name__)
 
 
-def _unescape_literal_newlines(original: str, translated: str) -> str:
-    """Turn model ``\\n`` sequences into real newlines when the source has them.
+class ItemProgress(Protocol):
+    """Per-item progress counter of a run."""
 
-    Only runs when *original* contains a real newline. Leaves ordinary
-    backslashes alone when the source has no line breaks.
+    def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
+        """Count *by* finished items of *filename*.
+
+        Args:
+            by: Items finished.
+            filename: Resource the items belong to.
+        """
+
+
+def unescape_literal_newlines(original: str, translated: str) -> str:
+    """Turn ``\\n`` sequences of a model answer into newlines when the source has them.
+
+    Args:
+        original: Source text.
+        translated: Model answer.
+
+    Returns:
+        *translated*, with literal ``\\r\\n``, ``\\n`` and ``\\r`` replaced by
+        newlines only when *original* contains a line break.
     """
     if "\n" not in original and "\r" not in original:
         return translated
@@ -63,166 +70,120 @@ def _unescape_literal_newlines(original: str, translated: str) -> str:
     return translated.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
 
 
-# Placeholders produced by TokenHandler.sanitize() that carry no translatable
-# content and must be stripped before checking if a sanitized string is empty.
-# The core is matched exactly (8-hex nonce + decimal counter, see
-# TokenHandler._make_placeholder): a permissive [A-Za-z0-9_]+ would greedily
-# swallow a single word sandwiched between two placeholders
-# (__NWN_INLINE_x_0__Attack__NWN_INLINE_x_1__) and misclassify it as empty.
-_PLACEHOLDER_CORE = r"(?:NWN_INLINE|NWN_TOKEN)_[0-9a-f]{8}_\d+"
-_NON_TRANSLATABLE_RE = re.compile(
-    rf"__{_PLACEHOLDER_CORE}__"
-    rf"|\[\[{_PLACEHOLDER_CORE}\]\]"
-    rf"|<<\[{_PLACEHOLDER_CORE}\]>>"
-    rf"|<\[{_PLACEHOLDER_CORE}\]>"
-)
-
-
-def _is_empty_after_sanitize(sanitized: str) -> bool:
-    """True when *sanitized* has no letter/digit once placeholders are removed.
-
-    NWN token placeholders (``<<TOKEN_n>>``) and internal NWN-tag helper
-    placeholders are stripped; the remainder is scanned for any Unicode
-    letter or digit.  Whitespace, punctuation, and lone underscores do not
-    count as translatable content.
-    """
-    if not sanitized:
-        return True
-    stripped = _NON_TRANSLATABLE_RE.sub("", sanitized)
-    return not re.search(r"[^\W_]", stripped, flags=re.UNICODE)
-
-
-logger = logging.getLogger(__name__)
-
-_NCS_DIAGNOSTIC_SAMPLE_LIMIT = 50
-
-
 class TranslationManager:
-    """Manager for the translation process."""
+    """Translates occurrences in deduplicated single and batch requests.
+
+    Attributes:
+        config: Run settings.
+        provider: Model provider.
+        glossary: Proper-name glossary offered to the model, if any.
+        batch_limits: Budgets of one batch request.
+        call_limits: Timeouts and retry budget of requests.
+        stats: ``items_translated`` (accepted distinct requests), ``errors``
+            (one line per rejected request) and ``ncs_diagnostics``.
+        failed_items: Occurrences whose request was rejected, with every
+            occurrence that shares the request. Script literals refused by the
+            gate are not failures.
+    """
 
     def __init__(
         self,
         config: TranslationConfig,
         provider: TranslationProvider,
-        glossary: Optional["Glossary"] = None,
+        glossary: Optional[Glossary] = None,
     ):
-        """Initialize translation manager.
+        """Create a manager for one run.
 
         Args:
-            config: Translation configuration
-            provider: AI provider instance
-            glossary: Optional pre-built proper-name glossary for translation prompts
+            config: Run settings.
+            provider: Model provider.
+            glossary: Proper-name glossary offered to the model, if any.
         """
         self.config = config
         self.provider = provider
         self.glossary = glossary
+        self.batch_limits = BatchLimits()
+        self.call_limits = CallLimits()
         self._log_writer = translation_log_writer_for_config(
             config.translation_log,
             config.translation_log_writer,
         )
-        self.token_handler = TokenHandler(preserve_standard_tokens=config.preserve_tokens)
-
-        # Statistics
         self.stats: Dict[str, Any] = {
-            "files_processed": 0,
             "items_translated": 0,
-            "cache_hits": 0,
             "errors": [],
-            "ncs_diagnostics": {
-                "total": 0,
-                "extracted": 0,
-                "approved": 0,
-                "skipped_hard_veto": 0,
-                "skipped_fail_closed": 0,
-                "translated": 0,
-                "timeout": 0,
-                "retry_recovered": 0,
-                "failed": 0,
-                "patch_failed": 0,
-                "samples": [],
-            },
+            "ncs_diagnostics": new_ncs_diagnostics(),
         }
-
-        # Reuse only equivalent translation requests; never glossary dictionary forms.
-        self.translation_cache: Dict[tuple, tuple[str, Occurrence]] = {}
-        self._stats_lock = threading.Lock()
-
-        #: LLM gate (or deterministic bypass) approval per ``item_id`` for ``ncs_string`` items.
-        self._ncs_gate_approval: Dict[Occurrence, bool] = {}
-        #: Originals sent to the model whose output was rejected (API fail, empty, unparseable).
         self.failed_items: Set[Occurrence] = set()
-        #: Shared per-item progress counter (set during ``translate_content``).
-        self._active_item_progress: Optional[Any] = None
+        self._diagnostics = NcsDiagnostics(self.stats["ncs_diagnostics"], self._log_writer)
 
-    def _ncs_stats(self) -> Dict[str, Any]:
-        return cast(
-            Dict[str, Any],
-            self.stats.setdefault(
-                "ncs_diagnostics",
-                {
-                    "total": 0,
-                    "extracted": 0,
-                    "approved": 0,
-                    "skipped_hard_veto": 0,
-                    "skipped_fail_closed": 0,
-                    "translated": 0,
-                    "timeout": 0,
-                    "retry_recovered": 0,
-                    "failed": 0,
-                    "patch_failed": 0,
-                    "samples": [],
-                },
-            ),
-        )
-
-    @staticmethod
-    def _is_ncs_item(item: Any) -> bool:
-        return (getattr(item, "metadata", None) or {}).get("type") == "ncs_string"
-
-    def _record_ncs_diagnostic(
+    def translate_content(
         self,
-        item: Optional[Any],
-        *,
-        reason: str,
-        count_field: Optional[str] = None,
-        error: Optional[str] = None,
-    ) -> None:
-        """Record one structured NCS diagnostic sample and optional counter."""
-        if item is None:
-            sample: Dict[str, Any] = {"reason": reason}
-        else:
-            meta = item.metadata or {}
-            loc = item.location or ""
-            sample = {
-                "file": Path(loc).name if loc else None,
-                "item_id": item.item_id,
-                "offset": meta.get("offset"),
-                "confidence": meta.get("confidence"),
-                "ncs_hint": meta.get("ncs_hint"),
-                "reason": reason,
-                "text_prefix": (item.text or "")[:120],
-            }
-        if error:
-            sample["error"] = error
+        content: ExtractedContent,
+        item_progress: Optional[ItemProgress] = None,
+    ) -> Translations:
+        """Translate every non-blank occurrence of *content*.
 
-        with self._stats_lock:
-            ncs_stats = self._ncs_stats()
-            if count_field:
-                ncs_stats[count_field] = int(ncs_stats.get(count_field, 0)) + 1
-            samples = ncs_stats.setdefault("samples", [])
-            if len(samples) < _NCS_DIAGNOSTIC_SAMPLE_LIMIT:
-                samples.append(sample)
+        Only requests with equal text, context, profile, hint and terminology share
+        an answer; every answer stays addressed by resource and item id. Rejected
+        requests are recorded in :attr:`stats` and :attr:`failed_items`.
 
-        event = {"event": "ncs_diagnostic", **sample}
-        try:
-            self._log_writer.write(event)
-        except Exception as log_exc:
-            logger.debug("Failed to write NCS diagnostic event: %s", log_exc)
+        Args:
+            content: Occurrences to translate (usually of several resources).
+            item_progress: Counter bumped once per non-blank occurrence.
 
-    def _increment_ncs_count(self, field: str, by: int = 1) -> None:
-        with self._stats_lock:
-            ncs_stats = self._ncs_stats()
-            ncs_stats[field] = int(ncs_stats.get(field, 0)) + by
+        Returns:
+            Accepted translation per occurrence.
+
+        Raises:
+            ValueError: An occurrence has no resource or item id.
+            TranslationCancelled: The run was cancelled.
+            TimeoutError: A pass exceeded its overall budget.
+        """
+        work = [self._prepare(item) for item in content.items if item.has_text()]
+        if not work:
+            return {}
+
+        def bump(filename: str) -> None:
+            if item_progress is not None:
+                item_progress.bump(filename=filename)
+
+        ncs_count = sum(1 for w in work if w.is_ncs)
+        if ncs_count:
+            self._diagnostics.count("total", ncs_count)
+            self._diagnostics.count("extracted", ncs_count)
+        gate = ScriptGate(self.config, self.provider, self._log_writer, self._diagnostics)
+        approvals = gate.decide([w.item for w in work])
+        approved = [w for w in work if not w.is_ncs or approvals.get(w.key, False)]
+        add_script_context([w.item for w in approved if w.is_ncs])
+        for w in work:
+            if w.is_ncs and not approvals.get(w.key, False):
+                bump(w.key[0])
+
+        groups: Dict[Hashable, List[WorkItem]] = {}
+        for w in approved:
+            groups.setdefault(dedup_key(w, self._terminology), []).append(w)
+        if not groups:
+            return {}
+        translations = self._translate_distinct(
+            [group[0] for group in groups.values()], lambda w: bump(w.key[0])
+        )
+        for group in groups.values():
+            representative = group[0].key
+            for duplicate in group[1:]:
+                if representative in translations:
+                    translations[duplicate.key] = translations[representative]
+                    write_trace(
+                        self._log_writer,
+                        {
+                            "event": "translation_reuse",
+                            "occurrence": duplicate.key,
+                            "representative": representative,
+                        },
+                    )
+                elif representative in self.failed_items:
+                    self.failed_items.add(duplicate.key)
+                bump(duplicate.key[0])
+        return translations
 
     def log_per_file_item(
         self,
@@ -235,9 +196,16 @@ class TranslationManager:
         success: bool = True,
         speaker: Optional["DialogSpeaker"] = None,
     ) -> None:
-        """Write one translation log row for web per-file grouping.
+        """Write one translation log row for the web editor.
 
-        *speaker* labels a dialog line for the editor; other rows carry no field.
+        Args:
+            original: Source text.
+            translated: Translation (the source text for a failed item).
+            context: Prompt context of the occurrence.
+            source_filename: Resource file name.
+            item_id: Occurrence id within the resource.
+            success: False for an occurrence whose translation was rejected.
+            speaker: Speaker of a dialog line; other rows carry no speaker.
         """
         entry: Dict[str, Any] = {
             "original": original,
@@ -250,1326 +218,285 @@ class TranslationManager:
         }
         if speaker is not None:
             entry["speaker"] = speaker
-        try:
-            self._log_writer.write(entry)
-        except Exception:
-            pass
+        write_trace(self._log_writer, entry)
 
-    def _glossary_block_for_texts(self, texts: Iterable[str]) -> Optional[str]:
-        """Return a glossary block narrowed to entries present in *texts*.
+    def get_statistics(self) -> Dict[str, Any]:
+        """Return :attr:`stats` plus ``total_errors``."""
+        return {**self.stats, "total_errors": len(self.stats["errors"])}
 
-        Returns *None* when no glossary is configured or no entries match
-        the batch — callers should omit the field from the prompt in that
-        case so the variable half of the system message stays empty.
-        """
-        return terminology_block(texts, self.config.target_lang, self.glossary) or None
+    def _prepare(self, item: TranslatableItem) -> WorkItem:
+        """Sanitize one occurrence; its copy names its resource for batch payloads."""
+        sanitized, handler = sanitize_text(item.text, preserve_tokens=self.config.preserve_tokens)
+        prepared = replace(item, metadata={**item.metadata, "batch_resource": item.key[0]})
+        return WorkItem(item=prepared, sanitized=sanitized, handler=handler)
 
-    def _translation_cache_key_for_item_data(self, item_data: dict) -> tuple:
-        """Only identical text and semantic context may share a provider answer."""
-        item = item_data["item"]
-        return (
-            item_data["sanitized"],
-            item.context or "",
-            item.metadata.get("shared_context", ""),
-            self._content_profile_for_item(item_data),
-            item.metadata.get("hint")
-            or item.metadata.get("ncs_hint")
-            or item.metadata.get("type", ""),
-            self._glossary_block_for_texts([item.text, item.context]),
-        )
+    def _terminology(self, texts: Iterable[Optional[str]]) -> Optional[str]:
+        """Return the glossary block for *texts*, or None when no term matches.
 
-    def _ncs_item_passes_gate(self, item) -> bool:
-        if not self._is_ncs_item(item):
-            return True
-        return self._ncs_gate_approval.get(item.key, False)
-
-    # Max entries per LLM gate batch. Each entry ships a bounded nss_snippet
-    # (~2000 chars cap), so 20 entries stays well under the chat context window
-    # and keeps latency manageable; the provider splits further on parse fail.
-    _NCS_GATE_BATCH_SIZE = 20
-
-    def _run_ncs_llm_gate(self, translation_items: List[dict]) -> None:
-        """Populate :attr:`_ncs_gate_approval` for all ``ncs_string`` items.
-
-        Hard vetoes always reject. Normally every candidate needs an explicit
-        boolean approval from the provider. Disabling the model gate permits
-        only bytecode-proven display arguments, never unproven candidates.
-        """
-        self._ncs_gate_approval.clear()
-        pending: List[dict] = []  # items awaiting LLM verdict
-        for itd in translation_items:
-            item = itd["item"]
-            meta = item.metadata or {}
-            if meta.get("type") != "ncs_string":
-                continue
-            iid = item.key
-            hard_veto = ncs_hard_veto_reason(
-                item.text,
-                proven_player=bool(meta.get("proven_player")),
-                is_concat=bool(meta.get("concat_parts")),
-                player_candidate=bool(meta.get("player_candidate"))
-                and not self.config.skip_ncs_llm_gate,
-            )
-            if hard_veto:
-                self._ncs_gate_approval[iid] = False
-                self._record_ncs_diagnostic(
-                    item,
-                    reason=hard_veto,
-                    count_field="skipped_hard_veto",
-                )
-                continue
-            if self.config.skip_ncs_llm_gate:
-                approved = meta.get("proven_player") is True
-                self._ncs_gate_approval[iid] = approved
-                self._record_ncs_diagnostic(
-                    item,
-                    reason="gate_bypassed_proven" if approved else "gate_disabled_unproven",
-                    count_field="approved" if approved else "skipped_fail_closed",
-                )
-                continue
-            pending.append(itd)
-
-        if not pending:
-            return
-
-        entries: List[Dict[str, Any]] = []
-        for i, itd in enumerate(pending):
-            item = itd["item"]
-            meta = item.metadata or {}
-            loc = item.location or ""
-            entries.append(
-                {
-                    "key": str(i),
-                    "text": item.text,
-                    "file": Path(loc).name if loc else "",
-                    "offset": meta.get("offset"),
-                    "hint": meta.get("ncs_hint", ""),
-                    "nss_snippet": meta.get("nss_snippet"),
-                    "nss_start": meta.get("nss_start"),
-                    "bytecode_context": meta.get("bytecode_context"),
-                    "confidence": meta.get("confidence"),
-                }
-            )
-
-        verdicts: Dict[str, Dict[str, Any]] = {}
-        from ..async_utils import run_async
-
-        async def gate_all() -> Dict[str, Dict[str, Any]]:
-            limit = max(1, int(self.config.max_concurrent_requests))
-            sem = asyncio.Semaphore(limit)
-            chunks: List[List[Dict[str, Any]]] = [
-                entries[start : start + self._NCS_GATE_BATCH_SIZE]
-                for start in range(0, len(entries), self._NCS_GATE_BATCH_SIZE)
-            ]
-
-            async def run_chunk(chunk: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-                rekeyed = [{**e, "key": str(j)} for j, e in enumerate(chunk)]
-                async with sem:
-                    result = await logged_model_call(
-                        self._log_writer,
-                        self.provider.classify_ncs_translate_gate_batch_async,
-                        trace_context={
-                            "occurrences": [
-                                pending[int(entry["key"])]["item"].key for entry in chunk
-                            ]
-                        },
-                        entries=rekeyed,
-                        source_lang=self.config.source_lang,
-                    )
-                return {
-                    e["key"]: result.get(str(j), {"translate": False, "reason": "gate_missing_key"})
-                    for j, e in enumerate(chunk)
-                }
-
-            chunk_results = await asyncio.gather(*(run_chunk(c) for c in chunks))
-            merged: Dict[str, Dict[str, Any]] = {}
-            for cr in chunk_results:
-                merged.update(cr)
-            return merged
-
-        try:
-            # No overall timeout: large modules may need many minutes to gate.
-            # Per-call timeouts and retries live in the provider layer.
-            verdicts = run_async(gate_all(), timeout=None)
-        except Exception as exc:
-            logger.warning(
-                "NCS LLM gate failed for %d item(s): %s — defaulting to reject.",
-                len(pending),
-                exc,
-            )
-
-        for i, itd in enumerate(pending):
-            item = itd["item"]
-            iid = item.key
-            cell = verdicts.get(str(i), {"translate": False, "reason": "gate_unavailable"})
-            if cell.get("translate") is True:
-                self._ncs_gate_approval[iid] = True
-                self._record_ncs_diagnostic(
-                    item,
-                    reason=f"gate_approved:{cell.get('reason', 'unspecified')}",
-                    count_field="approved",
-                )
-            else:
-                self._ncs_gate_approval[iid] = False
-                self._record_ncs_diagnostic(
-                    item,
-                    reason=f"gate_rejected:{cell.get('reason', 'unspecified')}",
-                    count_field="skipped_fail_closed",
-                )
-
-    def translate_content(
-        self,
-        content: ExtractedContent,
-        item_progress: Optional[Any] = None,
-    ) -> Translations:
-        """Translate multiple items individually, skipping duplicates.
-
-        Only equivalent text, context, profile and terminology share a request.
-        Every answer remains addressed by resource and extracted item ID.
+        The provider treats None and an empty string alike (it falls back to the race
+        terms of the text); None is kept so that the logged request arguments stay
+        unchanged. Missing texts (an item without context) match nothing.
 
         Args:
-            content: ExtractedContent with items
+            texts: Texts of one request; None entries are skipped.
 
         Returns:
-            Translation mapping ((resource, item_id) → translated text)
+            The glossary block, or None.
+        """
+        present = (text for text in texts if text)
+        return terminology_block(present, self.config.target_lang, self.glossary) or None
+
+    def _translate_distinct(
+        self, work: List[WorkItem], done: Callable[[WorkItem], None]
+    ) -> Translations:
+        """Translate distinct requests: passthrough, main pass, then fallbacks.
+
+        Results are processed in a fixed order: long singles, batch results (failed
+        batch items are set aside), failed script strings through their fallback
+        request, then the other failed batch items one by one.
+
+        Args:
+            work: Distinct requests, in input order.
+            done: Called once per item when its first-pass request is finished.
+
+        Returns:
+            Accepted translation per request.
         """
         translations: Translations = {}
-        items = [item for item in content.items if item.has_text()]
-
-        if not items:
-            return translations
-
-        self._active_item_progress = item_progress
-
-        source_filename = Path(content.source_file).name if content.source_file else None
-
-        # Prepare translation items (sanitize tokens)
-        translation_items = []
-        for item in items:
-            sanitized, handler = sanitize_text(
-                item.text, preserve_tokens=self.config.preserve_tokens
-            )
-            translation_items.append(
-                {
-                    "item": replace(
-                        item, metadata={**item.metadata, "batch_resource": item.key[0]}
-                    ),
-                    "sanitized": sanitized,
-                    "full_sanitized": sanitized,
-                    "handler": handler,
-                }
-            )
-
-        ncs_item_count = sum(1 for itd in translation_items if self._is_ncs_item(itd["item"]))
-        if ncs_item_count:
-            with self._stats_lock:
-                ncs_stats = self._ncs_stats()
-                ncs_stats["total"] = int(ncs_stats.get("total", 0)) + ncs_item_count
-                ncs_stats["extracted"] = int(ncs_stats.get("extracted", 0)) + ncs_item_count
-
-        self._run_ncs_llm_gate(translation_items)
-        self._add_script_context(translation_items)
-
-        # Per-session cache check
-        # Avoids duplicate API calls when the same string appears multiple times across files.
-
-        use_tqdm = not self.config.quiet and self.config.progress_callback is None
-        iterable = (
-            tqdm(
-                translation_items,
-                desc=f"Translating {content.content_type}",
-                disable=False,
-                leave=False,
-            )
-            if use_tqdm
-            else translation_items
+        plan = plan_work(work, self.batch_limits, self._terminology)
+        caller = ModelCaller(
+            self.config,
+            self.provider,
+            self._log_writer,
+            self._diagnostics,
+            self._terminology,
+            self.call_limits,
         )
-        n_items = len(translation_items)
-        uncached_items: List[dict] = []
 
-        for idx, item_data in enumerate(iterable):
-            if self.config.progress_callback is not None and item_progress is None:
-                self.config.progress_callback(
-                    "translating_item",
-                    idx,
-                    n_items,
-                    content.content_type,
-                )
-            item = item_data["item"]
-            sanitized = item_data["sanitized"]
-            handler = item_data["handler"]
-
-            if not self._ncs_item_passes_gate(item):
-                if item_progress is not None:
-                    item_progress.bump(filename=content.content_type)
-                continue
-
-            # Cache hit?
-            cache_key = self._translation_cache_key_for_item_data(item_data)
-            if cache_key in self.translation_cache:
-                cached_text, representative = self.translation_cache[cache_key]
-                self._log_writer.write(
-                    {
-                        "event": "translation_reuse",
-                        "occurrence": item.key,
-                        "representative": representative,
-                    }
-                )
-                outcome = handler.finalize_translation(
-                    cached_text,
-                    allow_cleanup=True,
-                )
-                translated = _unescape_literal_newlines(item.text, outcome.final_text)
-                translated = restore_wrapping_quotes(item.text, translated)
-                translations[item.key] = translated
-                if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
-                    self._increment_ncs_count("translated")
-                with self._stats_lock:
-                    self.stats["cache_hits"] = self.stats.get("cache_hits", 0) + 1
-                logger.debug("Cache hit for '%s…'", sanitized[:40])
-                if item_progress is not None:
-                    item_progress.bump(filename=content.content_type)
-                continue
-
-            uncached_items.append(item_data)
-
-        if uncached_items:
-            # One deduplication pass, with explicit fan-out to occurrence addresses.
-            groups: Dict[tuple, List[dict]] = {}
-            for item_data in uncached_items:
-                key = self._translation_cache_key_for_item_data(item_data)
-                groups.setdefault(key, []).append(item_data)
-            self._translate_uncached_concurrent(
-                [group[0] for group in groups.values()],
-                translations,
-                source_filename=source_filename,
+        if plan.passthrough:
+            logger.info(
+                "Skipping API for %d item(s) with no translatable content "
+                "(tokens/punctuation only)",
+                len(plan.passthrough),
             )
-            for group in groups.values():
-                representative = group[0]["item"].key
-                for duplicate in group[1:]:
-                    item = duplicate["item"]
-                    if representative in translations:
-                        translations[item.key] = translations[representative]
-                        write_trace(
-                            self._log_writer,
-                            {
-                                "event": "translation_reuse",
-                                "occurrence": item.key,
-                                "representative": representative,
-                            },
-                        )
-                        self.stats["cache_hits"] += 1
-                    elif representative in self.failed_items:
-                        self.failed_items.add(item.key)
-                    self._async_bump(duplicate)
+        for w in plan.passthrough:
+            # The sanitized form restores to the source itself.
+            translated = self._accept(w, w.sanitized)
+            if translated is None:
+                self._record_rejected(w, "text without translatable content was rejected")
+            else:
+                translations[w.key] = translated
+            done(w)
 
-        self._active_item_progress = None
+        single_results, batch_results = caller.run_main_pass(plan.singles, plan.batches, done)
+        if plan.batches:
+            logger.info(
+                "Batch-translated %d items in %d batch(es), %d long items individually",
+                sum(len(batch) for batch in plan.batches),
+                len(plan.batches),
+                len(plan.singles),
+            )
+        for w, result in zip(plan.singles, single_results):
+            self._process(caller, translations, w, result)
+
+        failed_ncs: List[WorkItem] = []
+        timed_out: Set[Occurrence] = set()
+        failed_other: List[WorkItem] = []
+        batch_work = [w for batch in plan.batches for w in batch]
+        for w, result in zip(batch_work, batch_results):
+            if result.success:
+                self._process(caller, translations, w, result)
+            elif w.is_ncs:
+                failed_ncs.append(w)
+                if result.error and "timeout" in result.error.lower():
+                    timed_out.add(w.key)
+            else:
+                failed_other.append(w)
+
+        if failed_ncs:
+            ncs_results = self._retry_failed_scripts(caller, failed_ncs, timed_out)
+            for w, result in zip(failed_ncs, ncs_results):
+                self._process(caller, translations, w, result)
+        if failed_other:
+            logger.info("Retrying %d failed batch items individually", len(failed_other))
+            other_results = caller.run_fallback_pass(failed_other, scripts=False)
+            for w, result in zip(failed_other, other_results):
+                self._process(caller, translations, w, result)
         return translations
 
-    def _add_script_context(self, items: List[dict]) -> None:
-        """Provide local approved speech as context, without changing gate decisions."""
-        scripts: Dict[str, List[Any]] = {}
-        for data in items:
-            item = data["item"]
-            if self._is_ncs_item(item) and self._ncs_item_passes_gate(item):
-                scripts.setdefault(item.key[0], []).append(item)
-        for script_items in scripts.values():
-            ordered = sorted(script_items, key=lambda item: item.metadata.get("offset", 0))
-            for index, item in enumerate(ordered):
-                item.metadata = {
-                    **item.metadata,
-                    "translation_group": "script",
-                    "batch_resource": item.key[0],
-                    "batch_context": item.context or "",
-                }
-                context = [item.context or ""]
-                snippet = item.metadata.get("nss_snippet")
-                if snippet:
-                    context.append("Matching source excerpt (context only):\n" + snippet[:2000])
-                neighbors = ordered[max(0, index - 3) : index] + ordered[index + 1 : index + 4]
-                item.metadata["approved_neighbors"] = [other.text[:600] for other in neighbors]
-                if neighbors:
-                    context.append(
-                        "Other approved speech in this script (constant order, not proven "
-                        "execution order; context only, do not translate these as extra outputs):\n"
-                        + "\n".join(other.text[:600] for other in neighbors)
-                    )
-                item.context = "\n".join(context)
+    def _retry_failed_scripts(
+        self, caller: ModelCaller, failed: List[WorkItem], timed_out: Set[Occurrence]
+    ) -> List[TranslationResult]:
+        """Send failed script strings with their fallback request, one per request.
 
-    # Batch budgets. Character limits are conservative proxies for input and output
-    # size, not token counts; response recovery still narrows short answers.
-    _BATCH_MAX_ITEMS = 60
-    _BATCH_TEXT_BUDGET = 6000
-    _BATCH_PAYLOAD_BUDGET = 12000
-    # Approved NCS strings above this length keep the individual path with full context.
-    _NCS_BATCH_MAX_LENGTH = 1000
+        Script strings whose batch timed out are recorded as timeouts before the
+        pass and as recovered or failed after it.
 
-    # Timeout (seconds) for a single async translation call.
-    _ITEM_TIMEOUT: float = 120.0
-    # Timeout (seconds) for a batch translation call.
-    _BATCH_CALL_TIMEOUT: float = 180.0
-    # Overall timeout (seconds) for async.gather of all items in one file.
-    _GATHER_TIMEOUT: float = 600.0
-    # Minimum run_async outer timeout. Large queues scale this up dynamically.
-    _RUN_ASYNC_TIMEOUT: float = 660.0
-    # Additional retries for token/tag mismatches after the first model answer.
-    _TOKEN_RETRY_BUDGET: int = 2
+        Args:
+            caller: Request sender of the run.
+            failed: Script strings whose batch requests failed.
+            timed_out: Those whose batch request timed out.
 
-    # Item types that are safe for batching (short names/labels only)
-    _BATCHABLE_TYPES = frozenset(
-        {
-            "creature_first_name",
-            "creature_last_name",
-            "item_name",
-            "area_name",
-            "trigger_name",
-            "placeable_name",
-            "door_name",
-            "store_name",
-            "waypoint_name",
-            "waypoint_map_note",
-            "journal_category_name",
-        }
-    )
-
-    @staticmethod
-    def _is_batchable(item_data: dict) -> bool:
-        """Strings within the batch text budget share requests; longer ones go individually."""
-        limit = (
-            TranslationManager._NCS_BATCH_MAX_LENGTH
-            if TranslationManager._is_ncs_item(item_data["item"])
-            else TranslationManager._BATCH_TEXT_BUDGET
-        )
-        return len(item_data["sanitized"]) <= limit
-
-    @staticmethod
-    def _content_profile_for_item(item_data: dict) -> str:
-        """Deterministic profile for a single item (Phase 3.4).
-
-        Items whose metadata type is in :data:`_BATCHABLE_TYPES` are
-        labels/names — they use the compact ``short_label`` profile.
-        Everything else falls back to the full ``default`` profile.
+        Returns:
+            One fallback result per string, in order.
         """
-        item = item_data["item"]
-        item_type = (item.metadata or {}).get("type", "")
-        if item_type == "ncs_string":
-            return CONTENT_PROFILE_SCRIPT_MESSAGE
-        if item_type in TranslationManager._BATCHABLE_TYPES:
-            return CONTENT_PROFILE_SHORT_LABEL
-        return CONTENT_PROFILE_DEFAULT
+        for w in failed:
+            if w.key in timed_out:
+                self._diagnostics.timeout(w.item)
+        results = caller.run_fallback_pass(failed, scripts=True)
+        for w, result in zip(failed, results):
+            if w.key in timed_out:
+                self._diagnostics.retry_outcome(w.item, result.success, result.error)
+        return results
 
-    @staticmethod
-    def _content_profile_for_batch(batch: List[dict]) -> str:
-        """Profile for a batch; uses ``short_label`` only if EVERY item qualifies.
-
-        The selection is a pure function of the content-type mix of the batch
-        (Phase 3.4 determinism rule) so each profile hits its own stable
-        prefix in provider caches.
-        """
-        if not batch:
-            return CONTENT_PROFILE_DEFAULT
-        if all(TranslationManager._is_ncs_item(d["item"]) for d in batch):
-            return CONTENT_PROFILE_SCRIPT_MESSAGE
-        for d in batch:
-            item_type = (d["item"].metadata or {}).get("type", "")
-            if item_type not in TranslationManager._BATCHABLE_TYPES:
-                return CONTENT_PROFILE_DEFAULT
-        return CONTENT_PROFILE_SHORT_LABEL
-
-    def _async_bump(self, item_data: dict) -> None:
-        """Per-item progress bump fired inside asyncio worker on completion."""
-        progress = self._active_item_progress
-        if progress is None:
-            return
-        item = item_data["item"]
-        loc = item.location or ""
-        fn = Path(loc).name if loc else ""
-        progress.bump(filename=fn)
-
-    @staticmethod
-    def _queued_call_timeout(
-        work_units: int,
-        per_call_timeout: float,
-        concurrency: int,
-    ) -> float:
-        """Return a queue-level timeout that accounts for semaphore waves."""
-        if work_units <= 0:
-            return 0.0
-        limit = max(1, int(concurrency))
-        waves = (work_units + limit - 1) // limit
-        slack = max(5.0, min(60.0, per_call_timeout * 0.5))
-        return waves * per_call_timeout + slack
-
-    async def _translate_one_async(
+    def _process(
         self,
-        sem: asyncio.Semaphore,
-        item_data: dict,
-        bump: bool = True,
-    ) -> TranslationResult:
-        """Translate a single item with semaphore and timeout."""
-        item = item_data["item"]
-        sanitized = item_data["sanitized"]
-        glossary_block = self._glossary_block_for_texts([sanitized, item.context])
-        content_profile = self._content_profile_for_item(item_data)
-        async with sem:
-            self.config.raise_if_cancelled()
-            try:
-                result = await asyncio.wait_for(
-                    logged_model_call(
-                        self._log_writer,
-                        self.provider.translate_async,
-                        trace_context={"occurrence": item_data["item"].key},
-                        text=sanitized,
-                        source_lang=self.config.source_lang,
-                        target_lang=self.config.target_lang,
-                        context=item.context,
-                        glossary_block=glossary_block,
-                        content_profile=content_profile,
-                    ),
-                    timeout=self._ITEM_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Translate timeout (%.0fs) for '%s…'",
-                    self._ITEM_TIMEOUT,
-                    sanitized[:40],
-                )
-                if self._is_ncs_item(item):
-                    self._record_ncs_diagnostic(
-                        item,
-                        reason="translation_timeout",
-                        count_field="timeout",
-                    )
-                    result = await self._retry_ncs_timeout(item_data)
-                else:
-                    result = await self._retry_generic_timeout(
-                        item_data, glossary_block, content_profile
-                    )
-            except Exception as e:
-                result = TranslationResult(
-                    translated="",
-                    original=sanitized,
-                    success=False,
-                    error=str(e),
-                    metadata={},
-                )
-        if bump:
-            self._async_bump(item_data)
-        return result
-
-    async def _retry_generic_timeout(
-        self,
-        item_data: dict,
-        glossary_block: Optional[str],
-        content_profile: str,
-    ) -> TranslationResult:
-        """Retry a timed-out non-NCS item once before giving up on it."""
-        item = item_data["item"]
-        sanitized = item_data["sanitized"]
-        try:
-            result = await asyncio.wait_for(
-                logged_model_call(
-                    self._log_writer,
-                    self.provider.translate_async,
-                    trace_context={"occurrence": item_data["item"].key},
-                    text=sanitized,
-                    source_lang=self.config.source_lang,
-                    target_lang=self.config.target_lang,
-                    context=item.context,
-                    glossary_block=glossary_block,
-                    content_profile=content_profile,
-                ),
-                timeout=self._ITEM_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            return TranslationResult(
-                translated="",
-                original=sanitized,
-                success=False,
-                error=f"Timeout after {self._ITEM_TIMEOUT}s (retry timed out)",
-                metadata={},
-            )
-        except Exception as exc:
-            return TranslationResult(
-                translated="",
-                original=sanitized,
-                success=False,
-                error=f"Timeout retry failed: {exc}",
-                metadata={},
-            )
-        if result.success:
-            logger.info("Timeout retry recovered translation for '%s…'", sanitized[:40])
-        return result
-
-    def _build_ncs_retry_context(self, item: Any) -> str:
-        meta = item.metadata or {}
-        loc = item.location or ""
-        filename = Path(loc).name if loc else "<unknown>"
-        return (
-            "NCS timeout fallback. Translate only if this is player-visible script text. "
-            "Do not translate identifiers, tags, resrefs, variables, debug logs, or code. "
-            f"file={filename}; item_id={item.item_id}; offset={meta.get('offset')}; "
-            f"confidence={meta.get('confidence')}; hint={meta.get('ncs_hint')}.\n"
-            + (item.context or "")
-        )
-
-    async def _retry_ncs_timeout(self, item_data: dict) -> TranslationResult:
-        """Retry an approved NCS item once with its context and terminology intact."""
-        item = item_data["item"]
-        sanitized = item_data["sanitized"]
-        content_profile = self._content_profile_for_item(item_data)
-        try:
-            retry_result = await asyncio.wait_for(
-                logged_model_call(
-                    self._log_writer,
-                    self.provider.translate_async,
-                    trace_context={"occurrence": item_data["item"].key},
-                    text=sanitized,
-                    source_lang=self.config.source_lang,
-                    target_lang=self.config.target_lang,
-                    context=self._build_ncs_retry_context(item),
-                    glossary_block=self._glossary_block_for_texts([item.text, item.context]),
-                    content_profile=content_profile,
-                ),
-                timeout=self._ITEM_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            self._record_ncs_diagnostic(
-                item,
-                reason="translation_timeout_retry_failed",
-                error=f"Timeout after {self._ITEM_TIMEOUT}s",
-            )
-            return TranslationResult(
-                translated="",
-                original=sanitized,
-                success=False,
-                error=f"Timeout after {self._ITEM_TIMEOUT}s",
-                metadata={},
-            )
-        except Exception as exc:
-            self._record_ncs_diagnostic(
-                item,
-                reason="translation_timeout_retry_failed",
-                error=str(exc),
-            )
-            return TranslationResult(
-                translated="",
-                original=sanitized,
-                success=False,
-                error=str(exc),
-                metadata={},
-            )
-
-        if retry_result.success:
-            self._record_ncs_diagnostic(
-                item,
-                reason="translation_timeout_retry_recovered",
-                count_field="retry_recovered",
-            )
-        return retry_result
-
-    def _build_token_retry_context(
-        self,
-        item_data: dict,
-        attempt: int,
-        mismatch_report: Optional[Any],
-    ) -> str:
-        """Build a stricter context hint for token/tag preservation retries."""
-        item = item_data["item"]
-        handler = item_data["handler"]
-        expected = handler.get_expected_artifact_sequence()
-        parts: List[str] = []
-        if item.context:
-            parts.append(item.context)
-        parts.append(PRESERVE_PLACEHOLDERS)
-        parts.append(PRESERVE_INLINE_MARKUP)
-        parts.append(
-            "If the line contains dialog action markers like <<...>> or -...-, preserve "
-            "the surrounding markers exactly and translate only the inner text. Do not "
-            "invent new angle-bracket pseudo-tags such as <sir/madam>."
-        )
-        parts.extend(expected_artifacts_line(expected))
-        if mismatch_report is not None and mismatch_report.mismatch_type == "foreign_script":
-            parts.append(
-                "Your previous answer contained characters from a foreign script "
-                f"(such as Chinese). Write the translation in {self.config.target_lang} "
-                "using only that language's alphabet."
-            )
-        parts.extend(previous_mismatch_lines(mismatch_report))
-        parts.append(f"Retry attempt {attempt} of {self._TOKEN_RETRY_BUDGET}.")
-        return "\n".join(parts)
-
-    def _accept_translation_candidate(
-        self,
-        item_data: dict,
-        translated_sanitized: str,
+        caller: ModelCaller,
         translations: Translations,
+        work: WorkItem,
+        result: TranslationResult,
+    ) -> None:
+        """Accept a model result into *translations*, retrying a broken answer.
+
+        A request that fails or whose answers are all rejected is recorded as
+        rejected instead.
+
+        Args:
+            caller: Request sender of the run.
+            translations: Accepted translations of the run.
+            work: Item the result belongs to.
+            result: Model result.
+        """
+        if not result.success:
+            self._record_rejected(work, result.error)
+            return
+        model = result.metadata.get("model", self.config.model)
+        translated = self._accept(work, result.translated, model=model)
+        if translated is None:
+            translated = self._retry_token_mismatch(caller, work, result.translated, model)
+        if translated is None:
+            self._record_rejected(work, "rejected after retries")
+        else:
+            translations[work.key] = translated
+
+    def _accept(
+        self,
+        work: WorkItem,
+        answer: str,
         *,
-        source_filename: Optional[str] = None,
         model: Optional[str] = None,
         allow_cleanup: bool = False,
-    ) -> bool:
-        """Finalize, validate, and store one model output."""
-        item = item_data["item"]
-        handler = item_data["handler"]
-        full_translated_sanitized = translated_sanitized
-        cache_key = self._translation_cache_key_for_item_data(item_data)
-        outcome = handler.finalize_translation(
-            full_translated_sanitized,
-            allow_cleanup=allow_cleanup,
-        )
+    ) -> Optional[str]:
+        """Restore and validate one answer; count and log it when accepted.
 
+        A rejected answer's validation report is kept in ``work.mismatch`` for the
+        retry prompt.
+
+        Args:
+            work: Item the answer belongs to.
+            answer: Model answer with placeholders.
+            model: Model that answered; the configured model when unknown.
+            allow_cleanup: Accept a mismatched answer after removing broken artifacts.
+
+        Returns:
+            The final translation, or None when the answer is rejected.
+        """
+        item = work.item
+        outcome = work.handler.finalize_translation(answer, allow_cleanup=allow_cleanup)
         if not outcome.exact_valid and not outcome.used_cleanup:
-            item_data["_token_mismatch_report"] = outcome.mismatch_report
-            item_data["_last_invalid_sanitized"] = full_translated_sanitized
-            item_filename = Path(item.location).name if item.location else source_filename
+            work.mismatch = outcome.mismatch_report
             logger.warning(
                 "%s: token/tag mismatch for %s (%s). expected=%s actual=%s",
-                item_filename or "<unknown>",
-                item.item_id or item.text[:40],
+                item.key[0],
+                item.item_id,
                 outcome.mismatch_report.mismatch_type,
                 outcome.mismatch_report.expected_sequence,
                 outcome.mismatch_report.actual_sequence,
             )
-            return False
-
-        translated = outcome.final_text
-        translated = _unescape_literal_newlines(item.text, translated)
+            return None
+        translated = unescape_literal_newlines(item.text, outcome.final_text)
         translated = restore_wrapping_quotes(item.text, translated)
-        if (item.text or "").strip() and not (translated or "").strip():
-            logger.warning(
-                "Empty translation rejected for %s",
-                item.item_id or (item.text or "")[:40],
-            )
-            return False
-        with self._stats_lock:
-            if outcome.exact_valid:
-                self.translation_cache[cache_key] = (full_translated_sanitized, item.key)
-            translations[item.key] = translated
-            self.stats["items_translated"] += 1
-
+        if item.text.strip() and not translated.strip():
+            logger.warning("Empty translation rejected for %s", item.item_id)
+            return None
+        self.stats["items_translated"] += 1
         if outcome.used_cleanup:
-            item_filename = Path(item.location).name if item.location else source_filename
             logger.warning(
                 "%s: accepted cleaned translation for %s after token/tag mismatch cleanup.",
-                item_filename or "<unknown>",
-                item.item_id or item.text[:40],
+                item.key[0],
+                item.item_id,
             )
-
-        if (item.metadata or {}).get("type") == "ncs_string" and item.item_id:
-            self._increment_ncs_count("translated")
-
-        item_filename = Path(item.location).name if item.location else source_filename
-        log_entry = {
-            "original": item.text,
-            "translated": translated,
-            "context": item.context,
-            "model": model or self.config.model,
-            "file": item_filename,
-            "item_id": item.item_id,
-        }
-        try:
-            self._log_writer.write(log_entry)
-        except Exception as log_e:
-            logger.debug("Failed to write to translation log: %s", log_e)
-
-        return True
+        if work.is_ncs:
+            self._diagnostics.count("translated")
+        write_trace(
+            self._log_writer,
+            {
+                "original": item.text,
+                "translated": translated,
+                "context": item.context,
+                "model": model or self.config.model,
+                "file": item.key[0],
+                "item_id": item.item_id,
+            },
+        )
+        return translated
 
     def _retry_token_mismatch(
-        self,
-        item_data: dict,
-        initial_translated_sanitized: str,
-        translations: Translations,
-        *,
-        source_filename: Optional[str] = None,
-        model: Optional[str] = None,
-    ) -> bool:
-        """Retry token/tag-mismatched outputs individually, then cleanup."""
-        last_candidate = initial_translated_sanitized
-        last_model = model or self.config.model
-        mismatch_report = item_data.get("_token_mismatch_report")
-        full_sanitized = item_data.get("full_sanitized") or item_data["sanitized"]
-        glossary_block = self._glossary_block_for_texts([full_sanitized, item_data["item"].context])
-        content_profile = self._content_profile_for_item(item_data)
-        from ..async_utils import run_async
+        self, caller: ModelCaller, work: WorkItem, first_answer: str, model: Optional[str]
+    ) -> Optional[str]:
+        """Retry a rejected answer with stricter prompts, then accept a cleaned one.
 
-        for attempt in range(1, self._TOKEN_RETRY_BUDGET + 1):
+        Retries stop early when the model repeats the same broken artifact
+        sequence. Requests are sent one at a time, in result order.
 
-            async def run_retry() -> TranslationResult:
-                return await logged_model_call(
-                    self._log_writer,
-                    self.provider.translate_async,
-                    trace_context={"occurrence": item_data["item"].key},
-                    text=full_sanitized,
-                    source_lang=self.config.source_lang,
-                    target_lang=self.config.target_lang,
-                    context=self._build_token_retry_context(item_data, attempt, mismatch_report),
-                    glossary_block=glossary_block,
-                    content_profile=content_profile,
-                )
-
-            try:
-                retry_result = run_async(
-                    run_retry(),
-                    timeout=self._ITEM_TIMEOUT,
-                )
-            except Exception as exc:
-                retry_result = TranslationResult(
-                    translated="",
-                    original=full_sanitized,
-                    success=False,
-                    error=str(exc),
-                    metadata={},
-                )
-
-            if not retry_result.success:
-                logger.warning(
-                    "Token retry failed for %s on attempt %d: %s",
-                    item_data["item"].item_id or item_data["item"].text[:40],
-                    attempt,
-                    retry_result.error,
-                )
-                continue
-
-            last_candidate = retry_result.translated
-            last_model = retry_result.metadata.get("model", last_model)
-            if self._accept_translation_candidate(
-                item_data,
-                retry_result.translated,
-                translations,
-                source_filename=source_filename,
-                model=last_model,
-                allow_cleanup=False,
-            ):
-                return True
-            new_report = item_data.get("_token_mismatch_report", mismatch_report)
-            # Short-circuit: if the model deterministically reproduces the same
-            # mismatch (e.g. hallucinated <StartCheck> or dropped placeholder),
-            # further retries waste API calls. Skip straight to cleanup.
-            if (
-                mismatch_report is not None
-                and new_report is not None
-                and getattr(mismatch_report, "actual_sequence", None)
-                == getattr(new_report, "actual_sequence", None)
-            ):
-                logger.debug(
-                    "Token retry produced identical mismatch for %s; skipping remaining retries.",
-                    item_data["item"].item_id or item_data["item"].text[:40],
-                )
-                mismatch_report = new_report
-                break
-            mismatch_report = new_report
-
-        return self._accept_translation_candidate(
-            item_data,
-            last_candidate,
-            translations,
-            source_filename=source_filename,
-            model=last_model,
-            allow_cleanup=True,
-        )
-
-    def _translate_uncached_concurrent(
-        self,
-        uncached_items: List[dict],
-        translations: Translations,
-        source_filename: Optional[str] = None,
-    ) -> None:
-        """Translate items without cache hits (concurrent async API calls).
-
-        Structural groups (or single fields) are packed per content profile and
-        share requests within the batch budgets; oversized strings go individually
-        with their full context. All requests run in one concurrent pass.
-        """
-        # Passthrough: strings reduced to tokens/punctuation/whitespace only
-        # need no API call — the sanitized form IS the "translation".
-        real_items: List[dict] = []
-        passthrough_items: List[dict] = []
-        for d in uncached_items:
-            if _is_empty_after_sanitize(d["sanitized"]):
-                passthrough_items.append(d)
-            else:
-                real_items.append(d)
-
-        if passthrough_items:
-            logger.info(
-                "Skipping API for %d item(s) with no translatable content "
-                "(tokens/punctuation only)",
-                len(passthrough_items),
-            )
-            for d in passthrough_items:
-                self._apply_passthrough(d, translations)
-
-        long_items = [d for d in real_items if not self._is_batchable(d)]
-        groups: Dict[tuple, List[dict]] = {}
-        for d in real_items:
-            if self._is_batchable(d):
-                item = d["item"]
-                group = item.metadata.get("translation_group")
-                key = (item.key[0], "group", group) if group is not None else ("item", item.key)
-                groups.setdefault(key, []).append(d)
-        # Batches stay homogeneous per content profile so each family keeps its prompt.
-        by_profile: Dict[str, List[List[dict]]] = {}
-        for group in groups.values():
-            if self._is_ncs_item(group[0]["item"]):
-                group.sort(key=lambda d: d["item"].metadata.get("offset", 0))
-            by_profile.setdefault(self._content_profile_for_batch(group), []).append(group)
-        batches = [
-            batch
-            for family in by_profile.values()
-            for batch in self._pack_structural_groups(family)
-        ]
-
-        async def run_all() -> tuple:
-            limit = max(1, int(self.config.max_concurrent_requests))
-            sem = asyncio.Semaphore(limit)
-
-            async def batch_one(batch: List[dict], *, bump: bool = True) -> List[TranslationResult]:
-                batch_items = [
-                    TranslationItem(
-                        original=d["sanitized"],
-                        context=d["item"].context,
-                        metadata=d["item"].metadata or {},
-                    )
-                    for d in batch
-                ]
-                glossary_block = self._glossary_block_for_texts(
-                    text for d in batch for text in (d["sanitized"], d["item"].context)
-                )
-                content_profile = self._content_profile_for_batch(batch)
-                async with sem:
-                    self.config.raise_if_cancelled()
-                    try:
-                        unique_results = await asyncio.wait_for(
-                            logged_model_call(
-                                self._log_writer,
-                                self.provider.translate_batch_async,
-                                trace_context={"occurrences": [d["item"].key for d in batch]},
-                                items=batch_items,
-                                source_lang=self.config.source_lang,
-                                target_lang=self.config.target_lang,
-                                glossary_block=glossary_block,
-                                content_profile=content_profile,
-                            ),
-                            timeout=self._BATCH_CALL_TIMEOUT,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "Batch translate timeout (%.0fs) for %d items",
-                            self._BATCH_CALL_TIMEOUT,
-                            len(batch_items),
-                        )
-                        unique_results = [
-                            TranslationResult(
-                                translated="",
-                                original=bi.original,
-                                success=False,
-                                error=f"Batch timeout after {self._BATCH_CALL_TIMEOUT}s",
-                                metadata={},
-                            )
-                            for bi in batch_items
-                        ]
-                    except Exception as e:
-                        unique_results = [
-                            TranslationResult(
-                                translated="",
-                                original=bi.original,
-                                success=False,
-                                error=str(e),
-                                metadata={},
-                            )
-                            for bi in batch_items
-                        ]
-                unique_results = unique_results[: len(batch)]
-                unique_results.extend(
-                    TranslationResult(
-                        translated="",
-                        original=batch_items[i].original,
-                        success=False,
-                        error="Missing translation result in batch response",
-                    )
-                    for i in range(len(unique_results), len(batch))
-                )
-                unique_results = await self._recover_batch_halves(
-                    batch, unique_results, lambda part: batch_one(part, bump=False)
-                )
-                # Per-item progress bump — one per batch member, regardless
-                # of success; retry paths below must not re-bump.
-                if bump:
-                    for d in batch:
-                        self._async_bump(d)
-                return unique_results
-
-            long_results, batch_results_nested = await asyncio.gather(
-                asyncio.gather(*[self._translate_one_async(sem, d) for d in long_items]),
-                asyncio.gather(*[batch_one(b) for b in batches]),
-            )
-            return long_results, [r for group in batch_results_nested for r in group]
-
-        from ..async_utils import run_async
-
-        limit = max(1, int(self.config.max_concurrent_requests))
-        queue_timeout = (
-            self._queued_call_timeout(len(long_items), self._ITEM_TIMEOUT, limit)
-            + self._queued_call_timeout(
-                sum(2 * len(batch) - 1 for batch in batches), self._BATCH_CALL_TIMEOUT, limit
-            )
-            + 60.0
-        )
-        long_results, batch_results = run_async(
-            run_all(),
-            timeout=max(self._RUN_ASYNC_TIMEOUT, queue_timeout),
-        )
-
-        if batches:
-            logger.info(
-                "Batch-translated %d items in %d batch(es), %d long items individually",
-                sum(len(batch) for batch in batches),
-                len(batches),
-                len(long_items),
-            )
-
-        for item_data, result in zip(long_items, long_results):
-            self._process_translation_result(
-                item_data, result, translations, source_filename=source_filename
-            )
-
-        # Remaining failures have been narrowed recursively to individual items.
-        failed_generic: List[dict] = []
-        failed_ncs: List[dict] = []
-        failed_ncs_results: List[TranslationResult] = []
-        for item_data, result in zip([d for batch in batches for d in batch], batch_results):
-            if result.success:
-                self._process_translation_result(
-                    item_data, result, translations, source_filename=source_filename
-                )
-            elif self._is_ncs_item(item_data["item"]):
-                failed_ncs.append(item_data)
-                failed_ncs_results.append(result)
-            else:
-                failed_generic.append(item_data)
-
-        if failed_ncs:
-            for item_data, result in zip(
-                failed_ncs,
-                self._translate_ncs_batch_failures_single(failed_ncs, failed_ncs_results),
-            ):
-                self._process_translation_result(
-                    item_data, result, translations, source_filename=source_filename
-                )
-        if failed_generic:
-            logger.info("Retrying %d failed batch items individually", len(failed_generic))
-            self._translate_individual_fallback(
-                failed_generic, translations, source_filename=source_filename
-            )
-
-    @staticmethod
-    async def _recover_batch_halves(
-        batch: List[dict],
-        results: List[TranslationResult],
-        retry: Callable[[List[dict]], Awaitable[List[TranslationResult]]],
-    ) -> List[TranslationResult]:
-        """Preserve successes and recursively narrow failures through the caller."""
-        failed = [i for i, result in enumerate(results) if not result.success]
-        if len(failed) <= 1:
-            return results
-        middle = len(failed) // 2
-        logger.info("Splitting %d failed batch items into two parts", len(failed))
-        for indices in (failed[:middle], failed[middle:]):
-            recovered = await retry([batch[i] for i in indices])
-            for i, result in zip(indices, recovered):
-                results[i] = result
-        return results
-
-    async def _translate_ncs_single_async(
-        self,
-        sem: asyncio.Semaphore,
-        item_data: dict,
-    ) -> TranslationResult:
-        """Retry one failed NCS batch item individually with its context and terminology."""
-        item = item_data["item"]
-        sanitized = item_data["sanitized"]
-        async with sem:
-            self.config.raise_if_cancelled()
-            try:
-                return await asyncio.wait_for(
-                    logged_model_call(
-                        self._log_writer,
-                        self.provider.translate_async,
-                        trace_context={"occurrence": item_data["item"].key},
-                        text=sanitized,
-                        source_lang=self.config.source_lang,
-                        target_lang=self.config.target_lang,
-                        context=self._build_ncs_retry_context(item),
-                        glossary_block=self._glossary_block_for_texts([item.text, item.context]),
-                        content_profile=CONTENT_PROFILE_SCRIPT_MESSAGE,
-                    ),
-                    timeout=self._ITEM_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                return TranslationResult(
-                    translated="",
-                    original=sanitized,
-                    success=False,
-                    error=f"NCS single-item fallback timeout after {self._ITEM_TIMEOUT}s",
-                    metadata={},
-                )
-            except Exception as exc:
-                return TranslationResult(
-                    translated="",
-                    original=sanitized,
-                    success=False,
-                    error=str(exc),
-                    metadata={},
-                )
-
-    def _pack_structural_groups(self, groups: List[List[dict]]) -> List[List[dict]]:
-        """Pack groups into batches, keeping a group whole when the budgets allow.
-
-        Oversized groups split at field boundaries, with NPC name pairs atomic. A
-        unit that exceeds a budget on its own still gets a request of its own.
-        """
-        batches: List[List[dict]] = []
-        current: List[dict] = []
-
-        def fits(batch: List[dict]) -> bool:
-            payload = [
-                TranslationItem(d["sanitized"], d["item"].context, d["item"].metadata)
-                for d in batch
-            ]
-            return (
-                len(batch) <= self._BATCH_MAX_ITEMS
-                and sum(len(d["sanitized"]) for d in batch) <= self._BATCH_TEXT_BUDGET
-                and batch_payload_chars(payload) <= self._BATCH_PAYLOAD_BUDGET
-                and len(
-                    self._glossary_block_for_texts(
-                        text for d in batch for text in (d["sanitized"], d["item"].context)
-                    )
-                    or ""
-                )
-                <= GLOSSARY_MAX_CHARS
-            )
-
-        for group in groups:
-            if fits(current + group):
-                current.extend(group)
-                continue
-            if current:
-                batches.append(current)
-                current = []
-            if fits(group):
-                current = list(group)
-                continue
-            names = [d for d in group if d["item"].metadata.get("name_fields")]
-            units = ([names] if names else []) + [
-                [d] for d in group if not d["item"].metadata.get("name_fields")
-            ]
-            for unit in units:
-                if current and not fits(current + unit):
-                    batches.append(current)
-                    current = []
-                current.extend(unit)
-        if current:
-            batches.append(current)
-        return batches
-
-    def _translate_ncs_batch_failures_single(
-        self,
-        items: List[dict],
-        failed_results: List[TranslationResult],
-    ) -> List[TranslationResult]:
-        """Retry failed NCS batch items individually without dropping context or terminology."""
-        retry_by_key: Dict[tuple[str, str], dict] = {}
-        timeout_keys: set[tuple[str, str]] = set()
-        for item_data, result in zip(items, failed_results):
-            key = item_data["item"].key
-            retry_by_key.setdefault(key, item_data)
-            if result.error and "timeout" in result.error.lower():
-                timeout_keys.add(key)
-
-        retry_items = list(retry_by_key.values())
-        for item_data in retry_items:
-            key = item_data["item"].key
-            if key in timeout_keys:
-                self._record_ncs_diagnostic(
-                    item_data["item"],
-                    reason="translation_timeout",
-                    count_field="timeout",
-                )
-
-        async def run_fallback() -> List[TranslationResult]:
-            limit = max(1, int(self.config.max_concurrent_requests))
-            sem = asyncio.Semaphore(limit)
-            return await asyncio.gather(
-                *[self._translate_ncs_single_async(sem, item_data) for item_data in retry_items]
-            )
-
-        from ..async_utils import run_async
-
-        limit = max(1, int(self.config.max_concurrent_requests))
-        retry_results = run_async(
-            run_fallback(),
-            timeout=max(
-                self._RUN_ASYNC_TIMEOUT / 2,
-                self._queued_call_timeout(len(retry_items), self._ITEM_TIMEOUT, limit) + 30.0,
-            ),
-        )
-
-        results_by_key = dict(zip(retry_by_key.keys(), retry_results))
-        out: List[TranslationResult] = []
-        for item_data in items:
-            result = results_by_key[item_data["item"].key]
-            key = item_data["item"].key
-            if key in timeout_keys:
-                if result.success:
-                    self._record_ncs_diagnostic(
-                        item_data["item"],
-                        reason="translation_timeout_retry_recovered",
-                        count_field="retry_recovered",
-                    )
-                else:
-                    self._record_ncs_diagnostic(
-                        item_data["item"],
-                        reason="translation_timeout_retry_failed",
-                        error=result.error,
-                    )
-            out.append(
-                TranslationResult(
-                    translated=result.translated,
-                    original=item_data["sanitized"],
-                    success=result.success,
-                    error=result.error,
-                    metadata=result.metadata,
-                )
-            )
-        return out
-
-    def _translate_individual_fallback(
-        self,
-        items: List[dict],
-        translations: Translations,
-        source_filename: Optional[str] = None,
-    ) -> None:
-        """Translate items individually as fallback for failed batch items."""
-
-        async def run_fallback() -> List[TranslationResult]:
-            limit = max(1, int(self.config.max_concurrent_requests))
-            sem = asyncio.Semaphore(limit)
-
-            try:
-                return await asyncio.gather(
-                    *[self._translate_one_async(sem, d, bump=False) for d in items]
-                )
-            except asyncio.TimeoutError:
-                logger.error(
-                    "Fallback gather timeout (%.0fs) for %d items",
-                    self._GATHER_TIMEOUT / 2,
-                    len(items),
-                )
-                return [
-                    TranslationResult(
-                        translated="",
-                        original=d["sanitized"],
-                        success=False,
-                        error="Fallback gather timeout",
-                    )
-                    for d in items
-                ]
-
-        from ..async_utils import run_async
-
-        limit = max(1, int(self.config.max_concurrent_requests))
-        results = run_async(
-            run_fallback(),
-            timeout=max(
-                self._RUN_ASYNC_TIMEOUT / 2,
-                self._queued_call_timeout(len(items), self._ITEM_TIMEOUT, limit) + 30.0,
-            ),
-        )
-
-        for item_data, result in zip(items, results):
-            self._process_translation_result(
-                item_data, result, translations, source_filename=source_filename
-            )
-
-    def _apply_passthrough(
-        self,
-        item_data: dict,
-        translations: Translations,
-    ) -> None:
-        """Record a no-API translation for items that carry no text to translate.
-
-        After :func:`sanitize_text` the string holds only token placeholders,
-        NWN-tag helpers, whitespace, and punctuation; the round-trip back to
-        the original text is the identity, so we reuse the sanitized form as
-        the "translated" value and restore tokens via the handler.
-        """
-        sanitized = item_data["sanitized"]
-
-        translated_sanitized = sanitized
-        self._accept_translation_candidate(
-            item_data,
-            translated_sanitized,
-            translations,
-            source_filename=(
-                Path(item_data["item"].location).name if item_data["item"].location else None
-            ),
-            model=self.config.model,
-        )
-        self._async_bump(item_data)
-
-    def _record_rejected_item(self, item: Any, *, error: Optional[str]) -> None:
-        """Record an original that was sent to the model but never accepted."""
-        error_msg = f"Translation failed for {item.item_id}: {error}"
-        if self._is_ncs_item(item):
-            self._record_ncs_diagnostic(
-                item,
-                reason="translation_failed",
-                count_field="failed",
-                error=error,
-            )
-        with self._stats_lock:
-            if item.text:
-                self.failed_items.add(item.key)
-            self.stats["errors"].append(error_msg)
-        logger.warning(error_msg)
-
-    def _process_translation_result(
-        self,
-        item_data: dict,
-        result: TranslationResult,
-        translations: Translations,
-        source_filename: Optional[str] = None,
-    ) -> None:
-        """Process a single translation result (shared by individual and batch paths)."""
-        if result.success:
-            if self._accept_translation_candidate(
-                item_data,
-                result.translated,
-                translations,
-                source_filename=source_filename,
-                model=result.metadata.get("model", self.config.model),
-            ):
-                return
-            if self._retry_token_mismatch(
-                item_data,
-                result.translated,
-                translations,
-                source_filename=source_filename,
-                model=result.metadata.get("model", self.config.model),
-            ):
-                return
-            self._record_rejected_item(item_data["item"], error="rejected after retries")
-            return
-        self._record_rejected_item(item_data["item"], error=result.error)
-
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get translation statistics.
+        Args:
+            caller: Request sender of the run.
+            work: Item whose answer was rejected.
+            first_answer: The rejected answer.
+            model: Model that gave it.
 
         Returns:
-            Dictionary with translation statistics
+            The accepted translation, or None when even the cleaned answer is rejected.
         """
-        return {
-            **self.stats,
-            "total_errors": len(self.stats["errors"]),
-        }
+        last_answer = first_answer
+        last_model = model or self.config.model
+        for attempt in range(1, self.call_limits.token_retries + 1):
+            previous = work.mismatch
+            result = caller.ask_token_retry(work, attempt)
+            if not result.success:
+                logger.warning(
+                    "Token retry failed for %s on attempt %d: %s",
+                    work.item.item_id,
+                    attempt,
+                    result.error,
+                )
+                continue
+            last_answer = result.translated
+            last_model = result.metadata.get("model", last_model)
+            translated = self._accept(work, result.translated, model=last_model)
+            if translated is not None:
+                return translated
+            if (
+                previous is not None
+                and work.mismatch is not None
+                and previous.actual_sequence == work.mismatch.actual_sequence
+            ):
+                # A deterministic repeat of the same mismatch; more retries waste calls.
+                logger.debug(
+                    "Token retry produced identical mismatch for %s; skipping remaining retries.",
+                    work.item.item_id,
+                )
+                break
+        return self._accept(work, last_answer, model=last_model, allow_cleanup=True)
+
+    def _record_rejected(self, work: WorkItem, error: Optional[str]) -> None:
+        """Record a request that was sent to the model but never accepted."""
+        item = work.item
+        error_msg = f"Translation failed for {item.item_id}: {error}"
+        if work.is_ncs:
+            self._diagnostics.record(
+                item, reason="translation_failed", count_field="failed", error=error
+            )
+        self.failed_items.add(item.key)
+        self.stats["errors"].append(error_msg)
+        logger.warning(error_msg)

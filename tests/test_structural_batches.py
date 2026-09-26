@@ -17,7 +17,9 @@ from nwn_translator.extractors.git_extractor import GitExtractor
 from nwn_translator.extractors.item_extractor import ItemExtractor
 from nwn_translator.extractors.journal_extractor import JournalExtractor
 from nwn_translator.extractors.nss_index import snippet_with_position
+from nwn_translator.translators.token_handler import sanitize_text
 from nwn_translator.translators.translation_manager import TranslationManager
+from nwn_translator.translators.work_plan import BatchLimits, WorkItem, pack_groups
 
 
 def loc(text):
@@ -170,11 +172,9 @@ def test_split_large_group_keeps_name_pair_and_every_occurrence():
             "Description": loc("Long description. " * 100),
         },
     )
-    manager = TranslationManager(TranslationConfig(api_key="test", quiet=True), Mock())
-    manager._BATCH_TEXT_BUDGET = 100
-    groups = [[{"item": i, "sanitized": i.text} for i in creature.items]]
-    batches = manager._pack_structural_groups(groups)
-    assert [[d["item"].metadata["type"] for d in b] for b in batches] == [
+    group = [WorkItem(i, *sanitize_text(i.text)) for i in creature.items]
+    batches = pack_groups([group], BatchLimits(text_chars=100), lambda texts: None)
+    assert [[w.item.metadata["type"] for w in b] for b in batches] == [
         ["creature_first_name", "creature_last_name"],
         ["creature_description"],
     ]
@@ -212,7 +212,7 @@ def test_partial_group_response_does_not_shift_next_group_results():
         )
     )
     manager = TranslationManager(TranslationConfig(api_key="test", quiet=True), provider)
-    manager._BATCH_MAX_ITEMS = 2
+    manager.batch_limits = BatchLimits(max_items=2)
     result = manager.translate_content(ExtractedContent("combined", items, Path("module")))
     assert result == {items[0].key: "TR:First", items[2].key: "TR:Second"}
     assert items[1].key in manager.failed_items

@@ -11,11 +11,16 @@ import pytest
 
 from src.nwn_translator.config import TranslationConfig
 from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
-from src.nwn_translator.translators.token_handler import TokenHandler
-from src.nwn_translator.translators.translation_manager import (
-    TranslationManager,
-    _is_empty_after_sanitize,
+from src.nwn_translator.glossary import Glossary, terminology_block
+from src.nwn_translator.prompts.token_retry import PRESERVE_INLINE_MARKUP, PRESERVE_PLACEHOLDERS
+from src.nwn_translator.translators.token_handler import (
+    TokenHandler,
+    has_translatable_content,
+    sanitize_text,
 )
+from src.nwn_translator.translators.model_calls import CallLimits
+from src.nwn_translator.translators.translation_manager import TranslationManager
+from src.nwn_translator.translators.work_plan import BatchLimits, WorkItem, is_batchable
 
 
 def _expected(content, answers):
@@ -30,8 +35,8 @@ def _key(content, text):
     return next(item.key for item in content.items if item.text == text)
 
 
-class TestEmptyAfterSanitize:
-    """The passthrough gate must not swallow real words between placeholders."""
+class TestHasTranslatableContent:
+    """The passthrough check must not swallow real words between placeholders."""
 
     @pytest.mark.parametrize(
         "text",
@@ -45,7 +50,7 @@ class TestEmptyAfterSanitize:
         """A lone word wrapped in tags used to be misclassified as empty:
         the permissive placeholder regex greedily matched across the word."""
         sanitized = TokenHandler().sanitize(text).sanitized_text
-        assert not _is_empty_after_sanitize(sanitized)
+        assert has_translatable_content(sanitized)
 
     @pytest.mark.parametrize(
         "text",
@@ -60,16 +65,16 @@ class TestEmptyAfterSanitize:
     )
     def test_tokens_and_punctuation_only_stay_passthrough(self, text):
         sanitized = TokenHandler().sanitize(text).sanitized_text
-        assert _is_empty_after_sanitize(sanitized)
+        assert not has_translatable_content(sanitized)
 
     def test_multi_word_tagged_text_is_translatable(self):
         sanitized = TokenHandler().sanitize("<StartAction>Attack the guard</Start> now")
-        assert not _is_empty_after_sanitize(sanitized.sanitized_text)
+        assert has_translatable_content(sanitized.sanitized_text)
 
     def test_mangled_bracket_placeholders_still_stripped(self):
-        assert _is_empty_after_sanitize("[[NWN_TOKEN_abcdef01_0]]!")
-        assert _is_empty_after_sanitize("<[NWN_INLINE_deadbeef_2]>...")
-        assert not _is_empty_after_sanitize("[[NWN_TOKEN_abcdef01_0]]Word[[NWN_TOKEN_abcdef01_1]]")
+        assert not has_translatable_content("[[NWN_TOKEN_abcdef01_0]]!")
+        assert not has_translatable_content("<[NWN_INLINE_deadbeef_2]>...")
+        assert has_translatable_content("[[NWN_TOKEN_abcdef01_0]]Word[[NWN_TOKEN_abcdef01_1]]")
 
 
 @dataclass
@@ -472,9 +477,7 @@ class TestNcsFailClosed:
 
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_approve_all)
         manager = TranslationManager(_make_config(), provider)
-        manager._ITEM_TIMEOUT = 0.01
-        manager._GATHER_TIMEOUT = 1.0
-        manager._RUN_ASYNC_TIMEOUT = 2.0
+        manager.call_limits = CallLimits(item_timeout=0.01, min_pass_timeout=2.0)
 
         result = manager.translate_content(content)
 
@@ -518,9 +521,7 @@ class TestNcsFailClosed:
 
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_approve_all)
         manager = TranslationManager(_make_config(), provider)
-        manager._ITEM_TIMEOUT = 0.01
-        manager._GATHER_TIMEOUT = 1.0
-        manager._RUN_ASYNC_TIMEOUT = 2.0
+        manager.call_limits = CallLimits(item_timeout=0.01, min_pass_timeout=2.0)
 
         result = manager.translate_content(content)
 
@@ -577,8 +578,7 @@ class TestNcsBatchTranslation:
         sent_items = provider.translate_batch_async.call_args.kwargs["items"]
         assert [item.original for item in sent_items] == ["The gate opens."]
 
-    def test_ncs_dynamic_batch_sizes_and_single_fallback_by_length(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_BATCH_PAYLOAD_BUDGET", 100000)
+    def test_ncs_dynamic_batch_sizes_and_single_fallback_by_length(self):
         short_items = [
             _make_ncs_item(f"Short player line {i}.", item_id=f"script:short_{i}", offset=i)
             for i in range(21)
@@ -640,6 +640,7 @@ class TestNcsBatchTranslation:
 
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate)
         manager = TranslationManager(_make_config(), provider)
+        manager.batch_limits = BatchLimits(payload_chars=100000)
 
         result = manager.translate_content(content)
 
@@ -676,13 +677,12 @@ class TestNcsBatchTranslation:
         assert len(calls) == expected_calls
         for call in calls:
             batch = call.kwargs["items"]
-            assert len(batch) <= manager._BATCH_MAX_ITEMS
-            assert sum(len(i.original) for i in batch) <= manager._BATCH_TEXT_BUDGET
-            assert batch_payload_chars(batch) <= manager._BATCH_PAYLOAD_BUDGET
+            assert len(batch) <= manager.batch_limits.max_items
+            assert sum(len(i.original) for i in batch) <= manager.batch_limits.text_chars
+            assert batch_payload_chars(batch) <= manager.batch_limits.payload_chars
         provider.translate_async.assert_not_called()
 
-    def test_ncs_batch_budget_counts_context(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_BATCH_PAYLOAD_BUDGET", 1000)
+    def test_ncs_batch_budget_counts_context(self):
         items = []
         for index in range(5):
             item = _make_ncs_item(f"Player line {index}.", item_id="line:0", offset=0)
@@ -692,6 +692,7 @@ class TestNcsBatchTranslation:
         content = ExtractedContent("combined", items, Path("module"))
         provider = _make_provider({item.text: f"TR:{item.text}" for item in items})
         manager = TranslationManager(_make_config(), provider)
+        manager.batch_limits = BatchLimits(payload_chars=1000)
 
         result = manager.translate_content(content)
 
@@ -864,9 +865,7 @@ class TestNcsBatchTranslation:
 
         provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate)
         manager = TranslationManager(_make_config(), provider)
-        manager._BATCH_CALL_TIMEOUT = 0.01
-        manager._ITEM_TIMEOUT = 1.0
-        manager._RUN_ASYNC_TIMEOUT = 2.0
+        manager.call_limits = CallLimits(item_timeout=1.0, batch_timeout=0.01, min_pass_timeout=2.0)
 
         result = manager.translate_content(content)
 
@@ -877,8 +876,8 @@ class TestNcsBatchTranslation:
         assert stats["translated"] == 1
 
 
-class TestTranslationCache:
-    """Tests for translation deduplication and statistics."""
+class TestStatistics:
+    """Accepted requests are counted; rejected ones are recorded as errors."""
 
     def test_statistics_increment(self):
         """items_translated statistic must match actual successful translations."""
@@ -940,7 +939,7 @@ class TestTranslationCache:
         assert manager.get_statistics()["total_errors"] >= 1
 
 
-class TestPassthroughEmptyAfterSanitize:
+class TestPassthrough:
     """Strings with no translatable content skip the API entirely."""
 
     def test_token_only_item_bypasses_provider(self):
@@ -990,29 +989,46 @@ class TestPassthroughEmptyAfterSanitize:
         provider.translate_async.assert_not_called()
 
 
+class TestPassthroughRejection:
+    """A passthrough string that does not survive acceptance is a failure, not a gap."""
+
+    def test_unrestorable_passthrough_is_recorded_as_failed(self):
+        # A lone combining mark has nothing to translate; normalization drops it.
+        item = TranslatableItem(text="́", item_id="mark", location="a.uti")
+        provider = _make_provider({})
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(ExtractedContent("combined", [item], Path("m")))
+
+        assert result == {}
+        assert manager.failed_items == {item.key}
+        assert manager.get_statistics()["errors"] == [
+            "Translation failed for mark: text without translatable content was rejected"
+        ]
+        provider.translate_async.assert_not_called()
+        provider.translate_batch_async.assert_not_called()
+
+
 class TestBatchEligibility:
     """Strings within the text budget share requests; longer ones go individually."""
 
     @staticmethod
-    def _item_data(sanitized: str, item: TranslatableItem) -> dict:
-        return {"sanitized": sanitized, "item": item}
+    def _batchable(sanitized: str, item: TranslatableItem) -> bool:
+        work = WorkItem(item=item, sanitized=sanitized, handler=TokenHandler())
+        return is_batchable(work, BatchLimits())
 
     def test_batch_eligibility_boundaries(self):
         desc = TranslatableItem(text="x", metadata={"type": "placeable_description"})
-        budget = TranslationManager._BATCH_TEXT_BUDGET
-        assert TranslationManager._is_batchable(self._item_data("x" * budget, desc))
-        assert not TranslationManager._is_batchable(self._item_data("x" * (budget + 1), desc))
+        budget = BatchLimits().text_chars
+        assert self._batchable("x" * budget, desc)
+        assert not self._batchable("x" * (budget + 1), desc)
 
         untyped = TranslatableItem(text="Sword")
-        assert TranslationManager._is_batchable(self._item_data("Sword", untyped))
+        assert self._batchable("Sword", untyped)
 
-        ncs_limit = TranslationManager._NCS_BATCH_MAX_LENGTH
-        assert TranslationManager._is_batchable(
-            self._item_data("x" * ncs_limit, _make_ncs_item("x"))
-        )
-        assert not TranslationManager._is_batchable(
-            self._item_data("x" * (ncs_limit + 1), _make_ncs_item("x"))
-        )
+        ncs_limit = BatchLimits().ncs_item_chars
+        assert self._batchable("x" * ncs_limit, _make_ncs_item("x"))
+        assert not self._batchable("x" * (ncs_limit + 1), _make_ncs_item("x"))
 
     def test_profiles_pack_separately_and_oversized_goes_individually(self):
         very_short = TranslatableItem(
@@ -1116,8 +1132,7 @@ class TestBatchEligibility:
         assert provider.translate_batch_async.call_count == 1
         assert provider.translate_async.call_count == 1  # individual fallback
 
-    def test_medium_batches_respect_char_budget(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_BATCH_TEXT_BUDGET", 300)
+    def test_medium_batches_respect_char_budget(self):
         texts = [
             f"A fairly long unique description number {i} that easily clears the "
             "short threshold and lands in the medium tier of the batch splitter."
@@ -1125,6 +1140,7 @@ class TestBatchEligibility:
         ]
         provider = _make_provider({t: f"Перевод {i}" for i, t in enumerate(texts)})
         manager = TranslationManager(_make_config(), provider)
+        manager.batch_limits = BatchLimits(text_chars=300)
         content = ExtractedContent(
             content_type="placeable",
             items=[
@@ -1160,8 +1176,7 @@ class TestGenericTimeoutRetry:
             source_file=Path("x.utp"),
         )
 
-    def test_timeout_then_success_recovers(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_ITEM_TIMEOUT", 0.05)
+    def test_timeout_then_success_recovers(self):
         long_text = "A remarkably long placeable description sentence. " * 22
         calls = {"n": 0}
 
@@ -1174,6 +1189,7 @@ class TestGenericTimeoutRetry:
         provider = Mock()
         provider.translate_async = AsyncMock(side_effect=slow_then_fast)
         manager = TranslationManager(_make_config(), provider)
+        manager.call_limits = CallLimits(item_timeout=0.05)
 
         content = self._long_item(long_text)
         result = manager.translate_content(content)
@@ -1182,8 +1198,7 @@ class TestGenericTimeoutRetry:
         assert calls["n"] == 2
         assert manager.stats["errors"] == []
 
-    def test_double_timeout_records_error(self, monkeypatch):
-        monkeypatch.setattr(TranslationManager, "_ITEM_TIMEOUT", 0.05)
+    def test_double_timeout_records_error(self):
         long_text = "A remarkably long placeable description sentence. " * 22
 
         async def always_slow(text, source_lang, target_lang, **kwargs):
@@ -1193,6 +1208,7 @@ class TestGenericTimeoutRetry:
         provider = Mock()
         provider.translate_async = AsyncMock(side_effect=always_slow)
         manager = TranslationManager(_make_config(), provider)
+        manager.call_limits = CallLimits(item_timeout=0.05)
 
         content = self._long_item(long_text)
         result = manager.translate_content(content)
@@ -1200,6 +1216,184 @@ class TestGenericTimeoutRetry:
         assert long_text not in result
         assert len(manager.stats["errors"]) == 1
         assert "retry timed out" in manager.stats["errors"][0]
+
+
+def _ncs_samples(manager: TranslationManager) -> list:
+    samples = manager.get_statistics()["ncs_diagnostics"]["samples"]
+    return [(s["reason"], s.get("error")) for s in samples]
+
+
+class TestSingleRequestFailures:
+    """Provider errors and timeouts of single requests become recorded failures."""
+
+    LONG_TEXT = "A remarkably long placeable description sentence. " * 130
+    LONG_SCRIPT = "The seal is breaking beyond the old ward stones and the eastern gate! " * 20
+
+    def _long_item(self) -> TranslatableItem:
+        return TranslatableItem(self.LONG_TEXT, None, "l", "x.utp", {"type": "item_description"})
+
+    def test_long_item_error_is_recorded_without_a_retry(self):
+        item = self._long_item()
+        provider = _make_provider({})
+        provider.translate_async = AsyncMock(side_effect=RuntimeError("provider down"))
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(ExtractedContent("placeable", [item], Path("x")))
+
+        assert result == {}
+        assert manager.failed_items == {item.key}
+        assert manager.stats["errors"] == ["Translation failed for l: provider down"]
+        assert provider.translate_async.call_count == 1
+        provider.translate_batch_async.assert_not_called()
+
+    def test_error_of_the_timeout_retry_is_prefixed(self):
+        item = self._long_item()
+        provider = _make_provider({})
+
+        async def slow_then_raise(text, source_lang, target_lang, **kwargs):
+            if provider.translate_async.call_count == 1:
+                await asyncio.sleep(1)
+            raise RuntimeError("provider down")
+
+        provider.translate_async = AsyncMock(side_effect=slow_then_raise)
+        manager = TranslationManager(_make_config(), provider)
+        manager.call_limits = CallLimits(item_timeout=0.01)
+
+        result = manager.translate_content(ExtractedContent("placeable", [item], Path("x")))
+
+        assert result == {}
+        assert manager.failed_items == {item.key}
+        assert manager.stats["errors"] == [
+            "Translation failed for l: Timeout retry failed: provider down"
+        ]
+        assert provider.translate_async.call_count == 2
+
+    @pytest.mark.parametrize(
+        "retry, samples",
+        [
+            (
+                RuntimeError("provider down"),
+                [
+                    ("translation_timeout_retry_failed", "provider down"),
+                    ("translation_failed", "provider down"),
+                ],
+            ),
+            # An unsuccessful answer (unlike an error or a timeout) records no retry
+            # outcome here, while the fallback pass of failed batches records one.
+            (
+                TranslationResult("", "", success=False, error="provider down"),
+                [("translation_failed", "provider down")],
+            ),
+        ],
+    )
+    def test_failed_timeout_retry_of_a_long_script_string(self, retry, samples):
+        item = _make_ncs_item(self.LONG_SCRIPT)
+        provider = _make_provider({})
+
+        async def slow_then_fail(text, source_lang, target_lang, **kwargs):
+            if provider.translate_async.call_count == 1:
+                await asyncio.sleep(1)
+            if isinstance(retry, Exception):
+                raise retry
+            return retry
+
+        provider.translate_async = AsyncMock(side_effect=slow_then_fail)
+        manager = TranslationManager(_make_config(), provider)
+        manager.call_limits = CallLimits(item_timeout=0.01)
+
+        result = manager.translate_content(ExtractedContent("ncs", [item], Path("script.ncs")))
+
+        assert result == {}
+        assert manager.failed_items == {item.key}
+        assert manager.stats["errors"] == ["Translation failed for script:off_20: provider down"]
+        assert _ncs_samples(manager) == [
+            ("gate_approved:test_approve", None),
+            ("translation_timeout", None),
+            *samples,
+        ]
+        stats = manager.get_statistics()["ncs_diagnostics"]
+        assert (stats["timeout"], stats["retry_recovered"], stats["failed"]) == (1, 0, 1)
+        assert provider.translate_async.call_count == 2
+        retry_context = provider.translate_async.call_args.kwargs["context"]
+        assert retry_context.startswith("NCS timeout fallback.")
+        provider.translate_batch_async.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "fallback, error",
+        [
+            (RuntimeError("provider down"), "provider down"),
+            (None, "NCS single-item fallback timeout after 0.01s"),
+        ],
+    )
+    def test_failed_fallback_of_a_script_batch(self, fallback, error):
+        item = _make_ncs_item("The gate opens.", item_id="script:off_10", offset=0x10)
+        provider = _make_provider({})
+
+        async def failing_batch(items, source_lang, target_lang, **kwargs):
+            return [
+                TranslationResult("", i.original, success=False, error="Batch JSON parse error")
+                for i in items
+            ]
+
+        async def failing_single(text, source_lang, target_lang, **kwargs):
+            if fallback is None:
+                await asyncio.sleep(1)
+                return TranslationResult("late", text)
+            raise fallback
+
+        provider.translate_batch_async = AsyncMock(side_effect=failing_batch)
+        provider.translate_async = AsyncMock(side_effect=failing_single)
+        manager = TranslationManager(_make_config(), provider)
+        manager.call_limits = CallLimits(item_timeout=0.01)
+
+        result = manager.translate_content(ExtractedContent("ncs", [item], Path("script.ncs")))
+
+        assert result == {}
+        assert manager.failed_items == {item.key}
+        assert manager.stats["errors"] == [f"Translation failed for script:off_10: {error}"]
+        # The batch failed without a timeout, so no timeout outcome is recorded.
+        assert _ncs_samples(manager) == [
+            ("gate_approved:test_approve", None),
+            ("translation_failed", error),
+        ]
+        assert provider.translate_batch_async.call_count == 1
+        assert provider.translate_async.call_count == 1
+
+    def test_failed_token_retry_does_not_end_the_retries(self, caplog):
+        text = "<StartHighlight>[Shudder.]</Start>"
+        sanitized, _ = sanitize_text(text)
+        item = TranslatableItem(text, None, "d", "a.uti")
+        provider = _make_provider({})
+
+        async def broken_batch(items, source_lang, target_lang, **kwargs):
+            return [
+                TranslationResult("<StartAction>[Вздрогнуть.]</StartAction>", i.original)
+                for i in items
+            ]
+
+        provider.translate_batch_async = AsyncMock(side_effect=broken_batch)
+        provider.translate_async = AsyncMock(
+            side_effect=[
+                RuntimeError("provider down"),
+                TranslationResult(sanitized.replace("Shudder.", "Вздрогнуть."), ""),
+            ]
+        )
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(ExtractedContent("item", [item], Path("a.uti")))
+
+        assert result == {item.key: "<StartHighlight>[Вздрогнуть.]</Start>"}
+        assert manager.stats["errors"] == []
+        assert "Token retry failed for d on attempt 1: provider down" in caplog.text
+        contexts = [call.kwargs["context"] for call in provider.translate_async.call_args_list]
+        assert [context.splitlines()[-1] for context in contexts] == [
+            "Retry attempt 1 of 2.",
+            "Retry attempt 2 of 2.",
+        ]
+        # The failed attempt left the first answer's mismatch in the next prompt.
+        assert "Previous restored artifact sequence: <StartAction> | </StartAction>" in (
+            contexts[1]
+        )
 
 
 class TestForeignScriptRetry:
@@ -1291,22 +1485,6 @@ class TestBatchDedupBySanitized:
         provider.close_async_client = AsyncMock(return_value=None)
 
         manager = TranslationManager(_make_config(), provider)
-
-        from src.nwn_translator.translators.token_handler import sanitize_text
-
-        uncached = []
-        for item in items:
-            sanitized, handler = sanitize_text(item.text, preserve_tokens=True)
-            uncached.append(
-                {
-                    "item": item,
-                    "sanitized": sanitized,
-                    "full_sanitized": sanitized,
-                    "handler": handler,
-                }
-            )
-
-        translations: dict = {}
         translations = manager.translate_content(content)
 
         assert provider.translate_batch_async.call_count == 1
@@ -1338,10 +1516,289 @@ class TestBatchDedupBySanitized:
         provider.translate_batch_async.assert_not_called()
 
 
+class _RecordingProgress:
+    """Collects the file name of every progress bump."""
+
+    def __init__(self) -> None:
+        self.files: list = []
+
+    def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
+        self.files.append(filename)
+
+
+class TestProgressBumps:
+    """Exactly one progress bump per non-blank item; fallbacks never bump again."""
+
+    def test_one_bump_per_item_with_its_file_name(self):
+        rejected = _make_ncs_item("Debug state changed.", needs_llm_gate=True, confidence="low")
+        rejected.location = "s.ncs"
+        items = [
+            rejected,
+            TranslatableItem(text="Sword", item_id="n", location="a.uti"),
+            TranslatableItem(text="Sword", item_id="n", location="b.uti"),
+            TranslatableItem(text="<FirstName>", item_id="t", location="c.uti"),
+            TranslatableItem(text="Long text. " * 700, item_id="l", location="d.utp"),
+            TranslatableItem(text="   ", item_id="blank", location="e.uti"),
+        ]
+        content = ExtractedContent("combined", items, Path("module"))
+        provider = _make_provider({})
+
+        async def gate_reject(entries, *, source_lang):
+            return {str(e["key"]): {"translate": False, "reason": "test"} for e in entries}
+
+        provider.classify_ncs_translate_gate_batch_async = AsyncMock(side_effect=gate_reject)
+        manager = TranslationManager(_make_config(max_concurrent_requests=1), provider)
+        progress = _RecordingProgress()
+
+        result = manager.translate_content(content, item_progress=progress)
+
+        assert len(result) == 4
+        assert progress.files[:2] == ["s.ncs", "c.uti"]
+        assert sorted(progress.files[2:4]) == ["a.uti", "d.utp"]
+        assert progress.files[4:] == ["b.uti"]
+
+    def test_batch_fallback_and_token_retry_do_not_bump_again(self):
+        text = "<StartHighlight>[Shudder.]</Start>"
+        items = [
+            TranslatableItem(text="First line.", item_id="1", location="a.uti"),
+            TranslatableItem(text=text, item_id="2", location="a.uti"),
+        ]
+        provider = _make_provider({"First line.": "Первая строка."})
+
+        async def failing_batch(items, source_lang, target_lang, **kwargs):
+            return [
+                TranslationResult(translated="", original=i.original, success=False, error="x")
+                for i in items
+            ]
+
+        answers = iter(["<StartAction>[Вздрогнуть.]</StartAction>", None])
+
+        async def translate_async(text, source_lang, target_lang, **kwargs):
+            answer = next(answers, None) if "Shudder" in text else None
+            if answer is None:
+                answer = text.replace("[Shudder.]", "[Вздрогнуть.]")
+                answer = answer.replace("First line.", "Первая строка.")
+            return TranslationResult(translated=answer, original=text)
+
+        provider.translate_batch_async = AsyncMock(side_effect=failing_batch)
+        provider.translate_async = AsyncMock(side_effect=translate_async)
+        manager = TranslationManager(_make_config(), provider)
+        progress = _RecordingProgress()
+        content = ExtractedContent("combined", items, Path("module"))
+
+        result = manager.translate_content(content, item_progress=progress)
+
+        assert result == {
+            items[0].key: "Первая строка.",
+            items[1].key: "<StartHighlight>[Вздрогнуть.]</Start>",
+        }
+        # One batch, one call per halved leaf, two fallbacks and one token retry.
+        assert provider.translate_batch_async.call_count == 3
+        assert provider.translate_async.call_count == 3
+        assert progress.files == ["a.uti", "a.uti"]
+
+
+class TestDuplicateFanOut:
+    """Duplicates share the representative's answer or its failure."""
+
+    def test_translated_representative_fans_out_with_reuse_trace(self):
+        items = [
+            TranslatableItem(text="Guard", item_id="g", location=f"{name}.utc")
+            for name in ("a", "b", "c")
+        ]
+        writer = CapturingWriter()
+        provider = _make_provider({"Guard": "Страж"})
+        manager = TranslationManager(_make_config(translation_log_writer=writer), provider)
+
+        result = manager.translate_content(ExtractedContent("combined", items, Path("module")))
+
+        assert result == {item.key: "Страж" for item in items}
+        reuse = [e for e in writer.entries if e.get("event") == "translation_reuse"]
+        assert reuse == [
+            {"event": "translation_reuse", "occurrence": item.key, "representative": items[0].key}
+            for item in items[1:]
+        ]
+        assert manager.get_statistics()["items_translated"] == 1
+
+    def test_failed_representative_marks_duplicates_failed(self):
+        items = [
+            TranslatableItem(text="Boom", item_id="x", location=f"{name}.uti")
+            for name in ("a", "b")
+        ]
+        provider = Mock()
+        fail = TranslationResult(translated="", original="Boom", success=False, error="API error")
+        provider.translate_async = AsyncMock(return_value=fail)
+        provider.translate_batch_async = AsyncMock(return_value=[fail])
+        manager = TranslationManager(_make_config(), provider)
+
+        result = manager.translate_content(ExtractedContent("combined", items, Path("module")))
+
+        assert result == {}
+        assert manager.failed_items == {item.key for item in items}
+        assert manager.get_statistics()["errors"] == ["Translation failed for x: API error"]
+
+
+class TestNcsSampleOrder:
+    """NCS samples follow the gate, the fallback run and result processing in turn."""
+
+    def test_batch_timeout_samples_precede_fallback_outcomes(self):
+        items = [
+            _make_ncs_item("The first ward flickers.", item_id="s:1", offset=1),
+            _make_ncs_item("The second ward flickers.", item_id="s:2", offset=2),
+        ]
+        provider = _make_provider({})
+
+        async def hanging_batch(items, source_lang, target_lang, **kwargs):
+            await asyncio.sleep(1)
+            return []
+
+        async def translate_async(text, source_lang, target_lang, **kwargs):
+            if "first" in text:
+                return TranslationResult(translated="Первый.", original=text)
+            return TranslationResult(translated="", original=text, success=False, error="nope")
+
+        provider.translate_batch_async = AsyncMock(side_effect=hanging_batch)
+        provider.translate_async = AsyncMock(side_effect=translate_async)
+        manager = TranslationManager(_make_config(), provider)
+        manager.call_limits = CallLimits(batch_timeout=0.01)
+
+        result = manager.translate_content(ExtractedContent("ncs", items, Path("s.ncs")))
+
+        assert result == {items[0].key: "Первый."}
+        stats = manager.get_statistics()["ncs_diagnostics"]
+        assert [(s["item_id"], s["reason"]) for s in stats["samples"]] == [
+            ("s:1", "gate_approved:test_approve"),
+            ("s:2", "gate_approved:test_approve"),
+            ("s:1", "translation_timeout"),
+            ("s:2", "translation_timeout"),
+            ("s:1", "translation_timeout_retry_recovered"),
+            ("s:2", "translation_timeout_retry_failed"),
+            ("s:2", "translation_failed"),
+        ]
+        assert stats["samples"][5]["error"] == "nope"
+        assert (stats["timeout"], stats["retry_recovered"], stats["failed"]) == (2, 1, 1)
+        assert stats["translated"] == 1
+
+
+class TestRequestTexts:
+    """Retry and fallback requests keep their exact arguments."""
+
+    def test_token_retry_requests(self):
+        text = "<StartHighlight>[Shudder.]</Start> Drizzt"
+        sanitized, _ = sanitize_text(text)
+        glossary = Glossary({"Drizzt": "Дзирт"})
+        item = TranslatableItem(text, "Line of Drizzt", "i", "a.dlg")
+        provider = _make_provider({})
+
+        async def failing_batch(items, source_lang, target_lang, **kwargs):
+            return [
+                TranslationResult(translated="", original=i.original, success=False, error="x")
+                for i in items
+            ]
+
+        provider.translate_batch_async = AsyncMock(side_effect=failing_batch)
+        provider.translate_async = AsyncMock(
+            side_effect=[
+                TranslationResult(translated=sanitized.replace("Shudder.", "欢迎"), original=""),
+                TranslationResult(
+                    translated="<StartAction>[Вздрогнуть.]</StartAction> Дзирт", original=""
+                ),
+                TranslationResult(
+                    translated=sanitized.replace("Shudder.", "Вздрогнуть.").replace(
+                        "Drizzt", "Дзирт"
+                    ),
+                    original="",
+                ),
+            ]
+        )
+        manager = TranslationManager(_make_config(), provider, glossary)
+
+        result = manager.translate_content(ExtractedContent("combined", [item], Path("m")))
+
+        assert result == {item.key: "<StartHighlight>[Вздрогнуть.]</Start> Дзирт"}
+        block = terminology_block([sanitized, item.context], "russian", glossary)
+        assert "Дзирт" in block
+        common = "\n".join(
+            [
+                "Line of Drizzt",
+                PRESERVE_PLACEHOLDERS,
+                PRESERVE_INLINE_MARKUP,
+                "If the line contains dialog action markers like <<...>> or -...-, preserve "
+                "the surrounding markers exactly and translate only the inner text. Do not "
+                "invent new angle-bracket pseudo-tags such as <sir/madam>.",
+                "Expected preserved artifacts after restoration: <StartHighlight> | </Start>",
+            ]
+        )
+        contexts = [
+            "Line of Drizzt",
+            common + "\nYour previous answer contained characters from a foreign script "
+            "(such as Chinese). Write the translation in russian using only that "
+            "language's alphabet.\nPrevious mismatch type: foreign_script.\n"
+            "Previous restored artifact sequence: <StartHighlight> | </Start>\n"
+            "Retry attempt 1 of 2.",
+            common + "\nPrevious mismatch type: value_mismatch.\n"
+            "Previous restored artifact sequence: <StartAction> | </StartAction>\n"
+            "Retry attempt 2 of 2.",
+        ]
+        assert [call.kwargs for call in provider.translate_async.call_args_list] == [
+            {
+                "text": sanitized,
+                "source_lang": "english",
+                "target_lang": "russian",
+                "context": context,
+                "glossary_block": block,
+                "content_profile": "default",
+            }
+            for context in contexts
+        ]
+        batch_call = provider.translate_batch_async.call_args
+        assert batch_call.kwargs["glossary_block"] == block
+        assert batch_call.kwargs["content_profile"] == "default"
+
+    def test_ncs_fallback_request_and_batch_metadata(self):
+        item = _make_ncs_item("The gate opens.", item_id="script:off_10", offset=0x10)
+        provider = _make_provider({})
+
+        async def failing_batch(items, source_lang, target_lang, **kwargs):
+            return [
+                TranslationResult(translated="", original=i.original, success=False, error="x")
+                for i in items
+            ]
+
+        provider.translate_batch_async = AsyncMock(side_effect=failing_batch)
+        manager = TranslationManager(_make_config(), provider)
+
+        manager.translate_content(ExtractedContent("ncs", [item], Path("script.ncs")))
+
+        sent = provider.translate_batch_async.call_args.kwargs["items"][0]
+        assert list(sent.metadata.items()) == [
+            ("type", "ncs_string"),
+            ("offset", 0x10),
+            ("confidence", "high"),
+            ("needs_llm_gate", False),
+            ("ncs_hint", "SpeakString"),
+            ("batch_resource", "script.ncs"),
+            ("translation_group", "script"),
+            ("batch_context", "NCS string; hint=SpeakString"),
+            ("approved_neighbors", []),
+        ]
+        assert provider.translate_async.call_args.kwargs == {
+            "text": "The gate opens.",
+            "source_lang": "english",
+            "target_lang": "russian",
+            "context": "NCS timeout fallback. Translate only if this is player-visible script "
+            "text. Do not translate identifiers, tags, resrefs, variables, debug logs, or "
+            "code. file=script.ncs; item_id=script:off_10; offset=16; confidence=high; "
+            "hint=SpeakString.\nNCS string; hint=SpeakString",
+            "glossary_block": None,
+            "content_profile": "script_message",
+        }
+
+
 class TestTokenMismatchRecovery:
     """Token/tag mismatches trigger retries and cleanup, not English fallback."""
 
-    def test_invalid_inline_tags_retry_to_exact_match_and_cache(self):
+    def test_invalid_inline_tags_retry_to_exact_match(self, caplog):
         text = "<StartHighlight>[Shudder.]</Start>"
         content = ExtractedContent(
             content_type="dialog",
@@ -1381,9 +1838,9 @@ class TestTokenMismatchRecovery:
 
         assert result[_key(content, text)] == "<StartHighlight>[Вздрогнуть.]</Start>"
         assert provider.translate_async.call_count == 2
-        assert len(list(manager.translation_cache.items())) == 1
+        assert "accepted cleaned translation" not in caplog.text
 
-    def test_cleanup_only_result_is_not_cached(self):
+    def test_repeated_mismatch_is_accepted_only_after_cleanup(self, caplog):
         text = "<StartHighlight>[Shudder.]</Start>"
         broken = "<StartAction>[Вздрогнуть.]</StartAction>"
         content = ExtractedContent(
@@ -1409,4 +1866,4 @@ class TestTokenMismatchRecovery:
         # Initial call + 1 retry reproducing the identical mismatch short-circuits
         # the remaining retry and goes straight to cleanup.
         assert provider.translate_async.call_count == 2
-        assert len(list(manager.translation_cache.items())) == 0
+        assert "accepted cleaned translation" in caplog.text

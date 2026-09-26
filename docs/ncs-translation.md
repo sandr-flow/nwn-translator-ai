@@ -171,12 +171,12 @@ from `unknown` selection labels. Uncertainty is not a fourth, lower priority.
 
 ## Reading experiment results
 
-The evaluator runs the production extractor and translation manager twice:
+The evaluator runs the production extractor and script gate twice:
 with bytecode alone, and with the matching packed NSS. The optional extractor
 trace observes the existing decisions; it does not implement another selector.
 Stages are `units` (empty literals and grouping), `consumer` (argument role),
 `text_filter` (technical/shape veto), `candidate` (context/sentence evidence),
-and `pre_gate` (manager hard veto before the model).
+and `pre_gate` (script-gate hard veto before the model).
 
 For every stage, the JSON report gives newly correct and incorrect rejections,
 unknown rejections, remaining labels and cumulative missed translations. Each

@@ -1,7 +1,7 @@
 """Measure deterministic NCS selection against independently reviewed occurrences.
 
-No API calls, translations or injections are performed. The real manager runs
-its pre-gate checks; a provider records exactly which occurrences reach the
+No API calls, translations or injections are performed. The real script gate
+runs its pre-gate checks; a provider records exactly which occurrences reach the
 model boundary. Those candidates are not reported as model-approved strings.
 """
 
@@ -23,7 +23,9 @@ from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
 from nwn_translator.extractors.ncs_concat import find_concat_chains, merged_text
 from nwn_translator.formats.ncs import parse_ncs_bytes
-from nwn_translator.translators.translation_manager import TranslationManager
+from nwn_translator.translation_logging import NullTranslationLogWriter
+from nwn_translator.translators.ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
+from nwn_translator.translators.script_gate import ScriptGate
 
 CORPUS = ROOT / "tests/fixtures/ncs_selection"
 STAGES = ("units", "consumer", "text_filter", "candidate", "pre_gate")
@@ -114,8 +116,13 @@ def evaluate_case(case, gold, work: Path, with_sources: bool, root: Path = CORPU
         },
     )
     provider = BoundaryProvider()
-    manager = TranslationManager(TranslationConfig(api_key="offline", input_file=path), provider)
-    manager._run_ncs_llm_gate([{"item": item} for item in content.items])
+    log_writer = NullTranslationLogWriter()
+    ScriptGate(
+        TranslationConfig(api_key="offline", input_file=path),
+        provider,
+        log_writer,
+        NcsDiagnostics(new_ncs_diagnostics(), log_writer),
+    ).decide(content.items)
     index_by_offset = {item["offset"]: item["const_index"] for item in gold["items"]}
     for item in content.items:
         parts = item.metadata.get("concat_parts") or [{"offset": item.metadata["offset"]}]

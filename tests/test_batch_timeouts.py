@@ -241,6 +241,7 @@ class TestTranslationManagerTimeouts:
         from typing import Any, Dict, Optional
         from src.nwn_translator.config import TranslationConfig
         from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+        from src.nwn_translator.translators.model_calls import CallLimits
         from src.nwn_translator.translators.translation_manager import TranslationManager
         from src.nwn_translator.ai_providers.base import TranslationResult
 
@@ -263,9 +264,7 @@ class TestTranslationManagerTimeouts:
 
         manager = TranslationManager(config, provider)
         # Set very short timeout for testing
-        manager._ITEM_TIMEOUT = 0.2
-        manager._GATHER_TIMEOUT = 1.0
-        manager._RUN_ASYNC_TIMEOUT = 2.0
+        manager.call_limits = CallLimits(item_timeout=0.2, min_pass_timeout=2.0)
 
         items = [
             TranslatableItem(text="Hello world", item_id="test:0"),
@@ -288,6 +287,7 @@ class TestTranslationManagerTimeouts:
         from src.nwn_translator.ai_providers.base import TranslationResult
         from src.nwn_translator.config import TranslationConfig
         from src.nwn_translator.extractors.base import ExtractedContent, TranslatableItem
+        from src.nwn_translator.translators.model_calls import CallLimits
         from src.nwn_translator.translators.translation_manager import TranslationManager
 
         config = TranslationConfig(
@@ -316,8 +316,7 @@ class TestTranslationManagerTimeouts:
         provider.close_async_client = AsyncMock()
 
         manager = TranslationManager(config, provider)
-        manager._ITEM_TIMEOUT = 1.0
-        manager._RUN_ASYNC_TIMEOUT = 0.08
+        manager.call_limits = CallLimits(item_timeout=1.0, min_pass_timeout=0.08)
 
         items = [
             TranslatableItem(

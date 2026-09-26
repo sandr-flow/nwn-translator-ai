@@ -23,7 +23,7 @@ class TestTokenPreservationWorkflow:
         handler = TokenHandler()
         sanitized = handler.sanitize(original)
 
-        placeholders = [replacement.placeholder for replacement in sanitized.replacements]
+        placeholders = [artifact.placeholder for artifact in sanitized.artifacts]
         mock_translated = f"¡Hola {placeholders[0]}, eres un {placeholders[1]} experto!"
 
         restored = handler.restore(mock_translated)

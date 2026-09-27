@@ -53,8 +53,8 @@ from ..translation_logging import (
 )
 from .dialog_plan import Chunk, PreparedDialog, plan_chunks, plan_requests, prepare_dialog
 from .model_calls import SingleRequest, send_single
+from .progress import ItemProgress
 from .token_handler import TokenMismatchReport
-from .translation_manager import ItemProgress
 
 logger = logging.getLogger(__name__)
 

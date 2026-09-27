@@ -14,7 +14,7 @@ last answer is finally cleaned up.
 
 import logging
 from dataclasses import replace
-from typing import Any, Callable, Dict, Hashable, Iterable, List, Optional, Protocol, Set
+from typing import Any, Callable, Dict, Hashable, Iterable, List, Optional, Set
 
 from ..ai_providers import TranslationProvider, TranslationResult
 from ..config import TranslationConfig
@@ -27,23 +27,12 @@ from ..translation_logging import (
 )
 from .model_calls import CallLimits, ModelCaller
 from .ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
+from .progress import ItemProgress
 from .script_gate import ScriptGate, add_script_context
 from .token_handler import sanitize_text
 from .work_plan import BatchLimits, WorkItem, dedup_key, plan_work
 
 logger = logging.getLogger(__name__)
-
-
-class ItemProgress(Protocol):
-    """Progress counter of a run, bumped by both translation managers."""
-
-    def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
-        """Counts *by* finished items of *filename*.
-
-        Args:
-            by: Items finished.
-            filename: Resource the items belong to.
-        """
 
 
 def unescape_literal_newlines(original: str, translated: str) -> str:

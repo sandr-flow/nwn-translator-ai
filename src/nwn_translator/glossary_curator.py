@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _VALID_DECISIONS = frozenset({"keep", "local_only", "drop", "alias_of"})
-#: Categories whose candidates always go to the model.
+#: Categories whose candidates the rules leave to the model (unless the filter drops them).
 _UNCERTAIN_CATEGORIES = frozenset({"unknown", "term", "faction", "organization"})
 
 #: A retry asks only for the keys the first reply left out; a failed request ends
@@ -185,7 +185,10 @@ def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str
 
 
 def _optional_int(value: Any) -> Optional[int]:
-    """Returns *value* as ``int``, or ``None`` (``json`` reads ``Infinity`` and ``NaN``)."""
+    """Returns *value* as ``int``, or ``None`` when it does not convert.
+
+    ``json.loads`` reads ``Infinity`` and ``NaN``, which ``int`` rejects.
+    """
     try:
         return int(value)
     except (TypeError, ValueError, OverflowError):

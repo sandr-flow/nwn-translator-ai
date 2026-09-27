@@ -128,8 +128,9 @@ class GlossaryBuilder:
                     temperature=GLOSSARY_TEMPERATURE,
                 )
 
-            # The set's iteration order (insertion in batch order) decides the order of
-            # the answers, and so of the "Already accepted forms" JSON a retry sends.
+            # Built exactly like this on purpose: the set's iteration order (it depends
+            # on the hash seed, see KI-008) decides the order of the answers, and so of
+            # the "Already accepted forms" JSON a retry sends (see LlmStage.fill_keys).
             remaining = set(batch)
 
             def on_attempt(attempt: int, answered: int) -> None:

@@ -366,7 +366,12 @@ class _Selection:
     """Relevance filter and shared budget of one WORLD CONTEXT block."""
 
     def __init__(self, texts: List[str], hierarchy_names: List[str]) -> None:
-        """Indexes the source *texts*; *hierarchy_names* are the area, quest and item names."""
+        """Indexes the source corpus and starts the shared budget.
+
+        Args:
+            texts: Source texts of the prompt.
+            hierarchy_names: Area, quest and item names, for the hierarchy check.
+        """
         self._index = SourceTokenIndex(tokenize_corpus(texts))
         self._joined = "\n".join(str(t) for t in texts if t).casefold()
         self._common = common_hierarchy_components(hierarchy_names)

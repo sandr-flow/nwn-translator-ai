@@ -11,7 +11,9 @@ to keep only the entities a dialog batch mentions. Matching is conservative:
   non-magnet token of at least 4 letters (``Smith``), or with a plural/possessive
   variant of one distinctive token (``Winters`` vs. ``Winter's``);
 * common prompt, routing and game words (magnets: ``player``, ``reply``,
-  ``ravenloft`` …) never count as evidence on their own.
+  ``ravenloft`` …) never count as a strong hit of a multi-token name and are
+  never distinctive for variant or fuzzy matching; an exact match of the whole
+  name still counts.
 
 CJK is out of scope (see ``config.GAME_INCOMPATIBLE_TARGET_LANGS``).
 """

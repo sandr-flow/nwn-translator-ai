@@ -253,7 +253,11 @@ class EntityCandidateRegistry:
             self._items[candidate.normalized_name] = candidate
 
     def values(self) -> List[EntityCandidate]:
-        """Returns all candidates, sorted by normalized name."""
+        """Returns the candidates.
+
+        Returns:
+            All candidates, sorted by normalized name.
+        """
         return [self._items[k] for k in sorted(self._items)]
 
     def mark_curated(
@@ -284,7 +288,12 @@ class EntityCandidateRegistry:
         candidate.alias_of = alias_of or None
 
     def glossary_pairs(self) -> List[Tuple[str, str]]:
-        """Returns ``(name, category)`` of the glossary-eligible candidates, by normalized name."""
+        """Returns the glossary requests of the eligible candidates.
+
+        Returns:
+            ``(name, category)`` of every candidate eligible for the glossary,
+            sorted by normalized name.
+        """
         return [(c.name, c.category or "unknown") for c in self.values() if c.eligible_for_glossary]
 
     def resolved_aliases(self) -> Dict[str, str]:

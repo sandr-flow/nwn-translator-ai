@@ -67,9 +67,14 @@ def iter_nodes(tree: List[DialogNode]) -> Iterator[Tuple[str, DialogNode]]:
 def _render_blocks(
     nodes: Iterable[Tuple[str, DialogNode]], overrides: Mapping[str, str]
 ) -> List[str]:
-    """Renders one block per ``(key, node)``, each ending with an empty line.
+    """Renders one block per node: header, text and the keys the node leads to.
 
-    *overrides* maps a key to the text used instead of ``node.text``.
+    Args:
+        nodes: ``(key, node)`` pairs in output order.
+        overrides: Key to text used instead of ``node.text``.
+
+    Returns:
+        The script lines; each block ends with an empty line.
     """
     lines: List[str] = []
     for key, node in nodes:

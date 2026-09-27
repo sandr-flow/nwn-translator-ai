@@ -1,122 +1,56 @@
-"""Deterministic filters for engine/toolset strings that are not prose.
+"""Deterministic filters for engine and toolset strings that are not prose.
 
-Two callers rely on this module. The entity-extraction pass uses it to decide
-what may seed world entities, and the extractors use it to decide what may be
-sent to the translator at all. Both are intentionally conservative: missing one
-inferred proper noun is cheaper than letting technical labels pollute the
-run-wide glossary, and translating an engine tag silently breaks the scripts
-that look it up by name.
-
-This module is also the single source of truth for engine tag prefixes; the NCS
-extractor imports :data:`ENGINE_TAG_PREFIXES` rather than keeping its own copy.
+Entity extraction uses them to decide what may seed world entities, and the
+extractors to decide what may be sent to the translator at all. Both are
+conservative: missing one inferred proper noun is cheaper than technical labels
+in the run-wide glossary, and translating an engine tag silently breaks the
+scripts that look it up by name. :data:`ENGINE_TAG_PREFIXES` is the one list of
+engine tag prefixes; the NCS extractor imports it.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Callable, FrozenSet, List, Literal, Optional, Tuple
+from typing import FrozenSet, List, Literal, Optional, Tuple
 
 _PLACEHOLDER_RE = re.compile(r"^<[^<>\s]+>$")
 _ANY_PLACEHOLDER_RE = re.compile(r"<[^<>]+>")
-_UNDERSCORE_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+$")
 _ALL_CAPS_IDENTIFIER_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _CAMEL_CASE_RE = re.compile(r"^[A-Z][a-z]+(?:[A-Z0-9][a-z0-9]*)+$")
-_MIXED_CASE_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*[A-Z][a-z][A-Za-z0-9]*$")
-_ROUTE_LABEL_RE = re.compile(r"^[A-Za-z]*\d+[A-Za-z0-9]*$")
-_RESREF_RE = re.compile(r"^[a-z]{1,4}_[a-z0-9_]+$", re.IGNORECASE)
+#: Other identifier shapes: underscores, resref, route label, CamelCase, mixed case.
+_IDENTIFIER_RES = (
+    re.compile(r"^[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+$"),
+    re.compile(r"^[a-z]{1,4}_[a-z0-9_]+$", re.IGNORECASE),
+    re.compile(r"^[A-Za-z]*\d+[A-Za-z0-9]*$"),
+    _CAMEL_CASE_RE,
+    re.compile(r"^[A-Za-z][A-Za-z0-9]*[A-Z][a-z][A-Za-z0-9]*$"),
+)
 _WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 _SENTENCE_PUNCT_RE = re.compile(r"[,.!?;:\"'()[\]]")
 _NUMBERED_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z' -]{1,48}\s+\d{1,4}$")
 _QUEST_HIERARCHY_RE = re.compile(r"^[A-Z][\w'\- ]{1,40}\s+:\s+\S")
 _BRACKETED_TAG_RE = re.compile(r"^\s*\[[A-Za-z0-9_]+\]\s+")
-
-# Paired asterisks with at least one letter inside: the NWN emote convention
-# (*gasp*, *whispers* ..., "SAY MY NAME! *WHIPCRACK*") — player-facing prose,
-# unlike bare/unpaired wildcards ("Court of the Count *").
+#: Paired asterisks around a letter: the NWN emote convention (``*gasp*``), which is
+#: player-facing prose, unlike a bare wildcard (``Court of the Count *``).
 _EMOTE_MARKUP_RE = re.compile(r"\*[^*]*[A-Za-z][^*]*\*")
 
-_SYSTEM_TERMS: FrozenSet[str] = frozenset(
-    {
-        "ad&d",
-        "d&d",
-        "dmfi",
-        "nwn",
-        "nwn:ee",
-        "bioware",
-        "neverwinternights",
-        "neverwinter nights",
-    }
+_SYSTEM_TERMS = frozenset(
+    {"ad&d", "d&d", "dmfi", "nwn", "nwn:ee", "bioware", "neverwinternights", "neverwinter nights"}
 )
-
-#: Engine/toolset tag prefixes that must never be translated: waypoints (WP_),
-#: destinations (DST_), post markers (POST_), Bioware's NW_/ARCH_ families.
-#: Shared with the NCS extractor, so a prefix is never declared in two lists.
-ENGINE_TAG_PREFIXES: Tuple[str, ...] = (
-    "arch_",
-    "nw_",
-    "wp_",
-    "dst_",
-    "post_",
-)
-
-#: Placeholder tags left in place by Bioware toolset templates. Matched whole and
-#: case-insensitively: the all-caps form already reads as code-like, but
-#: "yourtaghere" and "Yourtaghere" would otherwise pass as ordinary words.
+#: Engine and toolset tag prefixes that are never translated: waypoints, destinations,
+#: post markers and Bioware's ``NW_``/``ARCH_`` families.
+ENGINE_TAG_PREFIXES: Tuple[str, ...] = ("arch_", "nw_", "wp_", "dst_", "post_")
+#: Toolset template placeholder tags, matched whole and case-insensitively.
 ENGINE_PLACEHOLDER_TAGS: FrozenSet[str] = frozenset({"yourtaghere"})
-
-#: ``.git`` item types whose code-like labels are toolset names, not prose.
-#: Every ``waypoint_*`` type counts as well.
-_GIT_TECHNICAL_TYPES: FrozenSet[str] = frozenset({"trigger_name", "encounter_name", "item_name"})
-
-_RACE_TOKENS: FrozenSet[str] = frozenset(
-    {
-        "human",
-        "elf",
-        "elven",
-        "elvish",
-        "dwarf",
-        "dwarven",
-        "dwarvish",
-        "halfling",
-        "gnome",
-        "gnomish",
-        "tiefling",
-        "aasimar",
-        "orc",
-        "orcish",
-        "ogre",
-        "goblin",
-        "drow",
-        "kobold",
-        "githyanki",
-        "githzerai",
-        "half-elf",
-        "halfelf",
-        "half-orc",
-        "halforc",
-    }
+#: ``.git`` item types whose code-like labels are toolset names; so is every ``waypoint_*``.
+_GIT_TECHNICAL_TYPES = frozenset({"trigger_name", "encounter_name", "item_name"})
+_RACE_TOKENS = frozenset(
+    "human elf elven elvish dwarf dwarven dwarvish halfling gnome gnomish tiefling aasimar orc "
+    "orcish ogre goblin drow kobold githyanki githzerai half-elf halfelf half-orc halforc".split()
 )
-
-_GENDER_TOKENS: FrozenSet[str] = frozenset(
-    {"male", "female", "man", "woman", "boy", "girl", "child"}
-)
-
-# Reasons that make a string unfit for translation/entity seeding, as opposed
-# to informational flags such as ``natural_language``.
-_BLOCKING_REASONS: FrozenSet[str] = frozenset(
-    {
-        "empty",
-        "placeholder",
-        "system_term",
-        "acronym_or_brand",
-        "code_like_identifier",
-        "wildcard_or_format_artifact",
-        "script_comment",
-    }
-)
-
-_GENERIC_PERSON_LABELS: FrozenSet[str] = frozenset(
+_GENDER_TOKENS = frozenset({"male", "female", "man", "woman", "boy", "girl", "child"})
+_GENERIC_PERSON_LABELS = frozenset(
     {
         "human male",
         "human female",
@@ -130,31 +64,17 @@ _GENERIC_PERSON_LABELS: FrozenSet[str] = frozenset(
         "merchant",
     }
 )
-
-# "patron" also appears above: this set catches it with punctuation ("Patron.").
-_COMMON_SINGLE_NOUNS: FrozenSet[str] = frozenset(
-    {
-        "armor",
-        "boat",
-        "candle",
-        "chest",
-        "display",
-        "food",
-        "kit",
-        "patron",
-        "rat",
-        "tree",
-    }
+#: Single common nouns; "patron" is here too, to catch it with punctuation ("Patron.").
+_COMMON_SINGLE_NOUNS = frozenset("armor boat candle chest display food kit patron rat tree".split())
+#: Reasons that make a string unfit for translation and entity seeding, unlike the
+#: informational ``natural_language``.
+_BLOCKING_REASONS = frozenset(
+    "empty placeholder system_term acronym_or_brand code_like_identifier "
+    "wildcard_or_format_artifact script_comment".split()
 )
-
-_GENERIC_REASONS: FrozenSet[str] = frozenset(
-    {
-        "generic_person_label",
-        "generic_race_label",
-        "generic_role_with_place_prefix",
-    }
+_GENERIC_REASONS = frozenset(
+    {"generic_person_label", "generic_race_label", "generic_role_with_place_prefix"}
 )
-
 
 #: Decision of the deterministic candidate filter.
 CandidateDecision = Literal["drop", "deprioritize", "keep"]
@@ -162,12 +82,12 @@ CandidateDecision = Literal["drop", "deprioritize", "keep"]
 
 @dataclass(frozen=True)
 class StringClassification:
-    """Classification of a source string for entity/glossary filtering.
+    """Classification of a source string for entity and glossary filtering.
 
     Attributes:
         text: The stripped string.
-        reasons: Every rule the string triggers (blocking reasons and the
-            informational ``natural_language``).
+        reasons: Every rule the string triggers: the blocking reasons and the
+            informational ``natural_language``.
         emote_markup: Paired asterisks are the only artifact (``*gasp*``).
     """
 
@@ -176,19 +96,14 @@ class StringClassification:
     emote_markup: bool = False
 
     @property
-    def empty(self) -> bool:
-        """The string is empty after stripping."""
-        return "empty" in self.reasons
+    def blocking(self) -> FrozenSet[str]:
+        """The reasons that make the string unfit for translation and entity seeding."""
+        return self.reasons & _BLOCKING_REASONS
 
     @property
-    def acronym_or_brand(self) -> bool:
-        """Upper-case acronym, ``&`` short form or system term."""
-        return "acronym_or_brand" in self.reasons
-
-    @property
-    def code_like_identifier(self) -> bool:
-        """Identifier-shaped: underscores, CamelCase, all caps, resref or route label."""
-        return "code_like_identifier" in self.reasons
+    def blocked(self) -> bool:
+        """Whether a blocking reason applies."""
+        return bool(self.blocking)
 
     @property
     def natural_language(self) -> bool:
@@ -196,14 +111,9 @@ class StringClassification:
         return "natural_language" in self.reasons
 
     @property
-    def blocked(self) -> bool:
-        """Whether this string should be excluded from entity extraction."""
-        return bool(self.reasons & _BLOCKING_REASONS)
-
-    @property
     def primary_reason(self) -> str:
         """Alphabetically first reason, for logs and drop reasons."""
-        return sorted(self.reasons)[0] if self.reasons else ""
+        return min(self.reasons, default="")
 
 
 @dataclass(frozen=True)
@@ -224,7 +134,7 @@ class CandidateFilterResult:
 
 
 def classify_string(text: object) -> StringClassification:
-    """Classifies *text* for conservative entity/glossary candidate filtering.
+    """Classifies *text* for conservative entity and glossary filtering.
 
     Args:
         text: Any value; ``None`` counts as empty.
@@ -232,38 +142,30 @@ def classify_string(text: object) -> StringClassification:
     Returns:
         The classification of the stripped string.
     """
-    value = "" if text is None else str(text)
-    stripped = value.strip()
+    stripped = ("" if text is None else str(text)).strip()
     lowered = stripped.casefold()
     # Scripter comments stored in name fields ("// * * * SCENE: ...").
     script_comment = stripped.startswith("//")
-    checks = (
-        ("empty", not stripped),
-        ("placeholder", bool(stripped and _PLACEHOLDER_RE.fullmatch(stripped))),
-        (
-            "system_term",
-            lowered in ENGINE_PLACEHOLDER_TAGS
-            or lowered.startswith(ENGINE_TAG_PREFIXES)
-            or any(term in lowered for term in _SYSTEM_TERMS),
-        ),
-        ("acronym_or_brand", _is_acronym_or_brand(stripped)),
-        ("wildcard_or_format_artifact", _is_wildcard_or_format_artifact(stripped)),
-        ("script_comment", script_comment),
-        ("code_like_identifier", _is_code_like_identifier(stripped)),
-        ("natural_language", _looks_natural_language(stripped)),
-    )
-    # Emote markup only when the asterisks are the sole artifact trigger:
-    # with them stripped out, the rest must be clean of braces/placeholders.
+    checks = {
+        "empty": not stripped,
+        "placeholder": bool(_PLACEHOLDER_RE.fullmatch(stripped)),
+        "system_term": lowered in ENGINE_PLACEHOLDER_TAGS
+        or lowered.startswith(ENGINE_TAG_PREFIXES)
+        or any(term in lowered for term in _SYSTEM_TERMS),
+        "acronym_or_brand": _is_acronym_or_brand(stripped),
+        "wildcard_or_format_artifact": _is_wildcard_or_format_artifact(stripped),
+        "script_comment": script_comment,
+        "code_like_identifier": _is_code_like_identifier(stripped),
+        "natural_language": _looks_natural_language(stripped),
+    }
+    # Emote markup only when, without the asterisks, nothing else is an artifact.
     emote_markup = (
         not script_comment
         and bool(_EMOTE_MARKUP_RE.search(stripped))
         and not _is_wildcard_or_format_artifact(stripped.replace("*", ""))
     )
-    return StringClassification(
-        text=stripped,
-        reasons=frozenset(reason for reason, hit in checks if hit),
-        emote_markup=emote_markup,
-    )
+    reasons = frozenset(reason for reason, hit in checks.items() if hit)
+    return StringClassification(stripped, reasons, emote_markup)
 
 
 def is_valid_entity_name(name: object, category: Optional[str] = None) -> bool:
@@ -280,24 +182,15 @@ def is_valid_entity_name(name: object, category: Optional[str] = None) -> bool:
     cls = classify_string(name)
     if _classify_candidate(cls, category).decision == "drop":
         return False
-    if cls.acronym_or_brand:
+    if "acronym_or_brand" in cls.reasons:
         return True
-
-    cat = (category or "").strip().lower()
-    words = _words(cls.text)
-
-    if cat == "unknown":
+    words = _WORD_RE.findall(cls.text)
+    if (category or "").strip().lower() == "unknown":
         return cls.natural_language and len(words) >= 2
-
     if cls.natural_language:
         return True
-
-    # Allow single fantasy/personal-looking names such as "Barovia" or "Ireena".
-    if len(words) == 1:
-        word = words[0]
-        return len(word) >= 3 and word[0].isupper()
-
-    return False
+    # A single fantasy or personal name such as "Barovia" or "Ireena".
+    return len(words) == 1 and len(words[0]) >= 3 and words[0][0].isupper()
 
 
 def should_skip_entity_source_text(
@@ -307,18 +200,13 @@ def should_skip_entity_source_text(
 ) -> bool:
     """Tells whether an item text must not be sent to the model.
 
-    Emote markup (``*gasp*``, ``*whispers* ...``) is player-facing prose and is
-    allowed through when the wildcard artifact rule is the only objection.
-    *known_names* (casefolded display names taken from the module's own
-    blueprints) rescues strings whose only objection is the code-like shape:
-    a CamelCase surname such as ``McGee`` or ``DeVir`` is legitimate when a
-    creature in the same module carries it as a name — the .utc side already
-    translates it unfiltered, so blocking the .git copy would desynchronize
-    the two. Engine tags stay blocked (``system_term`` is a separate reason),
-    and so do technical field types below. The glossary gates
-    (:func:`is_valid_entity_name`, :func:`classify_entity_candidate`)
-    deliberately stay strict — an asterisk-bearing string is never an entity
-    name, and neither is a rescued CamelCase one.
+    Emote markup (``*gasp*``) is prose and passes when the wildcard rule is its
+    only objection. *known_names* rescues a string whose only objection is its
+    code-like shape: a CamelCase surname (``McGee``) that a creature of the
+    module carries is translated on the ``.utc`` side anyway, and blocking the
+    ``.git`` copy would desynchronize the two. Engine tags (``system_term``) and
+    technical ``.git`` field types stay blocked, and the glossary gates stay
+    strict: neither an emote nor a rescued name ever becomes an entity name.
 
     Args:
         text: Item text.
@@ -329,25 +217,23 @@ def should_skip_entity_source_text(
         ``True`` when the text must be skipped.
     """
     cls = classify_string(text)
-    if cls.blocked:
-        blocking = cls.reasons & _BLOCKING_REASONS
-        rescued = bool(
+    blocking = cls.blocking
+    if blocking:
+        rescued = (
             known_names is not None
             and blocking <= {"code_like_identifier"}
             and cls.text.casefold() in known_names
         )
-        if not rescued and not (cls.emote_markup and blocking <= {"wildcard_or_format_artifact"}):
+        emote = cls.emote_markup and blocking <= {"wildcard_or_format_artifact"}
+        if not (rescued or emote):
             return True
-
     meta_type = str((metadata or {}).get("type", ""))
-    if _is_git_technical_type(meta_type) and cls.code_like_identifier and not cls.natural_language:
-        return True
-
-    return False
+    technical = meta_type in _GIT_TECHNICAL_TYPES or meta_type.startswith("waypoint_")
+    return technical and "code_like_identifier" in cls.reasons and not cls.natural_language
 
 
 def describe_rejection(name: object, category: Optional[str] = None) -> str:
-    """Returns a compact deterministic rejection reason for a log line.
+    """Returns a compact rejection reason for a log line.
 
     Args:
         name: Rejected entity name.
@@ -356,83 +242,20 @@ def describe_rejection(name: object, category: Optional[str] = None) -> str:
     Returns:
         The primary classification reason, else a reason for the category rule.
     """
-    cls = classify_string(name)
-    if cls.primary_reason:
-        return cls.primary_reason
+    reason = classify_string(name).primary_reason
+    if reason:
+        return reason
     if (category or "").strip().lower() == "unknown":
         return "unknown_not_natural_multiword"
     return "invalid_entity_name"
 
 
-def _is_race_gender_pair(text: str) -> bool:
-    """Tells whether *text* is a ``Human Female``-style label, optionally after a ``[TAG]``."""
-    parts = _BRACKETED_TAG_RE.sub("", text).split()
-    return (
-        len(parts) == 2
-        and parts[0].casefold() in _RACE_TOKENS
-        and parts[1].casefold() in _GENDER_TOKENS
-    )
-
-
-#: Rule predicate: ``(text, casefolded text, words, lower-cased category) -> applies``.
-_CandidateRule = Callable[[str, str, List[str], str], bool]
-
-#: Candidate rules applied in order after the blocking checks:
-#: ``(decision, reason, technical score, predicate)``; the first match decides.
-_CANDIDATE_RULES: Tuple[Tuple[CandidateDecision, str, int, _CandidateRule], ...] = (
-    (
-        "drop",
-        "numbered_generic_label",
-        80,
-        lambda text, _folded, _words, _cat: bool(_NUMBERED_LABEL_RE.fullmatch(text)),
-    ),
-    (
-        "drop",
-        "quest_hierarchy_label",
-        85,
-        lambda text, _folded, _words, _cat: bool(_QUEST_HIERARCHY_RE.match(text)),
-    ),
-    (
-        "deprioritize",
-        "generic_person_label",
-        40,
-        lambda _text, folded, _words, _cat: folded in _GENERIC_PERSON_LABELS,
-    ),
-    (
-        "deprioritize",
-        "single_common_noun",
-        30,
-        lambda _text, _folded, words, _cat: len(words) == 1
-        and words[0].casefold() in _COMMON_SINGLE_NOUNS,
-    ),
-    (
-        "deprioritize",
-        "generic_race_label",
-        35,
-        lambda text, _folded, _words, _cat: _is_race_gender_pair(text),
-    ),
-    (
-        "deprioritize",
-        "generic_role_with_place_prefix",
-        35,
-        lambda _text, folded, _words, _cat: folded.endswith((" resident", " shopper", " sitter")),
-    ),
-    (
-        "deprioritize",
-        "unknown_single_word",
-        20,
-        lambda _text, _folded, words, cat: cat == "unknown" and len(words) == 1,
-    ),
-)
-
-
 def classify_entity_candidate(
     name: object, category: Optional[str] = None
 ) -> CandidateFilterResult:
-    """Classifies whether *name* may become a glossary/world-context anchor.
+    """Classifies whether *name* may seed the glossary and world context.
 
-    This does not decide whether the original string is translated. It only
-    controls whether the string is allowed to seed entity context.
+    It does not decide whether the string itself is translated.
 
     Args:
         name: Candidate name.
@@ -448,33 +271,48 @@ def _classify_candidate(
     cls: StringClassification, category: Optional[str]
 ) -> CandidateFilterResult:
     """Returns the :func:`classify_entity_candidate` decision of a classified string."""
-    if cls.empty:
+    if "empty" in cls.reasons:
         return CandidateFilterResult("drop", "empty", 100, frozenset({"empty"}))
     # Acronyms in visible text need curation, not automatic removal from terminology.
-    blocking = cls.reasons & _BLOCKING_REASONS
-    if cls.acronym_or_brand and blocking <= {"acronym_or_brand", "code_like_identifier"}:
+    acronym_only = cls.blocking <= {"acronym_or_brand", "code_like_identifier"}
+    if "acronym_or_brand" in cls.reasons and acronym_only:
         return CandidateFilterResult("keep", "needs_acronym_curation", 0, cls.reasons)
     if cls.blocked:
-        return CandidateFilterResult("drop", cls.primary_reason or "blocked", 90, cls.reasons)
+        return CandidateFilterResult("drop", cls.primary_reason, 90, cls.reasons)
+    rule = _generic_label_rule(cls.text, (category or "").strip().lower())
+    if rule is None:
+        return CandidateFilterResult("keep")
+    decision, reason, score = rule
+    return CandidateFilterResult(decision, reason, score, frozenset({reason}))
 
-    text = cls.text
-    lowered = text.casefold()
-    words = _words(text)
-    category_key = (category or "").strip().lower()
-    for decision, reason, score, applies in _CANDIDATE_RULES:
-        if applies(text, lowered, words, category_key):
-            return CandidateFilterResult(decision, reason, score, frozenset({reason}))
-    return CandidateFilterResult("keep")
+
+def _generic_label_rule(text: str, category: str) -> Optional[Tuple[CandidateDecision, str, int]]:
+    """Returns ``(decision, reason, technical score)`` of the first generic-label rule met."""
+    folded = text.casefold()
+    words = _WORD_RE.findall(text)
+    if _NUMBERED_LABEL_RE.fullmatch(text):
+        return "drop", "numbered_generic_label", 80
+    if _QUEST_HIERARCHY_RE.match(text):
+        return "drop", "quest_hierarchy_label", 85
+    if folded in _GENERIC_PERSON_LABELS:
+        return "deprioritize", "generic_person_label", 40
+    if len(words) == 1 and words[0].casefold() in _COMMON_SINGLE_NOUNS:
+        return "deprioritize", "single_common_noun", 30
+    pair = _BRACKETED_TAG_RE.sub("", text).casefold().split()  # "[TAG] Human Female" too
+    if len(pair) == 2 and pair[0] in _RACE_TOKENS and pair[1] in _GENDER_TOKENS:
+        return "deprioritize", "generic_race_label", 35
+    if folded.endswith((" resident", " shopper", " sitter")):
+        return "deprioritize", "generic_role_with_place_prefix", 35
+    if category == "unknown" and len(words) == 1:
+        return "deprioritize", "unknown_single_word", 20
+    return None
 
 
 def is_generic_entity_label(name: object, category: Optional[str] = None) -> bool:
-    """Tells whether *name* is a non-disambiguating generic label.
+    """Tells whether *name* is a generic label shared by many distinct NPCs.
 
-    Generic labels (``Human Female``, ``Almraiven Resident``, ``dwarf merchant``)
-    are shared by many distinct NPCs. In prompt selection they must be
-    admitted only by exact substring match on the name itself; tag/speaker
-    matches are not evidence because every Human-Female NPC would otherwise
-    pull in via a token co-occurrence.
+    Prompt selection never admits such a label (``Human Female``, ``Almraiven
+    Resident``) by a tag or token match.
 
     Args:
         name: Entity name.
@@ -488,58 +326,29 @@ def is_generic_entity_label(name: object, category: Optional[str] = None) -> boo
     return result.decision == "deprioritize" and result.reason in _GENERIC_REASONS
 
 
-def _is_git_technical_type(meta_type: str) -> bool:
-    """Tells whether *meta_type* names a toolset label field of a ``.git`` instance."""
-    return meta_type in _GIT_TECHNICAL_TYPES or meta_type.startswith("waypoint_")
-
-
-def _words(text: str) -> List[str]:
-    """Returns the ASCII words of *text* (an inner apostrophe stays in the word)."""
-    return _WORD_RE.findall(text)
-
-
 def _is_acronym_or_brand(text: str) -> bool:
     """Tells whether *text* is a system term, a short ``&`` form or short upper-case text."""
-    if not text:
-        return False
-    if text.casefold() in _SYSTEM_TERMS:
-        return True
-    if "&" in text and len(text) <= 8:
-        return True
-    if text.isupper() and len(_words(text)) <= 2 and len(text) <= 16:
-        return True
-    return False
+    return bool(text) and (
+        text.casefold() in _SYSTEM_TERMS
+        or ("&" in text and len(text) <= 8)
+        or (text.isupper() and len(_WORD_RE.findall(text)) <= 2 and len(text) <= 16)
+    )
 
 
 def _is_wildcard_or_format_artifact(text: str) -> bool:
-    """Tells whether *text* holds an asterisk, a brace or an embedded placeholder.
-
-    A placeholder that is the whole string does not count.
-    """
-    if not text:
-        return False
-    if "*" in text or "{" in text or "}" in text:
+    """Tells whether *text* holds an asterisk, a brace or a placeholder that is not all of it."""
+    if any(char in text for char in "*{}"):
         return True
-    if _ANY_PLACEHOLDER_RE.search(text) and not _PLACEHOLDER_RE.fullmatch(text):
-        return True
-    return False
+    return bool(_ANY_PLACEHOLDER_RE.search(text) and not _PLACEHOLDER_RE.fullmatch(text))
 
 
 def _is_code_like_identifier(text: str) -> bool:
     """Tells whether *text* is one token shaped like an identifier, resref or route label."""
-    if not text or " " in text:
+    if " " in text:
         return False
-    if _UNDERSCORE_IDENTIFIER_RE.fullmatch(text):
-        return True
     if _ALL_CAPS_IDENTIFIER_RE.fullmatch(text) and len(text) > 1:
         return True
-    if _RESREF_RE.fullmatch(text):
-        return True
-    if _ROUTE_LABEL_RE.fullmatch(text):
-        return True
-    if _CAMEL_CASE_RE.fullmatch(text) or _MIXED_CASE_IDENTIFIER_RE.fullmatch(text):
-        return True
-    return False
+    return any(pattern.fullmatch(text) for pattern in _IDENTIFIER_RES)
 
 
 def _looks_natural_language(text: str) -> bool:
@@ -548,23 +357,12 @@ def _looks_natural_language(text: str) -> bool:
     That is two or more words that are not all identifier-shaped or that come
     with sentence punctuation, or one ``Capitalized`` word of 3+ letters.
     """
-    if not text:
-        return False
-    words = _words(text)
-    if len(words) >= 2 and not _all_identifier_tokens(words):
-        return True
-    if _SENTENCE_PUNCT_RE.search(text) and len(words) >= 2:
-        return True
-    if len(words) == 1:
-        word = words[0]
-        return bool(word[0].isupper() and word[1:].islower() and len(word) >= 3)
-    return False
-
-
-def _all_identifier_tokens(words: List[str]) -> bool:
-    """Tells whether every word is CamelCase or all caps (``False`` for no words)."""
-    if not words:
-        return False
-    return all(
-        _CAMEL_CASE_RE.fullmatch(word) or _ALL_CAPS_IDENTIFIER_RE.fullmatch(word) for word in words
+    words: List[str] = _WORD_RE.findall(text)
+    if len(words) >= 2:
+        return bool(_SENTENCE_PUNCT_RE.search(text)) or not all(
+            _CAMEL_CASE_RE.fullmatch(word) or _ALL_CAPS_IDENTIFIER_RE.fullmatch(word)
+            for word in words
+        )
+    return (
+        len(words) == 1 and len(words[0]) >= 3 and words[0][0].isupper() and words[0][1:].islower()
     )

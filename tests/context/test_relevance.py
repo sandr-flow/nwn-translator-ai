@@ -3,6 +3,7 @@
 import pytest
 
 from nwn_translator.context.relevance import (
+    SourceTokenIndex,
     _damerau_levenshtein_le_1,
     is_relevant,
     tokenize,
@@ -75,8 +76,8 @@ def test_damerau_levenshtein_distance_at_most_one(a, b, expected):
     ],
 )
 def test_is_relevant(entity, text, relevant):
-    assert is_relevant(entity, tokenize(text)) is relevant
+    assert is_relevant(entity, SourceTokenIndex(tokenize(text))) is relevant
 
 
 def test_nothing_is_relevant_to_an_empty_corpus():
-    assert not is_relevant("Anything", set())
+    assert not is_relevant("Anything", SourceTokenIndex(set()))

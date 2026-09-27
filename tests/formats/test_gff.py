@@ -299,6 +299,41 @@ def test_8_byte_values_live_in_the_field_data_block(tmp_path, value, field_type)
 
 
 @pytest.mark.parametrize(
+    "gff_type, written, read_back",
+    [
+        (GFFType.BYTE, 200, 200),
+        (GFFType.CHAR, "A", "A"),
+        # A CHAR has no code page: bytes past ASCII read back as "?".
+        (GFFType.CHAR, 200, "?"),
+        (GFFType.WORD, 0xBEEF, 0xBEEF),
+        (GFFType.SHORT, 0x1234, 0x1234),
+        (GFFType.SHORT, -2, -2),
+        (GFFType.DWORD, 0xFFFFFFFF, 0xFFFFFFFF),
+        (GFFType.INT, 7, 7),
+        (GFFType.INT, -7, -7),
+        (GFFType.FLOAT, 0.5, 0.5),
+    ],
+    ids=[
+        "byte",
+        "char_ascii",
+        "char_non_ascii",
+        "word",
+        "short_positive",
+        "short_negative",
+        "dword",
+        "int_positive",
+        "int_negative",
+        "float",
+    ],
+)
+def test_inline_values_decode_by_field_type(tmp_path, gff_type, written, read_back):
+    """Values of up to 4 bytes live in the field record's data word itself."""
+    data = {"StructType": "GFF", "Field": written, "_field_types": {"Field": int(gff_type)}}
+    result = _roundtrip(tmp_path, data)
+    assert (result["Field"], result["_field_types"]["Field"]) == (read_back, int(gff_type))
+
+
+@pytest.mark.parametrize(
     "data",
     [
         _dialog_graph(),

@@ -1,9 +1,8 @@
 """Stages of a translation run, each operating on one explicit :class:`PipelineState`.
 
-:func:`run_pipeline` runs them in order: unpack the archive, scan the world, extract
-the strings, collect entity candidates, build the glossary, translate, inject and
-repack. Every stage can also run on its own from saved artifacts (see
-:mod:`nwn_translator.pipeline.artifacts` and ``scripts/stage.py``).
+:func:`run_pipeline` runs them in order: unpack, world scan, extract, entity
+candidates, glossary, translate, inject and repack. Each stage can also run alone from
+saved artifacts (:mod:`nwn_translator.pipeline.artifacts`, ``scripts/stage.py``).
 """
 
 import logging
@@ -13,7 +12,6 @@ import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar
 
@@ -49,37 +47,25 @@ from ..translators.translation_manager import TranslationManager
 
 logger = logging.getLogger(__name__)
 
-#: ``file_path -> (parsed_data, ExtractedContent, file_ext)``, in file order.
-ExtractedMap = Dict[Path, Tuple[Dict[str, Any], ExtractedContent, str]]
+#: One loaded resource: its parsed data and its extracted items.
+Loaded = Tuple[Dict[str, Any], ExtractedContent]
+
+#: The extracted resources of a run by path, in file order.
+ExtractedMap = Dict[Path, Loaded]
 
 _Result = TypeVar("_Result")
 
 #: Errors listed one by one in the verbose run summary; the rest are counted.
 _SUMMARY_ERRORS_SHOWN = 10
 
-#: Rule line framing the run summary in the log.
-_SUMMARY_RULE = "=" * 50
-
-
-def _new_run_stats() -> Dict[str, Any]:
-    """Returns empty run statistics, in the key order of the stats dict."""
-    return {
-        "files_processed": 0,
-        "items_translated": 0,
-        "errors": [],
-        "ncs_diagnostics": new_ncs_diagnostics(),
-    }
-
 
 def find_translatable_files(directory: Path) -> List[Path]:
     """Returns the files under *directory* whose kind can be translated.
 
-    File order decides batch composition, so it must not depend on the file
-    system: the files are sorted by upper-cased relative path, the order in
-    which NTFS lists a directory, and a Linux run batches them as a Windows
-    run does. The world scan (context mode) walks the directory in the file
-    system's own order, so its registries, and the requests they feed, can
-    still differ between file systems.
+    File order decides batch composition, so the files are sorted by upper-cased
+    relative path, the order NTFS lists them in, on every file system. The world
+    scan walks the file system's own order, so its registries (and the requests
+    they feed) can still differ between file systems.
 
     Args:
         directory: Unpacked module.
@@ -100,7 +86,7 @@ def load_parsed_and_extracted(
     file_ext: str,
     gff_cache: Optional[Dict[Path, Dict[str, Any]]],
     source_encoding: Optional[str] = None,
-) -> Optional[Tuple[Dict[str, Any], ExtractedContent]]:
+) -> Optional[Loaded]:
     """Loads *file_path* and extracts its translatable items.
 
     Args:
@@ -133,7 +119,6 @@ def inject_translations_into_file(
     extracted: ExtractedContent,
     translations: Translations,
     *,
-    log_updates: bool = False,
     target_lang: Optional[str] = None,
     source_encoding: Optional[str] = None,
 ) -> Optional[InjectedContent]:
@@ -141,14 +126,12 @@ def inject_translations_into_file(
 
     Args:
         file_path: Resource file to patch in place.
-        parsed_data: Loaded resource; unused, injectors patch the file by the
-            offsets recorded in *extracted*.
+        parsed_data: Loaded resource; unused, the injectors patch by recorded offsets.
         extracted: Items extracted from the file.
         translations: Translated text by occurrence.
-        log_updates: Log the number of patched items.
-        target_lang: Target language; selects the code page of written text.
-        source_encoding: Decode used when *extracted* was produced. Script
-            injection re-reads the file and compares against the originals.
+        target_lang: Target language; selects the code page of the written text.
+        source_encoding: Decode used for *extracted*; script injection compares
+            the re-read file against it.
 
     Returns:
         The injection result, or ``None`` when the file kind is not translatable.
@@ -156,7 +139,7 @@ def inject_translations_into_file(
     kind = RESOURCE_KINDS.get(file_path.suffix.lower())
     if kind is None:
         return None
-    result = kind.inject(
+    return kind.inject(
         file_path,
         extracted.items,
         translations,
@@ -164,30 +147,36 @@ def inject_translations_into_file(
         text_encoding=module_string_encoding_for_target_lang(target_lang),
         source_encoding=source_encoding,
     )
-    if log_updates and result.modified:
-        logger.info("Updated %s: %s items", file_path.name, result.items_updated)
-    return result
+
+
+def _new_run_stats() -> Dict[str, Any]:
+    """Returns empty run statistics, in the key order of the stats dict."""
+    return {
+        "files_processed": 0,
+        "items_translated": 0,
+        "errors": [],
+        "ncs_diagnostics": new_ncs_diagnostics(),
+    }
 
 
 @dataclass
 class PipelineState:
     """Everything the stages of one run read and write.
 
-    The statistics are only changed from the thread that runs the stages.
-
     Attributes:
         config: Run settings.
         provider: Model provider.
         metrics_recorder: Request metrics of the run.
-        temp_dir: Temporary directory holding :attr:`extract_dir`; ``None`` when the
-            directory is kept after the run (``skip_cleanup``) or not created.
+        temp_dir: Temporary directory of :attr:`extract_dir`; ``None`` with
+            ``skip_cleanup`` (the directory is kept) or before unpacking.
         extract_dir: Unpacked module.
         world_context: Scanned module objects (context mode).
         glossary: Proper-name glossary (context mode).
-        gff_cache: Parsed GFF resources by path, shared by the stages.
-        stats: Run statistics; see :meth:`get_statistics`.
-        trace: Translation log of the run, shared by the stages and the
-            translation managers.
+        gff_cache: Parsed GFF resources by path.
+        stats: Run statistics, changed only by the thread running the stages.
+        trace: Translation log of the run: ``config.translation_log_writer``,
+            else a writer the run opens for ``config.translation_log``, else a
+            writer that discards entries.
     """
 
     config: TranslationConfig
@@ -202,21 +191,10 @@ class PipelineState:
     trace: TranslationLogWriter = field(init=False)
 
     def __post_init__(self) -> None:
-        """Chooses the translation log writer of the run.
-
-        An injected writer (``config.translation_log_writer``) belongs to the
-        caller; the file named by ``config.translation_log`` is opened by the
-        run and closed by :meth:`close_log` when :func:`run_pipeline` ends.
-        """
+        """Chooses the translation log writer of the run."""
         self.trace = translation_log_writer_for_config(
             self.config.translation_log, self.config.translation_log_writer
         )
-
-    def close_log(self) -> None:
-        """Closes the log file the run opened; an injected writer belongs to its caller."""
-        opened_by_run = self.trace is not self.config.translation_log_writer
-        if opened_by_run and isinstance(self.trace, FileTranslationLogWriter):
-            self.trace.close()
 
     @classmethod
     def create(cls, config: TranslationConfig) -> "PipelineState":
@@ -237,8 +215,14 @@ class PipelineState:
         """Code page of the module's strings; ``None`` lets the readers detect it."""
         return source_string_encoding(self.config.source_lang)
 
+    def close_log(self) -> None:
+        """Closes the log file the run opened; an injected writer belongs to its caller."""
+        opened_by_run = self.trace is not self.config.translation_log_writer
+        if opened_by_run and isinstance(self.trace, FileTranslationLogWriter):
+            self.trace.close()
+
     def progress(self, phase: str, current: int, total: int, message: str) -> None:
-        """Reports progress to the run's callback, if there is one.
+        """Reports progress to ``config.progress_callback``, if set.
 
         Args:
             phase: Progress phase (the web maps it to a task status).
@@ -250,7 +234,7 @@ class PipelineState:
             self.config.progress_callback(phase, current, total, message)
 
     def add_error(self, message: str) -> None:
-        """Records one error of the run and logs it.
+        """Records and logs one error of the run.
 
         Args:
             message: Error description.
@@ -259,9 +243,7 @@ class PipelineState:
         logger.error(message)
 
     def merge_manager_stats(self, manager_stats: Dict[str, Any]) -> None:
-        """Adds the statistics of a finished translation manager to the run.
-
-        Every counter is added in full, so each manager is merged exactly once.
+        """Adds the statistics of a finished translation manager (once per manager).
 
         Args:
             manager_stats: ``TranslationManager.stats`` after its last request.
@@ -275,24 +257,8 @@ class PipelineState:
         for sample in manager_ncs["samples"]:
             add_sample(run_ncs, sample)
 
-    def record_ncs_patch_failure(self, file_path: Path, error: str) -> None:
-        """Counts a script whose translations could not be patched in, and logs it.
-
-        Args:
-            file_path: The script.
-            error: Why the patch failed.
-        """
-        sample = {"file": file_path.name, "reason": "patch_failed", "error": error}
-        add_sample(self.stats["ncs_diagnostics"], sample, "patch_failed")
-        write_trace(self.trace, {"event": "ncs_diagnostic", **sample})
-
     def output_path(self) -> Path:
-        """Returns the path of the translated module.
-
-        Returns:
-            ``config.output_file``, or a path next to the input named after the
-            target language.
-        """
+        """Returns ``config.output_file``, else the input's path named after the language."""
         if self.config.output_file is not None:
             return self.config.output_file
         return create_output_path(self.config.input_file, self.config.target_lang)
@@ -300,8 +266,8 @@ class PipelineState:
     def write_metrics(self, output_path: Path) -> None:
         """Stores the metrics summary in :attr:`stats` and writes the metrics file.
 
-        The file is ``config.metrics_output``, or *output_path* with a
-        ``.metrics.json`` suffix appended. A failed write is only logged.
+        The file is ``config.metrics_output``, else *output_path* plus
+        ``.metrics.json``; a failed write is only logged.
 
         Args:
             output_path: The translated module.
@@ -320,10 +286,9 @@ class PipelineState:
 
         Returns:
             ``files_processed`` (files injected without an error),
-            ``items_translated`` (accepted requests of the batch pass, so no
-            contextual dialog lines), ``errors``,
-            ``ncs_diagnostics``, ``metrics`` (the current request summary) and
-            ``total_errors``, in this order.
+            ``items_translated`` (accepted batch-pass requests, no contextual
+            dialog lines), ``errors``, ``ncs_diagnostics``, ``metrics`` (the
+            current summary) and ``total_errors``, in this order.
         """
         return {
             **self.stats,
@@ -333,10 +298,10 @@ class PipelineState:
 
 
 class _ItemProgress:
-    """Adapter that turns the per-item bumps of the translation managers into progress events.
+    """Turns the per-item bumps of the translation managers into progress events.
 
-    Dialog files are translated on a thread pool, so the counter is locked.
-    The total is an estimate; the count never goes past it.
+    Dialog files are translated on a thread pool, so the counter is locked. The
+    total is an estimate; the count never passes it.
 
     Attributes:
         total: Items expected, at least one.
@@ -347,8 +312,8 @@ class _ItemProgress:
         """Counts up to *total* items of the run *state*.
 
         Args:
-            state: Run whose progress callback is called.
-            total: Items expected (at least one is assumed).
+            state: Run whose progress is reported.
+            total: Items expected.
         """
         self._state = state
         self.total = max(1, total)
@@ -380,20 +345,18 @@ def _run_pool(
 ) -> List[Tuple[Path, Optional[_Result], Optional[Exception]]]:
     """Runs *work* on every path on a thread pool, returning the outcomes in input order.
 
-    Progress is reported as files finish, but the outcomes are handed back in the
-    order of *paths*, so what the caller does with them never depends on thread
-    timing.
+    Progress is reported as files finish; the outcomes come back in the order of
+    *paths*, so what the caller does with them never depends on thread timing.
 
     Args:
-        state: Run state (worker count, progress callback, cancellation).
+        state: Run state (worker count, progress, cancellation).
         work: Called with one path per task.
         paths: Files to process.
         phase: Progress phase reported once per finished file.
         cancellable: Check for cancellation after every finished file.
 
     Returns:
-        ``(path, result, error)`` per path in input order; *error* is the
-        exception *work* raised, and *result* is then ``None``.
+        ``(path, result, error)`` per path; *result* is ``None`` when *work* raised *error*.
 
     Raises:
         TranslationCancelled: If *cancellable* and the run is cancelled; queued
@@ -422,34 +385,12 @@ def _run_pool(
     return [(path, result, error) for path, (result, error) in zip(paths, outcomes)]
 
 
-def _unpack(state: PipelineState) -> Path:
-    """Unpacks the input archive into a new directory under ``config.temp_dir``.
-
-    The system temporary directory is used when ``config.temp_dir`` does not
-    exist. Without ``skip_cleanup`` the directory is a :attr:`PipelineState.temp_dir`
-    that :func:`run_pipeline` removes.
-
-    Args:
-        state: Run state; its ``temp_dir`` is set unless ``skip_cleanup``.
-
-    Returns:
-        The directory holding the unpacked resources.
-    """
-    config = state.config
-    parent = config.temp_dir if config.temp_dir.exists() else None
-    if config.skip_cleanup:
-        extract_dir = Path(tempfile.mkdtemp(prefix="nwn_translate_", dir=parent))
-    else:
-        state.temp_dir = tempfile.TemporaryDirectory(prefix="nwn_translate_", dir=parent)
-        extract_dir = Path(state.temp_dir.name)
-    ERFReader(config.input_file, progress_callback=config.progress_callback).extract_all(
-        extract_dir
-    )
-    return extract_dir
-
-
 def stage_unpack(state: PipelineState) -> List[Path]:
     """Unpacks the input archive into :attr:`PipelineState.extract_dir`.
+
+    The directory is created under ``config.temp_dir`` (the system temporary
+    directory when that does not exist). Without ``skip_cleanup`` it is the
+    :attr:`PipelineState.temp_dir` that :func:`run_pipeline` removes.
 
     Args:
         state: Run state.
@@ -461,12 +402,22 @@ def stage_unpack(state: PipelineState) -> List[Path]:
         TranslationCancelled: If the run is cancelled.
     """
     logger.info("Extracting module...")
-    state.extract_dir = _unpack(state)
+    config = state.config
+    parent = config.temp_dir if config.temp_dir.exists() else None
+    if config.skip_cleanup:
+        extract_dir = Path(tempfile.mkdtemp(prefix="nwn_translate_", dir=parent))
+    else:
+        state.temp_dir = tempfile.TemporaryDirectory(prefix="nwn_translate_", dir=parent)
+        extract_dir = Path(state.temp_dir.name)
+    ERFReader(config.input_file, progress_callback=config.progress_callback).extract_all(
+        extract_dir
+    )
+    state.extract_dir = extract_dir
     state.progress("extracting", 1, 1, "done")
-    state.config.raise_if_cancelled()
+    config.raise_if_cancelled()
 
     logger.info("Finding translatable files...")
-    translatable_files = find_translatable_files(state.extract_dir)
+    translatable_files = find_translatable_files(extract_dir)
     logger.info("Found %d translatable files", len(translatable_files))
     return translatable_files
 
@@ -493,29 +444,6 @@ def stage_worldscan(state: PipelineState) -> None:
     )
 
 
-def _extract_file(
-    state: PipelineState, file_path: Path
-) -> Optional[Tuple[Dict[str, Any], ExtractedContent, str]]:
-    """Loads one file and extracts its items, for :func:`stage_extract`.
-
-    Args:
-        state: Run state (parse cache, source code page).
-        file_path: Resource file.
-
-    Returns:
-        ``(parsed data, extracted content, lower-case extension)``, or ``None``
-        when the file has nothing to translate.
-    """
-    file_ext = file_path.suffix.lower()
-    loaded = load_parsed_and_extracted(
-        file_path, file_ext, state.gff_cache, source_encoding=state.source_encoding
-    )
-    if loaded is None:
-        return None
-    parsed_data, extracted = loaded
-    return parsed_data, extracted, file_ext
-
-
 def stage_extract(state: PipelineState, translatable_files: List[Path]) -> ExtractedMap:
     """Parses the files and extracts their translatable items on a thread pool.
 
@@ -526,20 +454,22 @@ def stage_extract(state: PipelineState, translatable_files: List[Path]) -> Extra
         translatable_files: Files to extract.
 
     Returns:
-        The files with translatable items, in the order of *translatable_files*
-        (item order drives batch composition).
+        The files with translatable items, in input order (it drives batch composition).
 
     Raises:
         TranslationCancelled: If the run is cancelled; queued files are dropped.
     """
     logger.info("Extracting translatable content...")
+
+    def extract(path: Path) -> Optional[Loaded]:
+        """Loads one file and extracts its items."""
+        return load_parsed_and_extracted(
+            path, path.suffix.lower(), state.gff_cache, source_encoding=state.source_encoding
+        )
+
     extracted_map: ExtractedMap = {}
     for file_path, result, error in _run_pool(
-        state,
-        partial(_extract_file, state),
-        translatable_files,
-        "extracting_content",
-        cancellable=True,
+        state, extract, translatable_files, "extracting_content", cancellable=True
     ):
         if error is not None:
             state.add_error(f"Error extracting {file_path.name}: {error}")
@@ -550,10 +480,10 @@ def stage_extract(state: PipelineState, translatable_files: List[Path]) -> Extra
 
 
 def stage_collect_entities(state: PipelineState, extracted_map: ExtractedMap) -> None:
-    """Adds entity candidates from the extracted text to the world context.
+    """Adds entity candidates to the world context for :func:`stage_build_glossary`.
 
-    Candidates come from the extracted fields themselves and from model
-    requests over all items; they feed :func:`stage_build_glossary`.
+    Candidates come from the extracted name fields and from model requests over
+    all items.
 
     Args:
         state: Run state; nothing happens without a world context.
@@ -563,28 +493,25 @@ def stage_collect_entities(state: PipelineState, extracted_map: ExtractedMap) ->
         TranslationCancelled: If the run is cancelled.
     """
     state.config.raise_if_cancelled()
-    if state.world_context is None or not extracted_map:
+    world = state.world_context
+    if world is None or not extracted_map:
         return
 
     state.progress("scanning", 0, 1, "Extracting entities from text…")
-    contents = [extracted for _parsed, extracted, _ext in extracted_map.values()]
-    all_items: List[TranslatableItem] = [item for content in contents for item in content.items]
-
-    known_names = {name for name, _cat in state.world_context.get_all_names()}
-    extracted_registry = EntityCandidateRegistry.from_extracted_content(contents)
-    state.world_context.candidates.extend(extracted_registry.values())
-
+    contents = [extracted for _parsed, extracted in extracted_map.values()]
+    known_names = {name for name, _cat in world.get_all_names()}
+    world.candidates.extend(EntityCandidateRegistry.from_extracted_content(contents).values())
     llm_registry = EntityExtractor().extract_candidates(
-        all_items,
+        [item for content in contents for item in content.items],
         state.provider,
         state.config,
         known_names,
         progress_callback=state.config.progress_callback,
     )
-    state.world_context.candidates.extend(llm_registry.values())
-    state.world_context.extracted_names = llm_registry.glossary_pairs()
-    if state.world_context.candidates:
-        candidate_count = len(state.world_context.candidates.values())
+    world.candidates.extend(llm_registry.values())
+    world.extracted_names = llm_registry.glossary_pairs()
+    if world.candidates:
+        candidate_count = len(world.candidates.values())
         state.metrics_recorder.increment("entity_candidates.raw", candidate_count)
         logger.info("Entity candidate collection produced %d candidate(s)", candidate_count)
 
@@ -592,12 +519,11 @@ def stage_collect_entities(state: PipelineState, extracted_map: ExtractedMap) ->
 def stage_build_glossary(state: PipelineState) -> None:
     """Curates the entity candidates and builds :attr:`PipelineState.glossary`.
 
-    A failed build leaves an empty glossary. The outcome is logged as a
+    A failed build leaves an empty glossary; the outcome is logged as a
     ``terminology_resolved`` event.
 
     Args:
-        state: Run state; nothing happens outside context mode or without a
-            world context.
+        state: Run state; nothing happens outside context mode or without a world context.
 
     Raises:
         TranslationCancelled: If the run is cancelled.
@@ -608,12 +534,10 @@ def stage_build_glossary(state: PipelineState) -> None:
 
     state.progress("scanning", 0, 1, "Building glossary...")
     candidates = state.world_context.candidates
+    callback = state.config.progress_callback
     try:
         GlossaryCurator().curate(
-            candidates,
-            state.provider,
-            state.config,
-            progress_callback=state.config.progress_callback,
+            candidates, state.provider, state.config, progress_callback=callback
         )
         decisions = Counter(
             f"entity_candidates.{candidate.curation_decision}" for candidate in candidates.values()
@@ -621,10 +545,7 @@ def stage_build_glossary(state: PipelineState) -> None:
         for key, value in decisions.items():
             state.metrics_recorder.increment(key, value)
         state.glossary = GlossaryBuilder().build(
-            state.world_context,
-            state.provider,
-            state.config,
-            progress_callback=state.config.progress_callback,
+            state.world_context, state.provider, state.config, progress_callback=callback
         )
     except RuntimeError as e:
         logger.warning("Glossary build failed, continuing without it: %s", e)
@@ -652,10 +573,9 @@ def stage_build_glossary(state: PipelineState) -> None:
 def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Translations:
     """Translates every extracted item.
 
-    The items of all files go to one deduplicated batch pass, except that in
-    context mode the dialog files are translated as whole conversations
-    afterwards.
-    Rejected requests become errors and editor rows with ``success: False``.
+    All items go to one deduplicated batch pass, except that in context mode the
+    dialog files are then translated as whole conversations. Rejected requests
+    become errors and editor rows with ``success: False``.
 
     Args:
         state: Run state.
@@ -669,25 +589,20 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
     """
     assert state.extract_dir is not None
     state.config.raise_if_cancelled()
-    use_dialog_manager = state.config.use_context and state.world_context is not None
-    dialog_files = [
-        path
-        for path, (_parsed, _extracted, ext) in extracted_map.items()
-        if use_dialog_manager and ext == ".dlg"
-    ]
-    dialog_set = set(dialog_files)
-
-    non_dialog_items: List[TranslatableItem] = []
-    for file_path, (_parsed, extracted, _ext) in extracted_map.items():
-        if file_path in dialog_set:
+    in_context = state.config.use_context and state.world_context is not None
+    dialogs: List[Tuple[Path, Dict[str, Any], int]] = []
+    items: List[TranslatableItem] = []
+    for file_path, (parsed, extracted) in extracted_map.items():
+        if in_context and file_path.suffix.lower() == ".dlg":
+            dialogs.append((file_path, parsed, len(extracted.items)))
             continue
         if state.world_context is not None:
             for item in extracted.items:
                 state.world_context.enrich_ncs_item_context(item)
-        non_dialog_items.extend(extracted.items)
+        items.extend(extracted.items)
 
     logger.info("Translating content...")
-    item_total = len(non_dialog_items) + sum(len(extracted_map[fp][1].items) for fp in dialog_files)
+    item_total = len(items) + sum(count for _path, _parsed, count in dialogs)
     item_progress = _ItemProgress(state, item_total)
     if item_total:
         # Switches the UI to the translating phase before the first item finishes.
@@ -695,13 +610,13 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
 
     translations: Translations = {}
     failed: Set[Occurrence] = set()
-    if non_dialog_items:
+    if items:
         manager = TranslationManager(
             state.config, state.provider, glossary=state.glossary, log_writer=state.trace
         )
         combined = ExtractedContent(
             content_type="combined",
-            items=non_dialog_items,
+            items=items,
             source_file=state.extract_dir,
             metadata={"type": "combined"},
         )
@@ -709,7 +624,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
         state.merge_manager_stats(manager.stats)
         failed |= manager.failed_items
 
-    if dialog_files:
+    if dialogs:
         state.config.raise_if_cancelled()
         assert state.world_context is not None
         dialog_manager = ContextualTranslationManager(
@@ -720,8 +635,7 @@ def stage_translate(state: PipelineState, extracted_map: ExtractedMap) -> Transl
             log_writer=state.trace,
         )
         dialog_translations, dialog_errors = dialog_manager.translate_dialogs(
-            [(fp, extracted_map[fp][0], len(extracted_map[fp][1].items)) for fp in dialog_files],
-            item_progress=item_progress,
+            dialogs, item_progress=item_progress
         )
         translations.update(dialog_translations)
         for file_path, exc in dialog_errors:
@@ -742,11 +656,9 @@ def _log_editor_rows(
     """Writes one translation log row per file and item id for the web editor.
 
     The managers log each distinct request once; the editor needs every
-    occurrence, grouped by file and addressable at rebuild. A rejected
-    occurrence keeps its source text with ``success: False``; dialog rows name
-    the speaker of the line. The rows are written after both managers have
-    finished, so a store that keeps the last row per file and item (the web
-    database) shows these.
+    occurrence, addressable at rebuild. A rejected occurrence keeps its source
+    text with ``success: False``; dialog rows name the speaker. Written after
+    both managers, so a store keeping the last row per file and item shows these.
 
     Args:
         state: Run state.
@@ -755,16 +667,14 @@ def _log_editor_rows(
         failed: Occurrences whose translation was rejected.
     """
     logged: Set[Tuple[str, str]] = set()
-    for file_path, (_parsed, extracted, file_ext) in extracted_map.items():
+    for file_path, (_parsed, extracted) in extracted_map.items():
         for item in extracted.items:
             if not item.has_text() or not item.item_id:
                 continue
             translated = translations.get(item.key)
             rejected = item.key in failed
-            if translated is None and not rejected:
-                continue
             row_key = (file_path.name, item.item_id)
-            if row_key in logged:
+            if (translated is None and not rejected) or row_key in logged:
                 continue
             logged.add(row_key)
             row: Dict[str, Any] = {
@@ -776,7 +686,7 @@ def _log_editor_rows(
                 "item_id": item.item_id,
                 "success": not rejected,
             }
-            if file_ext == ".dlg":
+            if file_path.suffix.lower() == ".dlg":
                 row["speaker"] = dialog_line_speaker(
                     state.world_context,
                     file_path.stem,
@@ -784,35 +694,6 @@ def _log_editor_rows(
                     speaker_tag=str(item.metadata.get("speaker") or ""),
                 )
             write_trace(state.trace, row)
-
-
-def _inject_file(
-    state: PipelineState,
-    extracted_map: ExtractedMap,
-    translations: Translations,
-    file_path: Path,
-) -> Optional[InjectedContent]:
-    """Patches the translations of one extracted file, for :func:`stage_inject`.
-
-    Args:
-        state: Run state (target language, source code page).
-        extracted_map: Extracted files.
-        translations: Translation per occurrence.
-        file_path: The file to patch; a key of *extracted_map*.
-
-    Returns:
-        The injection result, or ``None`` when the file kind is not translatable.
-    """
-    parsed_data, extracted, _ext = extracted_map[file_path]
-    return inject_translations_into_file(
-        file_path,
-        parsed_data,
-        extracted,
-        translations,
-        log_updates=True,
-        target_lang=state.config.target_lang,
-        source_encoding=state.source_encoding,
-    )
 
 
 def stage_inject(
@@ -836,38 +717,51 @@ def stage_inject(
     """
     state.config.raise_if_cancelled()
     logger.info("Injecting translations...")
+
+    def inject(file_path: Path) -> Optional[InjectedContent]:
+        """Patches the translations of one extracted file, logging it as it is patched."""
+        parsed_data, extracted = extracted_map[file_path]
+        result = inject_translations_into_file(
+            file_path,
+            parsed_data,
+            extracted,
+            translations,
+            target_lang=state.config.target_lang,
+            source_encoding=state.source_encoding,
+        )
+        if result and result.modified:
+            logger.info("Updated %s: %s items", file_path.name, result.items_updated)
+        return result
+
     for file_path, result, error in _run_pool(
-        state,
-        partial(_inject_file, state, extracted_map, translations),
-        list(extracted_map),
-        "injecting",
-        cancellable=False,
+        state, inject, list(extracted_map), "injecting", cancellable=False
     ):
+        event = {"event": "injection_result", "file": file_path.name}
         if error is not None:
-            write_trace(
-                state.trace,
-                {"event": "injection_result", "file": file_path.name, "error": str(error)},
-            )
+            write_trace(state.trace, {**event, "error": str(error)})
             state.add_error(f"Error injecting {file_path.name}: {error}")
             continue
         metadata = result.metadata if result else {}
+        submitted = [
+            {"item_id": item.item_id, "translated": translations[item.key]}
+            for item in extracted_map[file_path][1].items
+            if item.key in translations
+        ]
         write_trace(
             state.trace,
             {
-                "event": "injection_result",
-                "file": file_path.name,
-                "submitted": [
-                    {"item_id": item.item_id, "translated": translations[item.key]}
-                    for item in extracted_map[file_path][1].items
-                    if item.key in translations
-                ],
+                **event,
+                "submitted": submitted,
                 "modified": result.modified if result else False,
                 "items_updated": result.items_updated if result else 0,
                 "metadata": metadata,
             },
         )
         if metadata.get("ncs_patch_failed"):
-            state.record_ncs_patch_failure(file_path, str(metadata.get("error", "")))
+            error_text = str(metadata.get("error", ""))
+            sample = {"file": file_path.name, "reason": "patch_failed", "error": error_text}
+            add_sample(state.stats["ncs_diagnostics"], sample, "patch_failed")
+            write_trace(state.trace, {"event": "ncs_diagnostic", **sample})
         state.stats["files_processed"] += 1
 
 
@@ -898,9 +792,10 @@ def _log_summary(state: PipelineState) -> None:
         state: Finished run; the errors are listed only with ``config.verbose``.
     """
     errors = state.stats["errors"]
-    logger.info(_SUMMARY_RULE)
+    rule = "=" * 50
+    logger.info(rule)
     logger.info("Translation Summary")
-    logger.info(_SUMMARY_RULE)
+    logger.info(rule)
     logger.info("Files processed: %s", state.stats["files_processed"])
     logger.info("Items translated: %s", state.stats["items_translated"])
     if errors:
@@ -912,16 +807,16 @@ def _log_summary(state: PipelineState) -> None:
                 logger.warning("  ... and %d more", len(errors) - _SUMMARY_ERRORS_SHOWN)
     else:
         logger.info("No errors!")
-    logger.info(_SUMMARY_RULE)
+    logger.info(rule)
 
 
 def run_pipeline(state: PipelineState) -> Path:
     """Runs every stage on *state* and returns the translated module.
 
     An archive without translatable files is copied unchanged. However the run
-    ends, the provider's HTTP client and this thread's event loop are closed,
-    the log file opened by the run is closed, and the temporary directory is
-    removed unless ``config.skip_cleanup`` is set.
+    ends, the provider's HTTP client, this thread's event loop and the log file
+    the run opened are closed, and the temporary directory is removed unless
+    ``config.skip_cleanup`` is set.
 
     Args:
         state: Fresh run state.

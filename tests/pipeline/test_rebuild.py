@@ -7,10 +7,10 @@ import pytest
 from nwn_translator import main
 from nwn_translator.formats.gff import read_gff
 from nwn_translator.formats.ncs import parse_ncs
-from nwn_translator.main import (
+from nwn_translator.main import rebuild_module
+from nwn_translator.pipeline.stages import (
     inject_translations_into_file,
     load_parsed_and_extracted,
-    rebuild_module,
 )
 from tests.support.gff_writer import loc, write_gff
 from tests.support.ncs import action, consts, retn, write_ncs

@@ -50,13 +50,13 @@ def _state(tmp_path: Path, provider: Any = None, **config) -> PipelineState:
 
 
 def _dialog(path: Path, data: dict = HELLO_DLG) -> tuple:
-    return data, DialogExtractor().extract(path, data), ".dlg"
+    return data, DialogExtractor().extract(path, data)
 
 
 def _item_file(path: Path, *items: TranslatableItem) -> tuple:
     for item in items:
         item.location = str(path)
-    return {}, ExtractedContent(content_type="item", items=list(items), source_file=path), ".uti"
+    return {}, ExtractedContent(content_type="item", items=list(items), source_file=path)
 
 
 def _module(path: Path, *resources) -> Path:
@@ -144,7 +144,7 @@ def test_injection_results_are_handled_in_file_order(tmp_path, monkeypatch):
     state = _state(tmp_path, max_concurrent_requests=8, translation_log_writer=writer)
     empty = ExtractedContent(content_type="item", items=[], source_file=tmp_path)
 
-    stage_inject(state, {path: ({}, empty, ".uti") for path in files}, {})
+    stage_inject(state, {path: ({}, empty) for path in files}, {})
 
     assert [event["file"] for event in writer.entries] == [path.name for path in files]
     assert state.stats["errors"] == [
@@ -165,7 +165,7 @@ def test_failed_script_patch_is_counted_sampled_and_logged(tmp_path, monkeypatch
     )
     content = ExtractedContent(content_type="ncs_script", items=[], source_file=script)
 
-    stage_inject(state, {script: ({}, content, ".ncs")}, {})
+    stage_inject(state, {script: ({}, content)}, {})
 
     stats = state.stats["ncs_diagnostics"]
     assert (stats["patch_failed"], stats["samples"][0]["reason"]) == (1, "patch_failed")
@@ -481,7 +481,7 @@ def test_terminology_stages_record_candidates_metrics_and_their_trace(tmp_path):
         ],
     )
 
-    stage_collect_entities(state, {Path("gewia.dlg"): ({}, content, ".dlg")})
+    stage_collect_entities(state, {Path("gewia.dlg"): ({}, content)})
     stage_build_glossary(state)
 
     assert provider.calls == ["entities", "curation", "glossary"]

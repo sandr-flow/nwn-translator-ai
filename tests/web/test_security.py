@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
+import sys
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from nwn_translator.web import __main__ as web_main
 from nwn_translator.web import database as db
-from nwn_translator.web.__main__ import _enable_local_mode_if_loopback
 from nwn_translator.web.app import _parse_cors_origins, create_app
 from nwn_translator.web.task_manager import TaskManager, set_task_manager
 
@@ -45,9 +47,21 @@ def _seed_task(owner: str = "owner-tok") -> str:
     ],
 )
 def test_only_a_loopback_bind_enables_local_mode(host, local, monkeypatch):
-    monkeypatch.delenv("NWN_WEB_LOCAL_MODE", raising=False)
-    assert _enable_local_mode_if_loopback(host) is local
+    runs: list = []
+    uvicorn = SimpleNamespace(run=lambda app, **options: runs.append((app, options)))
+    monkeypatch.setitem(sys.modules, "uvicorn", uvicorn)
+    monkeypatch.setattr(web_main, "load_dotenv", lambda: None)
+    monkeypatch.setenv("NWN_WEB_HOST", host)
+    # Recorded first, so the mode main() switches on is undone after the test.
+    monkeypatch.setenv("NWN_WEB_LOCAL_MODE", "")
+    for name in ("NWN_WEB_LOCAL_MODE", "NWN_WEB_PORT", "NWN_WEB_RELOAD"):
+        monkeypatch.delenv(name, raising=False)
+
+    web_main.main()
+
     assert os.environ.get("NWN_WEB_LOCAL_MODE") == ("1" if local else None)
+    options = {"factory": True, "host": host, "port": 8000, "reload": False}
+    assert runs == [("nwn_translator.web.app:create_app", options)]
 
 
 @pytest.mark.parametrize("local", [False, True])

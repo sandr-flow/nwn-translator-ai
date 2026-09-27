@@ -77,4 +77,6 @@ def inject_ncs(
         except NCSPatchError as e:
             logger.error("Failed to patch NCS file %s: %s", file_path.name, e)
             metadata = {"type": content_type, "error": str(e), "ncs_patch_failed": True}
-    return InjectedContent(file_path, patched_count > 0, patched_count, metadata)
+    return InjectedContent(
+        file_path, modified=patched_count > 0, items_updated=patched_count, metadata=metadata
+    )

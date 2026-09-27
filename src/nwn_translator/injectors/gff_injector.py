@@ -37,4 +37,9 @@ def inject_gff(
         patches.append((offset, translated))
     if patches:
         patch_locstrings(file_path, patches, text_encoding=text_encoding)
-    return InjectedContent(file_path, bool(patches), len(patches), {"type": content_type})
+    return InjectedContent(
+        file_path,
+        modified=bool(patches),
+        items_updated=len(patches),
+        metadata={"type": content_type},
+    )

@@ -56,14 +56,28 @@ class ModelReasoning:
 #: the live catalog is unavailable.
 FALLBACK: Dict[str, ModelReasoning] = {
     "google/gemini-3.1-flash-lite": ModelReasoning(
-        True, False, "minimal", ("high", "medium", "low", "minimal")
+        supported=True,
+        mandatory=False,
+        default_effort="minimal",
+        supported_efforts=("high", "medium", "low", "minimal"),
     ),
     "google/gemini-3.5-flash-lite": ModelReasoning(
-        True, True, "minimal", ("high", "medium", "low", "minimal")
+        supported=True,
+        mandatory=True,
+        default_effort="minimal",
+        supported_efforts=("high", "medium", "low", "minimal"),
     ),
-    "google/gemini-3.8-flash": ModelReasoning(True, True, "medium", ("high", "medium", "low")),
+    "google/gemini-3.8-flash": ModelReasoning(
+        supported=True,
+        mandatory=True,
+        default_effort="medium",
+        supported_efforts=("high", "medium", "low"),
+    ),
     "openai/gpt-5.6-luna": ModelReasoning(
-        True, False, "medium", ("max", "xhigh", "high", "medium", "low", "none")
+        supported=True,
+        mandatory=False,
+        default_effort="medium",
+        supported_efforts=("max", "xhigh", "high", "medium", "low", "none"),
     ),
 }
 

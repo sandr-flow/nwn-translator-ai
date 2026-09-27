@@ -273,21 +273,34 @@ def _classify_candidate(
     """Returns the :func:`classify_entity_candidate` decision of a classified string."""
     if "empty" in cls.reasons:
         return CandidateFilterResult("drop", "empty", 100, frozenset({"empty"}))
-    # Acronyms in visible text need curation, not automatic removal from terminology.
-    acronym_only = cls.blocking <= {"acronym_or_brand", "code_like_identifier"}
-    if "acronym_or_brand" in cls.reasons and acronym_only:
+    # Acronyms in visible text need curation, not automatic removal from terminology,
+    # unless a reason other than the acronym or a code-like look blocks them.
+    curable_acronym = "acronym_or_brand" in cls.reasons and cls.blocking <= {
+        "acronym_or_brand",
+        "code_like_identifier",
+    }
+    if curable_acronym:
         return CandidateFilterResult("keep", "needs_acronym_curation", 0, cls.reasons)
     if cls.blocked:
         return CandidateFilterResult("drop", cls.primary_reason, 90, cls.reasons)
-    rule = _generic_label_rule(cls.text, (category or "").strip().lower())
+    rule = _candidate_rule(cls.text, (category or "").strip().lower())
     if rule is None:
         return CandidateFilterResult("keep")
     decision, reason, score = rule
     return CandidateFilterResult(decision, reason, score, frozenset({reason}))
 
 
-def _generic_label_rule(text: str, category: str) -> Optional[Tuple[CandidateDecision, str, int]]:
-    """Returns ``(decision, reason, technical score)`` of the first generic-label rule met."""
+def _candidate_rule(text: str, category: str) -> Optional[Tuple[CandidateDecision, str, int]]:
+    """Applies the label rules of the candidate filter to a string nothing blocks.
+
+    Args:
+        text: The candidate name.
+        category: Its category, stripped and lower-cased.
+
+    Returns:
+        ``(decision, reason, technical score)`` of the first candidate rule met,
+        or ``None`` when the candidate is kept.
+    """
     folded = text.casefold()
     words = _WORD_RE.findall(text)
     if _NUMBERED_LABEL_RE.fullmatch(text):

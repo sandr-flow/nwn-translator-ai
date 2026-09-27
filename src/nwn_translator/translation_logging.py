@@ -23,7 +23,7 @@ class TranslationLogWriter(Protocol):
     """Destination of the translation log: one JSON-serializable dict per entry."""
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Persists a single log entry (e.g. one line of JSONL).
+        """Persists one log entry.
 
         Args:
             entry: JSON-serializable log entry.
@@ -33,9 +33,8 @@ class TranslationLogWriter(Protocol):
 class FileTranslationLogWriter:
     """Log writer that appends JSONL lines to a file through one handle kept open.
 
-    Opening the file for every entry costs milliseconds on Windows, and a run
-    writes tens of thousands of entries. Each entry is flushed at once, so the
-    file is complete while the run goes on.
+    Opening the file per entry costs milliseconds on Windows, and a run writes
+    tens of thousands of entries. Each entry is flushed, so the file stays complete.
 
     Attributes:
         path: The log file.
@@ -54,10 +53,10 @@ class FileTranslationLogWriter:
         self._finalizer: Optional[weakref.finalize] = None
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Serializes *entry* as JSON and appends one line to the log file.
+        """Appends *entry* as one JSON line; a write failure is only logged.
 
         Args:
-            entry: JSON-serializable dict (e.g. original/translated pair).
+            entry: JSON-serializable log entry.
         """
         try:
             with self._lock:
@@ -80,15 +79,10 @@ class FileTranslationLogWriter:
 
 
 class NullTranslationLogWriter:
-    """No-op writer for when logging is disabled."""
+    """Writer that discards every entry (no translation log)."""
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Discards the entry (no-op).
-
-        Args:
-            entry: Ignored.
-        """
-        return None
+        """Discards *entry*."""
 
 
 def translation_log_writer_for_config(

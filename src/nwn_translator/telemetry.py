@@ -1,8 +1,7 @@
-"""Run-level telemetry for LLM requests.
+"""Request-level metrics of the LLM calls of a run (prompt budget, tokens, latency).
 
-The translation JSONL log is item-oriented. This module records request-level
-metrics so pipeline changes can be compared by actual LLM calls and prompt
-budget, not only by translated strings.
+The translation log is item-oriented; these metrics let pipeline changes be
+compared by the actual model calls.
 """
 
 from __future__ import annotations
@@ -202,27 +201,20 @@ class RunMetricsRecorder:
             "counters": counters,
         }
 
-    def to_json_dict(self) -> Dict[str, Any]:
-        """Returns the metrics document.
+    def write_json(self, path: Path) -> None:
+        """Writes ``{"summary": ..., "requests": [...]}`` as indented UTF-8 JSON.
 
-        Returns:
-            ``{"summary": ..., "requests": [...]}`` with one dict per request.
+        Args:
+            path: Output file; its parent directories are created.
         """
-        return {
+        document = {
             "summary": self.summary(),
             "requests": [asdict(metric) for metric in self.requests],
         }
-
-    def write_json(self, path: Path) -> None:
-        """Writes :meth:`to_json_dict` as indented UTF-8 JSON, creating parent directories.
-
-        Args:
-            path: Output file.
-        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.to_json_dict(), f, ensure_ascii=False, indent=2)
+            json.dump(document, f, ensure_ascii=False, indent=2)
 
 
 def estimate_tokens(chars: int) -> int:
@@ -273,14 +265,10 @@ def usage_tokens(response: Any) -> tuple[Optional[int], Optional[int]]:
         ``(prompt_tokens, completion_tokens)``, each ``None`` when not reported.
     """
     usage = getattr(response, "usage", None)
-    if usage is None:
-        return None, None
-    prompt = getattr(usage, "prompt_tokens", None)
-    completion = getattr(usage, "completion_tokens", None)
-    if isinstance(usage, dict):
-        prompt = usage.get("prompt_tokens", prompt)
-        completion = usage.get("completion_tokens", completion)
-    return (
-        int(prompt) if prompt is not None else None,
-        int(completion) if completion is not None else None,
-    )
+
+    def count(name: str) -> Optional[int]:
+        """Returns one reported count of *usage*, if any."""
+        value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+        return int(value) if value is not None else None
+
+    return count("prompt_tokens"), count("completion_tokens")

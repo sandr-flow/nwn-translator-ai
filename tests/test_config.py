@@ -11,11 +11,9 @@ from nwn_translator.config import (
     TranslationConfig,
     _env_number,
     create_output_path,
-    lang_suffix,
     max_concurrent_from_environment,
     module_string_encoding_for_target_lang,
     parse_reasoning_effort,
-    sanitized_mod_stem,
     source_string_encoding,
     target_lang_supported_for_nwn_injection,
 )
@@ -127,13 +125,10 @@ def test_target_code_pages_are_the_writable_module_encodings():
 
 
 def test_output_names_use_hyphens_not_underscores():
-    assert (lang_suffix("russian"), lang_suffix("de")) == ("-rus", "-de")
-    assert not lang_suffix("english").startswith("_")
-    assert "_" not in lang_suffix("french")
-    assert sanitized_mod_stem("foo_bar") == "foo-bar"
-    assert "_" not in sanitized_mod_stem("a_b_c")
     source = Path("in") / "my_mod_name.mod"
     assert create_output_path(source, "russian").name == "my-mod-name-rus.mod"
+    assert create_output_path(source, "de").name == "my-mod-name-de.mod"
+    assert create_output_path(Path("a_b_c.mod"), "French").name == "a-b-c-fre.mod"
     assert create_output_path(source, "russian", output_dir=Path("out")) == (
         Path("out") / "my-mod-name-rus.mod"
     )

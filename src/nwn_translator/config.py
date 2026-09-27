@@ -24,12 +24,12 @@ def _env_number(
 
     Args:
         name: Environment variable name.
-        default: Value used when the variable is unset or does not parse.
-        minimum: Lower bound applied to a parsed value.
+        default: Value when the variable is unset or does not parse.
+        minimum: Lower bound of a parsed value.
         parse: ``int`` or ``float``.
 
     Returns:
-        ``max(minimum, parse(value))``, or *default* when the value does not parse.
+        ``max(minimum, parse(value))``, or *default*.
     """
     try:
         return max(minimum, parse(os.getenv(name, str(default)).strip()))
@@ -80,16 +80,12 @@ def parse_reasoning_effort(raw: Optional[str]) -> Optional[str]:
     Raises:
         ValueError: If *raw* is non-empty but not one of :data:`REASONING_EFFORTS`.
     """
-    if raw is None:
-        return None
-    s = str(raw).strip().lower()
-    if not s:
-        return None
-    if s not in REASONING_EFFORTS:
+    effort = "" if raw is None else str(raw).strip().lower()
+    if effort and effort not in REASONING_EFFORTS:
         raise ValueError(
             f"Invalid reasoning_effort {raw!r}; expected one of {sorted(REASONING_EFFORTS)}"
         )
-    return s
+    return effort or None
 
 
 #: Emit a ``cache_control: ephemeral`` breakpoint between the stable and variable halves
@@ -190,19 +186,14 @@ class TranslationConfig:
         Raises:
             ValueError: If ``reasoning_effort`` is not a known effort.
         """
-        self.input_file = (
-            Path(self.input_file) if isinstance(self.input_file, str) else self.input_file
-        )
-        if self.output_file and isinstance(self.output_file, str):
-            self.output_file = Path(self.output_file)
-        if self.translation_log and isinstance(self.translation_log, str):
-            self.translation_log = Path(self.translation_log)
-        if self.metrics_output and isinstance(self.metrics_output, str):
-            self.metrics_output = Path(self.metrics_output)
-
+        if isinstance(self.input_file, str):
+            self.input_file = Path(self.input_file)
+        for name in ("output_file", "translation_log", "metrics_output"):
+            value = getattr(self, name)
+            if value and isinstance(value, str):
+                setattr(self, name, Path(value))
         if self.model is None:
             self.model = DEFAULT_MODEL
-
         self.reasoning_effort = parse_reasoning_effort(self.reasoning_effort)
 
     def raise_if_cancelled(self) -> None:
@@ -231,16 +222,13 @@ class TranslationConfig:
         return self.api_key
 
 
-# GFF/NCS injection encodes player-visible strings with a Windows code page chosen
-# from the target language (see :func:`module_string_encoding_for_target_lang`; the
-# patchers accept only ``formats.text_codec.MODULE_ENCODINGS``).
-#
-# **CJK** cannot be represented in these single-byte pages, and NWN:EE's codepage
-# setting only offers cp1250/cp1251/cp1252 — Turkish (cp1254) is not displayable
-# either. Those tags are blocked in the web UI / API.
+#: Languages the game cannot display: injection writes a single-byte Windows code
+#: page, CJK does not fit one, and NWN:EE offers only cp1250/cp1251/cp1252 (not
+#: Turkish cp1254). The web API refuses them.
 GAME_INCOMPATIBLE_TARGET_LANGS = frozenset({"chinese", "japanese", "korean", "turkish"})
 
-# Language slug -> Python codec; a test keeps the values equal to ``MODULE_ENCODINGS``.
+#: Language -> code page of injected strings; a test keeps the values equal to
+#: ``formats.text_codec.MODULE_ENCODINGS``, the pages the patchers accept.
 _LANG_TO_WINDOWS_ENCODING: dict[str, str] = {
     "russian": "cp1251",
     "ukrainian": "cp1251",
@@ -303,31 +291,6 @@ def source_string_encoding(source_lang: Optional[str]) -> Optional[str]:
     return _LANG_TO_WINDOWS_ENCODING.get(key)
 
 
-def sanitized_mod_stem(stem: str) -> str:
-    """Returns a module file stem without underscores.
-
-    Args:
-        stem: Input file stem.
-
-    Returns:
-        *stem* with every underscore replaced by a hyphen.
-    """
-    return stem.replace("_", "-")
-
-
-def lang_suffix(target_lang: str) -> str:
-    """Builds a short language tag for output filenames (hyphen-separated, no underscores).
-
-    Args:
-        target_lang: Target language name (e.g. ``"russian"``).
-
-    Returns:
-        ``"-"`` plus the first three letters of the name, lower-cased, e.g.
-        ``"-rus"`` for ``"russian"``.
-    """
-    return f"-{target_lang[:3].lower()}"
-
-
 def create_output_path(
     input_path: Path,
     target_lang: str,
@@ -341,9 +304,9 @@ def create_output_path(
         output_dir: Directory for the output; the input's directory when ``None``.
 
     Returns:
-        ``<dir>/<stem without underscores><lang suffix><extension>``.
+        ``<dir>/<stem, underscores as hyphens>-<first three letters of the language><ext>``,
+        e.g. ``my-mod-rus.mod`` for ``my_mod.mod`` in Russian.
     """
-    stem = sanitized_mod_stem(input_path.stem)
-    suffix = input_path.suffix
+    stem = input_path.stem.replace("_", "-")
     parent = Path(output_dir) if output_dir is not None else input_path.parent
-    return parent / f"{stem}{lang_suffix(target_lang)}{suffix}"
+    return parent / f"{stem}-{target_lang[:3].lower()}{input_path.suffix}"

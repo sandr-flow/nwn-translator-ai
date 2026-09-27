@@ -326,8 +326,15 @@ class ContextualTranslationManager:
         ]
         for worker in workers:
             worker.start()
-        for worker in workers:
-            worker.join()
+        try:
+            for worker in workers:
+                worker.join()
+        except BaseException:
+            # The calling thread was interrupted (Ctrl+C) while it waited: the run must
+            # not unwind (close the log, remove the work dir) under running workers.
+            for worker in workers:
+                worker.join()
+            raise
         translations: Translations = {}
         errors: List[Tuple[Path, Exception]] = []
         for files, outcome in zip(jobs, outcomes):

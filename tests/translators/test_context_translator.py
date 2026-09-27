@@ -534,6 +534,39 @@ def test_worker_threads_close_their_client_and_event_loop(single_files):
     assert provider.request_loops and all(loop.is_closed() for loop in provider.request_loops)
 
 
+class _Interrupt(BaseException):
+    """Stands in for ``KeyboardInterrupt``, which pytest handles on its own."""
+
+
+def _dialog_workers():
+    return [thread for thread in threading.enumerate() if thread.name.startswith("dialog-")]
+
+
+def test_an_interrupted_caller_still_waits_for_the_workers(single_files, monkeypatch):
+    class _SlowProvider(DialogProvider):
+        async def complete_json_chat_async(self, *args, **kwargs):
+            await asyncio.sleep(0.05)
+            return await super().complete_json_chat_async(*args, **kwargs)
+
+    real_join = threading.Thread.join
+    interrupted = []
+
+    def join(thread, timeout=None):
+        if thread.name.startswith("dialog-") and not interrupted:
+            interrupted.append(thread.name)
+            raise _Interrupt  # like Ctrl+C while the calling thread waits
+        real_join(thread, timeout)
+
+    monkeypatch.setattr(threading.Thread, "join", join)
+    manager = ContextualTranslationManager(
+        make_config(max_concurrent_requests=2), _SlowProvider(THREE_ANSWERS), WorldContext()
+    )
+
+    with pytest.raises(_Interrupt):
+        manager.translate_dialogs(THREE_FILES)
+    assert interrupted and _dialog_workers() == []
+
+
 def test_files_without_lines_report_their_budget(single_files):
     manager, provider = _manager({})
     progress = _CountingProgress()

@@ -718,9 +718,9 @@ def stage_inject(
     logger.info("Injecting translations...")
 
     def inject(file_path: Path) -> Optional[InjectedContent]:
-        """Patches the translations of one extracted file."""
+        """Patches the translations of one extracted file, logging it as it is patched."""
         parsed_data, extracted = extracted_map[file_path]
-        return inject_translations_into_file(
+        result = inject_translations_into_file(
             file_path,
             parsed_data,
             extracted,
@@ -728,6 +728,9 @@ def stage_inject(
             target_lang=state.config.target_lang,
             source_encoding=state.source_encoding,
         )
+        if result and result.modified:
+            logger.info("Updated %s: %s items", file_path.name, result.items_updated)
+        return result
 
     for file_path, result, error in _run_pool(
         state, inject, list(extracted_map), "injecting", cancellable=False
@@ -737,8 +740,6 @@ def stage_inject(
             write_trace(state.trace, {**event, "error": str(error)})
             state.add_error(f"Error injecting {file_path.name}: {error}")
             continue
-        if result and result.modified:
-            logger.info("Updated %s: %s items", file_path.name, result.items_updated)
         metadata = result.metadata if result else {}
         submitted = [
             {"item_id": item.item_id, "translated": translations[item.key]}

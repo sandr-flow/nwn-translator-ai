@@ -109,7 +109,7 @@ def _mock_roundtrip(corpus_module: Path, tmp_path: Path, *, use_context: bool) -
             field_total += 1
             if MARKER in item.text:
                 continue
-            sanitized = TokenHandler().sanitize(item.text).sanitized_text
+            sanitized = TokenHandler().sanitize(item.text)
             if not has_translatable_content(sanitized):
                 continue
             missing_marker += 1

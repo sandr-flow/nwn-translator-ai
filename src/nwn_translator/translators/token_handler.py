@@ -15,7 +15,7 @@ import hashlib
 import re
 import unicodedata
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
 #: Non-European scripts (CJK, Hebrew, Arabic, Devanagari, Thai). Target
@@ -101,16 +101,14 @@ def normalize_translated_text(text: str) -> str:
 
 
 def has_translatable_content(sanitized: str) -> bool:
-    """Tells whether a sanitized string holds anything to translate.
-
-    Placeholders written by :meth:`TokenHandler.sanitize` are removed first;
-    whitespace, punctuation and underscores do not count.
+    """Tells whether a Unicode letter or digit remains in *sanitized* without its placeholders.
 
     Args:
-        sanitized: Output of :func:`sanitize_text`.
+        sanitized: Output of :func:`sanitize_text`; whitespace, punctuation and
+            underscores do not count.
 
     Returns:
-        ``True`` when a Unicode letter or digit remains.
+        ``True`` when there is something to translate.
     """
     if not sanitized:
         return False
@@ -131,19 +129,6 @@ class PreservedArtifact:
     kind: str
     original: str
     placeholder: str
-
-
-@dataclass
-class SanitizedText:
-    """Text with its protected artifacts replaced by placeholders.
-
-    Attributes:
-        sanitized_text: Text sent to the model.
-        artifacts: Protected artifacts in source order.
-    """
-
-    sanitized_text: str
-    artifacts: List[PreservedArtifact] = field(default_factory=list)
 
 
 @dataclass
@@ -193,18 +178,12 @@ def _classify(raw: str, preserve_tokens: bool) -> Optional[str]:
 
 
 def _scan(text: str, preserve_tokens: bool) -> List[Tuple[int, int, str]]:
-    """Locates the protected artifacts of *text*.
+    """Returns ``(start, end, kind)`` of every protected artifact of *text*, in order.
 
     A dialog (``<<…>>``) or dash (``-…-``) action contributes its two markers, so
     the action text between them stays translatable; tokens and inline tags nested
-    in a dash action are artifacts of their own.
-
-    Args:
-        text: Source text or restored answer.
-        preserve_tokens: Treat engine tokens as artifacts.
-
-    Returns:
-        ``(start, end, kind)`` of every artifact, in text order.
+    in a dash action are artifacts of their own. Engine tokens count only with
+    *preserve_tokens*.
     """
     spans: List[Tuple[int, int, str]] = []
     for match in _ARTIFACT_RE.finditer(text):
@@ -237,12 +216,7 @@ def _compare(expected: List[str], actual: List[str]) -> TokenMismatchReport:
         mismatch_type = "order_mismatch"
     else:
         mismatch_type = "value_mismatch"
-    return TokenMismatchReport(
-        is_exact_match=expected == actual,
-        mismatch_type=mismatch_type,
-        expected_sequence=expected,
-        actual_sequence=actual,
-    )
+    return TokenMismatchReport(expected == actual, mismatch_type, expected, actual)
 
 
 def _strip_placeholder_noise(text: str) -> str:
@@ -293,23 +267,24 @@ class TokenHandler:
         #: Lowercased placeholder core -> artifact original.
         self._originals: Dict[str, str] = {}
 
-    def sanitize(self, text: str) -> SanitizedText:
+    def sanitize(self, text: str) -> str:
         """Replaces the protected artifacts of *text* with placeholders.
 
         Placeholders are deterministic: equal texts sanitize to equal strings, so
-        they share one deduplicated request.
+        they share one deduplicated request. The artifacts are kept in
+        :attr:`artifacts`.
 
         Args:
             text: Source text.
 
         Returns:
-            The sanitized text and its artifacts.
+            The sanitized text.
         """
         self._source = text or ""
         self.artifacts = []
         self._originals = {}
         if not text:
-            return SanitizedText(sanitized_text=self._source)
+            return self._source
         self._nonce = hashlib.blake2s(text.encode("utf-8"), digest_size=4).hexdigest()
         parts: List[str] = []
         last_end = 0
@@ -318,7 +293,7 @@ class TokenHandler:
             parts.append(self._protect(text[start:end], kind))
             last_end = end
         parts.append(text[last_end:])
-        return SanitizedText(sanitized_text="".join(parts), artifacts=list(self.artifacts))
+        return "".join(parts)
 
     def restore(self, text: str) -> str:
         """Puts the protected artifacts back in place of their placeholders.
@@ -340,22 +315,12 @@ class TokenHandler:
         return self._drop_deviating_action_tags(restored)
 
     def validate_text(self, restored: str) -> TokenMismatchReport:
-        """Compares the artifacts of a restored answer with the source's.
-
-        Args:
-            restored: Output of :meth:`restore`.
-
-        Returns:
-            The validation report.
-        """
+        """Compares the artifacts of a restored answer (see :meth:`restore`) with the source's."""
         actual = [restored[start:end] for start, end, _kind in _scan(restored, True)]
         return _compare(self.get_expected_artifact_sequence(), actual)
 
     def finalize_translation(
-        self,
-        translated_text: str,
-        *,
-        allow_cleanup: bool = False,
+        self, translated_text: str, *, allow_cleanup: bool = False
     ) -> TokenProcessingResult:
         """Restores a model answer, validates it and optionally cleans it up.
 
@@ -376,30 +341,15 @@ class TokenHandler:
             FOREIGN_SCRIPT_PATTERN.search(self._source)
         )
         if foreign_script and report.is_exact_match:
-            report = TokenMismatchReport(
-                is_exact_match=False,
-                mismatch_type="foreign_script",
-                expected_sequence=report.expected_sequence,
-                actual_sequence=report.actual_sequence,
-            )
+            report = replace(report, is_exact_match=False, mismatch_type="foreign_script")
         if report.is_exact_match or not allow_cleanup:
-            return TokenProcessingResult(
-                final_text=restored,
-                exact_valid=report.is_exact_match,
-                used_cleanup=False,
-                mismatch_report=report,
-            )
+            return TokenProcessingResult(restored, report.is_exact_match, False, report)
         cleaned = restored
         if report.mismatch_type != "foreign_script":
             cleaned = self.cleanup_mismatched_artifacts(restored)
         if foreign_script:
             cleaned = FOREIGN_SCRIPT_PATTERN.sub("", cleaned)
-        return TokenProcessingResult(
-            final_text=cleaned,
-            exact_valid=False,
-            used_cleanup=True,
-            mismatch_report=report,
-        )
+        return TokenProcessingResult(cleaned, False, True, report)
 
     def cleanup_mismatched_artifacts(self, restored: str) -> str:
         """Keeps the source's artifacts in order and drops every other token-like fragment.
@@ -429,11 +379,7 @@ class TokenHandler:
         return _normalize_cleanup_whitespace(self._drop_deviating_action_tags(cleaned))
 
     def get_expected_artifact_sequence(self) -> List[str]:
-        """Returns the artifacts the restored answer must carry.
-
-        Returns:
-            The source's artifacts, in order, as written in the source.
-        """
+        """Returns the source's artifacts, as written and in order: what an answer must carry."""
         return [artifact.original for artifact in self.artifacts]
 
     def _protect(self, original: str, kind: str) -> str:
@@ -482,4 +428,4 @@ def sanitize_text(text: str, preserve_tokens: bool = True) -> Tuple[str, TokenHa
         The sanitized text and the handler that restores it.
     """
     handler = TokenHandler(preserve_tokens=preserve_tokens)
-    return handler.sanitize(text).sanitized_text, handler
+    return handler.sanitize(text), handler

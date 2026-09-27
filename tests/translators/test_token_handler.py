@@ -31,7 +31,7 @@ def _placeholders(handler, original: str) -> list:
 
 def test_plain_text_is_unchanged():
     handler, result = _sanitized("Hello world")
-    assert (result.sanitized_text, result.artifacts, handler.artifacts) == ("Hello world", [], [])
+    assert (result, handler.artifacts) == ("Hello world", [])
 
 
 @pytest.mark.parametrize(
@@ -56,15 +56,15 @@ def test_plain_text_is_unchanged():
     ],
 )
 def test_tokens_and_markup_become_placeholders(text, originals, kinds):
-    _handler, result = _sanitized(text)
-    assert [a.original for a in result.artifacts] == originals
+    handler, result = _sanitized(text)
+    assert [a.original for a in handler.artifacts] == originals
     if kinds:
-        assert [a.kind for a in result.artifacts] == kinds
-    for artifact in result.artifacts:
+        assert [a.kind for a in handler.artifacts] == kinds
+    for artifact in handler.artifacts:
         pattern = TOKEN_PLACEHOLDER_RE if artifact.kind == "engine_token" else INLINE_PLACEHOLDER_RE
         assert pattern.fullmatch(artifact.placeholder)
-        assert artifact.placeholder in result.sanitized_text
-    assert not any(original in result.sanitized_text for original in ("<FirstName>", "<Start"))
+        assert artifact.placeholder in result
+    assert not any(original in result for original in ("<FirstName>", "<Start"))
 
 
 @pytest.mark.parametrize(
@@ -78,16 +78,14 @@ def test_tokens_and_markup_become_placeholders(text, originals, kinds):
     ],
 )
 def test_prose_dashes_are_not_markers(text):
-    _handler, result = _sanitized(text)
-    assert (result.sanitized_text, result.artifacts) == (text, [])
+    handler, result = _sanitized(text)
+    assert (result, handler.artifacts) == (text, [])
 
 
 def test_disabled_token_preservation_still_hides_inline_tags():
-    _handler, result = _sanitized(
-        "<StartAction>[Wave]</Start> Hello <FirstName>", preserve_tokens=False
-    )
-    assert "<FirstName>" in result.sanitized_text
-    assert len(INLINE_PLACEHOLDER_RE.findall(result.sanitized_text)) == 2
+    _, result = _sanitized("<StartAction>[Wave]</Start> Hello <FirstName>", preserve_tokens=False)
+    assert "<FirstName>" in result
+    assert len(INLINE_PLACEHOLDER_RE.findall(result)) == 2
 
 
 def test_equal_text_sanitizes_identically():
@@ -96,9 +94,7 @@ def test_equal_text_sanitizes_identically():
     assert sanitize_text("Greetings, <FirstName>!")[0] == first
     assert TOKEN_PLACEHOLDER_RE.search(first)
     handler = TokenHandler()
-    assert handler.sanitize("Hello <FirstName>").sanitized_text == (
-        handler.sanitize("Hello <FirstName>").sanitized_text
-    )
+    assert handler.sanitize("Hello <FirstName>") == (handler.sanitize("Hello <FirstName>"))
     assert sanitize_text("Hello <FirstName>")[0] != sanitize_text("Goodbye <FirstName>")[0]
 
 
@@ -120,7 +116,7 @@ def test_equal_text_sanitizes_identically():
     ],
 )
 def test_translatable_content_after_sanitizing(text, translatable):
-    assert has_translatable_content(TokenHandler().sanitize(text).sanitized_text) is translatable
+    assert has_translatable_content(TokenHandler().sanitize(text)) is translatable
 
 
 def test_mangled_bracket_placeholders_are_not_content():
@@ -142,7 +138,7 @@ def test_restore_round_trip():
         sanitized, handler = sanitize_text(text)
         assert handler.restore(sanitized) == text
     handler, result = _sanitized("Hello <FirstName>, you are a skilled <Class>!")
-    first, second = (a.placeholder for a in result.artifacts)
+    first, second = (a.placeholder for a in handler.artifacts)
     translated = f"¡Hola {first}, eres un {second} experto!"
     assert handler.restore(translated) == "¡Hola <FirstName>, eres un <Class> experto!"
 
@@ -204,11 +200,11 @@ def test_placeholder_residue_never_reaches_the_output(answer):
 )
 def test_action_markers_keep_their_markers_and_translate_the_inner_text(original, inner, final):
     handler, result = _sanitized(original)
-    first, last = (a.placeholder for a in result.artifacts)
-    assert original.strip("<>-") in result.sanitized_text
+    first, last = (a.placeholder for a in handler.artifacts)
+    assert original.strip("<>-") in result
     finalized = handler.finalize_translation(f"{first}{inner}{last}")
     assert (finalized.exact_valid, finalized.final_text) == (True, final)
-    assert finalized.mismatch_report.actual_sequence == [a.original for a in result.artifacts]
+    assert finalized.mismatch_report.actual_sequence == [a.original for a in handler.artifacts]
 
 
 def test_nested_token_of_a_dash_marker_is_restored_and_validated():
@@ -326,7 +322,7 @@ def test_cleanup_drops_only_the_mismatched_markup(original, answer, present, abs
 
 def test_cleanup_drops_unknown_helper_noise_and_mangled_cores():
     handler, result = _sanitized("<StartAction>[Wave]</Start>")
-    first, last = INLINE_PLACEHOLDER_RE.findall(result.sanitized_text)
+    first, last = INLINE_PLACEHOLDER_RE.findall(result)
     noisy = f"{first}[Машет]{last} [[NWN_INLINE_garbage]]"
     assert handler.finalize_translation(noisy, allow_cleanup=True).final_text.strip() == (
         "<StartAction>[Машет]</Start>"
@@ -351,7 +347,7 @@ def test_cleanup_drops_unknown_helper_noise_and_mangled_cores():
 )
 def test_unpaired_original_tags_round_trip_untouched(original):
     handler, result = _sanitized(original)
-    finalized = handler.finalize_translation(result.sanitized_text, allow_cleanup=False)
+    finalized = handler.finalize_translation(result, allow_cleanup=False)
     assert (finalized.exact_valid, finalized.final_text) == (True, original)
 
 
@@ -365,7 +361,7 @@ def test_unpaired_original_tags_round_trip_untouched(original):
 def test_a_lost_tag_is_still_caught(original, dropped, cleanup):
     handler, result = _sanitized(original)
     lost = handler.artifacts[dropped]
-    mangled = result.sanitized_text.replace(lost.placeholder, "")
+    mangled = result.replace(lost.placeholder, "")
     finalized = handler.finalize_translation(mangled, allow_cleanup=cleanup)
     assert not finalized.exact_valid
     assert finalized.mismatch_report.expected_sequence == [a.original for a in handler.artifacts]
@@ -423,7 +419,7 @@ def test_foreign_script_of_the_original_is_allowed():
 
 def test_foreign_script_does_not_mask_a_token_mismatch():
     handler, result = _sanitized("<FirstName>, the Society is not welcome!")
-    mangled = result.sanitized_text.replace(handler.artifacts[0].placeholder, "")
+    mangled = result.replace(handler.artifacts[0].placeholder, "")
     outcome = handler.finalize_translation(mangled + " 欢迎", allow_cleanup=True)
     assert (outcome.exact_valid, outcome.used_cleanup) == (False, True)
     assert outcome.mismatch_report.mismatch_type != "foreign_script"

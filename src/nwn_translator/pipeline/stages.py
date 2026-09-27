@@ -175,7 +175,8 @@ class PipelineState:
         gff_cache: Parsed GFF resources by path.
         stats: Run statistics, changed only by the thread running the stages.
         trace: Translation log of the run: ``config.translation_log_writer``,
-            else a writer the run opens for ``config.translation_log``.
+            else a writer the run opens for ``config.translation_log``, else a
+            writer that discards entries.
     """
 
     config: TranslationConfig

@@ -227,8 +227,10 @@ class TranslationConfig:
 #: Turkish cp1254). The web API refuses them.
 GAME_INCOMPATIBLE_TARGET_LANGS = frozenset({"chinese", "japanese", "korean", "turkish"})
 
-#: Language -> code page of injected strings; a test keeps the values equal to
-#: ``formats.text_codec.MODULE_ENCODINGS``, the pages the patchers accept.
+#: Language -> Windows code page, both for decoding the module's source strings
+#: (:func:`source_string_encoding`) and for encoding the injected ones. A test keeps
+#: the values equal to ``formats.text_codec.MODULE_ENCODINGS``, the pages the
+#: patchers accept.
 _LANG_TO_WINDOWS_ENCODING: dict[str, str] = {
     **dict.fromkeys(("russian", "ukrainian"), "cp1251"),
     **dict.fromkeys(("polish", "czech", "hungarian", "romanian"), "cp1250"),

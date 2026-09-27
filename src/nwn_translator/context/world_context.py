@@ -10,7 +10,7 @@ of the entities that dialog mentions.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from ..config import ProgressCallback
 from ..extractors.base import TranslatableItem, extract_local_string, list_field
@@ -35,12 +35,30 @@ logger = logging.getLogger(__name__)
 WORLD_CONTEXT_MAX_ENTRIES = 30
 WORLD_CONTEXT_MAX_CHARS = 12000
 
-#: Tagged, named entities: extension -> (``WorldContext`` registry, name field,
-#: candidate category, evidence source). A journal registers each of its categories.
-_NAMED: Dict[str, Tuple[str, str, str, str]] = {
-    ".are": ("areas", "Name", "location", "are_name"),
-    ".uti": ("items", "LocalizedName", "item", "uti_name"),
-    ".jrl": ("quests", "Name", "quest", "jrl_category"),
+
+class _NamedKind(NamedTuple):
+    """How the world scan registers a tagged, named entity.
+
+    Attributes:
+        count_key: Key of the entity kind in the scan summary counts.
+        registry: The ``WorldContext`` dict (tag -> name) the entity goes into.
+        name_field: CExoLocString field holding the name.
+        category: Category of the name candidate.
+        source: Evidence source of the name candidate.
+    """
+
+    count_key: str
+    registry: Callable[["WorldContext"], Dict[str, str]]
+    name_field: str
+    category: str
+    source: str
+
+
+#: Tagged, named entities by extension. A journal registers each of its categories.
+_NAMED: Dict[str, _NamedKind] = {
+    ".are": _NamedKind("areas", lambda ctx: ctx.areas, "Name", "location", "are_name"),
+    ".uti": _NamedKind("items", lambda ctx: ctx.items, "LocalizedName", "item", "uti_name"),
+    ".jrl": _NamedKind("quests", lambda ctx: ctx.quests, "Name", "quest", "jrl_category"),
 }
 #: Blueprints of non-creature objects that can own a dialog.
 _DIALOG_OBJECT_KINDS = {".utp": "placeable", ".utd": "door"}
@@ -451,7 +469,7 @@ class WorldScanner:
                     counts["actors"] += _register_dialog_actor(context, data, kind)
                 else:
                     structs = list_field(data, "Categories") if ext == ".jrl" else [data]
-                    counts[_NAMED[ext][0]] += sum(
+                    counts[_NAMED[ext].count_key] += sum(
                         _register_named(context, struct, ext, file_path.name)
                         for struct in structs
                         if isinstance(struct, dict)
@@ -518,14 +536,14 @@ def _register_named(context: WorldContext, struct: Dict[str, Any], ext: str, res
     Returns:
         ``True`` when the struct had both a tag and a name.
     """
-    registry, name_field, category, source = _NAMED[ext]
+    kind = _NAMED[ext]
     tag = struct.get("Tag", "")
-    name = _local_string(struct, name_field)
+    name = _local_string(struct, kind.name_field)
     if not (tag and name):
         return False
-    getattr(context, registry)[tag] = name
+    kind.registry(context)[tag] = name
     context.candidates.add(
-        name, category=category, source=source, resource=resource, field=name_field
+        name, category=kind.category, source=kind.source, resource=resource, field=kind.name_field
     )
     return True
 

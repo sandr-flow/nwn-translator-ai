@@ -80,7 +80,7 @@ class ConcatChain:
         return [p for p in self.parts if isinstance(p, ConcatLit)]
 
     def to_metadata(self) -> List[Dict[str, Any]]:
-        """Serializes the parts for ``metadata["concat_parts"]`` (``offset``/``text`` or ``var``)."""
+        """Serializes the parts for ``metadata["concat_parts"]``: ``offset``/``text`` or ``var``."""
         return [
             {"offset": p.offset, "text": p.text} if isinstance(p, ConcatLit) else {"var": p.index}
             for p in self.parts

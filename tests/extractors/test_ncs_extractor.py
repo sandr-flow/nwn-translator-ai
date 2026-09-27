@@ -62,7 +62,7 @@ def _texts(result):
         "GENERIC SCRIPT DEBUG STRING ********** ",
         "Generic Generic or Specific; error: 3524",
         "USING SPAWN IN CONDITION NOW BASTARDO",
-        # Corpus waypoint tags used to survive extraction and reach the LLM gate.
+        # Waypoint tags from the corpus; they must not reach the LLM gate.
         "WP_DPR1_CloseDoor",
         "WP_CoN_Parishoner",
         "WP_MerudocRuns_01",

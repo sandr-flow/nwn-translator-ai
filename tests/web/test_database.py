@@ -42,7 +42,7 @@ def _translation_columns() -> set:
 def test_the_suite_never_touches_the_repository_database():
     """Losing the ``isolated_web_db`` fixture would silently pollute the live database.
 
-    The suite once wrote hundreds of fake task rows into
+    Without it the suite writes fake task rows into
     ``workspace/web/translations.db``, and a TaskManager started against it
     flags any genuinely running translation as ``interrupted``.
     """

@@ -105,8 +105,8 @@ def test_equal_text_sanitizes_identically():
 @pytest.mark.parametrize(
     "text, translatable",
     [
-        # A lone word between tags is translatable; the permissive placeholder
-        # regex used to match across it.
+        # A lone word between tags is translatable: a placeholder does not
+        # match across it.
         ("<StartAction>Attack</Start>", True),
         ("<StartHighlight>Partir</Start>", True),
         ("<StartAction>Yes</Start>", True),

@@ -1,8 +1,8 @@
-"""V2.2 identity round-trip: extract then repack without translating.
+"""Identity round trip: extract, then repack without translating.
 
 The output archive must contain the same resources, with the same type IDs and
-byte-identical contents, as the input. This pins ERF read/write fidelity (C3
-type-id table, M-W8 module description) without any translation in the loop.
+byte-identical contents, as the input. This pins ERF read/write fidelity (the
+resource type-id table, the module description) with no translation in the loop.
 
 A second run repacks with ``original_mod=None`` so resource type IDs come from
 the canonical table alone (no per-file overrides) — that isolates whether the

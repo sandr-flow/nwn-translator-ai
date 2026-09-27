@@ -1,4 +1,4 @@
-"""V2.4 mock-translate round-trip: full pipeline with a deterministic provider.
+"""Mock-translate round trip: the full pipeline with a deterministic provider.
 
 Runs the complete pipeline (extract -> translate -> inject -> repack) on each
 corpus module using :class:`MockTranslateProvider`, then reads the output back
@@ -6,8 +6,8 @@ and checks three invariants:
 
 1. the output ``.mod`` reads back (all resources extractable);
 2. every re-extracted GFF field with translatable content carries the marker
-   (player-facing content is translated in full; gaps expose patch-coverage
-   bugs such as M-G1). Fields that sanitize down to tokens/punctuation only
+   (player-facing content is translated in full; gaps expose fields the
+   patcher does not reach). Fields that sanitize down to tokens/punctuation only
    (``"<Deity>!"``, ``. . .``) are passthrough by design and exempt;
 3. every output ``.ncs`` reparses and its preamble field ``T`` equals its size.
 
@@ -15,7 +15,7 @@ NCS strings are deliberately *not* held to the marker invariant: the extractor
 surfaces internal/debug strings (e.g. ``"TalentHeal Enter"``) on re-extraction
 that the pipeline intentionally never translates, so a universal NCS marker
 check would be meaningless. The NCS integrity guarantee here is structural
-(reparse + correct ``T``), which is exactly what isolates C1/C2.
+(reparse + correct ``T``): it catches a patch that shifts jumps or the size field.
 
 ``use_context=False`` keeps the world-context / glossary / contextual-dialog
 subsystems out of the loop so the provider surface stays to a single
@@ -24,7 +24,6 @@ subsystems out of the loop so the provider surface stays to a single
 
 from __future__ import annotations
 
-import struct
 from pathlib import Path
 
 import pytest
@@ -39,16 +38,8 @@ from nwn_translator.pipeline.stages import (
 )
 from nwn_translator.translators.token_handler import TokenHandler, has_translatable_content
 
-from ._corpus import extract_module
+from ._corpus import declared_ncs_size, extract_module
 from ._mock_provider import MARKER, MockContextProvider, MockTranslateProvider
-
-_NCS_EE_SIZE_OPCODE = 0x42
-
-
-def _declared_ncs_size(raw: bytes) -> int | None:
-    if len(raw) >= 13 and raw[8] == _NCS_EE_SIZE_OPCODE:
-        return struct.unpack_from(">I", raw, 9)[0]
-    return None
 
 
 def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
@@ -57,7 +48,7 @@ def test_mock_translate_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
 
 def test_sandy_context_roundtrip(corpus_module: Path, tmp_path: Path) -> None:
     if corpus_module.name != "Sandy Valley Days v2.mod":
-        pytest.skip("Sandy Valley context regression")
+        pytest.skip("the context checks pin Sandy Valley names")
     _mock_roundtrip(corpus_module, tmp_path, use_context=True)
 
 
@@ -101,7 +92,7 @@ def _mock_roundtrip(corpus_module: Path, tmp_path: Path, *, use_context: bool) -
             except Exception as exc:  # noqa: BLE001 - robustness sweep
                 ncs_failures.append(f"reparse {path.name}: {type(exc).__name__}: {exc}")
             else:
-                declared = _declared_ncs_size(raw)
+                declared = declared_ncs_size(raw)
                 if declared is not None and declared != len(raw):
                     ncs_failures.append(f"size {path.name}: T={declared} actual={len(raw)}")
             continue

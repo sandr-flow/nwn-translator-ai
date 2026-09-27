@@ -1,9 +1,8 @@
-"""V2.3 no-op patch: injecting ``{original: original}`` changes no bytes.
+"""Injecting ``{original: original}`` changes no bytes.
 
 Every translatable resource is extracted and then re-injected with each string
 mapped to itself. A correct injector/patcher stack must skip identical text and
-leave the file byte-for-byte unchanged. This pins the "no-op is truly a no-op"
-invariant that the P1 patcher refactor must preserve.
+leave the file byte-for-byte unchanged: a no-op patch is truly a no-op.
 """
 
 from __future__ import annotations

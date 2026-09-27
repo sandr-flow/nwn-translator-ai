@@ -1,4 +1,4 @@
-"""V2.1 parse-all: every parsable resource of every corpus module parses.
+"""Every parsable resource of every corpus module parses.
 
 For GFF resources this means :func:`read_gff` does not raise. For ``.dlg`` it
 additionally means :meth:`DialogExtractor.build_dialog_tree` builds a tree
@@ -11,7 +11,6 @@ the declared ``T`` no longer equals the file size it walked).
 
 from __future__ import annotations
 
-import struct
 from pathlib import Path
 
 import pytest
@@ -21,16 +20,7 @@ from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.formats.gff import read_gff
 from nwn_translator.formats.ncs import parse_ncs_bytes
 
-from ._corpus import extract_module
-
-_NCS_EE_SIZE_OPCODE = 0x42
-
-
-def _declared_ncs_size(raw: bytes) -> int | None:
-    """Return the NWN:EE preamble ``T`` (declared script size), or ``None``."""
-    if len(raw) >= 13 and raw[8] == _NCS_EE_SIZE_OPCODE:
-        return struct.unpack_from(">I", raw, 9)[0]
-    return None
+from ._corpus import declared_ncs_size, extract_module
 
 
 def test_parse_all(corpus_module: Path, tmp_path: Path) -> None:
@@ -55,7 +45,7 @@ def test_parse_all(corpus_module: Path, tmp_path: Path) -> None:
             except Exception as exc:  # noqa: BLE001 - robustness sweep
                 failures.append(f"NCS parse {path.name}: {type(exc).__name__}: {exc}")
                 continue
-            declared = _declared_ncs_size(raw)
+            declared = declared_ncs_size(raw)
             if declared is not None and declared != len(raw):
                 failures.append(f"NCS size mismatch {path.name}: T={declared} actual={len(raw)}")
         else:

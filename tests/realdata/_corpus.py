@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import struct
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -17,6 +18,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Resource archive extensions the pipeline accepts.
 _ARCHIVE_GLOBS = ("*.mod", "*.erf", "*.hak")
+
+#: Opcode of the NWN:EE preamble instruction that declares the script size.
+_NCS_EE_SIZE_OPCODE = 0x42
 
 
 def corpus_dir() -> Optional[Path]:
@@ -66,6 +70,20 @@ def read_raw_resources(mod_path: Path) -> Tuple[list, Dict[Tuple[str, int], byte
             handle.seek(entry.offset)
             raw[(entry.res_ref.lower(), entry.res_type)] = handle.read(entry.size)
     return entries, raw
+
+
+def declared_ncs_size(raw: bytes) -> Optional[int]:
+    """Return the script size declared by the NWN:EE preamble field ``T``.
+
+    Args:
+        raw: The compiled script.
+
+    Returns:
+        The declared size, or ``None`` when the script has no EE preamble.
+    """
+    if len(raw) >= 13 and raw[8] == _NCS_EE_SIZE_OPCODE:
+        return struct.unpack_from(">I", raw, 9)[0]
+    return None
 
 
 def extract_module(mod_path: Path, dest: Path) -> Path:

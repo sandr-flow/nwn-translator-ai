@@ -124,7 +124,7 @@ def test_older_databases_are_migrated_and_keep_their_rows(tmp_path, columns, row
     assert db.get_translations_by_task("t1")[: len(rows)] == stored
 
 
-def test_log_writer_stores_rows_and_ignores_events(caplog):
+def test_log_writer_stores_rows_and_ignores_events():
     _task()
     writer = db.SqliteTranslationLogWriter("t1")
     writer.write({"event": "ncs_diagnostic", "file": "s.ncs", "item_id": "s:off_1a"})

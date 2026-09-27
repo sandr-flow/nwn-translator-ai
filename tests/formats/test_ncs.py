@@ -15,7 +15,6 @@ from nwn_translator.formats.ncs import (
     OP_NEQUAL,
     OP_RETN,
     TYPE_INT,
-    TYPE_STRING,
     NCSParseError,
     NCSPatchError,
     parse_ncs,
@@ -217,7 +216,7 @@ def test_subroutine_call_keeps_its_target_after_both_strings_grow(tmp_path):
 
 def test_only_the_listed_offset_is_patched(tmp_path):
     path = write_ncs(tmp_path, "dup.ncs", consts("Same"), retn(), consts("Same"), retn())
-    first, second = parse_ncs(path).string_constants
+    first, _second = parse_ncs(path).string_constants
     assert patch_ncs_string_replacements(path, [(first.offset, "Same", "FirstOnly")]) == 1
     assert [i.string_value for i in parse_ncs(path).string_constants] == ["FirstOnly", "Same"]
 

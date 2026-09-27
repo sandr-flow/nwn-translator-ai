@@ -1,6 +1,5 @@
 """OpenRouterProvider requests, parsing, retries and metrics against a fake API."""
 
-import asyncio
 import json
 from types import SimpleNamespace
 

@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from nwn_translator.resources import TRANSLATABLE_TYPES
 from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.formats.gff import read_gff

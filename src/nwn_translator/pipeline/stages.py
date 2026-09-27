@@ -259,9 +259,9 @@ class PipelineState:
 
     def output_path(self) -> Path:
         """Returns ``config.output_file``, else the input's path named after the language."""
-        return self.config.output_file or create_output_path(
-            self.config.input_file, self.config.target_lang
-        )
+        if self.config.output_file is not None:
+            return self.config.output_file
+        return create_output_path(self.config.input_file, self.config.target_lang)
 
     def write_metrics(self, output_path: Path) -> None:
         """Stores the metrics summary in :attr:`stats` and writes the metrics file.
@@ -273,8 +273,9 @@ class PipelineState:
             output_path: The translated module.
         """
         self.stats["metrics"] = self.metrics_recorder.summary()
-        default_path = output_path.with_suffix(output_path.suffix + ".metrics.json")
-        metrics_path = self.config.metrics_output or default_path
+        metrics_path = self.config.metrics_output
+        if metrics_path is None:
+            metrics_path = output_path.with_suffix(output_path.suffix + ".metrics.json")
         try:
             self.metrics_recorder.write_json(metrics_path)
         except Exception as exc:

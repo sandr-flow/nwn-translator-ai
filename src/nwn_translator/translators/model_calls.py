@@ -6,19 +6,20 @@ single request that times out is retried once in the same semaphore slot: a
 script string with the fallback request (explicit script context), anything else
 with the same request. A batch whose results fail is halved recursively until
 single failed leaves remain; those are left to the caller's fallback pass.
-A failed single or batch request never raises: it comes back as an unsuccessful
-result. Only a cancelled run (:class:`~nwn_translator.config.TranslationCancelled`)
-and a pass that exceeds its overall budget (:class:`TimeoutError`) raise.
+A failed request never raises: it comes back as an unsuccessful result. Only a
+cancelled run (:class:`~nwn_translator.config.TranslationCancelled`) and a pass
+that exceeds its overall budget (:class:`TimeoutError`) raise.
 """
 
 import asyncio
 import logging
 from dataclasses import dataclass, replace
-from typing import Any, Awaitable, Callable, Coroutine, List, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Coroutine, List, Optional, Sequence, Tuple
 
 from ..ai_providers import TranslationProvider, TranslationResult
 from ..async_utils import run_async
 from ..config import TranslationConfig
+from ..extractors.base import Occurrence
 from ..prompts._builder import CONTENT_PROFILE_SCRIPT_MESSAGE
 from ..prompts.token_retry import (
     PRESERVE_INLINE_MARKUP,
@@ -32,15 +33,8 @@ from .work_plan import Terminology, WorkItem, batch_terminology, content_profile
 
 logger = logging.getLogger(__name__)
 
-_T = TypeVar("_T")
-
 #: Called once per item when its first-pass request is finished.
 Done = Optional[Callable[[WorkItem], None]]
-
-#: Bounds of the slack added to a queued budget (half of one call), so a short
-#: call still gets a few seconds and a long one at most a minute.
-_MIN_QUEUE_SLACK = 5.0
-_MAX_QUEUE_SLACK = 60.0
 
 
 @dataclass(frozen=True)
@@ -48,17 +42,15 @@ class CallLimits:
     """Timeouts and retry budget of translation requests.
 
     A pass may run as long as its queued requests need (see
-    :func:`queued_timeout`) plus a pad, and never less than its floor.
+    :func:`queued_timeout`) plus a pad, and never less than its floor; the floor
+    of a fallback pass is half the main pass floor.
 
     Attributes:
         item_timeout: Seconds for one single-string request.
         batch_timeout: Seconds for one batch request.
-        min_pass_timeout: Lower bound of the main pass budget. Larger queues
-            scale the budget up.
-        main_pass_pad: Seconds the main pass gets beyond its queued requests,
-            for scheduling and result handling between them.
-        fallback_pass_pad: The same headroom for a fallback pass, which sends
-            fewer and only single requests.
+        min_pass_timeout: Floor of the main pass budget.
+        main_pass_pad: Seconds the main pass gets beyond its queued requests.
+        fallback_pass_pad: The same headroom for a fallback pass.
         token_retries: Extra requests for an answer that broke tokens or tags.
     """
 
@@ -69,11 +61,6 @@ class CallLimits:
     fallback_pass_pad: float = 30.0
     token_retries: int = 2
 
-    @property
-    def min_fallback_pass_timeout(self) -> float:
-        """Lower bound of a fallback pass budget: half the main pass floor."""
-        return self.min_pass_timeout / 2
-
 
 @dataclass(frozen=True)
 class SingleRequest:
@@ -82,12 +69,46 @@ class SingleRequest:
     Attributes:
         context: Prompt context.
         glossary_block: Glossary block, or ``None`` when no term matches.
-        content_profile: Prompt profile.
+        content_profile: Prompt profile; ``None`` for the provider default.
     """
 
     context: Optional[str]
     glossary_block: Optional[str]
-    content_profile: str
+    content_profile: Optional[str]
+
+
+def send_single(
+    log_writer: TranslationLogWriter,
+    provider: TranslationProvider,
+    config: TranslationConfig,
+    occurrence: Occurrence,
+    text: str,
+    request: SingleRequest,
+) -> Coroutine[Any, Any, TranslationResult]:
+    """Starts one logged ``translate_async`` request.
+
+    Args:
+        log_writer: Translation log of the run.
+        provider: Model provider.
+        config: Run settings (languages).
+        occurrence: Address of the string, recorded with the request.
+        text: Sanitized text.
+        request: The other request arguments.
+
+    Returns:
+        The request coroutine.
+    """
+    return logged_model_call(
+        log_writer,
+        provider.translate_async,
+        trace_context={"occurrence": occurrence},
+        text=text,
+        source_lang=config.source_lang,
+        target_lang=config.target_lang,
+        context=request.context,
+        glossary_block=request.glossary_block,
+        content_profile=request.content_profile,
+    )
 
 
 def queued_timeout(work_units: int, per_call_timeout: float, concurrency: int) -> float:
@@ -105,10 +126,10 @@ def queued_timeout(work_units: int, per_call_timeout: float, concurrency: int) -
     if work_units <= 0:
         return 0.0
     waves = (work_units + concurrency - 1) // concurrency
-    slack = max(_MIN_QUEUE_SLACK, min(_MAX_QUEUE_SLACK, per_call_timeout * 0.5))
-    return waves * per_call_timeout + slack
+    return waves * per_call_timeout + max(5.0, min(60.0, per_call_timeout * 0.5))
 
 
+@dataclass
 class ModelCaller:
     """Sender of the translation requests of one run.
 
@@ -121,84 +142,48 @@ class ModelCaller:
         limits: Timeouts and retry budget.
     """
 
-    def __init__(
-        self,
-        config: TranslationConfig,
-        provider: TranslationProvider,
-        log_writer: TranslationLogWriter,
-        diagnostics: NcsDiagnostics,
-        terminology: Terminology,
-        limits: CallLimits,
-    ):
-        """Creates a caller for one run.
-
-        Args:
-            config: Run settings (languages, concurrency, cancellation).
-            provider: Model provider.
-            log_writer: Translation log of the run.
-            diagnostics: Recorder of script-string outcomes.
-            terminology: Glossary lookup of the run.
-            limits: Timeouts and retry budget.
-        """
-        self.config = config
-        self.provider = provider
-        self.log_writer = log_writer
-        self.diagnostics = diagnostics
-        self.terminology = terminology
-        self.limits = limits
+    config: TranslationConfig
+    provider: TranslationProvider
+    log_writer: TranslationLogWriter
+    diagnostics: NcsDiagnostics
+    terminology: Terminology
+    limits: CallLimits
 
     @property
     def concurrency(self) -> int:
         """Requests allowed in flight at once."""
         return max(1, int(self.config.max_concurrent_requests))
 
-    # ── request builders ─────────────────────────────────────────────────
     def plain_request(self, work: WorkItem) -> SingleRequest:
-        """Returns the regular request of an item: its context, terms and profile.
-
-        Args:
-            work: Item to translate.
-
-        Returns:
-            The request arguments besides the text.
-        """
+        """Returns the regular request of an item: its context, terms and profile."""
         return SingleRequest(
-            context=work.item.context,
-            glossary_block=self.terminology([work.sanitized, work.item.context]),
-            content_profile=work.profile,
+            work.item.context, self.terminology([work.sanitized, work.item.context]), work.profile
         )
 
     def ncs_fallback_request(self, work: WorkItem) -> SingleRequest:
-        """Returns the request that retries a script string on its own.
+        """Returns the request of a script string on its own.
 
-        The context restates where the literal comes from and that code must stay
-        untranslated.
-
-        Args:
-            work: Script string to translate.
-
-        Returns:
-            The request arguments besides the text.
+        Its context restates where the literal comes from and that code must
+        stay untranslated.
         """
         item = work.item
         meta = item.metadata
+        context = (
+            "NCS timeout fallback. Translate only if this is player-visible script text. "
+            "Do not translate identifiers, tags, resrefs, variables, debug logs, or code. "
+            f"file={item.key[0]}; item_id={item.item_id}; offset={meta.get('offset')}; "
+            f"confidence={meta.get('confidence')}; hint={meta.get('ncs_hint')}.\n"
+            + (item.context or "")
+        )
         return SingleRequest(
-            context=(
-                "NCS timeout fallback. Translate only if this is player-visible script text. "
-                "Do not translate identifiers, tags, resrefs, variables, debug logs, or code. "
-                f"file={item.key[0]}; item_id={item.item_id}; offset={meta.get('offset')}; "
-                f"confidence={meta.get('confidence')}; hint={meta.get('ncs_hint')}.\n"
-                + (item.context or "")
-            ),
-            glossary_block=self.terminology([item.text, item.context]),
-            content_profile=CONTENT_PROFILE_SCRIPT_MESSAGE,
+            context, self.terminology([item.text, item.context]), CONTENT_PROFILE_SCRIPT_MESSAGE
         )
 
     def token_retry_request(self, work: WorkItem, attempt: int) -> SingleRequest:
         """Returns the request that retries an answer which broke tokens or tags.
 
-        The context adds strict preservation rules, the expected artifacts and how
-        the previous answer (``work.mismatch``) broke them.
+        The context adds strict preservation rules, the expected artifacts and
+        how the previous answer (``work.mismatch``) broke them.
 
         Args:
             work: Item whose last answer was rejected.
@@ -208,17 +193,15 @@ class ModelCaller:
             The request arguments besides the text.
         """
         report = work.mismatch
-        parts: List[str] = []
-        if work.item.context:
-            parts.append(work.item.context)
-        parts.append(PRESERVE_PLACEHOLDERS)
-        parts.append(PRESERVE_INLINE_MARKUP)
-        parts.append(
+        parts = [work.item.context] if work.item.context else []
+        parts += [
+            PRESERVE_PLACEHOLDERS,
+            PRESERVE_INLINE_MARKUP,
             "If the line contains dialog action markers like <<...>> or -...-, preserve "
             "the surrounding markers exactly and translate only the inner text. Do not "
-            "invent new angle-bracket pseudo-tags such as <sir/madam>."
-        )
-        parts.extend(expected_artifacts_line(work.handler.get_expected_artifact_sequence()))
+            "invent new angle-bracket pseudo-tags such as <sir/madam>.",
+            *expected_artifacts_line(work.handler.get_expected_artifact_sequence()),
+        ]
         if report is not None and report.mismatch_type == "foreign_script":
             parts.append(
                 "Your previous answer contained characters from a foreign script "
@@ -229,19 +212,12 @@ class ModelCaller:
         parts.append(f"Retry attempt {attempt} of {self.limits.token_retries}.")
         return replace(self.plain_request(work), context="\n".join(parts))
 
-    # ── single requests ──────────────────────────────────────────────────
-    def _call(self, work: WorkItem, request: SingleRequest) -> Awaitable[TranslationResult]:
+    def _call(
+        self, work: WorkItem, request: SingleRequest
+    ) -> Coroutine[Any, Any, TranslationResult]:
         """Starts one logged ``translate_async`` request for *work*."""
-        return logged_model_call(
-            self.log_writer,
-            self.provider.translate_async,
-            trace_context={"occurrence": work.key},
-            text=work.sanitized,
-            source_lang=self.config.source_lang,
-            target_lang=self.config.target_lang,
-            context=request.context,
-            glossary_block=request.glossary_block,
-            content_profile=request.content_profile,
+        return send_single(
+            self.log_writer, self.provider, self.config, work.key, work.sanitized, request
         )
 
     async def _ask(self, work: WorkItem, request: SingleRequest) -> TranslationResult:
@@ -251,17 +227,10 @@ class ModelCaller:
     @staticmethod
     def _failed(work: WorkItem, error: str) -> TranslationResult:
         """Returns the unsuccessful result of *work* with *error*."""
-        return TranslationResult(
-            translated="", original=work.sanitized, success=False, error=error, metadata={}
-        )
+        return TranslationResult(translated="", original=work.sanitized, success=False, error=error)
 
     async def _ask_or_fail(
-        self,
-        work: WorkItem,
-        request: SingleRequest,
-        *,
-        timeout_error: str,
-        error_prefix: str = "",
+        self, work: WorkItem, request: SingleRequest, *, timeout_error: str, error_prefix: str = ""
     ) -> TranslationResult:
         """Sends one request; a timeout or error becomes an unsuccessful result."""
         try:
@@ -355,9 +324,7 @@ class ModelCaller:
             return await self._ask_or_fail(
                 work,
                 self.ncs_fallback_request(work),
-                timeout_error=(
-                    f"NCS single-item fallback timeout after {self.limits.item_timeout}s"
-                ),
+                timeout_error=f"NCS single-item fallback timeout after {self.limits.item_timeout}s",
             )
 
     def ask_token_retry(self, work: WorkItem, attempt: int) -> TranslationResult:
@@ -371,25 +338,19 @@ class ModelCaller:
             The result; a timeout or error becomes an unsuccessful result.
         """
         request = self.token_retry_request(work, attempt)
-
-        async def call() -> TranslationResult:
-            """Sends the retry request."""
-            return await self._call(work, request)
-
         try:
-            return run_async(call(), timeout=self.limits.item_timeout)
+            return run_async(self._call(work, request), timeout=self.limits.item_timeout)
         except Exception as exc:
             return self._failed(work, str(exc))
 
-    # ── batch requests ───────────────────────────────────────────────────
     async def translate_batch(
         self, sem: asyncio.Semaphore, batch: List[WorkItem], done: Done = None
     ) -> List[TranslationResult]:
         """Translates a batch and narrows its failures by halving.
 
         When two or more results fail, the failed items are split in two halves,
-        left first, and each half is sent again the same way. A single failed item
-        is left for the fallback pass. At most ``2n - 1`` requests per batch.
+        left first, and each half is sent again the same way. A single failed
+        item is left for the fallback pass. At most ``2n - 1`` requests per batch.
 
         Args:
             sem: Semaphore of the pass.
@@ -452,11 +413,13 @@ class ModelCaller:
         )
         return results
 
-    # ── passes ───────────────────────────────────────────────────────────
     def run_main_pass(
         self, singles: Sequence[WorkItem], batches: Sequence[List[WorkItem]], done: Done
     ) -> Tuple[List[TranslationResult], List[TranslationResult]]:
         """Sends every single and batch request of the plan concurrently.
+
+        The pass budget covers a timeout retry in every single request's slot and
+        ``2n - 1`` requests per batch of *n* items (halving included).
 
         Args:
             singles: Items sent one per request.
@@ -481,25 +444,28 @@ class ModelCaller:
             )
             return list(single_results), list(batch_results)
 
-        single_results, batch_results = self._run_pass(
-            run_all(),
-            singles=len(singles),
-            single_slot=self._retrying_slot,
-            batch_calls=sum(2 * len(batch) - 1 for batch in batches),
-            floor=self.limits.min_pass_timeout,
-            pad=self.limits.main_pass_pad,
+        limits = self.limits
+        budget = (
+            queued_timeout(len(singles), 2 * limits.item_timeout, self.concurrency)
+            + queued_timeout(
+                sum(2 * len(batch) - 1 for batch in batches), limits.batch_timeout, self.concurrency
+            )
+            + limits.main_pass_pad
+        )
+        single_results, batch_results = run_async(
+            run_all(), timeout=max(limits.min_pass_timeout, budget)
         )
         return single_results, [result for results in batch_results for result in results]
 
     def run_fallback_pass(
         self, work: Sequence[WorkItem], *, scripts: bool
     ) -> List[TranslationResult]:
-        """Sends one request per item of *work* concurrently, under half the main budget.
+        """Sends one request per item of *work* concurrently, under half the main floor.
 
         Args:
             work: Failed batch items.
-            scripts: *work* holds script strings, sent with their fallback request;
-                otherwise every item gets its regular request and timeout retry.
+            scripts: *work* holds script strings, sent with their fallback request
+                and no timeout retry; otherwise every item gets its regular request.
 
         Returns:
             One result per item, in order.
@@ -518,50 +484,7 @@ class ModelCaller:
                 calls = [self.translate_one(sem, w) for w in work]
             return list(await asyncio.gather(*calls))
 
-        return self._run_pass(
-            run_all(),
-            singles=len(work),
-            single_slot=self.limits.item_timeout if scripts else self._retrying_slot,
-            batch_calls=0,
-            floor=self.limits.min_fallback_pass_timeout,
-            pad=self.limits.fallback_pass_pad,
-        )
-
-    @property
-    def _retrying_slot(self) -> float:
-        """Longest semaphore hold of :meth:`translate_one`: a request and its timeout retry."""
-        return 2 * self.limits.item_timeout
-
-    def _run_pass(
-        self,
-        coro: Coroutine[Any, Any, _T],
-        *,
-        singles: int,
-        single_slot: float,
-        batch_calls: int,
-        floor: float,
-        pad: float,
-    ) -> _T:
-        """Runs one pass with a budget that covers its queued requests.
-
-        Args:
-            coro: The pass.
-            singles: Single requests in the pass.
-            single_slot: Longest time one single request holds its slot.
-            batch_calls: Upper bound of batch requests, halving included.
-            floor: Smallest budget.
-            pad: Seconds added to the queued time.
-
-        Returns:
-            What the pass returns.
-
-        Raises:
-            TranslationCancelled: If the run is cancelled.
-            TimeoutError: If the pass exceeds its budget.
-        """
-        queue = (
-            queued_timeout(singles, single_slot, self.concurrency)
-            + queued_timeout(batch_calls, self.limits.batch_timeout, self.concurrency)
-            + pad
-        )
-        return run_async(coro, timeout=max(floor, queue))
+        limits = self.limits
+        slot = limits.item_timeout if scripts else 2 * limits.item_timeout
+        budget = queued_timeout(len(work), slot, self.concurrency) + limits.fallback_pass_pad
+        return run_async(run_all(), timeout=max(limits.min_pass_timeout / 2, budget))

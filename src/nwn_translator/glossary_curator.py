@@ -26,9 +26,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _VALID_DECISIONS = frozenset({"keep", "local_only", "drop", "alias_of"})
+#: Categories whose candidates always go to the model.
+_UNCERTAIN_CATEGORIES = frozenset({"unknown", "term", "faction", "organization"})
 
-#: A retry asks only for the keys the first reply left out; a failed request
-#: ends the batch. A batch keeps its concurrency slot for its retry.
+#: A retry asks only for the keys the first reply left out; a failed request ends
+#: the batch. A batch keeps its concurrency slot for its retry.
 _STAGE = LlmStage(
     phase="glossary_curation",
     label="Glossary curation",
@@ -58,15 +60,10 @@ class GlossaryCurator:
             progress_callback: Optional progress reporter.
 
         Returns:
-            *registry*. Candidates of a batch that raised, or was unfinished
-            when the overall budget ran out, keep their deterministic
-            decisions; the other batches' decisions still apply.
+            *registry*. The candidates of a batch that raised, or was unfinished when
+            the overall budget ran out, keep their deterministic decisions.
         """
-        candidates = registry.values()
-        if not candidates:
-            return registry
-
-        for candidate in candidates:
+        for candidate in registry.values():
             result = classify_entity_candidate(candidate.name, candidate.category)
             candidate.technical_score = result.technical_score
             if result.decision == "drop":
@@ -81,7 +78,6 @@ class GlossaryCurator:
         ]
         if not llm_candidates:
             return registry
-
         batches = chunks(llm_candidates, _STAGE.batch_size)
         system_prompt = build_curator_system_prompt(config.target_lang)
 
@@ -89,8 +85,7 @@ class GlossaryCurator:
             slot: "Slot", number: int, batch: List[EntityCandidate]
         ) -> Dict[str, Dict[str, Any]]:
             """Curates one batch; names the model leaves out keep their decision."""
-            # Runs once the batch holds its slot, so the progress names the
-            # batch the model is curating.
+            # The batch holds its slot here, so the progress names the batch being curated.
             if progress_callback:
                 progress_callback(
                     "scanning",
@@ -99,8 +94,8 @@ class GlossaryCurator:
                     f"Curating glossary candidates {number}/{len(batches)}",
                 )
             by_name = {candidate.name: candidate for candidate in batch}
-            # Built exactly like this on purpose: the set's iteration order
-            # decides the order of the answers and of the missing-key fallback.
+            # Built exactly like this on purpose: the set's iteration order decides
+            # the order of the answers and of the missing-key fallback.
             remaining: Set[str] = set({candidate.name for candidate in batch})
 
             def prepare(
@@ -127,7 +122,6 @@ class GlossaryCurator:
             return decisions
 
         results = _STAGE.run(batches, curate_batch, concurrency=config.max_concurrent_requests)
-
         for batch_result in results:
             if isinstance(batch_result, BaseException):
                 logger.warning("Glossary curation batch failed: %s", batch_result)
@@ -140,68 +134,58 @@ class GlossaryCurator:
                     priority=_optional_int(decision.get("priority")),
                     alias_of=_optional_str(decision.get("alias_of")),
                 )
-
         return registry
 
 
 def _needs_llm_curation(candidate: EntityCandidate) -> bool:
     """Tells whether the rules leave *candidate*'s glossary status to the model."""
-    if candidate.is_speaker_or_dialog_actor:
-        return True
-    if candidate.frequency > 1:
-        return True
-    if candidate.curation_decision == "local_only":
-        return True
-    return candidate.category in {"unknown", "term", "faction", "organization"}
+    return (
+        candidate.is_speaker_or_dialog_actor
+        or candidate.frequency > 1
+        or candidate.curation_decision == "local_only"
+        or candidate.category in _UNCERTAIN_CATEGORIES
+    )
 
 
 def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str, Any]]:
     """Parses a curator reply into decisions for the expected candidate names.
 
-    Keys match exactly, else case-insensitively; values with an unknown
-    decision are skipped.
+    Keys match exactly, else case-insensitively; values with an unknown decision
+    are skipped.
 
     Args:
-        raw: Model reply, decoded with
-            :func:`~nwn_translator.json_utils.load_brace_span`.
+        raw: Model reply, decoded with :func:`~nwn_translator.json_utils.load_brace_span`.
         expected_keys: Candidate names still awaiting a decision.
 
     Returns:
-        Candidate name -> ``decision``, ``reason``, ``priority`` and
-        ``alias_of``, in reply order; empty when the reply does not decode.
+        Candidate name -> ``decision``, ``reason``, ``priority`` and ``alias_of``, in
+        reply order; empty when the reply does not decode.
     """
-    if not raw or not raw.strip():
-        return {}
     try:
-        data = load_brace_span(raw)
+        data = load_brace_span(raw) if raw and raw.strip() else None
     except json.JSONDecodeError:
         return {}
     if not isinstance(data, dict):
         return {}
-
     out: Dict[str, Dict[str, Any]] = {}
     folded = {key.casefold(): key for key in expected_keys}
-    for raw_key, raw_value in data.items():
+    for raw_key, value in data.items():
         key = raw_key if raw_key in expected_keys else folded.get(str(raw_key).casefold())
-        if key is None or not isinstance(raw_value, dict):
+        if key is None or not isinstance(value, dict):
             continue
-        decision = str(raw_value.get("decision", "keep")).strip().lower()
-        if decision not in _VALID_DECISIONS:
-            continue
-        out[key] = {
-            "decision": decision,
-            "reason": str(raw_value.get("reason", "")),
-            "priority": _optional_int(raw_value.get("priority")) or 0,
-            "alias_of": _optional_str(raw_value.get("alias_of")),
-        }
+        decision = str(value.get("decision", "keep")).strip().lower()
+        if decision in _VALID_DECISIONS:
+            out[key] = {
+                "decision": decision,
+                "reason": str(value.get("reason", "")),
+                "priority": _optional_int(value.get("priority")) or 0,
+                "alias_of": _optional_str(value.get("alias_of")),
+            }
     return out
 
 
 def _optional_int(value: Any) -> Optional[int]:
-    """Returns *value* as ``int``, or ``None`` when it does not convert.
-
-    ``json.loads`` reads ``Infinity`` and ``NaN``, which ``int`` rejects.
-    """
+    """Returns *value* as ``int``, or ``None`` (``json`` reads ``Infinity`` and ``NaN``)."""
     try:
         return int(value)
     except (TypeError, ValueError, OverflowError):
@@ -210,7 +194,5 @@ def _optional_int(value: Any) -> Optional[int]:
 
 def _optional_str(value: Any) -> Optional[str]:
     """Returns *value* as a stripped non-empty string, or ``None``."""
-    if value is None:
-        return None
-    text = str(value).strip()
+    text = "" if value is None else str(value).strip()
     return text or None

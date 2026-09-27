@@ -1,11 +1,10 @@
 """Batched JSON requests of the terminology stages.
 
-Entity extraction, glossary curation and glossary building all split their
-input into batches, send each batch to the model under one concurrency limit
-and parse a JSON reply per request. :class:`LlmStage` holds the policy of one
-stage (metrics phase, batch size, attempts, concurrency slots, timeouts) and
-runs its batches; :meth:`LlmStage.fill_keys` is the retry loop that asks again
-for the keys a reply left out.
+Entity extraction, glossary curation and glossary building split their input
+into batches, send each batch to the model under one concurrency limit and parse
+a JSON reply per request. :class:`LlmStage` holds the policy of one stage and
+runs its batches; :meth:`LlmStage.fill_keys` asks again for the keys a reply
+left out.
 """
 
 from __future__ import annotations
@@ -46,23 +45,13 @@ B = TypeVar("B")
 R = TypeVar("R")
 V = TypeVar("V")
 
-#: What a request holds while it runs: a slot of the run's concurrency limit,
-#: or a no-op when its batch already holds one.
+#: What a request holds while it runs: a slot of the concurrency limit, or a no-op
+#: when its batch already holds one.
 Slot = AbstractAsyncContextManager[Any]
 
-#: Worker of one batch: ``(request slot, 1-based batch number, batch) -> result``.
-BatchWorker = Callable[[Slot, int, B], Awaitable[R]]
-
-#: Request builder of one attempt: ``(keys sorted by str.lower, accepted so far, attempt)
-#: -> function starting the request``.
+#: Request builder of one attempt: ``(keys sorted by str.lower, accepted so far,
+#: attempt) -> function starting the request``.
 KeyRequest = Callable[[List[str], Dict[str, V], int], Callable[[], Awaitable[str]]]
-
-#: Reply parser: ``(reply, keys still expected) -> answered keys``.
-KeyParser = Callable[[str, Set[str]], Dict[str, V]]
-
-#: Observer of a finished attempt: ``(attempt, keys it answered)``; the count is
-#: 0 when the request failed or the reply had no usable key.
-AttemptObserver = Callable[[int, int], None]
 
 
 def chunks(items: Sequence[B], size: int) -> List[List[B]]:
@@ -73,7 +62,7 @@ def chunks(items: Sequence[B], size: int) -> List[List[B]]:
         size: Maximum batch length.
 
     Returns:
-        The batches; empty when *items* is empty.
+        The batches; none for no items.
     """
     return [list(items[start : start + size]) for start in range(0, len(items), size)]
 
@@ -100,11 +89,6 @@ def json_request(
     )
 
 
-def _clip(text: str, limit: int) -> str:
-    """Shortens *text* to *limit* characters for a log line."""
-    return text[:limit] + "…" if len(text) > limit else text
-
-
 @dataclass(frozen=True)
 class LlmStage:
     """Request policy of one batched terminology stage.
@@ -113,19 +97,14 @@ class LlmStage:
         phase: ``llm_phase`` label of the stage's requests in the run metrics.
         label: Stage name in log lines.
         batch_size: Maximum items per batch.
-        run_timeout_per_batch: What each batch adds to the overall deadline of
-            :meth:`run` (seconds). No single batch is held to it: one batch
-            may use the time of others.
-        max_attempts: Requests per batch in :meth:`fill_keys`; each retry asks
-            only for the keys still missing.
-        retry_on_error: Retry after a failed request; otherwise the batch stops
-            at its first failed request.
-        slot_per_batch: A batch takes its concurrency slot before its first
-            request and keeps it until its last, so its retry runs before
-            other batches start; otherwise each request waits for a slot of
-            its own.
-        max_run_timeout: Ceiling of the overall deadline of one :meth:`run`
-            (seconds).
+        run_timeout_per_batch: Share of each batch in the overall deadline of
+            :meth:`run` (seconds); one batch may use the time of others.
+        max_attempts: Requests per batch in :meth:`fill_keys`.
+        retry_on_error: Retry after a failed request instead of stopping the batch.
+        slot_per_batch: A batch holds one concurrency slot from its first request
+            to its last, so its retry runs before other batches start; otherwise
+            each request waits for a slot of its own.
+        max_run_timeout: Ceiling of the overall deadline of one :meth:`run` (seconds).
     """
 
     phase: str
@@ -138,40 +117,36 @@ class LlmStage:
     max_run_timeout: float = math.inf
 
     def run_timeout(self, batch_count: int) -> float:
-        """Returns the overall deadline of a run.
+        """Returns the overall deadline of a run of *batch_count* batches (seconds).
 
         Args:
             batch_count: Number of batches in the run.
 
         Returns:
-            :attr:`run_timeout_per_batch` times *batch_count*, capped at
-            :attr:`max_run_timeout` (seconds).
+            :attr:`run_timeout_per_batch` per batch, capped at :attr:`max_run_timeout`.
         """
         return min(self.run_timeout_per_batch * batch_count, self.max_run_timeout)
 
     def run(
         self,
         batches: Sequence[B],
-        worker: BatchWorker[B, R],
+        worker: Callable[[Slot, int, B], Awaitable[R]],
         *,
         concurrency: int,
     ) -> List[Union[R, BaseException]]:
-        """Runs *worker* on every batch concurrently and returns the results in batch order.
-
-        When :meth:`run_timeout` runs out, the unfinished batches are cancelled
-        and the finished ones keep their results.
+        """Runs *worker* on every batch concurrently until the overall deadline.
 
         Args:
             batches: Batches in request order.
-            worker: Coroutine function processing one batch; it passes its
-                slot to :meth:`request` or :meth:`fill_keys`. With
-                :attr:`slot_per_batch` it runs while its batch holds a slot.
-            concurrency: Maximum requests (with :attr:`slot_per_batch`,
-                batches) in flight.
+            worker: Coroutine function ``(slot, 1-based number, batch) -> result``;
+                it passes its slot to :meth:`request` or :meth:`fill_keys`.
+            concurrency: Maximum requests (with :attr:`slot_per_batch`, batches) in
+                flight.
 
         Returns:
-            One entry per batch: its result, the exception its worker raised,
-            or a ``TimeoutError`` when it was still running at the deadline.
+            Per batch, in batch order: its result, the exception its worker raised,
+            or a ``TimeoutError`` when it was still running at the deadline (it is
+            cancelled then).
         """
         limit = self.run_timeout(len(batches))
 
@@ -211,8 +186,7 @@ class LlmStage:
                 elif task.cancelled():
                     results.append(asyncio.CancelledError())
                 else:
-                    error = task.exception()
-                    results.append(error if error is not None else task.result())
+                    results.append(task.exception() or task.result())
             return results
 
         return run_async(run_all(), timeout=None)
@@ -228,8 +202,7 @@ class LlmStage:
             The model reply.
 
         Raises:
-            asyncio.TimeoutError: If the request exceeds ``GLOSSARY_LLM_TIMEOUT``
-                (the builtin ``TimeoutError`` on Python 3.11+).
+            asyncio.TimeoutError: If the request exceeds ``GLOSSARY_LLM_TIMEOUT``.
             Exception: Whatever the provider raises.
         """
         async with slot:
@@ -243,30 +216,26 @@ class LlmStage:
         slot: Slot,
         remaining: Set[str],
         prepare: KeyRequest[V],
-        parse: KeyParser[V],
+        parse: Callable[[str, Set[str]], Dict[str, V]],
         *,
         name: str,
-        on_attempt: Optional[AttemptObserver] = None,
+        on_attempt: Optional[Callable[[int, int], None]] = None,
     ) -> Dict[str, V]:
         """Requests the keys in *remaining* until each is answered or the attempts run out.
 
-        Every attempt asks for the keys still missing, sorted by ``str.lower``;
-        the answered ones leave *remaining* in place, so the caller sees the
-        unanswered keys afterwards. The caller builds *remaining*: its iteration
-        order decides the order of keys equal under ``str.lower`` and the order
-        in which :func:`parse` may report answers.
+        Every attempt asks for the keys still missing, sorted by ``str.lower``.
+        The caller builds *remaining*: its iteration order decides the order of keys
+        equal under ``str.lower`` and the order in which *parse* may report answers.
 
         Args:
             slot: The worker's request slot (see :meth:`run`).
-            remaining: Keys to answer; updated in place.
-            prepare: Builds the request of one attempt. It runs before the
-                request waits for its slot and outside the failure handling,
-                so an error in it propagates instead of counting as a failed
-                request.
-            parse: Extracts the answered keys from a reply.
+            remaining: Keys to answer; answered keys are removed in place.
+            prepare: Builds the request of one attempt; it runs outside the failure
+                handling, so its errors propagate.
+            parse: ``(reply, keys still expected) -> answered keys``.
             name: Batch name for log lines.
-            on_attempt: Called after every attempt, once *remaining* is
-                updated.
+            on_attempt: Called with ``(attempt, keys answered)`` after every attempt,
+                once *remaining* is updated.
 
         Returns:
             Answered key -> value, in answer order.
@@ -280,6 +249,7 @@ class LlmStage:
             if not remaining:
                 break
             keys = sorted(remaining, key=str.lower)
+            progress = f"{name} attempt {attempt}/{self.max_attempts}"
             if attempt > 1:
                 logger.info(
                     "%s: retrying %d missing key(s), attempt %d/%d",
@@ -293,14 +263,8 @@ class LlmStage:
             try:
                 raw = await self.request(slot, send)
             except Exception as exc:
-                logger.warning(
-                    "%s attempt %d/%d: request failed after %.1fs: %s",
-                    name,
-                    attempt,
-                    self.max_attempts,
-                    time.monotonic() - started,
-                    exc,
-                )
+                elapsed = time.monotonic() - started
+                logger.warning("%s: request failed after %.1fs: %s", progress, elapsed, exc)
                 if on_attempt:
                     on_attempt(attempt, 0)
                 if self.retry_on_error:
@@ -312,23 +276,17 @@ class LlmStage:
             remaining -= set(parsed)
             if parsed:
                 logger.info(
-                    "%s attempt %d/%d: %d key(s) in %.1fs, %d/%d answered",
-                    name,
-                    attempt,
-                    self.max_attempts,
+                    "%s: %d key(s) in %.1fs, %d/%d answered",
+                    progress,
                     len(parsed),
                     elapsed,
                     len(accepted),
                     total,
                 )
             else:
+                clipped = raw[:600] + "…" if len(raw) > 600 else raw
                 logger.warning(
-                    "%s attempt %d/%d: no usable keys in %.1fs. Raw (truncated): %s",
-                    name,
-                    attempt,
-                    self.max_attempts,
-                    elapsed,
-                    _clip(raw, 600),
+                    "%s: no usable keys in %.1fs. Raw (truncated): %s", progress, elapsed, clipped
                 )
             if on_attempt:
                 on_attempt(attempt, len(parsed))

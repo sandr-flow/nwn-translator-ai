@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 _SPACE_RE = re.compile(r"\s+")
 
-#: Candidate priority by evidence source; the highest one seen is kept. Only the
-#: ``candidates.json`` artifact shows it, no decision reads it.
+#: Candidate priority by evidence source (10 for any other); the highest one seen
+#: is kept. Only the ``candidates.json`` artifact shows it.
 SOURCE_PRIORITY = {
     "dlg_speaker": 95,
     "utc_name": 90,
@@ -59,8 +59,7 @@ def normalize_entity_name(name: object) -> str:
         *name* NFKC-normalized, with whitespace collapsed, stripped and casefolded.
     """
     text = unicodedata.normalize("NFKC", "" if name is None else str(name))
-    text = _SPACE_RE.sub(" ", text).strip().casefold()
-    return text
+    return _SPACE_RE.sub(" ", text).strip().casefold()
 
 
 @dataclass
@@ -127,10 +126,9 @@ class EntityCandidate:
         self.is_speaker_or_dialog_actor = (
             self.is_speaker_or_dialog_actor or evidence.is_speaker_or_dialog_actor
         )
-        if evidence.context:
-            snippet = _SPACE_RE.sub(" ", evidence.context).strip()
-            if snippet and snippet not in self.contexts and len(self.contexts) < 3:
-                self.contexts.append(snippet[:240])
+        snippet = _SPACE_RE.sub(" ", evidence.context or "").strip()
+        if snippet and snippet not in self.contexts and len(self.contexts) < 3:
+            self.contexts.append(snippet[:240])
         if self.category == "unknown" and evidence.category != "unknown":
             self.category = evidence.category
         self.priority = max(self.priority, SOURCE_PRIORITY.get(evidence.source, 10))
@@ -147,11 +145,7 @@ class EntityCandidate:
 
     @property
     def eligible_for_glossary(self) -> bool:
-        """Whether this candidate may seed the run-wide glossary.
-
-        Neither curation nor the deterministic filter dropped it, and it is
-        not ``local_only``.
-        """
+        """Whether neither curation (``drop``, ``local_only``) nor the filter excludes it."""
         if self.curation_decision in {"drop", "local_only"}:
             return False
         return classify_entity_candidate(self.name, self.category).decision != "drop"
@@ -160,17 +154,16 @@ class EntityCandidate:
         """Returns the JSON record the curator sees for this candidate.
 
         Returns:
-            Name, category, sources, frequency, contexts, the filter's
-            technical flags and the speaker flag.
+            Name, category, sources, frequency, contexts, the filter's technical
+            flags and the speaker flag.
         """
-        filter_result = classify_entity_candidate(self.name, self.category)
         return {
             "name": self.name,
             "category": self.category,
             "sources": self.sources,
             "frequency": self.frequency,
             "contexts": self.contexts,
-            "technical_flags": sorted(filter_result.reasons),
+            "technical_flags": sorted(classify_entity_candidate(self.name, self.category).reasons),
             "is_speaker_or_dialog_actor": self.is_speaker_or_dialog_actor,
         }
 
@@ -199,7 +192,7 @@ class EntityCandidateRegistry:
     ) -> None:
         """Adds one evidence record for *name*, creating its candidate on first sight.
 
-        A new candidate starts with the deterministic filter's score and a
+        A new candidate starts with the deterministic filter's score, and with a
         ``drop`` decision when the filter drops the name. Blank names are ignored.
 
         Args:
@@ -215,36 +208,27 @@ class EntityCandidateRegistry:
         normalized = normalize_entity_name(clean)
         if not normalized:
             return
-
         candidate = self._items.get(normalized)
         if candidate is None:
-            filter_result = classify_entity_candidate(clean, category)
-            candidate = EntityCandidate(
+            result = classify_entity_candidate(clean, category)
+            candidate = self._items[normalized] = EntityCandidate(
                 name=clean,
                 normalized_name=normalized,
                 category=category or "unknown",
-                technical_score=filter_result.technical_score,
-                curation_decision="drop" if filter_result.decision == "drop" else "keep",
-                curation_reason=filter_result.reason,
+                technical_score=result.technical_score,
+                curation_decision="drop" if result.decision == "drop" else "keep",
+                curation_reason=result.reason,
             )
-            self._items[normalized] = candidate
+        category = category or "unknown"
         candidate.add_evidence(
-            EntityEvidence(
-                source=source,
-                resource=resource,
-                field=field,
-                category=category or "unknown",
-                context=context,
-                is_speaker_or_dialog_actor=is_speaker_or_dialog_actor,
-            )
+            EntityEvidence(source, resource, field, category, context, is_speaker_or_dialog_actor)
         )
 
     def extend(self, candidates: Iterable[EntityCandidate]) -> None:
-        """Replays the evidence of *candidates* into this registry.
+        """Replays every evidence record of *candidates* through :meth:`add`.
 
         Args:
-            candidates: Candidates of another registry; each evidence record is
-                added again through :meth:`add`.
+            candidates: Candidates of another registry.
         """
         for candidate in candidates:
             for evidence in candidate.evidence:
@@ -261,22 +245,15 @@ class EntityCandidateRegistry:
     def restore(self, candidates: Iterable[EntityCandidate]) -> None:
         """Inserts saved candidates as they are, keeping their curated fields.
 
-        Unlike :meth:`extend`, nothing is recomputed: the decision, priority
-        and score of a loaded ``candidates.json`` stay exactly as saved.
-
         Args:
-            candidates: Candidates keyed by their ``normalized_name``; a later
-                one replaces an earlier one with the same key.
+            candidates: Candidates keyed by ``normalized_name``; a later one
+                replaces an earlier one with the same key.
         """
         for candidate in candidates:
             self._items[candidate.normalized_name] = candidate
 
     def values(self) -> List[EntityCandidate]:
-        """Returns the candidates.
-
-        Returns:
-            All candidates, sorted by normalized name.
-        """
+        """Returns all candidates, sorted by normalized name."""
         return [self._items[k] for k in sorted(self._items)]
 
     def mark_curated(
@@ -297,8 +274,7 @@ class EntityCandidateRegistry:
             priority: Curator priority; raises the candidate's priority only.
             alias_of: Alias target; ``None`` clears a previous one.
         """
-        key = normalize_entity_name(name)
-        candidate = self._items.get(key)
+        candidate = self._items.get(normalize_entity_name(name))
         if candidate is None:
             return
         candidate.curation_decision = decision
@@ -308,25 +284,15 @@ class EntityCandidateRegistry:
         candidate.alias_of = alias_of or None
 
     def glossary_pairs(self) -> List[Tuple[str, str]]:
-        """Returns the glossary requests of the eligible candidates.
-
-        Returns:
-            ``(name, category)`` of every candidate eligible for the glossary,
-            sorted by normalized name.
-        """
-        out: List[Tuple[str, str]] = []
-        for candidate in self.values():
-            if candidate.eligible_for_glossary:
-                out.append((candidate.name, candidate.category or "unknown"))
-        return out
+        """Returns ``(name, category)`` of the glossary-eligible candidates, by normalized name."""
+        return [(c.name, c.category or "unknown") for c in self.values() if c.eligible_for_glossary]
 
     def resolved_aliases(self) -> Dict[str, str]:
         """Resolves alias chains to their root candidate.
 
         Returns:
-            Eligible alias name -> name of its eligible root; chains with a
-            missing target, a cycle or an ineligible link are dropped with a
-            warning.
+            Eligible alias name -> name of its eligible root; chains with a missing
+            target, a cycle or an ineligible link are dropped with a warning.
         """
         result: Dict[str, str] = {}
         for candidate in self.values():
@@ -364,53 +330,37 @@ class EntityCandidateRegistry:
         for content in contents:
             resource = Path(content.source_file).name if content.source_file else ""
             for item in content.items:
-                add_item_candidate(registry, item, resource)
+                registry._add_item(item, resource)
         return registry
 
+    def _add_item(self, item: TranslatableItem, resource: str) -> None:
+        """Adds the evidence of one extracted item, if any.
 
-def add_item_candidate(
-    registry: EntityCandidateRegistry,
-    item: TranslatableItem,
-    resource: str,
-) -> None:
-    """Adds the evidence one extracted item gives, if any.
-
-    Dialog lines contribute their speaker; name fields listed in
-    :data:`TYPE_TO_CANDIDATE` contribute their text. Everything in a ``.git``
-    resource counts as ``git_instance`` evidence.
-
-    Args:
-        registry: Registry to add to.
-        item: Extracted item.
-        resource: File name of the item's resource.
-    """
-    meta = item.metadata or {}
-    item_type = str(meta.get("type", ""))
-    if item_type in {"entry", "reply"}:
-        speaker = str(meta.get("speaker", "")).strip()
-        if speaker:
-            registry.add(
-                speaker,
-                category="character",
-                source="dlg_speaker",
+        Dialog lines give their speaker; the types of :data:`TYPE_TO_CANDIDATE`
+        give their text. Everything in a ``.git`` resource is ``git_instance``
+        evidence.
+        """
+        meta = item.metadata or {}
+        item_type = str(meta.get("type", ""))
+        if item_type in {"entry", "reply"}:
+            speaker = str(meta.get("speaker", "")).strip()
+            if speaker:
+                self.add(
+                    speaker,
+                    category="character",
+                    source="dlg_speaker",
+                    resource=resource,
+                    field="Speaker",
+                    context=item.text,
+                    is_speaker_or_dialog_actor=True,
+                )
+        elif item_type in TYPE_TO_CANDIDATE:
+            category, source, field_label = TYPE_TO_CANDIDATE[item_type]
+            self.add(
+                item.text,
+                category=category,
+                source="git_instance" if resource.lower().endswith(".git") else source,
                 resource=resource,
-                field="Speaker",
-                context=item.text,
-                is_speaker_or_dialog_actor=True,
+                field=str(meta.get("git_field") or field_label),
+                context=item.context or "",
             )
-        return
-
-    mapped = TYPE_TO_CANDIDATE.get(item_type)
-    if mapped is None:
-        return
-    category, source, field_label = mapped
-    if resource.lower().endswith(".git"):
-        source = "git_instance"
-    registry.add(
-        item.text,
-        category=category,
-        source=source,
-        resource=resource,
-        field=str(meta.get("git_field") or field_label),
-        context=item.context or "",
-    )

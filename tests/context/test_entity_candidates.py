@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nwn_translator.context.entity_candidates import EntityCandidateRegistry, add_item_candidate
+from nwn_translator.context.entity_candidates import EntityCandidateRegistry
 from nwn_translator.extractors.base import ExtractedContent, TranslatableItem
 
 
@@ -63,10 +63,9 @@ def test_restore_keeps_curated_fields_and_replaces_by_key():
 
 
 def test_item_descriptions_are_not_candidates():
-    registry = EntityCandidateRegistry()
     item = TranslatableItem("Long description", metadata={"type": "item_description"})
-    add_item_candidate(registry, item, "thing.uti")
-    assert registry.values() == []
+    content = ExtractedContent(content_type="item", source_file=Path("thing.uti"), items=[item])
+    assert EntityCandidateRegistry.from_extracted_content([content]).values() == []
 
 
 @pytest.mark.parametrize(

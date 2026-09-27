@@ -36,14 +36,18 @@ logger = logging.getLogger(__name__)
 #: Called once per item when its first-pass request is finished.
 Done = Optional[Callable[[WorkItem], None]]
 
+#: Bounds of the slack added to a queued budget (half of one call), so a short
+#: call still gets a few seconds and a long one at most a minute.
+_MIN_QUEUE_SLACK = 5.0
+_MAX_QUEUE_SLACK = 60.0
+
 
 @dataclass(frozen=True)
 class CallLimits:
     """Timeouts and retry budget of translation requests.
 
     A pass may run as long as its queued requests need (see
-    :func:`queued_timeout`) plus a pad, and never less than its floor; the floor
-    of a fallback pass is half the main pass floor.
+    :func:`queued_timeout`) plus a pad, and never less than its floor.
 
     Attributes:
         item_timeout: Seconds for one single-string request.
@@ -60,6 +64,16 @@ class CallLimits:
     main_pass_pad: float = 60.0
     fallback_pass_pad: float = 30.0
     token_retries: int = 2
+
+    @property
+    def retrying_slot(self) -> float:
+        """Longest semaphore hold of a single request with its timeout retry."""
+        return 2 * self.item_timeout
+
+    @property
+    def min_fallback_pass_timeout(self) -> float:
+        """Floor of a fallback pass budget: half the main pass floor."""
+        return self.min_pass_timeout / 2
 
 
 @dataclass(frozen=True)
@@ -120,13 +134,14 @@ def queued_timeout(work_units: int, per_call_timeout: float, concurrency: int) -
         concurrency: Semaphore size.
 
     Returns:
-        Waves times the per-call timeout, plus slack of half a call within
-        5 to 60 seconds; 0 for no work.
+        Waves times the per-call timeout, plus half a call of slack within
+        :data:`_MIN_QUEUE_SLACK` and :data:`_MAX_QUEUE_SLACK`; 0 for no work.
     """
     if work_units <= 0:
         return 0.0
     waves = (work_units + concurrency - 1) // concurrency
-    return waves * per_call_timeout + max(5.0, min(60.0, per_call_timeout * 0.5))
+    slack = max(_MIN_QUEUE_SLACK, min(_MAX_QUEUE_SLACK, per_call_timeout * 0.5))
+    return waves * per_call_timeout + slack
 
 
 @dataclass
@@ -446,7 +461,7 @@ class ModelCaller:
 
         limits = self.limits
         budget = (
-            queued_timeout(len(singles), 2 * limits.item_timeout, self.concurrency)
+            queued_timeout(len(singles), limits.retrying_slot, self.concurrency)
             + queued_timeout(
                 sum(2 * len(batch) - 1 for batch in batches), limits.batch_timeout, self.concurrency
             )
@@ -460,7 +475,10 @@ class ModelCaller:
     def run_fallback_pass(
         self, work: Sequence[WorkItem], *, scripts: bool
     ) -> List[TranslationResult]:
-        """Sends one request per item of *work* concurrently, under half the main floor.
+        """Sends one request per item of *work* concurrently.
+
+        The pass budget covers the queued requests plus ``fallback_pass_pad``,
+        and is never below ``CallLimits.min_fallback_pass_timeout``.
 
         Args:
             work: Failed batch items.
@@ -485,6 +503,6 @@ class ModelCaller:
             return list(await asyncio.gather(*calls))
 
         limits = self.limits
-        slot = limits.item_timeout if scripts else 2 * limits.item_timeout
+        slot = limits.item_timeout if scripts else limits.retrying_slot
         budget = queued_timeout(len(work), slot, self.concurrency) + limits.fallback_pass_pad
-        return run_async(run_all(), timeout=max(limits.min_pass_timeout / 2, budget))
+        return run_async(run_all(), timeout=max(limits.min_fallback_pass_timeout, budget))

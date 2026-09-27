@@ -1,14 +1,13 @@
-"""Tests for the static race/creature term dictionary and matching logic."""
+"""The static race and creature term dictionary and its matcher."""
 
 import pytest
 
-from src.nwn_translator.race_dictionary import RACE_TERMS, match_race_terms
+from nwn_translator.race_dictionary import RACE_TERMS, match_race_terms
 
-# All language keys present in the dictionary.
-ALL_LANGS = list(RACE_TERMS.keys())
+ALL_LANGS = list(RACE_TERMS)
 
-# Minimum English keys each language must define (singular forms).
-_EXPECTED_MIN_KEYS = {
+#: English keys every language defines.
+_REQUIRED_KEYS = {
     "dwarf",
     "dwarves",
     "halfling",
@@ -31,134 +30,78 @@ _EXPECTED_MIN_KEYS = {
 }
 
 
-class TestRaceTermsData:
-    """RACE_TERMS dictionary has correct shape and coverage."""
+def test_every_language_is_present():
+    assert {
+        "russian",
+        "ukrainian",
+        "polish",
+        "german",
+        "french",
+        "spanish",
+        "italian",
+        "portuguese",
+        "czech",
+        "romanian",
+        "hungarian",
+        "dutch",
+        "english",
+    } <= set(RACE_TERMS)
 
-    @pytest.mark.parametrize("lang", ALL_LANGS)
-    def test_language_has_minimum_keys(self, lang: str):
-        missing = _EXPECTED_MIN_KEYS - set(RACE_TERMS[lang].keys())
-        assert not missing, f"{lang} missing keys: {missing}"
 
-    @pytest.mark.parametrize("lang", ALL_LANGS)
-    def test_values_are_nonempty_strings(self, lang: str):
-        for key, value in RACE_TERMS[lang].items():
-            assert (
-                isinstance(value, str) and value.strip()
-            ), f"{lang}[{key!r}] has empty or non-string value: {value!r}"
+@pytest.mark.parametrize("lang", ALL_LANGS)
+def test_language_table_shape(lang):
+    terms = RACE_TERMS[lang]
+    assert not _REQUIRED_KEYS - set(terms), f"{lang} lacks required keys"
+    for key, value in terms.items():
+        assert key == key.lower(), f"{lang} has a non-lowercase key: {key!r}"
+        assert isinstance(value, str) and value.strip(), f"{lang}[{key!r}] is empty"
+    block = match_race_terms("dwarves and goblins", lang)
+    assert block.startswith("RACE/CREATURE TERMS")
 
-    @pytest.mark.parametrize("lang", ALL_LANGS)
-    def test_keys_are_lowercase(self, lang: str):
-        for key in RACE_TERMS[lang]:
-            assert key == key.lower(), f"{lang} has non-lowercase key: {key!r}"
 
-    def test_all_expected_languages_present(self):
-        expected = {
+@pytest.mark.parametrize(
+    "text, lang, present",
+    [
+        ("Kill the dwarves!", "russian", ['"dwarves"', "дварфы"]),
+        (
+            "The bugbear and the kobolds attacked the elves.",
             "russian",
-            "ukrainian",
-            "polish",
-            "german",
-            "french",
-            "spanish",
-            "italian",
-            "portuguese",
-            "czech",
-            "romanian",
-            "hungarian",
-            "dutch",
-            "english",
-        }
-        missing = expected - set(RACE_TERMS.keys())
-        assert not missing, f"Missing languages: {missing}"
+            ["багбир", "кобольды", "эльфы"],
+        ),
+        ("The BUGBEAR roared.", "russian", ["багбир"]),
+        ("A Dwarven fortress.", "russian", ["дварфийский"]),
+        ("The yuan-ti temple was ancient.", "russian", ["юань-ти"]),
+        ("a goblin", "russian", ["→"]),
+        ("The dwarf spoke.", "russian", ["дварф"]),
+        ("The dwarf spoke.", "french", ["nain"]),
+        ("A bugbear and a hobgoblin.", "czech", ["gobr", "skurut"]),
+    ],
+)
+def test_matched_terms(text, lang, present):
+    block = match_race_terms(text, lang)
+    for part in present:
+        assert part in block
 
 
-class TestMatchRaceTerms:
-    """match_race_terms() correctly scans text and builds prompt blocks."""
-
-    def test_basic_match(self):
-        result = match_race_terms("Kill the dwarves!", "russian")
-        assert '"dwarves"' in result
-        assert "дварфы" in result
-
-    def test_multiple_matches(self):
-        result = match_race_terms("The bugbear and the kobolds attacked the elves.", "russian")
-        assert "багбир" in result
-        assert "кобольды" in result
-        assert "эльфы" in result
-
-    def test_no_match_returns_empty(self):
-        result = match_race_terms("Hello, traveler! Nice weather today.", "russian")
-        assert result == ""
-
-    def test_case_insensitive(self):
-        result = match_race_terms("The BUGBEAR roared.", "russian")
-        assert "багбир" in result
-
-    def test_mixed_case(self):
-        result = match_race_terms("A Dwarven fortress.", "russian")
-        assert "дварфийский" in result
-
-    def test_hyphenated_terms(self):
-        result = match_race_terms("She is a half-elf ranger.", "russian")
-        assert "полуэльф" in result
-
-    def test_yuan_ti(self):
-        result = match_race_terms("The yuan-ti temple was ancient.", "russian")
-        assert "юань-ти" in result
-
-    def test_half_elf_does_not_match_bare_elf_alone(self):
-        """When the text says 'half-elf', the 'elf' inside must not produce
-        a separate spurious match (the hyphen prevents word-boundary match)."""
-        result = match_race_terms("She is a half-elf.", "russian")
-        assert "полуэльф" in result
-        lines = result.strip().split("\n")
-        term_lines = [l for l in lines if l.strip().startswith("*")]
-        keys_found = [l.split('"')[1] for l in term_lines]
-        assert "elf" not in keys_found, "bare 'elf' should not match inside 'half-elf'"
-
-    def test_empty_text(self):
-        assert match_race_terms("", "russian") == ""
-
-    def test_none_text(self):
-        assert match_race_terms(None, "russian") == ""  # type: ignore[arg-type]
-
-    def test_unknown_language_returns_empty(self):
-        assert match_race_terms("Kill the dwarves!", "klingon") == ""
-
-    def test_word_boundary_no_false_positive(self):
-        """'orcs' should not match inside 'workforce' or 'sorcery'."""
-        result = match_race_terms("The workforce improved sorcery.", "russian")
-        assert "орк" not in result
-
-    def test_elf_does_not_match_inside_self(self):
-        """'elf' should not match inside 'herself' or 'bookshelf'."""
-        result = match_race_terms("She proved herself near the bookshelf.", "russian")
-        assert result == ""
-
-    @pytest.mark.parametrize("lang", ALL_LANGS)
-    def test_matches_for_every_language(self, lang: str):
-        result = match_race_terms("dwarves and goblins", lang)
-        assert result != "", f"No match for {lang}"
-        assert "RACE/CREATURE TERMS" in result
-
-    def test_format_has_header(self):
-        result = match_race_terms("a goblin", "russian")
-        assert result.startswith("RACE/CREATURE TERMS")
-
-    def test_format_has_arrow(self):
-        result = match_race_terms("a goblin", "russian")
-        assert "\u2192" in result
+def test_half_elf_does_not_also_match_a_bare_elf():
+    """The hyphen keeps the ``elf`` inside ``half-elf`` from matching on its own."""
+    block = match_race_terms("She is a half-elf ranger.", "russian")
+    assert "полуэльф" in block
+    keys = [line.split('"')[1] for line in block.splitlines() if line.strip().startswith("*")]
+    assert "elf" not in keys
 
 
-class TestCrossLanguageConsistency:
-    """Ensure consistent behaviour across languages."""
-
-    def test_same_text_different_langs_produce_different_translations(self):
-        ru = match_race_terms("The dwarf spoke.", "russian")
-        fr = match_race_terms("The dwarf spoke.", "french")
-        assert "дварф" in ru
-        assert "nain" in fr
-
-    def test_czech_has_unique_terms(self):
-        result = match_race_terms("A bugbear and a hobgoblin.", "czech")
-        assert "gobr" in result
-        assert "skurut" in result
+@pytest.mark.parametrize(
+    "text, lang",
+    [
+        ("Hello, traveler! Nice weather today.", "russian"),
+        ("", "russian"),
+        (None, "russian"),
+        ("Kill the dwarves!", "klingon"),
+        # Word boundaries: "orc" is not in "workforce" or "sorcery", "elf" not in "herself".
+        ("The workforce improved sorcery.", "russian"),
+        ("She proved herself near the bookshelf.", "russian"),
+    ],
+)
+def test_no_match_gives_an_empty_block(text, lang):
+    assert match_race_terms(text, lang) == ""

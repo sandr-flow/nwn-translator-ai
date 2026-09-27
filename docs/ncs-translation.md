@@ -212,11 +212,11 @@ always expand translation units back to their original constant occurrences.
    controls separate from compiler-produced real scripts. Changing existing gold
    requires re-reviewing its evidence; changing bytes requires new hashes and a
    complete inventory. Source files retain their original cp1252 bytes.
-4. Run focused regression tests, `pytest tests/test_ncs_corpus.py`, and the
-   relevant realdata selection tests. Compare per-stage counts, occurrence IDs,
-   modules and cohorts in both modes. Check that better counts do not merely move
-   an error to a later stage. For injection changes, check every original
-   constant after patching; reparsing alone is insufficient.
+4. Run focused regression tests, `pytest tests/extractors/test_ncs_corpus.py`,
+   and the relevant realdata selection tests. Compare per-stage counts,
+   occurrence IDs, modules and cohorts in both modes. Check that better counts
+   do not merely move an error to a later stage. For injection changes, check
+   every original constant after patching; reparsing alone is insufficient.
 5. Run `pytest`, `mypy src` and `black --check src tests` before integration.
    A skipped realdata suite is not evidence of coverage. Record model/config and
    actual verdicts separately if evaluating the live gate. Keep reports and

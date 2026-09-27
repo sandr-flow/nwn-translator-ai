@@ -1,7 +1,5 @@
 """Source-reviewed NCS selections and selective patching on the real corpus."""
 
-import struct
-
 import pytest
 
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
@@ -10,6 +8,7 @@ from nwn_translator.formats.ncs import parse_ncs_bytes
 from nwn_translator.config import TranslationConfig
 from nwn_translator.injectors.ncs_injector import inject_ncs
 from nwn_translator.translators.translation_manager import TranslationManager
+from ._corpus import declared_ncs_size
 from ._mock_provider import MARKER, MockTranslateProvider
 
 
@@ -132,5 +131,5 @@ def test_ncs_selection_and_patch(corpus_module, tmp_path, with_sources):
                     )
                 elif not before.is_string_const:
                     assert before.args == after.args
-            if raw[8] == 0x42:
-                assert struct.unpack_from(">I", patched_raw, 9)[0] == len(patched_raw)
+            if declared_ncs_size(raw) is not None:
+                assert declared_ncs_size(patched_raw) == len(patched_raw)

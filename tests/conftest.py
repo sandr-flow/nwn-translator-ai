@@ -17,8 +17,8 @@ def isolated_web_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Keep every test off the real ``workspace/web/translations.db``.
 
     Without ``NWN_WEB_DB_PATH`` the web layer defaults to a path under the
-    working directory, so a test run wrote its fake tasks straight into the
-    developer's live database — and ``TaskManager`` startup would flag any
+    working directory, so a test run would write its fake tasks straight into
+    the developer's live database — and ``TaskManager`` startup would flag any
     genuinely running translation as ``interrupted``.
 
     The file is created lazily by ``init_db``, so tests that never touch the

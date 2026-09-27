@@ -1,4 +1,4 @@
-"""M-E realdata: declared source encoding yields mojibake-free extraction and patching.
+"""A declared source encoding yields mojibake-free extraction and patching.
 
 The corpus manifest declares each module's content language. For modules whose
 language maps to a Windows code page (e.g. the French cp1252 module), extraction

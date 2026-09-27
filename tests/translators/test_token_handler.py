@@ -94,7 +94,7 @@ def test_equal_text_sanitizes_identically():
     assert sanitize_text("Greetings, <FirstName>!")[0] == first
     assert TOKEN_PLACEHOLDER_RE.search(first)
     handler = TokenHandler()
-    assert handler.sanitize("Hello <FirstName>") == (handler.sanitize("Hello <FirstName>"))
+    assert handler.sanitize("Hello <FirstName>") == handler.sanitize("Hello <FirstName>")
     assert sanitize_text("Hello <FirstName>")[0] != sanitize_text("Goodbye <FirstName>")[0]
 
 

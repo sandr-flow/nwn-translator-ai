@@ -12,11 +12,10 @@ as the dict the prompt builders read:
 - ``speech_low_int_pattern``: how low-INT speech looks in the target language
 - ``dialog_output``: node id -> line, the dialog prompt's output example
 - ``glossary_personal``: ``personal_names`` without ``Talias Allenthel``
-- ``glossary_descriptive``: the ``proper_names`` examples
-- ``glossary_nicknames`` (optional): ``(english, good, bad transliteration,
-  bad numeral calque of "-one")``; languages without it use the English ones
-- ``declension_note`` and ``speech_normal_counterexample`` (optional): extra
-  rule text appended to the prompts
+- ``glossary_nicknames``: ``(english, good, bad transliteration, bad numeral
+  calque of "-one")``; the English ones for a language without its own
+- ``declension_note`` and ``speech_normal_counterexample``: extra rule text
+  appended to the prompts, empty for most languages
 """
 
 from __future__ import annotations
@@ -41,8 +40,6 @@ _LOW_INT_SOURCES = (
 _DIALOG_NODE_IDS = ("E0", "R1", "E2")
 #: The glossary prompt shows the personal names without this one.
 _NOT_IN_GLOSSARY = "Talias Allenthel"
-#: Keys a language may leave out of its forms.
-_OPTIONAL_KEYS = ("glossary_nicknames", "declension_note", "speech_normal_counterexample")
 
 #: Target-language forms, in the order of the English sources above:
 #: ``(good, bad)`` pairs for proper names and low-INT speech, the translations
@@ -462,12 +459,12 @@ def _expand(forms: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         The examples dict described in the module docstring.
     """
-    proper = [
-        (src, good, bad) for src, (good, bad) in zip(_PROPER_NAME_SOURCES, forms["proper_names"])
-    ]
     personal = list(zip(_PERSONAL_NAME_SOURCES, forms["personal_names"]))
-    examples: Dict[str, Any] = {
-        "proper_names": proper,
+    return {
+        "proper_names": [
+            (src, good, bad)
+            for src, (good, bad) in zip(_PROPER_NAME_SOURCES, forms["proper_names"])
+        ],
         "personal_names": personal,
         "speech_low_int": [
             (src, good, bad) for src, (good, bad) in zip(_LOW_INT_SOURCES, forms["speech_low_int"])
@@ -475,12 +472,12 @@ def _expand(forms: Dict[str, Any]) -> Dict[str, Any]:
         "speech_low_int_pattern": forms["speech_low_int_pattern"],
         "dialog_output": dict(zip(_DIALOG_NODE_IDS, forms["dialog_output"])),
         "glossary_personal": [pair for pair in personal if pair[0] != _NOT_IN_GLOSSARY],
-        "glossary_descriptive": list(proper),
+        "glossary_nicknames": forms.get(
+            "glossary_nicknames", _FORMS["english"]["glossary_nicknames"]
+        ),
+        "declension_note": forms.get("declension_note", ""),
+        "speech_normal_counterexample": forms.get("speech_normal_counterexample", ""),
     }
-    for key in _OPTIONAL_KEYS:
-        if key in forms:
-            examples[key] = forms[key]
-    return examples
 
 
 _EXAMPLES: Dict[str, Dict[str, Any]] = {lang: _expand(forms) for lang, forms in _FORMS.items()}

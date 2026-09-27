@@ -1,8 +1,7 @@
 """Prompts of the terminology stages: entity extraction, candidate curation, glossary.
 
-Every byte here reaches the model: the system prompts are pinned by the prompt
-snapshot test, the user prompts by the exact-request tests of the entity
-extractor, the glossary curator and the glossary builder.
+Every byte reaches the model. The prompt snapshot test pins the system prompts;
+the exact-request tests of the three stages pin the user prompts.
 """
 
 from __future__ import annotations
@@ -21,13 +20,8 @@ if TYPE_CHECKING:
 def build_entity_extraction_system_prompt(source_lang: str = "English") -> str:
     """Builds the system prompt for extracting proper nouns from game texts.
 
-    Entity extraction finds character, location and organization names embedded
-    in dialogs, descriptions and sign text, which the world scan never sees as
-    standalone GFF fields.
-
     Args:
-        source_lang: Language of the analyzed texts; names must come back
-            exactly as they appear in the source.
+        source_lang: Language of the analyzed texts, inserted as given.
 
     Returns:
         The system prompt.
@@ -102,8 +96,8 @@ def build_entity_extraction_user_prompt(texts: Iterable[str]) -> str:
         texts: Texts of the batch, numbered from 0 in the prompt.
 
     Returns:
-        The user prompt; line breaks inside a text become spaces and double
-        quotes become single quotes, so each text stays one quoted line.
+        The user prompt; each text is one quoted line (line breaks become spaces,
+        double quotes single ones).
     """
     lines = ["Extract proper nouns from these texts:", ""]
     for idx, text in enumerate(texts):
@@ -166,11 +160,10 @@ def build_glossary_system_prompt(target_lang: str) -> str:
         The system prompt.
     """
     ex = get_examples(target_lang)
-    personal = ex["glossary_personal"]
-    descriptive = ex["glossary_descriptive"]
-
-    pers_ex = ", ".join(f'"{eng}" -> "{tr}"' for eng, tr in personal)
-    desc_ex = ", ".join(f'"{eng}" -> "{good}" (NOT "{bad}")' for eng, good, bad in descriptive)
+    pers_ex = ", ".join(f'"{eng}" -> "{tr}"' for eng, tr in ex["glossary_personal"])
+    desc_ex = ", ".join(
+        f'"{eng}" -> "{good}" (NOT "{bad}")' for eng, good, bad in ex["proper_names"]
+    )
     nick_ex = format_nickname_examples(target_lang, indent="  ")
 
     return (
@@ -223,10 +216,9 @@ def build_glossary_name_line(
     Args:
         name: Source form to translate.
         category: Entity category (``unknown`` when empty).
-        candidate: The name's entity candidate, whose alias target and source
-            contexts become hints.
-        npcs: Creatures carrying *name* as first, last or full name; their name
-            fields and gender become hints.
+        candidate: The name's candidate; its alias target and contexts become hints.
+        npcs: Creatures with *name* as first, last or full name; their name fields
+            and gender become hints.
 
     Returns:
         The line ``- name (hint, hint, ...)``.
@@ -251,7 +243,7 @@ def build_glossary_user_prompt(name_lines: Iterable[str], accepted: Mapping[str,
 
     Args:
         name_lines: Lines from :func:`build_glossary_name_line`.
-        accepted: Forms already accepted for this batch; a retry repeats them so
+        accepted: Forms already accepted in this batch; a retry repeats them, so
             the missing names stay consistent with their alias family.
 
     Returns:

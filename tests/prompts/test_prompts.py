@@ -9,7 +9,6 @@ import json
 import pytest
 
 from nwn_translator.prompts import (
-    build_dialog_system_prompt,
     build_dialog_system_prompt_parts,
     build_entity_extraction_system_prompt,
     build_glossary_system_prompt,
@@ -46,6 +45,12 @@ def _stable(lang="russian", gender="male", **kwargs) -> str:
     return build_translation_system_prompt_parts(lang, gender, **kwargs)[0]
 
 
+def _dialog(lang: str, world_block: str) -> str:
+    """The dialog system prompt as sent: the stable half, then the variable half."""
+    parts = build_dialog_system_prompt_parts(lang, "male", world_block)
+    return "\n\n".join(part for part in parts if part)
+
+
 @pytest.mark.parametrize("lang", list(LANGUAGES))
 def test_every_language_has_its_own_examples_and_no_other(lang):
     examples = get_examples(lang)
@@ -58,13 +63,13 @@ def test_every_language_has_its_own_examples_and_no_other(lang):
     assert "speech_low_int_pattern" in examples
     assert isinstance(examples["dialog_output"], dict) and len(examples["dialog_output"]) >= 2
     assert len(examples["glossary_personal"]) >= 2
-    assert len(examples["glossary_descriptive"]) >= 3
+    assert len(examples["glossary_nicknames"]) >= 1
 
     glossary = "GLOSSARY:\n- Dark Ranger = Test Ranger\n"
     translation, variable = build_translation_system_prompt_parts(
         lang, "male", glossary_block=glossary
     )
-    dialog = build_dialog_system_prompt(lang, "male", "WORLD: test")
+    dialog = _dialog(lang, "WORLD: test")
     glossary_prompt = build_glossary_system_prompt(lang)
     assert lang in translation.lower()
     assert variable == glossary.strip()
@@ -162,7 +167,7 @@ def test_dialog_world_block_is_in_the_variable_half():
 
 
 def test_dialog_prompt_rules():
-    prompt = build_dialog_system_prompt("english", "male", "WORLD: test")
+    prompt = _dialog("english", "WORLD: test")
     for rule in (
         "<StartAction>",
         "<StartCheck>",

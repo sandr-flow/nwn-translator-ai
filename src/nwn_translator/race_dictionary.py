@@ -9,17 +9,11 @@ renders only the terms the source text mentions.
 from __future__ import annotations
 
 import re
-from typing import Dict, List
+from typing import Dict
 
-# ---------------------------------------------------------------------------
-# Data: {target_lang: {english_form_lowercase: canonical_translation}}
-#
-# Each race includes singular, plural, and (where applicable) adjective forms
-# so that word-boundary matching catches all common usages.
-# ---------------------------------------------------------------------------
-
+#: Target language -> lower-case English form -> canonical translation. Each race
+#: has its singular, plural and (where there is one) adjective form.
 RACE_TERMS: Dict[str, Dict[str, str]] = {
-    # ── Russian ────────────────────────────────────────────────────────
     "russian": {
         "sword spider": "мечепряд",
         "sword spiders": "мечепряды",
@@ -61,7 +55,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "полуорк",
         "half-orcs": "полуорки",
     },
-    # ── Ukrainian ──────────────────────────────────────────────────────
     "ukrainian": {
         "dwarf": "дварф",
         "dwarves": "дварфи",
@@ -98,7 +91,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "напіворк",
         "half-orcs": "напіворки",
     },
-    # ── Polish ─────────────────────────────────────────────────────────
     "polish": {
         "dwarf": "krasnolud",
         "dwarves": "krasnoludy",
@@ -135,7 +127,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "półork",
         "half-orcs": "półorki",
     },
-    # ── German ─────────────────────────────────────────────────────────
     "german": {
         "dwarf": "Zwerg",
         "dwarves": "Zwerge",
@@ -172,7 +163,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "Halbork",
         "half-orcs": "Halborks",
     },
-    # ── French ─────────────────────────────────────────────────────────
     "french": {
         "dwarf": "nain",
         "dwarves": "nains",
@@ -209,7 +199,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "demi-orque",
         "half-orcs": "demi-orques",
     },
-    # ── Spanish ────────────────────────────────────────────────────────
     "spanish": {
         "dwarf": "enano",
         "dwarves": "enanos",
@@ -246,7 +235,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "semiorco",
         "half-orcs": "semiorcos",
     },
-    # ── Italian ────────────────────────────────────────────────────────
     "italian": {
         "dwarf": "nano",
         "dwarves": "nani",
@@ -283,7 +271,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "mezzorco",
         "half-orcs": "mezzorchi",
     },
-    # ── Portuguese ─────────────────────────────────────────────────────
     "portuguese": {
         "dwarf": "anão",
         "dwarves": "anões",
@@ -320,7 +307,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "meio-orc",
         "half-orcs": "meio-orcs",
     },
-    # ── Czech ──────────────────────────────────────────────────────────
     "czech": {
         "dwarf": "trpaslík",
         "dwarves": "trpaslíci",
@@ -357,7 +343,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "půlork",
         "half-orcs": "půlorkové",
     },
-    # ── Romanian ───────────────────────────────────────────────────────
     "romanian": {
         "dwarf": "pitic",
         "dwarves": "pitici",
@@ -394,7 +379,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "semi-orc",
         "half-orcs": "semi-orci",
     },
-    # ── Hungarian ──────────────────────────────────────────────────────
     "hungarian": {
         "dwarf": "törpe",
         "dwarves": "törpék",
@@ -431,7 +415,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "félork",
         "half-orcs": "félorkok",
     },
-    # ── Dutch ──────────────────────────────────────────────────────────
     "dutch": {
         "dwarf": "dwerg",
         "dwarves": "dwergen",
@@ -468,7 +451,6 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
         "half-orc": "halfork",
         "half-orcs": "halforks",
     },
-    # ── English (identity fallback) ────────────────────────────────────
     "english": {
         "dwarf": "Dwarf",
         "dwarves": "Dwarves",
@@ -507,35 +489,17 @@ RACE_TERMS: Dict[str, Dict[str, str]] = {
     },
 }
 
-# ---------------------------------------------------------------------------
-# Pre-compiled regex patterns (built once at import time)
-# ---------------------------------------------------------------------------
-
-# Sorted longest-first so "half-elf" matches before "elf", "hobgoblin"
-# before "goblin", etc.
-_ALL_KEYS: List[str] = sorted(
-    {k for lang_dict in RACE_TERMS.values() for k in lang_dict},
-    key=lambda s: (-len(s), s),
-)
-
-# Single compiled pattern that matches any known English race term at word
-# boundaries.  The ``re.IGNORECASE`` flag handles mixed-case input.
-# Hyphenated terms like "half-elf" and "yuan-ti" need the hyphen treated as
-# part of the word, so we use a custom boundary: look-behind for non-word-
-# non-hyphen and look-ahead for non-word-non-hyphen.
-_BOUNDARY_LEFT = r"(?<![a-zA-Z0-9\-])"
-_BOUNDARY_RIGHT = r"(?![a-zA-Z0-9\-])"
+#: Every English term, longest first: "half-elf" wins over "elf", "hobgoblin" over "goblin".
+_KEYS = sorted({key for terms in RACE_TERMS.values() for key in terms}, key=lambda s: (-len(s), s))
+#: Any term at word boundaries; a hyphen is part of the word ("half-elf" holds no "elf").
 _PATTERN = re.compile(
-    _BOUNDARY_LEFT + r"(?:" + "|".join(re.escape(k) for k in _ALL_KEYS) + r")" + _BOUNDARY_RIGHT,
+    r"(?<![a-zA-Z0-9\-])(?:" + "|".join(map(re.escape, _KEYS)) + r")(?![a-zA-Z0-9\-])",
     re.IGNORECASE,
 )
 
 
 def match_race_terms(text: str, target_lang: str) -> str:
-    """Scans *text* for known race/creature terms and returns a prompt block.
-
-    Only terms that actually appear in *text* (case-insensitive, word-boundary)
-    are included.
+    """Renders the race and creature terms that occur in *text* as a prompt block.
 
     Args:
         text: Source text of the prompt.
@@ -547,25 +511,14 @@ def match_race_terms(text: str, target_lang: str) -> str:
     """
     if not text or not target_lang:
         return ""
-
-    lang_key = target_lang.strip().lower()
-    lang_dict = RACE_TERMS.get(lang_key)
-    if not lang_dict:
+    terms = RACE_TERMS.get(target_lang.strip().lower(), {})
+    found = {m.group(0).lower() for m in _PATTERN.finditer(text)} & terms.keys()
+    if not found:
         return ""
-
-    seen: Dict[str, str] = {}
-    for m in _PATTERN.finditer(text):
-        key = m.group(0).lower()
-        if key in lang_dict and key not in seen:
-            seen[key] = lang_dict[key]
-
-    if not seen:
-        return ""
-
     lines = [
         "RACE/CREATURE TERMS (use these translations consistently; "
         "decline/conjugate as required by grammar):",
     ]
-    for eng in sorted(seen, key=lambda k: (-len(k), k)):
-        lines.append(f'  * "{eng}" \u2192 "{seen[eng]}"')
+    for eng in sorted(found, key=lambda k: (-len(k), k)):
+        lines.append(f'  * "{eng}" \u2192 "{terms[eng]}"')
     return "\n".join(lines)

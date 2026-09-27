@@ -10,6 +10,12 @@ def dlg(*roots: DialogNode) -> dict:
     """Parsed ``.dlg`` struct whose conversation tree is *roots*.
 
     Node ids are list indices; unused indices get empty nodes no link reaches.
+
+    Args:
+        *roots: Starting entries; their replies are followed recursively.
+
+    Returns:
+        The struct as ``read_gff()`` returns it.
     """
     tables: Dict[bool, Dict[int, dict]] = {True: {}, False: {}}
     for _key, node in iter_nodes(list(roots)):
@@ -22,6 +28,7 @@ def dlg(*roots: DialogNode) -> dict:
         tables[node.is_entry][node.node_id] = struct
 
     def as_list(table: Dict[int, dict]) -> List[dict]:
+        """The nodes of *table* ordered by id, with empty nodes in the gaps."""
         return [
             table.get(i, {"Text": {"StrRef": -1, "Value": ""}})
             for i in range(max(table, default=-1) + 1)
@@ -36,7 +43,14 @@ def dlg(*roots: DialogNode) -> dict:
 
 
 def deep_chain(n: int) -> dict:
-    """Parsed ``.dlg`` with *n* entry/reply alternations (depth ``2 * n``)."""
+    """Parsed ``.dlg`` with *n* entry/reply alternations (depth ``2 * n``).
+
+    Args:
+        n: Number of entries, and of replies, in the chain.
+
+    Returns:
+        The struct as ``read_gff()`` returns it.
+    """
     return {
         "StructType": "DLG",
         "EntryList": [

@@ -9,7 +9,14 @@ from nwn_translator.config import TranslationConfig
 
 
 def make_config(**overrides: Any) -> TranslationConfig:
-    """A run configuration: English to Russian, a test key and model, *overrides* on top."""
+    """A run configuration: English to Russian, a test key and model, *overrides* on top.
+
+    Args:
+        **overrides: Configuration fields that replace the defaults.
+
+    Returns:
+        The configuration.
+    """
     values: Dict[str, Any] = dict(
         api_key="test-key",
         model="test-model",
@@ -30,20 +37,44 @@ class RecordingWriter:
     """
 
     def __init__(self, fail: bool = False) -> None:
+        """Start with no entries.
+
+        Args:
+            fail: Make every write raise ``OSError``.
+        """
         self.entries: List[Dict[str, Any]] = []
         self.fail = fail
 
     def write(self, entry: Dict[str, Any]) -> None:
+        """Keep *entry*.
+
+        Args:
+            entry: A log row or event.
+
+        Raises:
+            OSError: When the writer was made to fail.
+        """
         if self.fail:
             raise OSError("disk full")
         self.entries.append(entry)
 
     def rows(self) -> List[Dict[str, Any]]:
-        """Translation rows, without model request/response or diagnostic events."""
+        """Translation rows, without model request/response or diagnostic events.
+
+        Returns:
+            The rows, in write order.
+        """
         return [entry for entry in self.entries if not entry.get("event")]
 
     def events(self, name: str) -> List[Dict[str, Any]]:
-        """Entries of the event *name*."""
+        """Entries of the event *name*.
+
+        Args:
+            name: The ``event`` value.
+
+        Returns:
+            The entries, in write order.
+        """
         return [entry for entry in self.entries if entry.get("event") == name]
 
 
@@ -53,6 +84,12 @@ def translation_provider(translations: Optional[Mapping[str, str]] = None) -> Mo
     Single and batch requests answer from *translations* (unknown text comes back
     unchanged), and the NCS gate approves every entry with the reason
     ``test_approve``. Each task method is an ``AsyncMock`` a test may replace.
+
+    Args:
+        translations: Answer of each source text.
+
+    Returns:
+        The provider mock.
     """
     answers = dict(translations or {})
 
@@ -80,7 +117,15 @@ def translation_provider(translations: Optional[Mapping[str, str]] = None) -> Mo
 
 
 def gate_answering(decide: Callable[[Dict[str, Any]], Any], reason: str = "test") -> Callable:
-    """An NCS gate that answers each entry with ``decide(entry)`` and *reason*."""
+    """An NCS gate that answers each entry with ``decide(entry)`` and *reason*.
+
+    Args:
+        decide: Returns the ``translate`` answer of a gate entry.
+        reason: The ``reason`` of every answer.
+
+    Returns:
+        A ``classify_ncs_translate_gate_batch_async`` replacement.
+    """
 
     async def gate(entries: Sequence[Dict[str, Any]], *, source_lang: str) -> Dict[str, Any]:
         return {str(e["key"]): {"translate": decide(e), "reason": reason} for e in entries}
@@ -89,7 +134,14 @@ def gate_answering(decide: Callable[[Dict[str, Any]], Any], reason: str = "test"
 
 
 def failing_batch(error: str = "x") -> Callable:
-    """A ``translate_batch_async`` whose every result failed with *error*."""
+    """A ``translate_batch_async`` whose every result failed with *error*.
+
+    Args:
+        error: The error of every result.
+
+    Returns:
+        The replacement coroutine function.
+    """
 
     async def batch(items: Sequence[Any], source_lang: str, target_lang: str, **_: Any) -> list:
         return [
@@ -132,6 +184,12 @@ class DialogProvider:
         responses: Union[Sequence[Reply], Mapping[str, Reply]],
         translate_line: Optional[Callable[[str], str]] = None,
     ) -> None:
+        """Set up the replies.
+
+        Args:
+            responses: Replies to JSON chats, in order or by prompt marker.
+            translate_line: Answer of a single-line retry to its text.
+        """
         self._queue = None if isinstance(responses, Mapping) else list(responses)
         self._by_marker = dict(responses) if isinstance(responses, Mapping) else {}
         self._translate_line = translate_line
@@ -139,6 +197,7 @@ class DialogProvider:
         self.line_calls: List[Dict[str, Any]] = []
 
     def make_system_message_content(self, stable: str, variable: str = "") -> str:
+        """Join the non-empty parts with a blank line, like the real provider."""
         return "\n\n".join(part for part in (stable, variable) if part)
 
     async def complete_json_chat_async(
@@ -150,6 +209,11 @@ class DialogProvider:
         temperature: float,
         use_reasoning: bool = True,
     ) -> str:
+        """Record the request and answer with the next matching reply.
+
+        Raises:
+            AssertionError: When no reply is left or none matches the prompt.
+        """
         self.calls.append(
             {
                 "system_prompt": system_prompt,
@@ -180,10 +244,16 @@ class DialogProvider:
         glossary_block: Optional[str] = None,
         content_profile: Optional[str] = None,
     ) -> TranslationResult:
+        """Answer a single-line retry with *translate_line* and record it.
+
+        Raises:
+            UnexpectedLineRetry: When the provider has no *translate_line*.
+        """
         if self._translate_line is None:
             raise UnexpectedLineRetry(text)
         self.line_calls.append({"text": text, "context": context, "glossary": glossary_block})
         return TranslationResult(translated=self._translate_line(text), original=text)
 
     async def close_async_client(self) -> None:
+        """Nothing to close."""
         return None

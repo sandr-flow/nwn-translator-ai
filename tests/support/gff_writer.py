@@ -27,6 +27,12 @@ class GFFWriter:
     """
 
     def __init__(self, data: Dict[str, Any], file_type: Optional[str] = None) -> None:
+        """Prepare empty tables for *data*.
+
+        Args:
+            data: Dict as returned by ``read_gff()``.
+            file_type: 4-character type tag; defaults to ``data["StructType"]``.
+        """
         tag = (file_type or data.get("StructType", "GFF")).upper()
         self._file_type = (tag + "    ")[:4].encode("ascii")
         self._data = data
@@ -38,7 +44,11 @@ class GFFWriter:
         self._list_indices = bytearray()
 
     def to_bytes(self) -> bytes:
-        """Return the complete GFF binary."""
+        """Serialise the dict.
+
+        Returns:
+            The complete GFF binary.
+        """
         self._emit_struct({k: v for k, v in self._data.items() if k != "StructType"}, 0xFFFFFFFF)
         labels = b"".join(
             label.encode("ascii", errors="replace")[:16].ljust(16, b"\x00")
@@ -58,7 +68,15 @@ class GFFWriter:
         return bytes(header) + b"".join(blocks)
 
     def _emit_struct(self, fields: Dict[str, Any], struct_id: int) -> int:
-        """Emit a struct after its fields; its field indices form one contiguous run."""
+        """Emit a struct after its fields; its field indices form one contiguous run.
+
+        Args:
+            fields: Labels and values of the struct, plus the ``_`` keys.
+            struct_id: Struct id unless ``fields["_struct_id"]`` sets one.
+
+        Returns:
+            Index of the struct.
+        """
         index = len(self._structs)
         self._structs.append(b"")
         struct_id = int(fields.get("_struct_id", struct_id))
@@ -79,13 +97,34 @@ class GFFWriter:
         return index
 
     def _emit_field(self, label: str, value: Any, explicit_type: Optional[int]) -> int:
+        """Emit one field record.
+
+        Args:
+            label: Field label.
+            value: Field value.
+            explicit_type: Pinned GFF type id, or ``None`` to derive it from *value*.
+
+        Returns:
+            Index of the field.
+        """
         label_index = self._labels.setdefault(label, len(self._labels))
         gff_type, data = self._encode(label, value, explicit_type)
         self._fields.append(RECORD.pack(int(gff_type), label_index, data & 0xFFFFFFFF))
         return len(self._fields) - 1
 
     def _encode(self, label: str, value: Any, explicit_type: Optional[int]) -> Tuple[GFFType, int]:
-        """Return the field type and DataOrDataOffset, adding any side data."""
+        """Return the field type and DataOrDataOffset, adding any side data.
+
+        A pinned type that is unhandled or fails to encode falls back to the type of *value*.
+
+        Args:
+            label: Field label, for the log.
+            value: Field value.
+            explicit_type: Pinned GFF type id; ``None`` or ``0xFF`` pin nothing.
+
+        Returns:
+            The field type and the record's data word.
+        """
         if explicit_type is not None and explicit_type != 0xFF:
             try:
                 encoded = self._encode_as(GFFType(explicit_type), value)
@@ -129,7 +168,15 @@ class GFFWriter:
         return GFFType.CExoString, self._exostring(str(value))
 
     def _encode_as(self, gff_type: GFFType, value: Any) -> Optional[Tuple[GFFType, int]]:
-        """Encode *value* as the pinned *gff_type*; ``None`` for an unhandled type."""
+        """Encode *value* as the pinned *gff_type*.
+
+        Args:
+            gff_type: The pinned type.
+            value: Field value.
+
+        Returns:
+            The type and the record's data word, or ``None`` for an unhandled type.
+        """
         if gff_type == GFFType.CExoLocString:
             loc = value if isinstance(value, dict) else {"StrRef": -1, "Value": str(value)}
             return gff_type, self._locstring(loc)
@@ -162,22 +209,33 @@ class GFFWriter:
         return None
 
     def _append(self, raw: bytes) -> int:
+        """Append *raw* to the field data and return its offset."""
         offset = len(self._field_data)
         self._field_data += raw
         return offset
 
     def _sized(self, raw: bytes) -> int:
+        """Append *raw* after its 32-bit length and return the offset."""
         return self._append(struct.pack("<I", len(raw)) + raw)
 
     def _exostring(self, text: str) -> int:
+        """Append a CExoString and return its offset."""
         return self._sized(text.encode("utf-8"))
 
     def _resref(self, text: str) -> int:
+        """Append a CResRef (at most 16 bytes) and return its offset."""
         encoded = text.encode("ascii")[:16]
         return self._append(bytes([len(encoded)]) + encoded)
 
     def _locstring(self, loc: Dict[str, Any]) -> int:
-        """One substring with language id 0 when the value is non-empty."""
+        """Append a CExoLocString: one substring with language id 0 when the value is non-empty.
+
+        Args:
+            loc: ``{"StrRef": ..., "Value": ...}`` dict.
+
+        Returns:
+            Offset of the value in the field data.
+        """
         encoded = (loc.get("Value", "") or "").encode("utf-8")
         count = 1 if encoded else 0
         payload = struct.pack(
@@ -188,7 +246,14 @@ class GFFWriter:
         return self._append(payload)
 
     def _list(self, items: List[Any]) -> int:
-        """Emit the child structs first, then this list's count and indices."""
+        """Emit the child structs first, then this list's count and indices.
+
+        Args:
+            items: Child structs; other values are skipped with a warning.
+
+        Returns:
+            Offset of the list in the list indices.
+        """
         children: List[int] = []
         for item in items:
             if not isinstance(item, dict):

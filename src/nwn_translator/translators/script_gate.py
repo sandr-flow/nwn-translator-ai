@@ -9,6 +9,7 @@ recorded in the NCS diagnostics.
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence
 
 from ..ai_providers import TranslationProvider
@@ -38,6 +39,7 @@ _MISSING_VERDICT = {"translate": False, "reason": "gate_missing_key"}
 _UNAVAILABLE_VERDICT = {"translate": False, "reason": "gate_unavailable"}
 
 
+@dataclass
 class ScriptGate:
     """Gate that approves or rejects the string literals of compiled scripts.
 
@@ -48,25 +50,10 @@ class ScriptGate:
         diagnostics: Recorder of the decisions.
     """
 
-    def __init__(
-        self,
-        config: TranslationConfig,
-        provider: TranslationProvider,
-        log_writer: TranslationLogWriter,
-        diagnostics: NcsDiagnostics,
-    ):
-        """Creates a gate for one run.
-
-        Args:
-            config: Run settings (source language, gate switch, concurrency).
-            provider: Model provider that classifies the candidates.
-            log_writer: Translation log of the run.
-            diagnostics: Recorder of the decisions.
-        """
-        self.config = config
-        self.provider = provider
-        self.log_writer = log_writer
-        self.diagnostics = diagnostics
+    config: TranslationConfig
+    provider: TranslationProvider
+    log_writer: TranslationLogWriter
+    diagnostics: NcsDiagnostics
 
     def decide(self, items: Sequence[TranslatableItem]) -> Dict[Occurrence, bool]:
         """Decides every script literal among *items*.
@@ -173,12 +160,12 @@ def _gate_entry(key: str, item: TranslatableItem) -> Dict[str, Any]:
 
 
 def add_script_context(approved: Sequence[TranslatableItem]) -> None:
-    """Gives approved script strings the context of their script.
+    """Gives approved script strings, in place, the context of their script.
 
     Each string gets its source excerpt and the neighbouring approved strings of
     the same script (by bytecode offset) as prompt context, and joins its script's
     batch group (``translation_group`` within its ``batch_resource``). Gate
-    decisions are not affected. Items are updated in place.
+    decisions are not affected.
 
     Args:
         approved: Approved script strings.
@@ -201,17 +188,16 @@ def add_script_context(approved: Sequence[TranslatableItem]) -> None:
                 context.append(
                     "Matching source excerpt (context only):\n" + snippet[:_SNIPPET_CHARS]
                 )
-            neighbors = (
-                ordered[max(0, index - _NEIGHBORS) : index]
+            neighbors = [
+                other.text[:_NEIGHBOR_CHARS]
+                for other in ordered[max(0, index - _NEIGHBORS) : index]
                 + ordered[index + 1 : index + 1 + _NEIGHBORS]
-            )
-            item.metadata["approved_neighbors"] = [
-                other.text[:_NEIGHBOR_CHARS] for other in neighbors
             ]
+            item.metadata["approved_neighbors"] = neighbors
             if neighbors:
                 context.append(
                     "Other approved speech in this script (constant order, not proven "
                     "execution order; context only, do not translate these as extra outputs):\n"
-                    + "\n".join(other.text[:_NEIGHBOR_CHARS] for other in neighbors)
+                    + "\n".join(neighbors)
                 )
             item.context = "\n".join(context)

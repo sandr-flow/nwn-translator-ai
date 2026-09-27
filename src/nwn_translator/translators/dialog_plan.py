@@ -12,16 +12,13 @@ well inside the output budget even with reasoning.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from ..context.dialog_formatter import format_dialog_tree, format_nodes, iter_nodes
 from ..extractors.base import DialogNode, Occurrence, occurrence_key
 from ..extractors.dialog_extractor import DialogExtractor, dialog_item_id
-from ..glossary import GLOSSARY_MAX_CHARS, terminology_block
+from ..glossary import GLOSSARY_MAX_CHARS, Glossary, terminology_block
 from .token_handler import TokenHandler, sanitize_text
-
-if TYPE_CHECKING:
-    from ..glossary import Glossary
 
 #: Largest script of one single-file request; larger dialogs are chunked.
 CHUNK_TARGET_CHARS = 24000
@@ -44,14 +41,13 @@ class PreparedDialog:
         file_path: Path of the ``.dlg`` resource.
         item_budget: Progress units the pipeline counts for this file (its
             extracted item count).
-        node_map: Every node reachable from ``StartingList`` by script key,
-            in :func:`~nwn_translator.context.dialog_formatter.iter_nodes` order.
+        node_map: Every node reachable from ``StartingList`` by script key, in
+            :func:`~nwn_translator.context.dialog_formatter.iter_nodes` order.
         texts: Source text of every node with non-blank text, by key, in the
             same order. These are the lines to translate.
         sanitized: Text sent to the model for each line, with NWN tokens and
             tags replaced by placeholders.
-        handlers: Token handler of each line; it restores and validates the
-            answer.
+        handlers: Token handler of each line; it restores and validates the answer.
         script: The whole dialog rendered with the sanitized texts.
     """
 
@@ -69,25 +65,13 @@ class PreparedDialog:
         return list(self.texts)
 
     def address(self, key: str) -> Occurrence:
-        """Returns the occurrence of a line: ``E3`` -> ``(file name, "stem:entry:3")``.
-
-        Args:
-            key: Script key of the line.
-
-        Returns:
-            The occurrence the extractor assigned to the same node.
-        """
+        """Returns the occurrence the extractor assigned to a line (``E3`` -> ``stem:entry:3``)."""
         stem = self.file_path.stem
         return occurrence_key(self.file_path, dialog_item_id(stem, key.startswith("E"), key[1:]))
 
 
 class Chunk(NamedTuple):
-    """The lines of one single-file request.
-
-    Attributes:
-        keys: Keys of the lines to translate.
-        script: The script that shows them.
-    """
+    """The lines of one single-file request (*keys*) and the *script* that shows them."""
 
     keys: List[str]
     script: str
@@ -106,8 +90,8 @@ def prepare_dialog(
         file_path: Path of the ``.dlg`` resource.
         parsed_data: Parsed GFF root struct.
         item_budget: Progress units the pipeline counts for this file.
-        preserve_tokens: Whether standard NWN tokens are protected as well as
-            tags (``TranslationConfig.preserve_tokens``).
+        preserve_tokens: Protect standard NWN tokens as well as tags
+            (``TranslationConfig.preserve_tokens``).
 
     Returns:
         The prepared dialog, or ``None`` when no node is reachable from
@@ -130,34 +114,20 @@ def prepare_dialog(
     return PreparedDialog(file_path, item_budget, node_map, texts, sanitized, handlers, script)
 
 
-def _terms_chars(texts: Sequence[str], target_lang: str, glossary: Optional["Glossary"]) -> int:
-    """Returns the length of the glossary block a request with *texts* would carry.
-
-    Args:
-        texts: Texts of the request.
-        target_lang: Target language.
-        glossary: Run glossary, if any.
-
-    Returns:
-        Length of the block in characters; ``0`` without matching terms.
-    """
-    return len(terminology_block(texts, target_lang, glossary))
-
-
 def plan_chunks(
     dialog: PreparedDialog,
     keys: List[str],
     target_lang: str,
-    glossary: Optional["Glossary"],
+    glossary: Optional[Glossary],
 ) -> List[Chunk]:
     """Splits the lines of one dialog into requests.
 
-    When *keys* are all the dialog's lines, the whole dialog script is
-    sent; otherwise only the nodes of *keys* with their neighbours as
-    context. If that exceeds :data:`CHUNK_TARGET_CHARS`,
-    :data:`CHUNK_MAX_KEYS` or a glossary block of ``GLOSSARY_MAX_CHARS``,
-    lines are packed greedily in *keys* order into chunks of selected nodes,
-    each within the same limits unless a single line exceeds them.
+    When *keys* are all the dialog's lines, the whole dialog script is sent;
+    otherwise only the nodes of *keys* with their neighbours as context. If that
+    exceeds :data:`CHUNK_TARGET_CHARS`, :data:`CHUNK_MAX_KEYS` or a glossary
+    block of ``GLOSSARY_MAX_CHARS``, lines are packed greedily in *keys* order
+    into chunks of selected nodes, each within the same limits unless a single
+    line exceeds them.
 
     Args:
         dialog: The prepared dialog.
@@ -177,7 +147,7 @@ def plan_chunks(
         """Tells whether *script* and its glossary block stay within the limits."""
         return (
             len(script) <= CHUNK_TARGET_CHARS
-            and _terms_chars([script], target_lang, glossary) <= GLOSSARY_MAX_CHARS
+            and len(terminology_block([script], target_lang, glossary)) <= GLOSSARY_MAX_CHARS
         )
 
     whole = dialog.script if set(keys) == set(dialog.texts) else script_of(keys)
@@ -199,13 +169,13 @@ def plan_chunks(
 def pack_groups(
     small: List[PreparedDialog],
     target_lang: str,
-    glossary: Optional["Glossary"],
+    glossary: Optional[Glossary],
 ) -> Tuple[List[List[PreparedDialog]], List[PreparedDialog]]:
     """Packs small dialogs greedily, in order, into grouped requests.
 
     A group closes before a dialog that would push it past
-    :data:`GROUP_TARGET_CHARS` of scripts, :data:`GROUP_MAX_FILES` files or
-    a glossary block of ``GLOSSARY_MAX_CHARS``.
+    :data:`GROUP_TARGET_CHARS` of scripts, :data:`GROUP_MAX_FILES` files or a
+    glossary block of ``GLOSSARY_MAX_CHARS``.
 
     Args:
         small: Dialogs whose script fits :data:`SMALL_DIALOG_CHARS`.
@@ -220,11 +190,11 @@ def pack_groups(
     current: List[PreparedDialog] = []
     chars = 0
     for dialog in small:
+        scripts = [d.script for d in current] + [dialog.script]
         if current and (
             chars + len(dialog.script) > GROUP_TARGET_CHARS
             or len(current) >= GROUP_MAX_FILES
-            or _terms_chars([d.script for d in current] + [dialog.script], target_lang, glossary)
-            > GLOSSARY_MAX_CHARS
+            or len(terminology_block(scripts, target_lang, glossary)) > GLOSSARY_MAX_CHARS
         ):
             packs.append(current)
             current, chars = [], 0
@@ -238,7 +208,7 @@ def pack_groups(
 def plan_requests(
     dialogs: List[PreparedDialog],
     target_lang: str,
-    glossary: Optional["Glossary"],
+    glossary: Optional[Glossary],
 ) -> Tuple[List[PreparedDialog], List[List[PreparedDialog]]]:
     """Chooses which dialogs get their own request and which share one.
 

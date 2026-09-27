@@ -254,8 +254,8 @@ class ERFReader:
         self.progress_callback = progress_callback
         self.header: Optional[ERFHeader] = None
         self.entries: List[ERFEntry] = []
-        # res_id -> extension, filled by read_entries().
-        self._extensions: Dict[int, str] = {}
+        # Entry -> extension, filled by read_entries().
+        self._extensions: Dict[ERFEntry, str] = {}
         if not self.file_path.exists():
             raise ERFError(f"File not found: {file_path}")
 
@@ -365,7 +365,7 @@ class ERFReader:
                 if entry.offset != UNUSED_OFFSET:
                     f.seek(entry.offset)
                     ext = SIGNATURE_EXTENSIONS.get(f.read(4))
-                self._extensions[entry.res_id] = ext or extension_for_type(entry.res_type)
+                self._extensions[entry] = ext or extension_for_type(entry.res_type)
         self.entries = entries
         return entries
 
@@ -378,7 +378,7 @@ class ERFReader:
         Returns:
             The extension with a leading dot, e.g. ``".dlg"``.
         """
-        return self._extensions[entry.res_id]
+        return self._extensions[entry]
 
     def filename_for(self, entry: ERFEntry) -> str:
         """Returns the file name :meth:`extract_all` writes *entry* to.

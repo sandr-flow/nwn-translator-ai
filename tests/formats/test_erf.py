@@ -360,6 +360,28 @@ def test_resources_without_signature_are_named_by_type_id(tmp_path, type_id, ext
     assert [p.name for p in out.iterdir()] == [f"asset{ext}"]
 
 
+def test_entries_sharing_a_resource_are_named_by_their_own_type(tmp_path):
+    """Two keys pointing at one unsigned resource keep their own extensions."""
+    mod = _write(
+        tmp_path / "shared.hak",
+        [("asset", ".bin", b"plain content")],
+        type_overrides={"asset.bin": 10},
+    )
+    raw = bytearray(mod.read_bytes())
+    # Duplicate the only key as "alias" with type 2017 (.2da) and bump EntryCount; the
+    # resource list stays one entry long, so both keys share ResID 0.
+    key = bytearray(raw[160:184])
+    key[0:16] = b"alias".ljust(16, b"\x00")
+    struct.pack_into("<I", key, 20, 2017)
+    struct.pack_into("<I", raw, 16, 2)
+    mod.write_bytes(bytes(raw[:184] + key + raw[184:]))
+    struct_offset = 184 + 24
+    _patch(mod, 28, struct.pack("<I", struct_offset))
+    _patch(mod, struct_offset, struct.pack("<I", _dword(mod.read_bytes(), struct_offset) + 24))
+    names = sorted(p.name for p in ERFReader(mod).extract_all(tmp_path / "out").iterdir())
+    assert names == ["alias.2da", "asset.txt"]
+
+
 def test_characters_forbidden_on_windows_become_underscores(tmp_path):
     reader = ERFReader(_write(tmp_path / "odd.mod", [("a?b*c", ".dlg", b"DLG DATA")]))
     (entry,) = reader.read_entries()

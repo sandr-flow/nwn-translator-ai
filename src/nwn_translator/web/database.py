@@ -99,9 +99,7 @@ _lock = threading.Lock()
 def _default_db_path() -> Path:
     """Returns the database file: ``NWN_WEB_DB_PATH``, else ``workspace/web/translations.db``."""
     env = os.environ.get("NWN_WEB_DB_PATH", "").strip()
-    if env:
-        return Path(env)
-    return Path("workspace") / "web" / "translations.db"
+    return Path(env) if env else Path("workspace") / "web" / "translations.db"
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -123,13 +121,9 @@ def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
     ``(task_id, file, item_id)`` so two identical originals in the same file do
     not collapse into one row.
     """
-    target = ["task_id", "file", "item_id"]
-    for idx in conn.execute("PRAGMA index_list(translations)").fetchall():
-        name, is_unique = idx[1], idx[2]
-        if not is_unique:
-            continue
-        cols = [row[2] for row in conn.execute(f"PRAGMA index_info({name})").fetchall()]
-        if cols == target:
+    for _seq, name, unique, *_rest in conn.execute("PRAGMA index_list(translations)").fetchall():
+        columns = [row[2] for row in conn.execute(f"PRAGMA index_info({name})")]
+        if unique and columns == ["task_id", "file", "item_id"]:
             return
 
     conn.execute("ALTER TABLE translations RENAME TO translations_old")
@@ -408,17 +402,7 @@ def insert_translation(
         "INSERT OR REPLACE INTO translations "
         "(task_id, original, translated, context, model, file, item_id, success, speaker) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            task_id,
-            original,
-            translated,
-            context,
-            model,
-            file,
-            item_id,
-            1 if success else 0,
-            speaker_json,
-        ),
+        (task_id, original, translated, context, model, file, item_id, int(success), speaker_json),
     )
 
 

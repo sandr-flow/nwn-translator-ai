@@ -18,7 +18,7 @@ import time
 import uuid
 import weakref
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Set
 
@@ -76,45 +76,11 @@ _PHASE_WEIGHTS = {
 _STATUS_PHASES = frozenset({"extracting", "scanning", "translating", "building"})
 
 #: Columns a task takes over from its row; the progress fields start afresh.
-_ROW_FIELDS = (
-    "task_id",
-    "client_ip",
-    "client_token",
-    "created_at",
-    "status",
-    "input_filename",
-    "target_lang",
-    "source_lang",
-    "error",
+_ROW_FIELDS = tuple(
+    "task_id client_ip client_token created_at status input_filename target_lang source_lang "
+    "error".split()
 )
 _ROW_PATHS = ("result_path", "extract_dir", "input_path")
-
-
-@dataclass(frozen=True)
-class JobParams:
-    """Validated translation settings of one job, named as the ``TranslationConfig`` fields.
-
-    Attributes:
-        api_key: The client's provider API key.
-        target_lang: Target language.
-        source_lang: Source language, ``"auto"`` to detect.
-        model: Model slug; ``None`` selects the provider default.
-        preserve_tokens: Protect NWN tokens such as ``<FirstName>``.
-        use_context: Build world context and glossary before translating.
-        max_concurrent_requests: Parallel provider requests.
-        player_gender: ``"male"`` or ``"female"``.
-        reasoning_effort: Provider reasoning effort, ``None`` to omit it.
-    """
-
-    api_key: str
-    target_lang: str
-    source_lang: str
-    model: Optional[str]
-    preserve_tokens: bool
-    use_context: bool
-    max_concurrent_requests: int
-    player_gender: str
-    reasoning_effort: Optional[str]
 
 
 @dataclass
@@ -490,7 +456,7 @@ class TaskManager:
 
         return callback
 
-    def start(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
+    def start(self, task: TranslationTask, job: TranslationConfig, input_path: Path) -> None:
         """Runs the job of *task* on a thread of its own.
 
         Jobs run for minutes to hours, so they must not occupy asyncio's default
@@ -498,7 +464,8 @@ class TaskManager:
 
         Args:
             task: Task that owns the job.
-            job: Validated job settings.
+            job: The client's validated settings; the job adds its files, log,
+                progress and cancellation.
             input_path: Uploaded module inside the task workspace.
         """
         worker = threading.Thread(
@@ -518,7 +485,7 @@ class TaskManager:
         for worker in workers:
             worker.join()
 
-    def _run_job(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
+    def _run_job(self, task: TranslationTask, job: TranslationConfig, input_path: Path) -> None:
         """Translates the uploaded module of *task* and records the outcome.
 
         The task ends ``completed``, ``cancelled`` or ``failed``; its IP slot is
@@ -526,7 +493,7 @@ class TaskManager:
 
         Args:
             task: Task that owns the job.
-            job: Validated job settings.
+            job: The client's validated settings.
             input_path: Uploaded module inside the task workspace.
         """
         base = self.workspace_root / task.task_id
@@ -546,15 +513,13 @@ class TaskManager:
             task.input_path = input_path
             task.status = "extracting"
             update_task_row(task.task_id, input_path=str(input_path), status="extracting")
-            config = TranslationConfig(
-                **asdict(job),
+            config = replace(
+                job,
                 input_file=input_path,
                 output_file=create_output_path(input_path, job.target_lang, output_dir=base),
-                translation_log=None,
                 translation_log_writer=log_writer,
                 temp_dir=temp_dir,
                 skip_cleanup=True,
-                verbose=False,
                 quiet=True,
                 progress_callback=self._make_progress_callback(task),
                 cancel_check=task.is_cancel_requested,

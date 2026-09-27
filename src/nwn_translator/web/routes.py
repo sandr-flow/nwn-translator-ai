@@ -38,6 +38,7 @@ from ..ai_providers.openrouter_models import (
     refresh_catalog,
 )
 from ..config import (
+    TranslationConfig,
     max_concurrent_from_environment,
     parse_reasoning_effort,
     target_lang_supported_for_nwn_injection,
@@ -67,7 +68,7 @@ from .schemas import (
     TranslateResponse,
     TranslationsResponse,
 )
-from .task_manager import JobParams, TaskManager, TranslationTask, get_task_manager
+from .task_manager import TaskManager, TranslationTask, get_task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -239,11 +240,12 @@ async def start_translate(
     concurrency = max_concurrent_from_environment()
     if max_concurrent_requests is not None:
         concurrency = min(max(1, max_concurrent_requests), concurrency)
-    job = JobParams(
+    slug = model.strip() if model else None
+    job = TranslationConfig(
         api_key=api_key.strip(),
         target_lang=target,
         source_lang=source,
-        model=model.strip() if model else None,
+        model=slug,
         preserve_tokens=preserve_tokens,
         use_context=use_context,
         max_concurrent_requests=concurrency,
@@ -254,9 +256,9 @@ async def start_translate(
         ip,
         file.filename,
         client_token=_client_token(request),
-        target_lang=job.target_lang,
-        source_lang=job.source_lang,
-        model=job.model,
+        target_lang=target,
+        source_lang=source,
+        model=slug,
     )
     # Claim the one-job-per-IP slot atomically before copying the upload; the
     # check at the top is only a fast path and racy on its own.

@@ -1,9 +1,9 @@
 """Translation jobs of the web service: task state, execution, rebuilds and cleanup.
 
 :class:`TaskManager` is the service layer behind the HTTP routes. It keeps the
-tasks of the running process in memory, mirrors their state into SQLite (see
-:mod:`.database`) so history and polling survive restarts, allows one running
-job per client IP, and purges old workspaces.
+tasks of this process in memory, mirrors them into SQLite (:mod:`.database`) so
+history and polling survive restarts, allows one running job per client IP and
+purges old workspaces.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import weakref
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Set
 
 from ..config import (
     TranslationCancelled,
@@ -55,14 +55,13 @@ DEFAULT_TASK_TTL_SECONDS = 24 * 3600
 #: Seconds between two runs of :meth:`TaskManager.purge_expired`.
 PURGE_INTERVAL_SECONDS = 3600
 
-#: Minimum seconds between SQLite writes of in-flight progress. The progress
-#: callback fires per translated item — far too often to touch the DB every
-#: time — but a phase change always persists immediately.
+#: Minimum seconds between SQLite writes of in-flight progress: the callback fires
+#: per translated item. A phase change is written at once.
 PROGRESS_PERSIST_INTERVAL_SECONDS = 2.0
 
 #: Share of the overall progress bar per pipeline phase, as ``(start, end)``.
-#: ``translating_item`` carries the per-item progress of all translations;
-#: ``translating`` only marks that translation has started.
+#: ``translating_item`` carries the per-item progress; ``translating`` only marks
+#: that translation has started.
 _PHASE_WEIGHTS = {
     "extracting": (0.0, 0.03),
     "scanning": (0.03, 0.08),
@@ -76,13 +75,24 @@ _PHASE_WEIGHTS = {
 #: Phases that also become the task status shown in history and polling.
 _STATUS_PHASES = frozenset({"extracting", "scanning", "translating", "building"})
 
+#: Columns a task takes over from its row; the progress fields start afresh.
+_ROW_FIELDS = (
+    "task_id",
+    "client_ip",
+    "client_token",
+    "created_at",
+    "status",
+    "input_filename",
+    "target_lang",
+    "source_lang",
+    "error",
+)
+_ROW_PATHS = ("result_path", "extract_dir", "input_path")
+
 
 @dataclass(frozen=True)
 class JobParams:
-    """Translation settings of one job, validated and normalized from the request.
-
-    The field names are :class:`~nwn_translator.config.TranslationConfig` fields
-    and are passed to it unchanged.
+    """Validated translation settings of one job, named as the ``TranslationConfig`` fields.
 
     Attributes:
         api_key: The client's provider API key.
@@ -107,11 +117,6 @@ class JobParams:
     reasoning_effort: Optional[str]
 
 
-def _optional_path(value: Optional[str]) -> Optional[Path]:
-    """Returns the path of a stored path column, ``None`` when empty."""
-    return Path(value) if value else None
-
-
 @dataclass
 class TranslationTask:
     """State of one translation job.
@@ -120,7 +125,7 @@ class TranslationTask:
         task_id: Task UUID.
         client_ip: Address that started the job (one running job per IP).
         client_token: Anonymous owner token; empty for ownerless tasks.
-        created_at: Unix timestamp of creation.
+        created_at: Unix time of creation.
         status: ``pending``, a status phase, ``cancelling`` or a terminal status.
         progress: Weighted overall progress in ``[0, 1]``.
         phase: Pipeline phase last reported by the worker.
@@ -159,7 +164,7 @@ class TranslationTask:
 
     @classmethod
     def from_row(cls, row: Dict[str, Any]) -> "TranslationTask":
-        """Rebuilds a task from its SQLite row (progress fields are not restored).
+        """Rebuilds a task from its ``tasks`` row; the progress fields start afresh.
 
         Args:
             row: Row of the ``tasks`` table.
@@ -167,45 +172,25 @@ class TranslationTask:
         Returns:
             The task.
         """
-        return cls(
-            task_id=row["task_id"],
-            client_ip=row["client_ip"],
-            client_token=row["client_token"],
-            created_at=row["created_at"],
-            status=row["status"],
-            input_filename=row["input_filename"],
-            result_path=_optional_path(row["result_path"]),
-            extract_dir=_optional_path(row["extract_dir"]),
-            input_path=_optional_path(row["input_path"]),
-            target_lang=row["target_lang"],
-            source_lang=row["source_lang"],
-            error=row["error"],
-            stats=decode_stats(row["stats"]),
-        )
+        values: Dict[str, Any] = {name: row[name] for name in _ROW_FIELDS}
+        values.update({name: Path(row[name]) if row[name] else None for name in _ROW_PATHS})
+        return cls(**values, stats=decode_stats(row["stats"]))
 
     def request_cancel(self) -> None:
         """Asks the worker to stop at its next cancellation checkpoint."""
         self._cancel.set()
 
     def is_cancel_requested(self) -> bool:
-        """Tells whether cancellation has been requested.
-
-        Returns:
-            ``True`` once :meth:`request_cancel` was called.
-        """
+        """Tells whether :meth:`request_cancel` was called."""
         return self._cancel.is_set()
 
     def is_finished(self) -> bool:
-        """Tells whether the task has reached a terminal status.
-
-        Returns:
-            ``True`` for a status in ``TERMINAL_STATUSES``.
-        """
+        """Tells whether the status is one of ``TERMINAL_STATUSES``."""
         return self.status in TERMINAL_STATUSES
 
 
 class TaskManager:
-    """Service that runs translation jobs and rebuilds and owns the in-memory task registry.
+    """Runs translation jobs and rebuilds and owns the in-memory task registry.
 
     Attributes:
         workspace_root: Directory holding one workspace per task.
@@ -239,16 +224,8 @@ class TaskManager:
         self._rebuild_locks: weakref.WeakValueDictionary[str, threading.Lock] = (
             weakref.WeakValueDictionary()
         )
-        self._reconcile_interrupted()
-
-    def _reconcile_interrupted(self) -> None:
-        """Flips tasks left unfinished by a dead worker to ``interrupted``.
-
-        A process restart leaves DB rows in a non-terminal status with no live
-        worker. They are marked ``interrupted`` (a terminal status) so clients
-        stop seeing a forever-running job, and registered in memory so the TTL
-        purge can later drop them.
-        """
+        # After a restart no worker runs the unfinished rows: mark them
+        # ``interrupted`` (terminal) and keep them in memory for the TTL purge.
         for row in get_unfinished_task_rows():
             update_task_row(row["task_id"], status="interrupted")
             self._tasks[row["task_id"]] = TranslationTask.from_row({**row, "status": "interrupted"})
@@ -267,29 +244,21 @@ class TaskManager:
         return path
 
     def get(self, task_id: str) -> Optional[TranslationTask]:
-        """Returns the in-memory task.
+        """Returns the in-memory task, or ``None`` when it is not in memory.
 
         Args:
             task_id: Task UUID.
-
-        Returns:
-            The task, or ``None`` if it is not in memory.
         """
         with self._lock:
             return self._tasks.get(task_id)
 
     def find(self, task_id: str) -> Optional[TranslationTask]:
-        """Returns the task from memory, else rebuilt from its SQLite row.
+        """Returns the task from memory, else rebuilt from its SQLite row, else ``None``.
 
-        Tasks that finished under an earlier process exist only in the
-        database; the ones it left unfinished are loaded as ``interrupted`` at
-        startup.
+        Tasks finished under an earlier process exist only in the database.
 
         Args:
             task_id: Task UUID.
-
-        Returns:
-            The task, or ``None`` if it exists nowhere.
         """
         task = self.get(task_id)
         if task is not None:
@@ -298,15 +267,10 @@ class TaskManager:
         return TranslationTask.from_row(row) if row else None
 
     def active_task_count(self) -> int:
-        """Returns how many tasks have not reached a terminal status.
+        """Returns how many tasks are unfinished, deleted tasks with a running worker included.
 
-        Deleted tasks whose worker is still running count too. Exposed via
-        ``/api/health`` so the deploy can wait for an idle service before
-        recreating the container: a restart kills every worker thread, and there
-        is no resume.
-
-        Returns:
-            The number of unfinished and orphaned tasks.
+        ``/api/health`` exposes it so a deploy can wait for an idle service: a
+        restart kills every worker thread, and there is no resume.
         """
         with self._lock:
             unfinished = sum(1 for t in self._tasks.values() if not t.is_finished())
@@ -319,13 +283,10 @@ class TaskManager:
         return tid if task is not None and not task.is_finished() else None
 
     def active_task_id_for_ip(self, ip: str) -> Optional[str]:
-        """Returns the unfinished task occupying *ip*'s slot.
+        """Returns the unfinished task occupying *ip*'s slot, or ``None``.
 
         Args:
             ip: Client IP address.
-
-        Returns:
-            The task id, or ``None`` when the slot is free.
         """
         with self._lock:
             return self._slot_holder(ip)
@@ -345,16 +306,15 @@ class TaskManager:
             client_ip: Originating client IP address.
             input_filename: Original uploaded filename.
             client_token: Anonymous client UUID from localStorage.
-            target_lang: Target translation language.
+            target_lang: Target language.
             source_lang: Source language.
             model: Model slug used for translation.
 
         Returns:
             The new task.
         """
-        task_id = str(uuid.uuid4())
         task = TranslationTask(
-            task_id=task_id,
+            task_id=str(uuid.uuid4()),
             client_ip=client_ip,
             client_token=client_token,
             input_filename=input_filename,
@@ -362,13 +322,13 @@ class TaskManager:
             source_lang=source_lang,
         )
         with self._lock:
-            self._tasks[task_id] = task
+            self._tasks[task.task_id] = task
         create_task_row(
-            task_id=task_id,
-            client_token=client_token,
-            client_ip=client_ip,
-            created_at=task.created_at,
-            input_filename=input_filename,
+            task.task_id,
+            client_token,
+            client_ip,
+            task.created_at,
+            input_filename,
             target_lang=target_lang,
             source_lang=source_lang,
             model=model,
@@ -376,19 +336,17 @@ class TaskManager:
         return task
 
     def try_register_active(self, client_ip: str, task_id: str) -> bool:
-        """Atomically registers *task_id* for *client_ip* unless one is already active.
+        """Registers *task_id* in *client_ip*'s slot unless an unfinished task holds it.
 
-        The check and the registration happen in one critical section, so two
-        concurrent requests from the same IP cannot both pass the one-job-per-IP
-        limit.
+        Check and registration share one critical section, so two concurrent
+        requests from one IP cannot both pass the one-job-per-IP limit.
 
         Args:
             client_ip: Client IP address.
             task_id: Task to register.
 
         Returns:
-            ``True`` if registered; ``False`` if an unfinished task already
-            occupies the slot for this IP.
+            ``True`` if registered.
         """
         with self._lock:
             if self._slot_holder(client_ip):
@@ -410,10 +368,9 @@ class TaskManager:
     def cancel(self, task: TranslationTask) -> None:
         """Asks a running task to stop and frees its client's slot at once.
 
-        ``cancelling`` is persisted immediately so history and resume do not show
-        a live job while the worker waits on an in-flight provider call; the
-        worker still sets the final status. The slot is not held until then,
-        because a hung provider call can take minutes to time out.
+        ``cancelling`` is persisted at once, so history and resume show no live
+        job while the worker waits on an in-flight provider call (which can take
+        minutes to time out); the worker sets the final status.
 
         Args:
             task: Running task.
@@ -426,11 +383,10 @@ class TaskManager:
     def delete(self, task_id: str) -> None:
         """Deletes a task with its workspace, database row and translations.
 
-        A running job is cancelled and its client's slot freed at once. Its
-        workspace goes when the worker exits, because the job may still be
-        writing there; until then the worker counts as an active task. A task
-        that never started (it lost the IP race or its upload failed) goes at
-        once; without its row no TTL purge would reach its workspace.
+        A running job is cancelled and its slot freed at once; its workspace goes
+        when the worker exits (the job may still write there), and until then the
+        worker counts as an active task. A task that never started goes at once,
+        since no TTL purge would reach its workspace without its row.
 
         Args:
             task_id: Task to delete.
@@ -452,12 +408,10 @@ class TaskManager:
     ) -> None:
         """Re-injects the task's translations plus *edits* and repacks its module.
 
-        No provider calls are made. An edit addresses one ``(file, item_id)`` and
-        reaches every identical line its editor row stands for. The edits are
-        persisted after a successful rebuild, so the editor and later rebuilds
-        see the current values. Rebuilds of one task run one at a time: they
-        patch the same extracted files and each starts from the edits the
-        previous one stored.
+        No provider calls are made. An edit reaches every line its editor row
+        stands for and is stored only after a successful rebuild. Rebuilds of one
+        task run one at a time: they patch the same files, and each starts from
+        the edits the previous one stored.
 
         Args:
             task: A completed task whose ``extract_dir`` and ``result_path`` exist.
@@ -465,8 +419,8 @@ class TaskManager:
             target_lang: Language that drives the string encoding.
 
         Raises:
-            Exception: Whatever :func:`~nwn_translator.main.rebuild_module`
-                raises, in which case no edit is stored, and database errors.
+            Exception: Whatever :func:`~nwn_translator.main.rebuild_module` or the
+                database raises; a failed rebuild stores no edit.
         """
         assert task.extract_dir is not None and task.result_path is not None
         with self._rebuild_lock(task.task_id):
@@ -487,17 +441,7 @@ class TaskManager:
 
     @contextmanager
     def _rebuild_lock(self, task_id: str) -> Iterator[None]:
-        """Holds the rebuild lock of *task_id*.
-
-        The registry keeps the lock only weakly: each rebuild holding or awaiting
-        it keeps it alive, and it disappears with the last one.
-
-        Args:
-            task_id: Task being rebuilt.
-
-        Yields:
-            Control while the lock is held.
-        """
+        """Holds the rebuild lock of *task_id*, kept alive by the rebuilds using it."""
         with self._lock:
             lock = self._rebuild_locks.get(task_id)
             if lock is None:
@@ -508,8 +452,9 @@ class TaskManager:
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
         """Creates the pipeline progress callback of *task*.
 
-        The callback updates the task's phase, status and monotonic weighted
-        progress, and mirrors them into SQLite.
+        The callback sets the task's phase, status and monotonic weighted
+        progress. The history list reads the SQLite row, so the row follows: at
+        once on a phase change, else every :data:`PROGRESS_PERSIST_INTERVAL_SECONDS`.
 
         Args:
             task: Task the callback reports for.
@@ -518,57 +463,35 @@ class TaskManager:
             The callback, called as ``(phase, current, total, message=None)``.
         """
 
-        def callback(
-            phase: str,
-            current: int,
-            total: int,
-            message: Optional[str] = None,
-        ) -> None:
+        def callback(phase: str, current: int, total: int, message: Optional[str] = None) -> None:
             """Records one progress event of the pipeline on *task*."""
             task.phase = phase
-            # Do not clobber ``cancelling`` with a phase name: SQLite would look
-            # "still translating" and the client would resume onto the progress
-            # screen after a refresh.
+            # ``cancelling`` stays: a refreshed client would otherwise resume
+            # onto the progress screen.
             if not task.is_cancel_requested() and phase in _STATUS_PHASES:
                 task.status = phase
             task.current_file = message
-
             start, end = _PHASE_WEIGHTS.get(phase, (0.0, 1.0))
             local = (current / total) if total else 0.0
             task.progress = max(task.progress, start + (end - start) * local)
 
-            self._persist_progress(task, phase, message)
+            now = time.time()
+            stale = now - task.last_persist_at >= PROGRESS_PERSIST_INTERVAL_SECONDS
+            if phase != task.persisted_phase or stale:
+                task.persisted_phase = phase
+                task.last_persist_at = now
+                update_task_row(
+                    task.task_id,
+                    status=task.status,
+                    progress=task.progress,
+                    phase=phase,
+                    current_file=message,
+                )
 
         return callback
 
-    def _persist_progress(self, task: TranslationTask, phase: str, message: Optional[str]) -> None:
-        """Mirrors in-flight progress into SQLite.
-
-        A phase change is written at once, other updates at most every
-        :data:`PROGRESS_PERSIST_INTERVAL_SECONDS`. The history list reads the
-        row's ``status``, so the row has to follow the running job instead of
-        keeping its extraction-time state; status polls read the in-memory task.
-
-        Args:
-            task: Task whose current state should be persisted.
-            phase: Pipeline phase reported by the callback.
-            message: Current file or status message, if any.
-        """
-        now = time.time()
-        stale = now - task.last_persist_at >= PROGRESS_PERSIST_INTERVAL_SECONDS
-        if phase != task.persisted_phase or stale:
-            task.persisted_phase = phase
-            task.last_persist_at = now
-            update_task_row(
-                task.task_id,
-                status=task.status,
-                progress=task.progress,
-                phase=phase,
-                current_file=message,
-            )
-
     def start(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
-        """Runs the job of *task* on a worker thread of its own.
+        """Runs the job of *task* on a thread of its own.
 
         Jobs run for minutes to hours, so they must not occupy asyncio's default
         executor, which the endpoints using ``asyncio.to_thread`` share.
@@ -598,21 +521,21 @@ class TaskManager:
     def _run_job(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
         """Translates the uploaded module of *task* and records the outcome.
 
-        The task ends ``completed``, ``cancelled`` or ``failed``, its IP slot is
-        released, its trace file is closed and the worker is unregistered.
+        The task ends ``completed``, ``cancelled`` or ``failed``; its IP slot is
+        released, its trace file closed and its worker unregistered.
 
         Args:
             task: Task that owns the job.
             job: Validated job settings.
             input_path: Uploaded module inside the task workspace.
         """
-        log_writer: Optional[SqliteTranslationLogWriter] = None
+        base = self.workspace_root / task.task_id
+        log_writer = SqliteTranslationLogWriter(
+            task.task_id, trace_path=base / "translation_trace.jsonl"
+        )
         try:
-            base = self.workspace_for_task(task.task_id)
-            temp_dir = base / "temp"
+            temp_dir = self.workspace_for_task(task.task_id) / "temp"
             temp_dir.mkdir(parents=True, exist_ok=True)
-            task.input_path = input_path
-            update_task_row(task.task_id, input_path=str(input_path))
             logger.info(
                 "Task %s: target_lang=%r source_lang=%r module_encoding=%s",
                 task.task_id,
@@ -620,12 +543,9 @@ class TaskManager:
                 job.source_lang,
                 module_string_encoding_for_target_lang(job.target_lang),
             )
+            task.input_path = input_path
             task.status = "extracting"
-            update_task_row(task.task_id, status="extracting")
-
-            log_writer = SqliteTranslationLogWriter(
-                task.task_id, trace_path=base / "translation_trace.jsonl"
-            )
+            update_task_row(task.task_id, input_path=str(input_path), status="extracting")
             config = TranslationConfig(
                 **asdict(job),
                 input_file=input_path,
@@ -665,10 +585,8 @@ class TaskManager:
             task.error = str(e)
             self._finish(task, "failed", error=str(e))
         finally:
-            if log_writer is not None:
-                # An open file cannot be removed on Windows, and the rmtree
-                # below ignores errors.
-                log_writer.close()
+            # Windows cannot remove an open file, and the rmtree below ignores errors.
+            log_writer.close()
             self.release_active(task.client_ip, task.task_id)
             with self._lock:
                 del self._workers[task.task_id]
@@ -676,18 +594,12 @@ class TaskManager:
             if deleted:
                 # The task stays active until its files are gone, so a deploy
                 # waiting for zero active tasks cannot cut the removal short.
-                shutil.rmtree(self.workspace_root / task.task_id, ignore_errors=True)
+                shutil.rmtree(base, ignore_errors=True)
                 with self._lock:
                     self._orphaned.discard(task.task_id)
 
     def _finish(self, task: TranslationTask, status: str, **fields: Any) -> None:
-        """Moves *task* to terminal *status* in memory and in SQLite.
-
-        Args:
-            task: Finished task.
-            status: Terminal status.
-            **fields: Extra columns to store with it.
-        """
+        """Moves *task* to terminal *status* in memory and in SQLite, with extra *fields*."""
         task.progress = 1.0
         task.phase = None
         task.current_file = None
@@ -705,26 +617,20 @@ class TaskManager:
     def purge_expired(self) -> None:
         """Evicts finished tasks older than the TTL from memory and disk.
 
-        Workspace directories (uploaded module, extraction temp, result) are
-        deleted; DB rows and translations are kept, so the client history and
-        the translation editor keep working, while download answers 400 ("result
-        file not ready") and rebuild 400 ("extracted files unavailable"). Expired
-        tasks come from the DB, not the in-memory dict: finished tasks are not
-        reloaded into memory after a restart, but their workspace files survive it.
+        Workspaces (upload, extraction, result) are deleted; rows and translations
+        stay, so history and the editor keep working while download and rebuild
+        answer 400. Expired workspaces are found in the database: finished tasks
+        are not reloaded into memory after a restart, but their files survive it.
         """
         now = time.time()
         with self._lock:
-            to_delete: List[str] = [
-                tid
-                for tid, t in self._tasks.items()
-                if now - t.created_at > self.task_ttl_seconds and t.is_finished()
-            ]
-            for tid in to_delete:
-                self._tasks.pop(tid, None)
+            for tid, task in list(self._tasks.items()):
+                if now - task.created_at > self.task_ttl_seconds and task.is_finished():
+                    del self._tasks[tid]
 
         for tid in get_finished_task_ids_older_than(now - self.task_ttl_seconds):
-            # Task IDs are our own uuid4 strings; refuse anything that could
-            # escape workspace_root in case a row was tampered with.
+            # Task ids are our own uuid4 strings; refuse any that could escape
+            # workspace_root in case a row was tampered with.
             if "/" in tid or "\\" in tid or tid in ("", ".", ".."):
                 logger.warning("Skipping workspace purge for suspicious task id %r", tid)
                 continue
@@ -752,13 +658,7 @@ _manager: Optional[TaskManager] = None
 
 
 def get_task_manager() -> TaskManager:
-    """Returns the process-wide :class:`TaskManager`, creating it on first use.
-
-    The workspace root comes from ``NWN_WEB_TASK_ROOT``.
-
-    Returns:
-        The shared manager.
-    """
+    """Returns the process-wide :class:`TaskManager` (root: ``NWN_WEB_TASK_ROOT``)."""
     global _manager
     if _manager is None:
         root_env = os.environ.get("NWN_WEB_TASK_ROOT", "").strip()

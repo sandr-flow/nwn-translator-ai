@@ -19,7 +19,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -90,124 +90,40 @@ _UNSUPPORTED_LANG_DETAIL = (
 
 
 async def _stream_upload_to_file(upload: UploadFile, dest: Path) -> None:
-    """Copies the upload to *dest* in chunks.
-
-    The upload middleware of the app has already limited its size.
-
-    Args:
-        upload: Uploaded module.
-        dest: Destination path inside the task workspace.
-    """
+    """Copies the upload to *dest* in chunks (the upload middleware has limited its size)."""
     with dest.open("wb") as out:
         while chunk := await upload.read(_READ_CHUNK):
             out.write(chunk)
 
 
 def _client_ip(request: Request) -> str:
-    """Extracts the client IP address from the request.
+    """Returns the client IP, ``"unknown"`` when there is none.
 
-    Trusts ``X-Forwarded-For`` only when the direct peer is listed in
-    ``NWN_WEB_TRUSTED_PROXIES`` (comma-separated IPs); otherwise uses the direct
-    client address to prevent spoofing.
+    ``X-Forwarded-For`` is trusted only when the direct peer is listed in
+    ``NWN_WEB_TRUSTED_PROXIES`` (comma-separated), so clients cannot spoof it.
 
     Args:
         request: Incoming request.
-
-    Returns:
-        Client IP string, or ``"unknown"`` if not determinable.
     """
-    trusted_proxies = os.environ.get("NWN_WEB_TRUSTED_PROXIES", "").strip()
-    if trusted_proxies:
-        trusted = {p.strip() for p in trusted_proxies.split(",") if p.strip()}
-        direct_ip = request.client.host if request.client else None
-        if direct_ip and direct_ip in trusted:
-            forwarded = request.headers.get("x-forwarded-for")
-            if forwarded:
-                return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return "unknown"
+    direct_ip = request.client.host if request.client else "unknown"
+    trusted = {p.strip() for p in os.environ.get("NWN_WEB_TRUSTED_PROXIES", "").split(",")} - {""}
+    forwarded = request.headers.get("x-forwarded-for")
+    if request.client and direct_ip in trusted and forwarded:
+        return forwarded.split(",")[0].strip()
+    return direct_ip
 
 
 def _client_token(request: Request) -> str:
-    """Returns the anonymous client token from the ``X-Client-Token`` header.
+    """Returns the anonymous client token, ``""`` when the request carries none.
 
-    Falls back to the ``client_token`` query parameter because plain browser
-    navigations (download links) cannot send custom headers.
+    The ``X-Client-Token`` header wins; the ``client_token`` query parameter serves
+    plain browser navigations (download links), which cannot send headers.
 
     Args:
         request: Incoming request.
-
-    Returns:
-        The token, or ``""`` when the request carries none.
     """
     header = (request.headers.get("x-client-token") or "").strip()
-    if header:
-        return header
-    return (request.query_params.get("client_token") or "").strip()
-
-
-def _job_from_form(
-    *,
-    api_key: str,
-    target_lang: str,
-    source_lang: str,
-    model: Optional[str],
-    preserve_tokens: bool,
-    use_context: bool,
-    max_concurrent_requests: Optional[int],
-    player_gender: str,
-    reasoning_effort: Optional[str],
-) -> JobParams:
-    """Validates and normalizes the job fields of a translate request.
-
-    ``max_concurrent_requests`` is clamped to ``[1, max_concurrent_from_environment()]``
-    (``NWN_TRANSLATE_MAX_CONCURRENT``, 12 when unset) and takes the upper bound
-    when omitted: the number sizes the job's thread pools and semaphores, so a
-    client may lower it but not raise it.
-
-    Args:
-        api_key: Provider API key.
-        target_lang: Requested target language.
-        source_lang: Requested source language; blank means ``"auto"``.
-        model: Model slug; ``None`` selects the provider default.
-        preserve_tokens: Protect NWN tokens.
-        use_context: Build world context and glossary first.
-        max_concurrent_requests: Requested parallelism, or ``None``.
-        player_gender: Player gender; blank means ``"male"``.
-        reasoning_effort: Raw reasoning effort value.
-
-    Returns:
-        The validated job parameters.
-
-    Raises:
-        HTTPException: 400 for a language NWN cannot display or an unknown
-            reasoning effort.
-    """
-    target = target_lang.strip()
-    if not target_lang_supported_for_nwn_injection(target):
-        raise HTTPException(status_code=400, detail=f"Целевой язык: {_UNSUPPORTED_LANG_DETAIL}")
-    source = source_lang.strip() or "auto"
-    if source.lower() != "auto" and not target_lang_supported_for_nwn_injection(source):
-        raise HTTPException(status_code=400, detail=f"Исходный язык: {_UNSUPPORTED_LANG_DETAIL}")
-    try:
-        effort = parse_reasoning_effort(reasoning_effort)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    concurrency = max_concurrent_from_environment()
-    if max_concurrent_requests is not None:
-        concurrency = min(max(1, max_concurrent_requests), concurrency)
-    return JobParams(
-        api_key=api_key.strip(),
-        target_lang=target,
-        source_lang=source,
-        model=model.strip() if model else None,
-        preserve_tokens=preserve_tokens,
-        use_context=use_context,
-        max_concurrent_requests=concurrency,
-        player_gender=player_gender.strip() or "male",
-        reasoning_effort=effort,
-    )
+    return header or (request.query_params.get("client_token") or "").strip()
 
 
 def require_task_owner(
@@ -278,11 +194,14 @@ async def start_translate(
     """Accepts a .mod/.erf/.hak upload and starts translating it in the background.
 
     An oversized upload never reaches this handler: the app's upload middleware
-    answers it with 413.
+    answers it with 413. ``max_concurrent_requests`` sizes the job's thread pools,
+    so it is clamped to ``[1, NWN_TRANSLATE_MAX_CONCURRENT]`` (12 when unset) and
+    takes the upper bound when omitted.
 
     Raises:
         HTTPException: 429 while the client IP has a running job, 400 for an
-            invalid file name or job field.
+            invalid file name, a language NWN cannot display or an unknown
+            reasoning effort.
 
     \f
     Args:
@@ -291,12 +210,12 @@ async def start_translate(
         file: Uploaded module.
         api_key: Provider API key.
         target_lang: Target language.
-        source_lang: Source language, ``auto`` to detect.
+        source_lang: Source language; ``auto`` (or blank) to detect.
         model: Model slug; the provider default when omitted.
         preserve_tokens: Protect NWN tokens.
         use_context: Build world context and glossary first.
-        max_concurrent_requests: Requested parallelism (see :func:`_job_from_form`).
-        player_gender: Player gender.
+        max_concurrent_requests: Requested parallelism.
+        player_gender: Player gender; blank means ``male``.
         reasoning_effort: Requested reasoning effort.
 
     Returns:
@@ -309,16 +228,27 @@ async def start_translate(
         raise HTTPException(status_code=400, detail="Имя файла не указано")
     if Path(file.filename).suffix.lower() not in _MODULE_SUFFIXES:
         raise HTTPException(status_code=400, detail="Допустимы только файлы .mod, .erf или .hak")
-    job = _job_from_form(
-        api_key=api_key,
-        target_lang=target_lang,
-        source_lang=source_lang,
-        model=model,
+    target, source = target_lang.strip(), source_lang.strip() or "auto"
+    for lang, label in ((target, "Целевой язык"), (source, "Исходный язык")):
+        if not target_lang_supported_for_nwn_injection(lang):
+            raise HTTPException(status_code=400, detail=f"{label}: {_UNSUPPORTED_LANG_DETAIL}")
+    try:
+        effort = parse_reasoning_effort(reasoning_effort)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    concurrency = max_concurrent_from_environment()
+    if max_concurrent_requests is not None:
+        concurrency = min(max(1, max_concurrent_requests), concurrency)
+    job = JobParams(
+        api_key=api_key.strip(),
+        target_lang=target,
+        source_lang=source,
+        model=model.strip() if model else None,
         preserve_tokens=preserve_tokens,
         use_context=use_context,
-        max_concurrent_requests=max_concurrent_requests,
-        player_gender=player_gender,
-        reasoning_effort=reasoning_effort,
+        max_concurrent_requests=concurrency,
+        player_gender=player_gender.strip() or "male",
+        reasoning_effort=effort,
     )
     task = tm.create_task(
         ip,
@@ -328,9 +258,8 @@ async def start_translate(
         source_lang=job.source_lang,
         model=job.model,
     )
-    # Claim the one-job-per-IP slot atomically before copying the upload into the
-    # workspace; the check at the top of the handler is only a fast path and is
-    # racy on its own.
+    # Claim the one-job-per-IP slot atomically before copying the upload; the
+    # check at the top is only a fast path and racy on its own.
     if not tm.try_register_active(ip, task.task_id):
         tm.delete(task.task_id)
         raise HTTPException(status_code=429, detail=_IP_BUSY_DETAIL)
@@ -415,14 +344,8 @@ async def download_log(
     rows = get_translations_by_task(task.task_id)
     if not rows:
         raise HTTPException(status_code=404, detail="Лог недоступен")
-
-    def generate() -> Iterator[str]:
-        """Yields the rows as JSON lines."""
-        for row in rows:
-            yield json.dumps(row, ensure_ascii=False) + "\n"
-
     return StreamingResponse(
-        generate(),
+        (json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
         media_type="application/jsonl",
         headers={"Content-Disposition": "attachment; filename=translation_log.jsonl"},
     )
@@ -494,22 +417,11 @@ async def task_history(request: Request) -> TaskHistoryResponse:
         The client's tasks, newest first; none without a token.
     """
     token = _client_token(request)
-    if not token:
-        return TaskHistoryResponse(items=[])
+    rows = list_tasks_by_token(token) if token else []
     return TaskHistoryResponse(
         items=[
-            TaskHistoryItem(
-                task_id=row["task_id"],
-                input_filename=row["input_filename"],
-                status=row["status"],
-                created_at=row["created_at"],
-                target_lang=row["target_lang"],
-                source_lang=row["source_lang"],
-                model=row["model"],
-                updated_at=row["updated_at"],
-                stats=compact_stats_for_api(decode_stats(row["stats"])),
-            )
-            for row in list_tasks_by_token(token)
+            TaskHistoryItem(**{**row, "stats": compact_stats_for_api(decode_stats(row["stats"]))})
+            for row in rows
         ]
     )
 
@@ -572,32 +484,24 @@ async def test_connection(body: TestConnectionRequest) -> TestConnectionResponse
     Returns:
         The translation, or the error; failures never raise.
     """
-    text = "Hello, welcome to my module!"
     provider_name = detect_provider_from_key(body.api_key)
     try:
-        reff = parse_reasoning_effort(body.reasoning_effort)
+        effort = parse_reasoning_effort(body.reasoning_effort)
     except ValueError as e:
         return TestConnectionResponse(ok=False, error=str(e), provider=provider_name)
     try:
-        provider = create_provider(body.api_key.strip(), body.model, reasoning_effort=reff)
+        provider = create_provider(body.api_key.strip(), body.model, reasoning_effort=effort)
         try:
             result = await provider.translate_async(
-                text, "english", body.target_lang, json_attempts=1
+                "Hello, welcome to my module!", "english", body.target_lang, json_attempts=1
             )
         finally:
             await provider.close_async_client()
-        model = provider.model
-        if result.success:
-            return TestConnectionResponse(
-                ok=True,
-                translated=result.translated,
-                model=model,
-                provider=provider.get_provider_name(),
-            )
         return TestConnectionResponse(
-            ok=False,
-            error=result.error or "Unknown error",
-            model=model,
+            ok=result.success,
+            translated=result.translated if result.success else None,
+            error=None if result.success else result.error or "Unknown error",
+            model=provider.model,
             provider=provider.get_provider_name(),
         )
     except Exception as e:

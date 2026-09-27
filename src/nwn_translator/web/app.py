@@ -30,11 +30,10 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 class UploadLimitMiddleware:
     """ASGI middleware that caps the request body of the upload route while it streams in.
 
-    FastAPI parses the whole multipart body, spooling files to disk, before a
-    handler runs, so a handler-side check comes too late. Once the declared or
-    received size passes the limit, the rest of the body is read and discarded
-    (the client then gets the 413 response rather than a reset connection) and
-    the request fails with 413.
+    FastAPI parses the whole multipart body before a handler runs, so a handler
+    check comes too late. Once the declared or received size passes the limit, the
+    rest of the body is drained (so the client gets the 413, not a reset
+    connection) and the request fails with 413.
 
     Attributes:
         app: Wrapped ASGI application.
@@ -94,22 +93,12 @@ class UploadLimitMiddleware:
 
 
 def _parse_cors_origins() -> List[str]:
-    """Parses ``NWN_WEB_CORS_ORIGINS`` into a list of allowed origins.
+    """Returns the origins listed in ``NWN_WEB_CORS_ORIGINS`` (comma-separated, or ``*``).
 
-    Defaults to an empty list (no cross-origin access) when unset: the SPA is
-    served from the same origin as the API — directly or behind nginx — so CORS
-    is not needed. Set the variable to a comma-separated origin list (or ``*``)
-    to opt in explicitly.
-
-    Returns:
-        List of origin strings.
+    Unset means none: the SPA is served from the API's origin, directly or behind
+    nginx, so cross-origin access is opt-in.
     """
-    raw = os.environ.get("NWN_WEB_CORS_ORIGINS", "").strip()
-    if not raw:
-        return []
-    if raw == "*":
-        return ["*"]
-    return [o.strip() for o in raw.split(",") if o.strip()]
+    return [o.strip() for o in os.environ.get("NWN_WEB_CORS_ORIGINS", "").split(",") if o.strip()]
 
 
 @asynccontextmanager

@@ -85,25 +85,8 @@ _ADDED_COLUMNS: Tuple[Tuple[str, str, str], ...] = (
 
 #: Columns :func:`update_task_row` may set; the names are interpolated into SQL.
 _TASK_COLUMNS = frozenset(
-    {
-        "client_token",
-        "client_ip",
-        "created_at",
-        "status",
-        "progress",
-        "phase",
-        "current_file",
-        "input_filename",
-        "result_path",
-        "extract_dir",
-        "input_path",
-        "error",
-        "stats",
-        "target_lang",
-        "source_lang",
-        "model",
-        "updated_at",
-    }
+    "client_token client_ip created_at status progress phase current_file input_filename "
+    "result_path extract_dir input_path error stats target_lang source_lang model updated_at".split()
 )
 
 #: Max error strings returned on status/history polls (full list stays in SQLite).
@@ -189,14 +172,8 @@ def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
 
 def get_db() -> sqlite3.Connection:
-    """Returns the shared connection, opening it with :func:`init_db` on first use.
-
-    Returns:
-        The process-wide connection.
-    """
-    if _connection is None:
-        return init_db()
-    return _connection
+    """Returns the shared connection, opening it with :func:`init_db` on first use."""
+    return _connection or init_db()
 
 
 def close_db() -> None:
@@ -238,11 +215,6 @@ def _execute(sql: str, params: Sequence[Any] = ()) -> None:
         db.commit()
 
 
-# ---------------------------------------------------------------------------
-# Tasks
-# ---------------------------------------------------------------------------
-
-
 def create_task_row(
     task_id: str,
     client_token: str,
@@ -282,14 +254,11 @@ def create_task_row(
 
 
 def update_task_row(task_id: str, **fields: Any) -> None:
-    """Sets columns of a task row; a missing row is left alone.
-
-    A ``stats`` dict is stored as JSON.
+    """Sets columns of a task row (a ``stats`` dict as JSON); a missing row is left alone.
 
     Args:
         task_id: Task UUID.
-        **fields: Column values; names must be columns of ``tasks`` other than
-            ``task_id``. Path columns take strings.
+        **fields: Values of ``tasks`` columns other than ``task_id``; paths as strings.
 
     Raises:
         ValueError: If a field is not a task column.
@@ -324,11 +293,10 @@ def decode_stats(raw: Optional[str]) -> Optional[Dict[str, Any]]:
 
 
 def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Returns a poll-safe copy of task stats without unbounded error dumps.
+    """Returns a poll-safe copy of task stats; the full payload stays in SQLite.
 
-    Keeps ``total_errors`` and the first few ``errors``, and drops any per-call
-    ``metrics.requests`` telemetry a stored row carries. The full payload stays
-    in the SQLite ``stats`` column.
+    Keeps ``total_errors`` and the first few ``errors`` and drops the per-call
+    ``metrics.requests``.
 
     Args:
         stats: Stats dict as stored for the task, or ``None``.
@@ -341,16 +309,12 @@ def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str,
     out = dict(stats)
     errors = out.get("errors")
     if isinstance(errors, list):
-        total = out.get("total_errors")
-        if not isinstance(total, int):
-            total = len(errors)
-            out["total_errors"] = total
+        if not isinstance(out.get("total_errors"), int):
+            out["total_errors"] = len(errors)
         out["errors"] = errors[:_STATS_ERROR_SAMPLE_LIMIT]
     metrics = out.get("metrics")
     if isinstance(metrics, dict):
-        metrics_out = dict(metrics)
-        metrics_out.pop("requests", None)
-        out["metrics"] = metrics_out
+        out["metrics"] = {key: value for key, value in metrics.items() if key != "requests"}
     return out
 
 
@@ -382,15 +346,7 @@ def list_tasks_by_token(client_token: str) -> List[Dict[str, Any]]:
 
 
 def get_unfinished_task_rows() -> List[Dict[str, Any]]:
-    """Returns task rows still in a non-terminal state.
-
-    Used at startup to reconcile tasks whose worker died: anything not in
-    :data:`TERMINAL_STATUSES` (``pending``/``extracting``/``translating``/…) has
-    no live worker after a restart and must be flipped to ``interrupted``.
-
-    Returns:
-        The unfinished rows.
-    """
+    """Returns the task rows not in a terminal status (no worker runs them after a restart)."""
     return _query(
         f"SELECT * FROM tasks WHERE status NOT IN ({_TERMINAL_PLACEHOLDERS})",  # noqa: S608
         TERMINAL_STATUSES,
@@ -398,18 +354,13 @@ def get_unfinished_task_rows() -> List[Dict[str, Any]]:
 
 
 def get_finished_task_ids_older_than(cutoff: float) -> List[str]:
-    """Returns IDs of terminal-status tasks created before *cutoff*.
-
-    Used by workspace TTL cleanup. Reads the DB rather than the in-memory task
-    dict because finished tasks are not reloaded into memory after a process
-    restart, while their rows (and workspace files) survive it.
+    """Returns the ids of terminal-status tasks created before *cutoff*.
 
     Args:
-        cutoff: Unix timestamp; only tasks with ``created_at`` strictly below
-            it are returned.
+        cutoff: Unix timestamp; ``created_at`` must be strictly below it.
 
     Returns:
-        Matching task IDs.
+        The task ids.
     """
     rows = _query(
         f"SELECT task_id FROM tasks WHERE status IN ({_TERMINAL_PLACEHOLDERS}) "  # noqa: S608
@@ -426,11 +377,6 @@ def delete_task_row(task_id: str) -> None:
         task_id: Task UUID.
     """
     _execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
-
-
-# ---------------------------------------------------------------------------
-# Translations
-# ---------------------------------------------------------------------------
 
 
 def insert_translation(
@@ -477,11 +423,9 @@ def insert_translation(
 
 
 def update_translation_text(task_id: str, file: str, item_id: str, translated: str) -> None:
-    """Persists an editor edit: sets *translated* for one ``(task_id, file, item_id)``.
+    """Stores an editor edit of one ``(task_id, file, item_id)`` row, if it exists.
 
-    The original text and the row identity are kept, and the line counts as
-    translated (the user has reviewed it). An edit of an item with no stored
-    row changes nothing.
+    The line then counts as translated: the user has reviewed it.
 
     Args:
         task_id: Owning task.
@@ -529,11 +473,7 @@ def count_translations(task_id: str) -> int:
 
 
 def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
-    """Returns ``{file: {item_id: translated}}`` for rows that carry an ``item_id``.
-
-    This is the addressing used by rebuild: a translation is identified by its
-    source file plus the stable per-file ``item_id`` the extractor assigned, so
-    identical originals in different files (or different nodes) stay distinct.
+    """Returns ``{file: {item_id: translated}}`` of the rows with an ``item_id`` (rebuild).
 
     Args:
         task_id: Task UUID.

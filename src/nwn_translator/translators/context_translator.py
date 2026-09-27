@@ -110,7 +110,13 @@ _PENDING_RECOVERY: _Recovery = {
 
 
 class _Rejected(NamedTuple):
-    """A rejected answer of one line and how it broke the tokens (``None`` if empty)."""
+    """A model answer for one line that was not accepted.
+
+    Attributes:
+        text: The answer as sent back (sanitized form).
+        report: How it broke the line's tokens and tags; ``None`` for an
+            empty answer.
+    """
 
     text: str
     report: Optional[TokenMismatchReport]
@@ -141,6 +147,9 @@ class _FileRun:
 
         The pipeline counts a file's extracted items, which need not equal its
         dialog lines; a budget of ``0`` disables the clamp.
+
+        Args:
+            lines: Progress units to report, such as newly accepted lines.
         """
         budget = self.dialog.item_budget
         if budget:
@@ -393,8 +402,13 @@ class ContextualTranslationManager:
     def _translate_file(self, run: _FileRun) -> Translations:
         """Requests the lines of a file not accepted yet, then reports its whole budget.
 
-        Errors are logged, not raised: the lines not accepted by then are added
-        to :attr:`failed_items`.
+        An error while the lines are requested is logged, not raised: the lines
+        not accepted by then are added to :attr:`failed_items`. An error before
+        that, while the speakers block is built, propagates, and the file fails
+        as a whole (see :meth:`_run_job` and :meth:`_translate_group`).
+
+        Args:
+            run: The file's state, with any lines accepted from a grouped answer.
 
         Returns:
             The file's accepted translations.
@@ -420,6 +434,10 @@ class ContextualTranslationManager:
 
     def _request_lines(self, run: _FileRun, keys: List[str]) -> None:
         """Sends the chunks of *keys*, then retries what is still missing or broken.
+
+        Args:
+            run: The file's state.
+            keys: Keys of the lines to request, in walk order.
 
         Raises:
             RateLimitError: If a chunk or the pending retry hits a rate or budget limit.
@@ -452,6 +470,12 @@ class ContextualTranslationManager:
         A failing request costs only this chunk: its lines are reported as
         failed, while the other chunks are still requested. A rate or budget
         limit stops the file instead, as every further request would meet it.
+
+        Args:
+            run: The file's state.
+            chunk: The lines to request and their script.
+            index: 1-based position of the chunk, for log messages.
+            total: Number of chunks of the file.
 
         Returns:
             Keys to retry: those missing or rejected; all of them when the answer
@@ -501,6 +525,10 @@ class ContextualTranslationManager:
         A failing request counts as an unusable answer, so the lines still get
         their single-line retries; a rate or budget limit is raised instead.
 
+        Args:
+            run: The file's state.
+            pending: Keys still missing or rejected, sorted.
+
         Returns:
             Keys still pending afterwards, sorted.
 
@@ -549,6 +577,10 @@ class ContextualTranslationManager:
 
     def _retry_lines(self, run: _FileRun, keys: List[str]) -> None:
         """Requests lines one by one; a line that still fails is accepted cleaned if valid.
+
+        Args:
+            run: The file's state.
+            keys: Keys still pending after the pending retry, sorted.
 
         Raises:
             TranslationCancelled: If the run is cancelled.
@@ -609,6 +641,10 @@ class ContextualTranslationManager:
         After a rate or budget limit the files are reported as errors instead:
         the request already used up the provider's retries, and one request per
         file would multiply the pressure on the limit.
+
+        Args:
+            group: Small dialogs packed into one request.
+            progress: Progress sink, if any.
 
         Returns:
             The group's translations, and ``(file_path, error)`` for each file

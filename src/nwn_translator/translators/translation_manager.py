@@ -381,6 +381,12 @@ class TranslationManager:
         Retries go one at a time and stop early when the model repeats the same
         broken artifact sequence.
 
+        Args:
+            caller: Request sender of the run.
+            work: Item whose answer was rejected.
+            first_answer: The rejected answer.
+            model: Model that gave it.
+
         Returns:
             The accepted translation, or ``None`` when even the cleaned answer is rejected.
         """

@@ -71,7 +71,12 @@ class PreparedDialog:
 
 
 class Chunk(NamedTuple):
-    """The lines of one single-file request (*keys*) and the *script* that shows them."""
+    """The lines of one single-file request.
+
+    Attributes:
+        keys: Keys of the lines to translate.
+        script: The script that shows them.
+    """
 
     keys: List[str]
     script: str

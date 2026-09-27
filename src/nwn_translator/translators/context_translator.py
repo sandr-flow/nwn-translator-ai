@@ -153,6 +153,17 @@ class _FileRun:
         """Reports the rest of the item budget, whatever was translated."""
         self.report(self.dialog.item_budget - self.reported)
 
+    def unaccepted(self, keys: List[str]) -> List[str]:
+        """Returns the keys of *keys* whose line has no accepted translation yet.
+
+        Args:
+            keys: Line keys of the dialog.
+
+        Returns:
+            Those keys, in order.
+        """
+        return [key for key in keys if self.dialog.address(key) not in self.translations]
+
 
 def _parse_answer(raw: str, label: str) -> Optional[Dict[str, Any]]:
     """Returns the first JSON object of an answer; logs an error when there is none."""
@@ -393,7 +404,7 @@ class ContextualTranslationManager:
         """
         self.config.raise_if_cancelled()
         dialog = run.dialog
-        keys = [key for key in dialog.keys if dialog.address(key) not in run.translations]
+        keys = run.unaccepted(dialog.keys)
         run.speakers = speakers_block(
             speaker_lines(self.world_context, dialog.file_path.stem, dialog.node_map)
         )
@@ -403,9 +414,7 @@ class ContextualTranslationManager:
             raise
         except Exception as exc:
             logger.error("Contextual translation failed for %s: %s", dialog.file_path.name, exc)
-        self.failed_items.update(
-            address for address in map(dialog.address, keys) if address not in run.translations
-        )
+        self.failed_items.update(map(dialog.address, run.unaccepted(keys)))
         run.finish()
         return run.translations
 
@@ -483,7 +492,8 @@ class ContextualTranslationManager:
                 total,
             )
             return list(chunk.keys)
-        return self._accept(run, answer, chunk.keys)
+        self._accept(run, answer, chunk.keys)
+        return run.unaccepted(chunk.keys)
 
     def _retry_pending(self, run: _FileRun, pending: List[str]) -> List[str]:
         """Requests the pending lines again in one token-preserving request.
@@ -528,7 +538,8 @@ class ContextualTranslationManager:
             return pending
         if not answer:
             return pending
-        still_pending = self._accept(run, answer, pending)
+        self._accept(run, answer, pending)
+        still_pending = run.unaccepted(pending)
         logger.info(
             "%s: retry recovered %d additional dialog translations.",
             name,
@@ -581,10 +592,12 @@ class ContextualTranslationManager:
             except Exception as exc:
                 logger.warning("%s: individual dialog retry failed for %s: %s", name, key, exc)
             else:
-                if result.success and not self._accept(run, {key: result.translated}, [key]):
-                    continue
-            candidate = run.rejected.get(key)
-            self._accept(run, {key: candidate.text if candidate else ""}, [key], allow_cleanup=True)
+                if result.success:
+                    self._accept(run, {key: result.translated}, [key])
+            if run.unaccepted([key]):
+                candidate = run.rejected.get(key)
+                answer = {key: candidate.text if candidate else ""}
+                self._accept(run, answer, [key], allow_cleanup=True)
 
     def _translate_group(
         self, group: List[PreparedDialog], progress: Optional[ItemProgress]
@@ -631,13 +644,10 @@ class ContextualTranslationManager:
             self.config.raise_if_cancelled()
             run = _FileRun(dialog, progress)
             part = _group_part(answer, dialog.file_path) if answer is not None else None
-            missing = (
+            if isinstance(part, dict):
                 self._accept(run, part, dialog.keys, report=False)
-                if isinstance(part, dict)
-                else dialog.keys
-            )
             translations.update(run.translations)
-            if not missing:
+            if not run.unaccepted(dialog.keys):
                 run.finish()
                 continue
             logger.warning(
@@ -779,12 +789,12 @@ class ContextualTranslationManager:
         *,
         allow_cleanup: bool = False,
         report: bool = True,
-    ) -> List[str]:
+    ) -> None:
         """Restores and validates the answers for *keys*, logging each accepted line.
 
         Accepted lines go into *run*; a rejected answer becomes the line's latest
         rejection. Other keys of *answer* (context-only nodes, lines accepted
-        earlier) are ignored.
+        earlier) are ignored; :meth:`_FileRun.unaccepted` tells what is left.
 
         Args:
             run: The file's state.
@@ -792,9 +802,6 @@ class ContextualTranslationManager:
             keys: Keys the request asked for.
             allow_cleanup: Accept a text with broken tokens or tags after removing them.
             report: Report the accepted lines as progress.
-
-        Returns:
-            The keys of *keys* still not accepted, in order.
         """
         dialog = run.dialog
         name = dialog.file_path.name
@@ -845,4 +852,3 @@ class ContextualTranslationManager:
             )
         if report:
             run.report(accepted)
-        return [key for key in keys if dialog.address(key) not in run.translations]

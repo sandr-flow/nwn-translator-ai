@@ -9,7 +9,7 @@ an :class:`ExtractedContent`. Each item is addressed by its
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 #: Address of one extracted string: ``(resource file name, item_id)``.
 Occurrence = tuple[str, str]
@@ -43,14 +43,6 @@ class ExtractedContent:
         for item in self.items:
             if not item.location:
                 item.location = str(self.source_file)
-
-    def __len__(self) -> int:
-        """Returns the number of extracted items."""
-        return len(self.items)
-
-    def __iter__(self) -> Iterator["TranslatableItem"]:
-        """Iterates over the extracted items."""
-        return iter(self.items)
 
 
 @dataclass

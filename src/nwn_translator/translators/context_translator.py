@@ -15,7 +15,6 @@ import logging
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
@@ -69,86 +68,43 @@ _RECOVERY_MAX_TOKENS = 32768
 _JobResult = Tuple[Translations, List[Tuple[Path, Exception]]]
 
 
-class _Step(NamedTuple):
-    """One recovery request after an unparseable answer.
-
-    Attributes:
-        repair: Send the repair prompt, built once from the answer before the
-            first repair step, instead of the original prompt.
-        recovery_budget: Send it with :data:`_RECOVERY_MAX_TOKENS` (read at send time).
-        warning: Logged before the request; ``%s`` is the request label.
-    """
-
-    repair: bool
-    recovery_budget: bool
-    warning: str
-
-
-#: Recovery steps, keyed by whether the first answer looks cut off mid-string.
-_Recovery = Dict[bool, Tuple[_Step, ...]]
+#: Recovery requests after an unparseable answer: one per warning (``%s`` is the
+#: request label), keyed by whether the answer looks cut off mid-string. The first
+#: request re-sends a cut-off prompt with :data:`_RECOVERY_MAX_TOKENS`, or asks to
+#: repair other invalid JSON within the first budget; a later one repairs with
+#: :data:`_RECOVERY_MAX_TOKENS`. The repair prompt is built once, from the answer
+#: before the first repair request.
+_Recovery = Dict[bool, Tuple[str, ...]]
 
 _CHUNK_RECOVERY: _Recovery = {
     True: (
-        _Step(
-            repair=False,
-            recovery_budget=True,
-            warning="%s: dialog JSON parse failed with truncation-like invalid JSON; "
-            "retrying original prompt with higher max_tokens...",
-        ),
-        _Step(
-            repair=True,
-            recovery_budget=True,
-            warning="%s: high-token original prompt retry still returned invalid JSON; "
-            "retrying repair prompt with higher max_tokens as final fallback...",
-        ),
+        "%s: dialog JSON parse failed with truncation-like invalid JSON; "
+        "retrying original prompt with higher max_tokens...",
+        "%s: high-token original prompt retry still returned invalid JSON; "
+        "retrying repair prompt with higher max_tokens as final fallback...",
     ),
     False: (
-        _Step(
-            repair=True,
-            recovery_budget=False,
-            warning="%s: dialog JSON parse failed with non-truncation invalid JSON; "
-            "retrying with repair prompt...",
-        ),
-        _Step(
-            repair=True,
-            recovery_budget=True,
-            warning="%s: repair prompt still returned invalid JSON; "
-            "retrying repair prompt with higher max_tokens as final fallback...",
-        ),
+        "%s: dialog JSON parse failed with non-truncation invalid JSON; "
+        "retrying with repair prompt...",
+        "%s: repair prompt still returned invalid JSON; "
+        "retrying repair prompt with higher max_tokens as final fallback...",
     ),
 }
 _GROUP_RECOVERY: _Recovery = {
-    True: (
-        _Step(
-            repair=False,
-            recovery_budget=True,
-            warning="Dialog group %s: JSON looks truncated; retrying with higher max_tokens...",
-        ),
-    ),
-    False: (
-        _Step(
-            repair=True,
-            recovery_budget=False,
-            warning="Dialog group %s: invalid JSON; retrying with repair prompt...",
-        ),
-    ),
+    True: ("Dialog group %s: JSON looks truncated; retrying with higher max_tokens...",),
+    False: ("Dialog group %s: invalid JSON; retrying with repair prompt...",),
 }
 _PENDING_RECOVERY: _Recovery = {
     True: (
-        _Step(
-            repair=False,
-            recovery_budget=True,
-            warning="%s: pending dialog retry JSON looks truncated; "
-            "retrying the same JSON retry prompt with higher max_tokens...",
-        ),
+        "%s: pending dialog retry JSON looks truncated; "
+        "retrying the same JSON retry prompt with higher max_tokens...",
     ),
     False: (),
 }
 
 
 class _Rejected(NamedTuple):
-    """A rejected answer for one line: its sanitized text and how it broke the
-    line's tokens and tags (``None`` for an empty answer)."""
+    """A rejected answer of one line and how it broke the tokens (``None`` if empty)."""
 
     text: str
     report: Optional[TokenMismatchReport]
@@ -322,16 +278,16 @@ class ContextualTranslationManager:
                 len(groups),
                 len(singles),
             )
-        jobs = [(partial(self._translate_single, d, item_progress), [d]) for d in singles]
-        jobs += [(partial(self._translate_group, g, item_progress), g) for g in groups]
-        translations, job_errors = self._run_pool(jobs)
+        jobs = [[dialog] for dialog in singles] + groups
+        translations, job_errors = self._run_pool(jobs, item_progress)
         return translations, errors + job_errors
 
     def _run_pool(
-        self, jobs: Sequence[Tuple[Callable[[], _JobResult], List[PreparedDialog]]]
+        self, jobs: List[List[PreparedDialog]], progress: Optional[ItemProgress]
     ) -> _JobResult:
-        """Runs *jobs* in queue order on up to ``max_concurrent_requests`` threads.
+        """Translates *jobs* in queue order on up to ``max_concurrent_requests`` threads.
 
+        A job is one dialog on its own or a group of two or more small ones.
         ``run_async`` keeps one event loop per thread, and the provider one HTTP
         client per loop, so a worker reuses them for all its jobs and closes them
         before it ends. An exception escaping a job fails all of its files; a
@@ -349,11 +305,14 @@ class ContextualTranslationManager:
             try:
                 while not cancelled.is_set():
                     try:
-                        index, (job, _files) = queue.popleft()
+                        index, files = queue.popleft()
                     except IndexError:
                         return
                     try:
-                        outcomes[index] = job()
+                        if len(files) > 1:
+                            outcomes[index] = self._translate_group(files, progress)
+                        else:
+                            outcomes[index] = self._translate_file(_FileRun(files[0], progress)), []
                     except BaseException as exc:
                         outcomes[index] = exc
                         if isinstance(exc, TranslationCancelled):
@@ -371,7 +330,7 @@ class ContextualTranslationManager:
             worker.join()
         translations: Translations = {}
         errors: List[Tuple[Path, Exception]] = []
-        for (_job, files), outcome in zip(jobs, outcomes):
+        for files, outcome in zip(jobs, outcomes):
             if isinstance(outcome, tuple):
                 translations.update(outcome[0])
                 errors.extend(outcome[1])
@@ -380,12 +339,6 @@ class ContextualTranslationManager:
             elif outcome is not None:
                 raise outcome
         return translations, errors
-
-    def _translate_single(
-        self, dialog: PreparedDialog, progress: Optional[ItemProgress]
-    ) -> _JobResult:
-        """Pool job: translates one dialog on its own."""
-        return self._translate_file(_FileRun(dialog, progress)), []
 
     def _translate_file(self, run: _FileRun) -> Translations:
         """Requests the lines of a file not accepted yet, then reports its whole budget.
@@ -597,7 +550,7 @@ class ContextualTranslationManager:
     def _translate_group(
         self, group: List[PreparedDialog], progress: Optional[ItemProgress]
     ) -> _JobResult:
-        """Pool job: translates small dialogs in one request and splits the answer.
+        """Translates small dialogs in one request and splits the answer.
 
         A file whose part is missing, incomplete or has a rejected line falls
         back to its own requests, keeping the lines accepted from the group.
@@ -703,11 +656,11 @@ class ContextualTranslationManager:
         """Sends a JSON request and recovers from an unparseable answer.
 
         Args:
-            recovery: Steps to take when the first answer does not parse.
+            recovery: Warnings of the recovery requests (see :data:`_Recovery`).
             system: System message content.
             user: User prompt.
             repair: Builds the repair prompt from an answer; required when
-                *recovery* has repair steps.
+                *recovery* has repair requests.
             trace: Context of the requests in the translation log.
             label: Name of the request in log messages.
 
@@ -716,17 +669,17 @@ class ContextualTranslationManager:
         """
         raw = self._call_json(system, user, TRANSLATION_MAX_TOKENS, trace)
         parsed = _parse_answer(raw, label)
-        steps = recovery[_looks_truncated(raw)] if parsed is None else ()
+        truncated = parsed is None and _looks_truncated(raw)
         repaired: Optional[str] = None
-        for step in steps:
-            logger.warning(step.warning, label)
+        for index, warning in enumerate(recovery[truncated] if parsed is None else ()):
+            logger.warning(warning, label)
             prompt = user
-            if step.repair:
+            if index or not truncated:
                 assert repair is not None
                 if repaired is None:
                     repaired = repair(raw)
                 prompt = repaired
-            budget = _RECOVERY_MAX_TOKENS if step.recovery_budget else TRANSLATION_MAX_TOKENS
+            budget = _RECOVERY_MAX_TOKENS if index or truncated else TRANSLATION_MAX_TOKENS
             raw = self._call_json(system, prompt, budget, trace)
             parsed = _parse_answer(raw, label)
             if parsed is not None:

@@ -309,13 +309,28 @@ def _hello_line(text):
     return text.replace("Hello", "Привет")
 
 
-def test_failing_pending_retry_still_retries_lines_one_by_one():
-    manager, provider = _manager(["{}", RuntimeError("provider down")], translate_line=_hello_line)
+@pytest.mark.parametrize("pending_answer", [RuntimeError("provider down"), "{}"])
+def test_failing_or_empty_pending_retry_still_retries_lines_one_by_one(pending_answer):
+    manager, provider = _manager(["{}", pending_answer], translate_line=_hello_line)
 
     assert _translate(manager, "test.dlg", _hello()) == {
         ("test.dlg", "test:entry:1"): "Привет there"
     }
     assert (len(provider.calls), len(provider.line_calls)) == (2, 1)
+    assert manager.failed_items == set()
+
+
+def test_failing_line_retry_falls_back_to_the_cleaned_last_answer(caplog):
+    def line_down(_text):
+        raise RuntimeError("line down")
+
+    caplog.set_level(logging.WARNING)
+    manager, _provider = _manager(['{"E1":"Привет."}'] * 2, translate_line=line_down)
+
+    result = _translate(manager, "test.dlg", _node(1, "Hello <FirstName>."))
+
+    assert result == {("test.dlg", "test:entry:1"): "Привет."}
+    assert "individual dialog retry failed for E1: line down" in caplog.text
     assert manager.failed_items == set()
 
 
@@ -519,6 +534,103 @@ def test_worker_threads_close_their_client_and_event_loop(single_files):
     assert provider.request_loops and all(loop.is_closed() for loop in provider.request_loops)
 
 
+class _Interrupt(BaseException):
+    """Stands in for ``KeyboardInterrupt``, which pytest handles on its own."""
+
+
+def _dialog_workers():
+    return [thread for thread in threading.enumerate() if thread.name.startswith("dialog-")]
+
+
+def test_an_interrupted_caller_still_waits_for_the_workers(single_files, monkeypatch):
+    class _SlowProvider(DialogProvider):
+        async def complete_json_chat_async(self, *args, **kwargs):
+            await asyncio.sleep(0.05)
+            return await super().complete_json_chat_async(*args, **kwargs)
+
+    real_join = threading.Thread.join
+    interrupted = []
+
+    def join(thread, timeout=None):
+        if thread.name.startswith("dialog-") and not interrupted:
+            interrupted.append(thread.name)
+            raise _Interrupt  # like Ctrl+C while the calling thread waits
+        real_join(thread, timeout)
+
+    monkeypatch.setattr(threading.Thread, "join", join)
+    manager = ContextualTranslationManager(
+        make_config(max_concurrent_requests=2), _SlowProvider(THREE_ANSWERS), WorldContext()
+    )
+
+    with pytest.raises(_Interrupt):
+        manager.translate_dialogs(THREE_FILES)
+    assert interrupted and _dialog_workers() == []
+
+
+def test_a_non_exception_escaping_a_job_is_raised_after_the_other_jobs(single_files, monkeypatch):
+    real_speakers = context_translator.speaker_lines
+
+    def speakers(world, stem, *args, **kwargs):
+        if stem == "a":
+            raise _Interrupt
+        return real_speakers(world, stem, *args, **kwargs)
+
+    monkeypatch.setattr(context_translator, "speaker_lines", speakers)
+    manager, provider = _manager(THREE_ANSWERS, max_concurrent_requests=2)
+
+    with pytest.raises(_Interrupt):
+        manager.translate_dialogs(THREE_FILES)
+    assert len(provider.calls) == 2  # b.dlg and c.dlg were still requested
+    assert _dialog_workers() == []
+
+
+def test_translations_merge_in_job_order_whatever_finishes_first(single_files):
+    class _GoodbyeFirstProvider(DialogProvider):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.goodbye_answered = threading.Event()
+
+        async def complete_json_chat_async(self, system_prompt, user_prompt, **kwargs):
+            for _ in range(500):
+                if "Hello" not in user_prompt or self.goodbye_answered.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            answer = await super().complete_json_chat_async(system_prompt, user_prompt, **kwargs)
+            if "Goodbye" in user_prompt:
+                self.goodbye_answered.set()
+            return answer
+
+    provider = _GoodbyeFirstProvider(THREE_ANSWERS)
+    manager = ContextualTranslationManager(
+        make_config(max_concurrent_requests=2), provider, WorldContext()
+    )
+
+    translations, errors = manager.translate_dialogs(THREE_FILES[:2])
+
+    assert errors == [] and provider.goodbye_answered.is_set()
+    assert list(translations) == [("a.dlg", "a:entry:1"), ("b.dlg", "b:entry:2")]
+
+
+def test_errors_are_listed_in_job_order_whatever_fails_first(single_files, monkeypatch):
+    b_failed = threading.Event()
+    boom_a, boom_b = RuntimeError("a exploded"), RuntimeError("b exploded")
+
+    def speakers(_world, stem, *_args, **_kwargs):
+        if stem == "a":
+            b_failed.wait(5)
+            raise boom_a
+        b_failed.set()
+        raise boom_b
+
+    monkeypatch.setattr(context_translator, "speaker_lines", speakers)
+    manager, provider = _manager({}, max_concurrent_requests=2)
+
+    translations, errors = manager.translate_dialogs(THREE_FILES[:2])
+
+    assert (translations, provider.calls) == ({}, [])
+    assert [(path.name, exc) for path, exc in errors] == [("a.dlg", boom_a), ("b.dlg", boom_b)]
+
+
 def test_files_without_lines_report_their_budget(single_files):
     manager, provider = _manager({})
     progress = _CountingProgress()
@@ -648,6 +760,60 @@ def test_group_rate_limit_fails_the_files_without_a_fallback():
     assert manager.failed_items == {("a.dlg", "a:entry:1"), ("b.dlg", "b:entry:2")}
     assert len(provider.calls) == 1
     assert progress.total == 5
+
+
+def test_failed_group_request_falls_back_to_single_files(caplog):
+    caplog.set_level(logging.WARNING)
+    manager, provider = _manager(
+        [RuntimeError("group exploded"), '{"E1": "Привет"}', '{"E2": "Прощай"}']
+    )
+    progress = _CountingProgress()
+
+    translations, errors = manager.translate_dialogs(TWO_FILES, item_progress=progress)
+
+    assert (translations, errors) == (_expected(TWO_FILES, TWO_ANSWERS), [])
+    assert "request failed (group exploded); falling back to single files" in caplog.text
+    assert [("=== FILE:" in prompt) for prompt in _prompts(provider)] == [True, False, False]
+    assert progress.total == 2
+
+
+def test_a_raising_group_fallback_is_reported_per_file(monkeypatch):
+    boom = RuntimeError("speakers exploded")
+
+    def broken_speakers(*_args, **_kwargs):
+        raise boom
+
+    monkeypatch.setattr(context_translator, "speaker_lines", broken_speakers)
+    manager, provider = _manager([])
+
+    translations, errors = manager.translate_dialogs(TWO_FILES)
+
+    assert translations == {}
+    assert [(path.name, exc) for path, exc in errors] == [("a.dlg", boom), ("b.dlg", boom)]
+    assert provider.calls == []
+
+
+def test_an_exception_escaping_a_single_file_job_fails_that_file(single_files, monkeypatch):
+    boom = RuntimeError("speakers exploded")
+    real_speakers = context_translator.speaker_lines
+
+    def speakers(world, stem, *args, **kwargs):
+        if stem == "bad":
+            raise boom
+        return real_speakers(world, stem, *args, **kwargs)
+
+    monkeypatch.setattr(context_translator, "speaker_lines", speakers)
+    manager, _provider = _manager(THREE_ANSWERS)
+    files = [
+        _file("a.dlg", 1, "Hello"),
+        _file("bad.dlg", 2, "Goodbye"),
+        _file("c.dlg", 3, "Thanks"),
+    ]
+
+    translations, errors = manager.translate_dialogs(files)
+
+    assert translations == _expected([files[0], files[2]], {"Hello": "Привет", "Thanks": "Спасибо"})
+    assert [(path.name, exc) for path, exc in errors] == [("bad.dlg", boom)]
 
 
 def test_large_file_stays_single_while_small_files_group():

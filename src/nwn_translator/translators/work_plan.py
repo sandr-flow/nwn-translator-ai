@@ -26,31 +26,13 @@ Terminology = Callable[[Iterable[Optional[str]]], Optional[str]]
 #: Item types that are names or labels; a batch of only these uses the compact
 #: ``short_label`` prompt.
 SHORT_LABEL_TYPES = frozenset(
-    {
-        "creature_first_name",
-        "creature_last_name",
-        "item_name",
-        "area_name",
-        "trigger_name",
-        "placeable_name",
-        "door_name",
-        "store_name",
-        "waypoint_name",
-        "waypoint_map_note",
-        "journal_category_name",
-    }
+    "creature_first_name creature_last_name item_name area_name trigger_name placeable_name "
+    "door_name store_name waypoint_name waypoint_map_note journal_category_name".split()
 )
 
 
 def is_ncs_item(item: TranslatableItem) -> bool:
-    """Tells whether *item* is a string literal of a compiled script.
-
-    Args:
-        item: Extracted occurrence.
-
-    Returns:
-        ``True`` for the ``ncs_string`` items of the script extractor.
-    """
+    """Tells whether *item* is a string literal of a compiled script (``ncs_string``)."""
     return item.metadata.get("type") == "ncs_string"
 
 
@@ -110,11 +92,7 @@ class WorkItem:
         return content_profile([self])
 
     def translation_item(self) -> TranslationItem:
-        """Returns the batch entry for this item.
-
-        Returns:
-            The sanitized text with the item's context and metadata.
-        """
+        """Returns the batch entry: the sanitized text with the item's context and metadata."""
         return TranslationItem(self.sanitized, self.item.context, self.item.metadata)
 
 
@@ -179,29 +157,13 @@ def dedup_key(work: WorkItem, terminology: Terminology) -> Tuple[Hashable, ...]:
 
 
 def is_batchable(work: WorkItem, limits: BatchLimits) -> bool:
-    """Tells whether *work* is short enough to share a batch request.
-
-    Args:
-        work: Prepared item.
-        limits: Batch budgets.
-
-    Returns:
-        ``True`` when the sanitized text is within the item limit of its kind.
-    """
+    """Tells whether the sanitized text of *work* is within the batch item limit of its kind."""
     limit = limits.ncs_item_chars if work.is_ncs else limits.text_chars
     return len(work.sanitized) <= limit
 
 
 def batch_terminology(batch: Sequence[WorkItem], terminology: Terminology) -> Optional[str]:
-    """Returns the glossary block of a batch: terms of every text and context in it.
-
-    Args:
-        batch: Items of one request.
-        terminology: Glossary lookup of the run.
-
-    Returns:
-        The glossary block, or ``None`` when no term matches.
-    """
+    """Returns the glossary block of a batch: terms of every text and context in it."""
     return terminology(text for w in batch for text in (w.sanitized, w.item.context))
 
 

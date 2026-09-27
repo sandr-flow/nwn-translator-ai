@@ -26,36 +26,17 @@ _BAD_ANSWER_CHARS = 1200
 
 _NO_TEXT_AROUND_JSON = "No markdown, no comments, no text before or after the object."
 
-#: The single per-line retry calls itself the second of two attempts. The text
-#: is part of the request, so it is kept as is.
-_LINE_RETRY_ATTEMPT = "Retry attempt 2 of 2."
-
 
 def _keys_exactly(keys: Sequence[str]) -> str:
-    """Returns the sentence asking for exactly *keys* as string values.
-
-    Args:
-        keys: Keys the answer must have; they are listed sorted.
-
-    Returns:
-        The sentence.
-    """
-    keys_csv = ", ".join(sorted(keys))
+    """Returns the sentence asking for exactly *keys* (listed sorted) as string values."""
     return (
-        f"Return ONLY one JSON object: keys exactly {keys_csv} "
+        f"Return ONLY one JSON object: keys exactly {', '.join(sorted(keys))} "
         f"(same IDs as in the script), each value a string translation."
     )
 
 
 def _bad_answer(bad_response: str) -> str:
-    """Returns the quoted start of an unparseable answer.
-
-    Args:
-        bad_response: The answer.
-
-    Returns:
-        A header line and the answer's first ``_BAD_ANSWER_CHARS`` characters.
-    """
+    """Returns a header and the first ``_BAD_ANSWER_CHARS`` characters of an unparseable answer."""
     return "Invalid previous output (truncated for context):\n" + (
         (bad_response or "").strip()[:_BAD_ANSWER_CHARS]
     )
@@ -80,11 +61,11 @@ def speakers_block(lines: Sequence[str]) -> str:
 
 
 def dialog_user_prompt(filename: str, script: str) -> str:
-    """Builds the user message asking for the translation of one dialog script.
+    """Builds the user message asking to translate one dialog script (or chunk).
 
     Args:
         filename: Dialog file name.
-        script: Formatted script (or one chunk of it).
+        script: Formatted script.
 
     Returns:
         The user message.
@@ -98,11 +79,11 @@ def dialog_user_prompt(filename: str, script: str) -> str:
 
 
 def repair_prompt(filename: str, script: str, keys: Sequence[str], bad_response: str) -> str:
-    """Builds the repair message asking for valid JSON after an unparseable dialog answer.
+    """Builds the message asking for valid JSON after an unparseable dialog answer.
 
     Args:
         filename: Dialog file name.
-        script: The script of the failed request.
+        script: Script of the failed request.
         keys: Keys the request asked for.
         bad_response: The unparseable answer; its start is quoted back.
 
@@ -125,17 +106,17 @@ def token_retry_prompt(
     expected: Mapping[str, Sequence[str]],
     reports: Mapping[str, Optional["TokenMismatchReport"]],
 ) -> str:
-    """Builds the retry message for lines that were missing or whose tokens or tags broke.
+    """Builds the retry message for lines that were missing or broke their tokens or tags.
 
     Args:
         filename: Dialog file name.
         script: Script of the lines to retry.
-        keys: Keys of those lines.
-        expected: Artifacts each line must keep, by key.
-        reports: How each line's previous answer broke its artifacts, if known.
+        keys: Keys of those lines; they are described in sorted order.
+        expected: Artifacts each line must keep.
+        reports: How each line's previous answer broke them, where known.
 
     Returns:
-        The user message; lines are described in sorted key order.
+        The user message.
     """
     keys_csv = ", ".join(sorted(keys))
     lines = [
@@ -166,7 +147,10 @@ def line_retry_context(
     expected: Sequence[str],
     report: Optional["TokenMismatchReport"],
 ) -> str:
-    """Returns the context of a single-line retry of one dialog node.
+    """Returns the context of the single-line retry of one dialog node.
+
+    The retry calls itself the second of two attempts; the text is part of the
+    request, so it stays as is.
 
     Args:
         key: Script key of the node.
@@ -176,7 +160,7 @@ def line_retry_context(
         report: How the previous answer broke them, if known.
 
     Returns:
-        The context passed to the single-line translation.
+        The context of the single-line translation.
     """
     return "\n".join(
         [
@@ -186,25 +170,18 @@ def line_retry_context(
             PRESERVE_INLINE_MARKUP,
             *expected_artifacts_line(expected),
             *previous_mismatch_lines(report),
-            _LINE_RETRY_ATTEMPT,
+            "Retry attempt 2 of 2.",
         ]
     )
 
 
 def group_script(scripts: Sequence[Tuple[str, str]]) -> str:
-    """Joins dialog scripts under ``=== FILE: <name> ===`` headers.
-
-    Args:
-        scripts: ``(file name, script)`` pairs in request order.
-
-    Returns:
-        The combined script.
-    """
+    """Joins ``(file name, script)`` pairs under ``=== FILE: <name> ===`` headers, in order."""
     return "\n\n".join(f"=== FILE: {name} ===\n{script}" for name, script in scripts)
 
 
 def group_user_prompt(names: List[str], combined_script: str) -> str:
-    """Builds the user message asking for the translation of several small dialogs in one request.
+    """Builds the user message asking to translate several small dialogs in one request.
 
     Args:
         names: File names in request order.
@@ -229,7 +206,7 @@ def group_user_prompt(names: List[str], combined_script: str) -> str:
 
 
 def group_repair_prompt(names: List[str], combined_script: str, bad_response: str) -> str:
-    """Builds the repair message asking for valid nested JSON after an unparseable group answer.
+    """Builds the message asking for valid nested JSON after an unparseable group answer.
 
     Args:
         names: File names in request order.

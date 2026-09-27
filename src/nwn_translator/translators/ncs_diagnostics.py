@@ -5,23 +5,16 @@ outcome in :data:`NCS_COUNTERS` and the first :data:`SAMPLE_LIMIT` samples. Ever
 sample is also written to the translation log as an ``ncs_diagnostic`` event.
 """
 
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 from ..extractors.base import TranslatableItem
 from ..translation_logging import TranslationLogWriter, write_trace
 
 #: Outcome counters of a diagnostics block, in report order.
-NCS_COUNTERS: Tuple[str, ...] = (
-    "total",
-    "extracted",
-    "approved",
-    "skipped_hard_veto",
-    "skipped_fail_closed",
-    "translated",
-    "timeout",
-    "retry_recovered",
-    "failed",
-    "patch_failed",
+NCS_COUNTERS: Tuple[str, ...] = tuple(
+    "total extracted approved skipped_hard_veto skipped_fail_closed translated timeout "
+    "retry_recovered failed patch_failed".split()
 )
 
 #: Samples kept per diagnostics block; later ones are only logged.
@@ -32,18 +25,12 @@ _TEXT_PREFIX_CHARS = 120
 
 
 def new_ncs_diagnostics() -> Dict[str, Any]:
-    """Returns an empty diagnostics block.
-
-    Returns:
-        Every counter of :data:`NCS_COUNTERS` at zero and an empty ``samples`` list.
-    """
+    """Returns an empty diagnostics block: every counter at zero, no ``samples``."""
     return {**{name: 0 for name in NCS_COUNTERS}, "samples": []}
 
 
 def add_sample(
-    diagnostics: Dict[str, Any],
-    sample: Dict[str, Any],
-    count_field: Optional[str] = None,
+    diagnostics: Dict[str, Any], sample: Dict[str, Any], count_field: Optional[str] = None
 ) -> None:
     """Counts an outcome and keeps its sample while the block has room.
 
@@ -58,30 +45,20 @@ def add_sample(
         diagnostics["samples"].append(sample)
 
 
+@dataclass
 class NcsDiagnostics:
-    """Recorder of the outcomes of script strings in one diagnostics block.
+    """Recorder of the outcomes of script strings.
 
     Attributes:
-        block: The diagnostics block being filled.
+        block: Block from :func:`new_ncs_diagnostics` being filled.
+        log_writer: Translation log that receives every sample.
     """
 
-    def __init__(self, block: Dict[str, Any], log_writer: TranslationLogWriter):
-        """Creates a recorder that fills *block* and logs every sample to *log_writer*.
-
-        Args:
-            block: Block from :func:`new_ncs_diagnostics`.
-            log_writer: Translation log of the run.
-        """
-        self.block = block
-        self._log_writer = log_writer
+    block: Dict[str, Any]
+    log_writer: TranslationLogWriter
 
     def count(self, field: str, by: int = 1) -> None:
-        """Adds *by* to one counter without a sample.
-
-        Args:
-            field: Counter name from :data:`NCS_COUNTERS`.
-            by: Amount to add.
-        """
+        """Adds *by* to the counter *field* without a sample."""
         self.block[field] += by
 
     def record(
@@ -112,20 +89,16 @@ class NcsDiagnostics:
         if error:
             sample["error"] = error
         add_sample(self.block, sample, count_field)
-        write_trace(self._log_writer, {"event": "ncs_diagnostic", **sample})
+        write_trace(self.log_writer, {"event": "ncs_diagnostic", **sample})
 
     def timeout(self, item: TranslatableItem) -> None:
-        """Records that the request of a script string timed out and will be retried.
-
-        Args:
-            item: The script string.
-        """
+        """Records that the request of a script string timed out and will be retried."""
         self.record(item, reason="translation_timeout", count_field="timeout")
 
     def retry_outcome(
         self, item: TranslatableItem, success: bool, error: Optional[str] = None
     ) -> None:
-        """Records whether the retry after a :meth:`timeout` recovered a script string.
+        """Records whether the retry after a :meth:`timeout` produced an answer.
 
         Args:
             item: The script string.

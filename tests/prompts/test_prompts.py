@@ -22,7 +22,9 @@ from nwn_translator.prompts._builder import (
     build_batch_user_prompt,
     build_single_user_prompt,
 )
+from nwn_translator.prompts.dialog import token_retry_prompt
 from nwn_translator.prompts.examples import LANGUAGES, get_examples
+from nwn_translator.translators.token_handler import TokenMismatchReport
 
 #: A phrase that appears only in the examples of its language.
 MARKERS = {
@@ -205,6 +207,41 @@ def test_user_prompts():
     assert build_batch_user_prompt("french", '{"0":"a"}') == (
         "Translate the items from french. Return only a flat object of numeric item IDs "
         'and translated strings. Shared groups are context only.\n\n{"0":"a"}'
+    )
+
+
+def test_dialog_token_retry_prompt_lists_keys_sorted_with_their_artifacts():
+    broken = TokenMismatchReport(False, "count_mismatch", ["<FirstName>"], ["<LastName>"])
+    exact = TokenMismatchReport(True, "exact_match", ["-"], ["-"])
+
+    prompt = token_retry_prompt(
+        "a.dlg",
+        "SCRIPT",
+        ["R2", "E10", "E2"],
+        {"E10": ["<FirstName>"], "E2": [], "R2": ["-", "-"]},
+        {"E10": broken, "R2": exact},
+    )
+
+    assert prompt == "\n".join(
+        [
+            "The previous answer for a.dlg changed, dropped, or omitted preserved NWN "
+            "tags/tokens for keys: E10, E2, R2.",
+            "Return ONLY one JSON object: keys exactly E10, E2, R2 "
+            "(same IDs as in the script), each value a string translation.",
+            "Preserve every placeholder and helper token surrogate EXACTLY as it appears "
+            "in the script.",
+            "Do not rename, reorder, delete, duplicate, or replace any placeholder.",
+            "Translate only the normal prose and the text inside square brackets.",
+            "",
+            "Expected preserved artifacts after restoration:",
+            "- E10: <FirstName>",
+            "  previous restored sequence: <LastName>",
+            "- R2: - | -",
+            "",
+            "Dialog script:",
+            "",
+            "SCRIPT",
+        ]
     )
 
 

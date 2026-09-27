@@ -14,17 +14,7 @@ last answer is finally cleaned up.
 
 import logging
 from dataclasses import replace
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Hashable,
-    Iterable,
-    List,
-    Optional,
-    Protocol,
-    Set,
-)
+from typing import Any, Callable, Dict, Hashable, Iterable, List, Optional, Set
 
 from ..ai_providers import TranslationProvider, TranslationResult
 from ..config import TranslationConfig
@@ -37,6 +27,7 @@ from ..translation_logging import (
 )
 from .model_calls import CallLimits, ModelCaller
 from .ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
+from .progress import ItemProgress
 from .script_gate import ScriptGate, add_script_context
 from .token_handler import sanitize_text
 from .work_plan import BatchLimits, WorkItem, dedup_key, plan_work
@@ -44,28 +35,15 @@ from .work_plan import BatchLimits, WorkItem, dedup_key, plan_work
 logger = logging.getLogger(__name__)
 
 
-class ItemProgress(Protocol):
-    """Per-item progress counter of a run."""
-
-    def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
-        """Counts *by* finished items of *filename*.
-
-        Args:
-            by: Items finished.
-            filename: Resource the items belong to.
-        """
-
-
 def unescape_literal_newlines(original: str, translated: str) -> str:
-    """Turns ``\\n`` sequences of a model answer into newlines when the source has them.
+    """Turns ``\\r\\n``, ``\\n`` and ``\\r`` sequences of an answer into newlines.
 
     Args:
-        original: Source text.
+        original: Source text; nothing changes unless it has a line break.
         translated: Model answer.
 
     Returns:
-        *translated*, with literal ``\\r\\n``, ``\\n`` and ``\\r`` replaced by
-        newlines only when *original* contains a line break.
+        The answer with its literal line-break escapes replaced.
     """
     if "\n" not in original and "\r" not in original:
         return translated
@@ -103,19 +81,16 @@ class TranslationManager:
             config: Run settings.
             provider: Model provider.
             glossary: Proper-name glossary offered to the model, if any.
-            log_writer: Log writer of the run; by default the one *config*
-                names.
+            log_writer: Log writer of the run; by default the one *config* names.
         """
         self.config = config
         self.provider = provider
         self.glossary = glossary
         self.batch_limits = BatchLimits()
         self.call_limits = CallLimits()
-        if log_writer is None:
-            log_writer = translation_log_writer_for_config(
-                config.translation_log, config.translation_log_writer
-            )
-        self._log_writer = log_writer
+        self._log_writer = log_writer or translation_log_writer_for_config(
+            config.translation_log, config.translation_log_writer
+        )
         self.stats: Dict[str, Any] = {
             "items_translated": 0,
             "errors": [],
@@ -125,9 +100,7 @@ class TranslationManager:
         self._diagnostics = NcsDiagnostics(self.stats["ncs_diagnostics"], self._log_writer)
 
     def translate_content(
-        self,
-        content: ExtractedContent,
-        item_progress: Optional[ItemProgress] = None,
+        self, content: ExtractedContent, item_progress: Optional[ItemProgress] = None
     ) -> Translations:
         """Translates every non-blank occurrence of *content*.
 
@@ -153,31 +126,28 @@ class TranslationManager:
         if not work:
             return {}
 
-        def bump(filename: str) -> None:
-            """Counts one finished occurrence of *filename*."""
+        def bump(w: WorkItem) -> None:
+            """Counts one finished occurrence."""
             if item_progress is not None:
-                item_progress.bump(filename=filename)
+                item_progress.bump(filename=w.key[0])
 
         ncs_count = sum(1 for w in work if w.is_ncs)
-        if ncs_count:
-            self._diagnostics.count("total", ncs_count)
-            self._diagnostics.count("extracted", ncs_count)
+        self._diagnostics.count("total", ncs_count)
+        self._diagnostics.count("extracted", ncs_count)
         gate = ScriptGate(self.config, self.provider, self._log_writer, self._diagnostics)
         approvals = gate.decide([w.item for w in work])
-        approved = [w for w in work if not w.is_ncs or approvals.get(w.key, False)]
+        approved = [w for w in work if not w.is_ncs or approvals[w.key]]
         add_script_context([w.item for w in approved if w.is_ncs])
         for w in work:
-            if w.is_ncs and not approvals.get(w.key, False):
-                bump(w.key[0])
+            if w.is_ncs and not approvals[w.key]:
+                bump(w)
 
         groups: Dict[Hashable, List[WorkItem]] = {}
         for w in approved:
             groups.setdefault(dedup_key(w, self._terminology), []).append(w)
         if not groups:
             return {}
-        translations = self._translate_distinct(
-            [group[0] for group in groups.values()], lambda w: bump(w.key[0])
-        )
+        translations = self._translate_distinct([group[0] for group in groups.values()], bump)
         for group in groups.values():
             representative = group[0].key
             for duplicate in group[1:]:
@@ -193,15 +163,11 @@ class TranslationManager:
                     )
                 elif representative in self.failed_items:
                     self.failed_items.add(duplicate.key)
-                bump(duplicate.key[0])
+                bump(duplicate)
         return translations
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Returns the statistics of the run.
-
-        Returns:
-            A copy of :attr:`stats` plus ``total_errors``.
-        """
+        """Returns a copy of :attr:`stats` plus ``total_errors``."""
         return {**self.stats, "total_errors": len(self.stats["errors"])}
 
     def _prepare(self, item: TranslatableItem) -> WorkItem:
@@ -211,17 +177,10 @@ class TranslationManager:
         return WorkItem(item=prepared, sanitized=sanitized, handler=handler)
 
     def _terminology(self, texts: Iterable[Optional[str]]) -> Optional[str]:
-        """Returns the glossary block for *texts*, or ``None`` when no term matches.
+        """Returns the glossary block for the present *texts*, or ``None`` without a match.
 
-        The provider treats ``None`` and an empty string alike (it falls back to the race
-        terms of the text); ``None`` is used because the request arguments are written to
-        the translation log. Missing texts (an item without context) match nothing.
-
-        Args:
-            texts: Texts of one request; ``None`` entries are skipped.
-
-        Returns:
-            The glossary block, or ``None``.
+        ``None`` rather than ``""``: the provider treats both alike, and the
+        request arguments are written to the translation log.
         """
         present = (text for text in texts if text)
         return terminology_block(present, self.config.target_lang, self.glossary) or None
@@ -309,16 +268,8 @@ class TranslationManager:
     ) -> List[TranslationResult]:
         """Sends failed script strings with their fallback request, one per request.
 
-        Script strings whose batch timed out are recorded as timeouts before the
-        pass and as recovered or failed after it.
-
-        Args:
-            caller: Request sender of the run.
-            failed: Script strings whose batch requests failed.
-            timed_out: Those whose batch request timed out.
-
-        Returns:
-            One fallback result per string, in order.
+        Strings whose batch timed out (*timed_out*) are recorded as timeouts
+        before the pass and as recovered or failed after it.
         """
         for w in failed:
             if w.key in timed_out:
@@ -336,17 +287,7 @@ class TranslationManager:
         work: WorkItem,
         result: TranslationResult,
     ) -> None:
-        """Accepts a model result into *translations*, retrying a broken answer.
-
-        A request that fails or whose answers are all rejected is recorded as
-        rejected instead.
-
-        Args:
-            caller: Request sender of the run.
-            translations: Accepted translations of the run.
-            work: Item the result belongs to.
-            result: Model result.
-        """
+        """Accepts a result into *translations*, retrying a broken answer; else records it."""
         if not result.success:
             self._record_rejected(work, result.error)
             return
@@ -369,8 +310,8 @@ class TranslationManager:
     ) -> Optional[str]:
         """Restores and validates one answer; counts and logs it when accepted.
 
-        A rejected answer's validation report is kept in ``work.mismatch`` for the
-        retry prompt.
+        A rejected answer's validation report is kept in ``work.mismatch`` for
+        the retry prompt.
 
         Args:
             work: Item the answer belongs to.
@@ -426,8 +367,8 @@ class TranslationManager:
     ) -> Optional[str]:
         """Retries a rejected answer with stricter prompts, then accepts a cleaned one.
 
-        Retries stop early when the model repeats the same broken artifact
-        sequence. Requests are sent one at a time, in result order.
+        Retries go one at a time and stop early when the model repeats the same
+        broken artifact sequence.
 
         Args:
             caller: Request sender of the run.

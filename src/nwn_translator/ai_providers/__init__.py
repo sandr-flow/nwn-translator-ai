@@ -48,6 +48,9 @@ def create_provider(api_key: str, model: Optional[str] = None, **kwargs: Any) ->
         api_key: OpenRouter (``sk-or-...``) or POLZA.AI (``pza...``) API key.
         model: Model slug; the provider's default when ``None``.
         **kwargs: Keyword arguments of :class:`OpenRouterProvider`.
+
+    Returns:
+        An :class:`OpenRouterProvider` or :class:`PolzaProvider`.
     """
     return _provider_class_for_key(api_key)(api_key, model, **kwargs)
 
@@ -60,6 +63,9 @@ def create_provider_for_config(
     Args:
         config: Run settings (API key, model, player gender, reasoning effort).
         metrics_recorder: Receives one metric per request attempt, if set.
+
+    Returns:
+        The provider :func:`create_provider` picks for ``config.api_key``.
     """
     return create_provider(
         config.api_key,

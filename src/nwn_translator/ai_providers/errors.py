@@ -50,9 +50,13 @@ def _retry_after_candidates(exc: BaseException) -> Iterator[Any]:
 def retry_after_seconds(exc: BaseException) -> Optional[float]:
     """Returns the gateway's ``Retry-After`` hint carried by *exc*, if any.
 
+    Args:
+        exc: Exception raised by a request.
+
     Returns:
         The first positive value among ``RateLimitError.retry_after_seconds``, the
-        ``retry-after`` response header and a "Retry-After: N" phrase in the message.
+        ``retry-after`` response header and a "Retry-After: N" phrase in the message;
+        ``None`` when there is none.
     """
     for raw in _retry_after_candidates(exc):
         try:
@@ -95,9 +99,16 @@ TRANSIENT_RETRY = retry(
 def is_rate_or_budget_error(exc: BaseException) -> bool:
     """Tells whether *exc* reports a rate limit or exhausted in-flight budget.
 
-    HTTP 429/402 are; the message (``rate_limit``, ``429``, ``402``, ``in_flight_budget``
-    in any case) is searched only when the error carries no HTTP status, since a 400 whose
-    text merely contains "429" or "402" (a token count) is not a rate limit.
+    HTTP 429 and 402 count as rate/budget errors. The message is searched only when the
+    error carries no HTTP status: a 400 whose text merely contains "429" or "402" (a token
+    count) is not a rate limit.
+
+    Args:
+        exc: Exception raised by a request.
+
+    Returns:
+        ``True`` for HTTP 429/402, or for a status-less error whose message contains
+        ``rate_limit``, ``429``, ``402`` or ``in_flight_budget`` in any letter case.
     """
     status = getattr(exc, "status_code", None)
     if status is not None:
@@ -129,6 +140,12 @@ def is_reasoning_rejection(error: BadRequestError) -> bool:
 
     Models that make reasoning mandatory ("cannot be disabled") and errors about a
     particular effort value are not rejections of the field itself.
+
+    Args:
+        error: The HTTP 400 raised for a request that carried reasoning parameters.
+
+    Returns:
+        ``True`` when resending the request without reasoning parameters is correct.
     """
     msg = str(error).lower()
     if "cannot be disabled" in msg or "reasoning is mandatory" in msg:

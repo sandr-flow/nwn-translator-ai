@@ -141,7 +141,14 @@ def build_batch_payload(items: List[TranslationItem]) -> Dict[str, Any]:
 
 
 def serialize_batch_payload(items: List[TranslationItem]) -> str:
-    """Serializes :func:`build_batch_payload` as compact JSON, exactly as the request sends it."""
+    """Serializes :func:`build_batch_payload` exactly as the request sends it.
+
+    Args:
+        items: Batch items in output order.
+
+    Returns:
+        Compact JSON with non-ASCII characters kept.
+    """
     return json.dumps(build_batch_payload(items), ensure_ascii=False, separators=(",", ":"))
 
 

@@ -4,10 +4,11 @@ import struct
 
 import pytest
 
-from nwn_translator.extractors.ncs_context import TYPE_STRING_STRING, trace_string_consumer
+from nwn_translator.extractors.ncs_context import trace_string_consumer
 from nwn_translator.formats.ncs import (
     OP_EQUAL,
     OP_NEQUAL,
+    TYPE_STRING_STRING,
     parse_ncs_bytes,
     patch_ncs_string_replacements,
 )

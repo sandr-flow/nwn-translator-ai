@@ -4,8 +4,7 @@ A ``.git`` holds the instances placed in an area (creatures, placeables, doors,
 …). Their names may differ from the blueprints (``.utc``, ``.utp``, …), so each
 instance list declares its visible CExoLocString fields in
 :data:`INSTANCE_FIELDS`, with the metadata type and prompt context of each.
-Inventory rows and items dropped on the area floor share
-:data:`ITEM_INVENTORY_FIELDS`.
+Inventory rows and items dropped on the area floor share :func:`item_fields`.
 
 Instance names are filtered harder than blueprint text: toolset route labels
 and resrefs often sit in them. The blueprint-name oracle
@@ -19,13 +18,13 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Union
 
 from ..context.string_filters import should_skip_entity_source_text
 from ..formats.gff import read_gff
 from ..nwn_constants import base_item_label, gender_label
 from .base import extract_local_string, list_field
-from .creature_extractor import creature_name_context, creature_traits
+from .creature_extractor import creature_name_context, creature_traits, name_fields
 from .item_extractor import item_description_context
 
 logger = logging.getLogger(__name__)
@@ -54,15 +53,7 @@ class GitField:
     context: Union[str, GitContext]
 
     def context_for(self, instance: Dict[str, Any], npc_index: NpcIndex) -> str:
-        """Returns the prompt context of this field on *instance*.
-
-        Args:
-            instance: Instance struct holding the field.
-            npc_index: NPC index of the area (see :func:`build_npc_index`).
-
-        Returns:
-            The fixed context, or the one computed from *instance*.
-        """
+        """Returns the prompt context of this field on *instance* (see :func:`build_npc_index`)."""
         if isinstance(self.context, str):
             return self.context
         return self.context(instance, npc_index)
@@ -118,12 +109,7 @@ def _creature_name_context(field_name: str, instance: Dict[str, Any], _npcs: Npc
 
 def _creature_description_context(instance: Dict[str, Any], _npcs: NpcIndex) -> str:
     """Returns the context of a placed creature's description."""
-    full_name = " ".join(
-        filter(
-            None,
-            (extract_local_string(instance.get(field, {})) for field in ("FirstName", "LastName")),
-        )
-    )
+    full_name = " ".join(filter(None, name_fields(instance).values()))
     detail = ", ".join(
         filter(None, [f"name: {full_name}" if full_name else "", creature_traits(instance)])
     )
@@ -219,15 +205,13 @@ INSTANCE_NESTED_ITEM_LISTS: Dict[str, List[str]] = {
     "Placeable List": ["ItemList"],
 }
 
-#: Item row field label -> metadata ``type``; also the field order.
+#: CExoLocString field of an inventory row or area floor item -> metadata ``type``,
+#: in extraction order.
 _ITEM_TYPES = {
     "LocalizedName": "item_name",
     "Description": "item_description",
     "DescIdentified": "item_identified_description",
 }
-
-#: CExoLocString fields of an inventory row or an item on the area floor.
-ITEM_INVENTORY_FIELDS: Tuple[str, ...] = tuple(_ITEM_TYPES)
 
 #: Top-level list of items dropped on the area floor in the toolset. Visited
 #: areas bake these into the save, so only unvisited areas pick up changes.
@@ -243,7 +227,7 @@ def item_fields(row: Dict[str, Any], where: str) -> List[Tuple[str, str, str]]:
             ``placed on the area floor``).
 
     Returns:
-        One entry per :data:`ITEM_INVENTORY_FIELDS` label, in that order.
+        One entry per item field, in extraction order.
     """
     base_item = base_item_label(row.get("BaseItem", -1))
     name = extract_local_string(row.get("LocalizedName", {})) or ""
@@ -281,12 +265,9 @@ def should_translate_git_string(
     Returns:
         ``True`` when the string should be extracted.
     """
-    if not isinstance(text, str):
+    if not isinstance(text, str) or not text.strip():
         return False
-    stripped = text.strip()
-    if not stripped:
-        return False
-    return not should_skip_entity_source_text(stripped, {"type": meta_type}, known_names)
+    return not should_skip_entity_source_text(text.strip(), {"type": meta_type}, known_names)
 
 
 def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
@@ -305,7 +286,7 @@ def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
     Returns:
         The casefolded, stripped names.
     """
-    names: Set[str] = set()
+    names = set()
     try:
         utc_files = sorted(root.glob("*.utc"))
     except OSError:
@@ -317,40 +298,26 @@ def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
             logger.debug("Skipping unreadable blueprint %s", utc_path, exc_info=True)
             continue
         for field_name in ("FirstName", "LastName"):
-            field_obj = data.get(field_name)
-            if isinstance(field_obj, dict):
-                value = field_obj.get("Value", "")
-                if isinstance(value, str) and value.strip():
-                    names.add(value.strip().casefold())
+            value = extract_local_string(data.get(field_name))
+            if isinstance(value, str) and value.strip():
+                names.add(value.strip().casefold())
     return frozenset(names)
 
 
 _creature_name_cache: "OrderedDict[Path, FrozenSet[str]]" = OrderedDict()
 _CREATURE_NAME_CACHE_MAX = 4
-# Guards the cache and the per-directory build locks below.
+# Held while an oracle is built, so concurrent extraction workers wait for a single .utc
+# scan instead of each running their own.
 _creature_name_cache_lock = threading.Lock()
-# One lock per directory whose oracle is being built, so concurrent extractor
-# workers wait for a single .utc scan instead of each running their own.
-_creature_name_build_locks: Dict[Path, threading.Lock] = {}
-
-
-def _cached_creature_names(key: Path) -> Optional[FrozenSet[str]]:
-    """Returns the cached oracle for *key* and marks it recently used."""
-    with _creature_name_cache_lock:
-        cached = _creature_name_cache.get(key)
-        if cached is not None:
-            _creature_name_cache.move_to_end(key)
-        return cached
 
 
 def get_module_creature_names(root: Path) -> FrozenSet[str]:
     """Returns the blueprint creature-name oracle of a module directory.
 
-    The oracle is cached for the process and built once per directory, even
-    when extraction workers ask for it concurrently. The cached entry is
-    deliberately reused by later lookups: rebuild re-extracts ``.git`` files
-    after the ``.utc`` files on disk were patched with translated names, and a
-    fresh oracle would no longer match the original ``.git`` text.
+    The oracle is built once per directory and cached for the process. The cached entry
+    is deliberately reused by later lookups: rebuild re-extracts ``.git`` files after the
+    ``.utc`` files on disk were patched with translated names, and a fresh oracle would no
+    longer match the original ``.git`` text.
 
     Args:
         root: Module extraction directory.
@@ -359,22 +326,16 @@ def get_module_creature_names(root: Path) -> FrozenSet[str]:
         The casefolded blueprint first and last names.
     """
     key = root.resolve()
-    cached = _cached_creature_names(key)
-    if cached is not None:
-        return cached
     with _creature_name_cache_lock:
-        build_lock = _creature_name_build_locks.setdefault(key, threading.Lock())
-    with build_lock:
-        cached = _cached_creature_names(key)
-        if cached is not None:
-            return cached
+        names = _creature_name_cache.get(key)
+        if names is not None:
+            _creature_name_cache.move_to_end(key)
+            return names
         names = collect_blueprint_creature_names(root)
         logger.debug("Blueprint name oracle for %s: %d names", root, len(names))
-        with _creature_name_cache_lock:
-            _creature_name_cache[key] = names
-            while len(_creature_name_cache) > _CREATURE_NAME_CACHE_MAX:
-                _creature_name_cache.popitem(last=False)
-            _creature_name_build_locks.pop(key, None)
+        _creature_name_cache[key] = names
+        while len(_creature_name_cache) > _CREATURE_NAME_CACHE_MAX:
+            _creature_name_cache.popitem(last=False)
     return names
 
 

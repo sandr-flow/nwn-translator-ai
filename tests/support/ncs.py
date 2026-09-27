@@ -4,7 +4,6 @@ import struct
 from pathlib import Path
 
 from nwn_translator.extractors.base import ExtractedContent
-from nwn_translator.extractors.ncs_concat import TYPE_ADD_STRING_STRING
 from nwn_translator.extractors.ncs_extractor import NcsExtractor
 from nwn_translator.formats.ncs import (
     NCS_HEADER,
@@ -19,6 +18,7 @@ from nwn_translator.formats.ncs import (
     OP_RETN,
     TYPE_INT,
     TYPE_STRING,
+    TYPE_STRING_STRING,
     parse_ncs_bytes,
 )
 
@@ -125,7 +125,7 @@ def add_ss() -> bytes:
     Returns:
         The instruction bytes.
     """
-    return struct.pack(">BB", OP_ADD, TYPE_ADD_STRING_STRING)
+    return struct.pack(">BB", OP_ADD, TYPE_STRING_STRING)
 
 
 def cptopsp(stack_offset: int = -4, size: int = 4) -> bytes:

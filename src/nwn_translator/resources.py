@@ -43,7 +43,7 @@ Loader = Callable[[Path, Optional[GffCache], Optional[str]], Optional[Dict[str, 
 
 @dataclass(frozen=True)
 class ResourceKind:
-    """How one resource kind is loaded, extracted and patched.
+    """How one resource kind is loaded, extracted and patched; GFF by default.
 
     Attributes:
         extractor: Selects the translatable strings of a loaded resource.
@@ -52,39 +52,18 @@ class ResourceKind:
     """
 
     extractor: BaseExtractor
-    load: Loader
-    inject: Injector
-
-
-def load_gff(
-    path: Path, gff_cache: Optional[GffCache], source_encoding: Optional[str]
-) -> Dict[str, Any]:
-    """Parses a GFF resource.
-
-    Args:
-        path: Resource file.
-        gff_cache: Parse cache shared by the run, if any.
-        source_encoding: Code page of the strings (``None`` to detect).
-
-    Returns:
-        The parsed root struct, with ``_record_offsets`` for patching.
-    """
-    return read_gff(path, cache=gff_cache, source_encoding=source_encoding)
+    load: Loader = read_gff
+    inject: Injector = inject_gff
 
 
 def load_ncs(
-    path: Path, gff_cache: Optional[GffCache], source_encoding: Optional[str]
+    path: Path, _gff_cache: Optional[GffCache], source_encoding: Optional[str]
 ) -> Optional[Dict[str, Any]]:
     """Parses a compiled script into the dict :class:`NcsExtractor` expects.
 
-    Args:
-        path: Script file.
-        gff_cache: Unused; scripts are not GFF.
-        source_encoding: Code page of the string literals (``None`` to detect).
-
     Returns:
-        ``{"_ncs_file": NCSFile, "_source_encoding": source_encoding}``, or
-        ``None`` when the script cannot be parsed.
+        ``{"_ncs_file": NCSFile, "_source_encoding": source_encoding}``, or ``None`` when
+        the script cannot be parsed.
     """
     try:
         ncs_file = parse_ncs(path, source_encoding=source_encoding)
@@ -94,25 +73,20 @@ def load_ncs(
     return {"_ncs_file": ncs_file, "_source_encoding": source_encoding}
 
 
-def _gff(extractor: BaseExtractor) -> ResourceKind:
-    """Returns the kind of a GFF resource handled by *extractor*."""
-    return ResourceKind(extractor, load_gff, inject_gff)
-
-
 #: Lowercase file extension -> resource kind.
 RESOURCE_KINDS: Dict[str, ResourceKind] = {
-    ".dlg": _gff(DialogExtractor()),
-    ".jrl": _gff(JournalExtractor()),
-    ".uti": _gff(ItemExtractor()),
-    ".utc": _gff(CreatureExtractor()),
-    ".are": _gff(AreaExtractor()),
-    ".utt": _gff(TriggerExtractor()),
-    ".utp": _gff(PlaceableExtractor()),
-    ".utd": _gff(DoorExtractor()),
-    ".ute": _gff(EncounterExtractor()),
-    ".utm": _gff(StoreExtractor()),
-    ".git": _gff(GitExtractor()),
-    ".ifo": _gff(ModuleExtractor()),
+    ".dlg": ResourceKind(DialogExtractor()),
+    ".jrl": ResourceKind(JournalExtractor()),
+    ".uti": ResourceKind(ItemExtractor()),
+    ".utc": ResourceKind(CreatureExtractor()),
+    ".are": ResourceKind(AreaExtractor()),
+    ".utt": ResourceKind(TriggerExtractor()),
+    ".utp": ResourceKind(PlaceableExtractor()),
+    ".utd": ResourceKind(DoorExtractor()),
+    ".ute": ResourceKind(EncounterExtractor()),
+    ".utm": ResourceKind(StoreExtractor()),
+    ".git": ResourceKind(GitExtractor()),
+    ".ifo": ResourceKind(ModuleExtractor()),
     ".ncs": ResourceKind(NcsExtractor(), load_ncs, inject_ncs),
 }
 

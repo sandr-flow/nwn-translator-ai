@@ -145,12 +145,18 @@ def test_short_untyped_strings_share_one_batch_request():
         _item("Just passing.", "dlg:reply:0", context="Player reply"),
         _item("Hello <FirstName>!", "t:2"),  # tokens alone do not make a passthrough
     ]
-    answers = {"Hello!": "Привет!", "Who are you?": "Кто ты?", "Just passing.": "Просто мимо."}
+    token_line, _ = sanitize_text("Hello <FirstName>!")
+    answers = {
+        "Hello!": "Привет!",
+        "Who are you?": "Кто ты?",
+        "Just passing.": "Просто мимо.",
+        token_line: token_line.replace("Hello", "Привет"),
+    }
     provider = translation_provider(answers)
 
     result, _manager = _run(provider, *items, source="test.dlg")
 
-    assert {k: v for k, v in result.items() if k[1] != "t:2"} == _answers(items, answers)
+    assert result == {**_answers(items, answers), items[3].key: "Привет <FirstName>!"}
     assert provider.translate_batch_async.call_count == 1
     provider.translate_async.assert_not_called()
     assert _run(provider)[0] == {}

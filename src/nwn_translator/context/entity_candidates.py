@@ -219,9 +219,15 @@ class EntityCandidateRegistry:
                 curation_decision="drop" if result.decision == "drop" else "keep",
                 curation_reason=result.reason,
             )
-        category = category or "unknown"
         candidate.add_evidence(
-            EntityEvidence(source, resource, field, category, context, is_speaker_or_dialog_actor)
+            EntityEvidence(
+                source=source,
+                resource=resource,
+                field=field,
+                category=category or "unknown",
+                context=context,
+                is_speaker_or_dialog_actor=is_speaker_or_dialog_actor,
+            )
         )
 
     def extend(self, candidates: Iterable[EntityCandidate]) -> None:

@@ -653,9 +653,9 @@ class ContextualTranslationManager:
                         self._log_writer,
                         self.provider,
                         self.config,
-                        dialog.address(key),
-                        dialog.sanitized[key],
-                        request,
+                        occurrence=dialog.address(key),
+                        text=dialog.sanitized[key],
+                        request=request,
                     )
                 )
             except Exception as exc:

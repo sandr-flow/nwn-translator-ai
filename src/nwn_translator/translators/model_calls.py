@@ -1,14 +1,19 @@
-"""Model requests of the batch translator under one timeout and retry policy.
+"""Model requests of the translators, and the batch translator's timeout and retry policy.
 
 Every request goes through :func:`logged_model_call` with the bound provider
-method, so the translation log names the task and records its arguments. A
-single request that times out is retried once in the same semaphore slot: a
-script string with the fallback request (explicit script context), anything else
-with the same request. A batch whose results fail is halved recursively until
-single failed leaves remain; those are left to the caller's fallback pass.
-A failed request never raises: it comes back as an unsuccessful result. Only a
-cancelled run (:class:`~nwn_translator.config.TranslationCancelled`) and a pass
-that exceeds its overall budget (:class:`TimeoutError`) raise.
+method, so the translation log names the task and records its arguments.
+:func:`send_single` starts one ``translate_async`` request that raises what the
+provider raises; the dialog translator shares it for its single-line retries.
+
+:class:`ModelCaller` sends the requests of the batch translator. A single
+request that times out is retried once in the same semaphore slot: a script
+string with the fallback request (explicit script context), anything else with
+the same request. A batch whose results fail is halved recursively until single
+failed leaves remain; those are left to the caller's fallback pass. A failed
+single, batch or fallback request of :class:`ModelCaller` never raises: it comes
+back as an unsuccessful result. Only a cancelled run
+(:class:`~nwn_translator.config.TranslationCancelled`) and a pass that exceeds
+its overall budget (:class:`TimeoutError`) raise.
 """
 
 import asyncio
@@ -95,11 +100,15 @@ def send_single(
     log_writer: TranslationLogWriter,
     provider: TranslationProvider,
     config: TranslationConfig,
+    *,
     occurrence: Occurrence,
     text: str,
     request: SingleRequest,
 ) -> Coroutine[Any, Any, TranslationResult]:
     """Starts one logged ``translate_async`` request.
+
+    The coroutine applies no timeout and raises what the provider raises, once
+    the translation log has recorded the error type.
 
     Args:
         log_writer: Translation log of the run.
@@ -232,7 +241,12 @@ class ModelCaller:
     ) -> Coroutine[Any, Any, TranslationResult]:
         """Starts one logged ``translate_async`` request for *work*."""
         return send_single(
-            self.log_writer, self.provider, self.config, work.key, work.sanitized, request
+            self.log_writer,
+            self.provider,
+            self.config,
+            occurrence=work.key,
+            text=work.sanitized,
+            request=request,
         )
 
     async def _ask(self, work: WorkItem, request: SingleRequest) -> TranslationResult:

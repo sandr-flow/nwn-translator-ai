@@ -11,13 +11,10 @@ import pytest
 
 from nwn_translator.formats.gff import (
     HEADER,
-    GFFFile,
+    RECORD,
     GFFHeader,
     GFFParseError,
-    GFFStruct,
     GFFType,
-    GFFValue,
-    _expand_struct,
     parse_gff,
     read_gff,
 )
@@ -101,7 +98,7 @@ def test_header_block_outside_the_file_fails_fast(tmp_path, offset, value, block
     _set_dword(path, offset, value)
     started = time.monotonic()
     with pytest.raises(GFFParseError) as exc_info:
-        parse_gff(path)
+        parse_gff(path.read_bytes())
     assert block in str(exc_info.value)
     assert "outside the file" in str(exc_info.value)
     # No per-declared-element work happens at all.
@@ -113,15 +110,11 @@ def test_truncated_or_foreign_files_are_rejected(tmp_path):
     truncated = tmp_path / "truncated.uti"
     truncated.write_bytes(data[: max(160, len(data) // 2)])
     with pytest.raises(GFFParseError, match="outside the file"):
-        parse_gff(truncated)
-    garbage = tmp_path / "script.ncs"
-    garbage.write_bytes(b"NCS V1.0B" + bytes(range(256)) * 4)
+        parse_gff(truncated.read_bytes())
     with pytest.raises(GFFParseError):
-        parse_gff(garbage)
-    stub = tmp_path / "stub.uti"
-    stub.write_bytes(b"UTI V3.2" + bytes(40))
+        parse_gff(b"NCS V1.0B" + bytes(range(256)) * 4)
     with pytest.raises(GFFParseError, match="File too small to be valid GFF"):
-        parse_gff(stub)
+        parse_gff(b"UTI V3.2" + bytes(40))
 
 
 def test_read_gff_names_the_file_in_every_failure(tmp_path):
@@ -196,9 +189,8 @@ def test_direct_struct_field_expands_to_a_patchable_nested_dict(tmp_path):
     # The nested locstring stays byte-patchable: a real field record offset.
     assert wrapper["_record_offsets"]["LocalizedName"] > 0
     # The 12-byte field record on disk carries type id 14, not 16.
-    field = parse_gff(path).structs[0].fields["Wrapper"]
-    assert field.type == GFFType.Struct
-    assert struct.unpack_from("<I", path.read_bytes(), field.record_offset)[0] == 14
+    record_offset = parsed["_record_offsets"]["Wrapper"]
+    assert struct.unpack_from("<I", path.read_bytes(), record_offset)[0] == 14
     # Two write/read cycles do not degrade the nested struct.
     again = _roundtrip(tmp_path, parsed)
     assert again["Wrapper"]["LocalizedName"]["Value"] == "Ancient Blade"
@@ -206,33 +198,30 @@ def test_direct_struct_field_expands_to_a_patchable_nested_dict(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "structs, expected",
+    "data, retyped, expected",
     [
-        ([{"Self": GFFValue(GFFType.Struct, 0, record_offset=100)}], {"Self": 0}),
-        ([{"Broken": GFFValue(GFFType.Struct, 99, record_offset=100)}], {"Broken": 99}),
-        ([{"Broken": GFFValue(GFFType.Struct, -1, record_offset=100)}], {"Broken": -1}),
+        ({"Self": 0}, "Self", {"Self": 0}),
+        ({"Broken": 99}, "Broken", {"Broken": 99}),
+        ({"Broken": 0xFFFFFFFF}, "Broken", {"Broken": 0xFFFFFFFF}),
         # A plain DWORD that happens to equal a valid struct index stays an int.
-        (
-            [
-                {"HP": GFFValue(GFFType.DWORD, 1, record_offset=100)},
-                {"Decoy": GFFValue(GFFType.DWORD, 7, record_offset=112)},
-            ],
-            {"HP": 1},
-        ),
+        ({"HP": 1, "Other": {"Decoy": 7}}, None, {"HP": 1}),
         # The back-edge of a two-struct cycle to the visited root stays an int.
-        (
-            [
-                {"Child": GFFValue(GFFType.Struct, 1, record_offset=100)},
-                {"Parent": GFFValue(GFFType.Struct, 0, record_offset=112)},
-            ],
-            {"Child": {"Parent": 0}},
-        ),
+        ({"Child": {"Parent": 0}}, "Parent", {"Child": {"Parent": 0}}),
     ],
 )
-def test_invalid_struct_indices_stay_ints_and_never_loop(structs, expected):
-    gff = GFFFile()
-    gff.structs.extend(GFFStruct(struct_id=0, fields=fields) for fields in structs)
-    result = _fields_only(_expand_struct(gff.structs[0].fields, gff, {0}))
+def test_invalid_struct_indices_stay_ints_and_never_loop(tmp_path, data, retyped, expected):
+    path = tmp_path / "structs.gff"
+    write_gff(path, {"StructType": "GFF", **data})
+    if retyped is not None:
+        # Turn the DWORD field into a Struct field pointing at the same index.
+        parsed = read_gff(path)
+        offsets = parsed["_record_offsets"]
+        if retyped not in offsets:
+            offsets = parsed["Child"]["_record_offsets"]
+        raw = bytearray(path.read_bytes())
+        struct.pack_into("<I", raw, offsets[retyped], int(GFFType.Struct))
+        path.write_bytes(bytes(raw))
+    result = _fields_only(read_gff(path))
     assert {key: result[key] for key in expected} == expected
 
 
@@ -329,11 +318,11 @@ def test_parsed_field_types_and_struct_ids_are_kept(tmp_path):
     parsed["_field_types"]["Conversation"] = int(GFFType.CExoString)
     out = tmp_path / "a.utc"
     write_gff(out, parsed)
-    field = parse_gff(out).structs[0].fields["Conversation"]
-    assert (field.type, field.value) == (GFFType.CExoString, "bob")
+    reread = read_gff(out)
+    assert (reread["_field_types"]["Conversation"], reread["Conversation"]) == (10, "bob")
 
     write_gff(out, {"StructType": "DLG", "EntryList": [{"_struct_id": 5, "Text": loc("A")}]})
-    gff = parse_gff(out)
-    entry = gff.structs[gff.structs[0].fields["EntryList"].value[0]]
-    assert entry.struct_id == 5
-    assert "_struct_id" not in entry.fields
+    data = out.read_bytes()
+    # The list's only child is the second struct record.
+    assert RECORD.unpack_from(data, GFFHeader.read(data).struct_offset + RECORD.size)[0] == 5
+    assert "_struct_id" not in read_gff(out)["EntryList"][0]

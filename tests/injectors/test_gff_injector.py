@@ -1,7 +1,7 @@
 """Injecting translations into GFF resources through their extracted field records."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.extractors.git_extractor import GitExtractor
@@ -13,12 +13,10 @@ from tests.support.gff_writer import loc, write_gff
 
 
 def _inject_with_mocked_patcher(extractor, path, data, answers, encoding):
-    """Extract *data* and inject *answers*; return the result and the patcher mocks."""
+    """Extract *data* and inject *answers*; return the result and the patcher mock."""
     content = extractor.extract(path, data)
     translations = {item.key: answers[item.text] for item in content.items if item.text in answers}
-    with patch("nwn_translator.injectors.gff_injector.GFFPatcher") as patcher_cls:
-        patcher = MagicMock()
-        patcher_cls.return_value = patcher
+    with patch("nwn_translator.injectors.gff_injector.patch_locstrings") as patcher:
         result = inject_gff(
             path,
             content.items,
@@ -26,7 +24,7 @@ def _inject_with_mocked_patcher(extractor, path, data, answers, encoding):
             content_type=content.content_type,
             text_encoding=encoding,
         )
-    return result, patcher_cls, patcher
+    return result, patcher
 
 
 def test_dialog_lines_are_patched_at_their_record_offsets():
@@ -44,14 +42,13 @@ def test_dialog_lines_are_patched_at_their_record_offsets():
     answers = {"Greetings, traveler.": "¡Saludos, viajero!", "Hello, innkeeper.": "Hola, posadero."}
     path = Path("test_dialog.dlg")
 
-    result, patcher_cls, patcher = _inject_with_mocked_patcher(
-        DialogExtractor(), path, data, answers, "cp1252"
-    )
+    result, patcher = _inject_with_mocked_patcher(DialogExtractor(), path, data, answers, "cp1252")
 
     assert (result.modified, result.items_updated, result.metadata) == (True, 2, {"type": "dialog"})
-    patcher_cls.assert_called_once_with(path, text_encoding="cp1252")
-    patcher.patch_multiple.assert_called_once()
-    assert set(patcher.patch_multiple.call_args[0][0]) == {
+    patcher.assert_called_once()
+    assert patcher.call_args.args[0] == path
+    assert patcher.call_args.kwargs == {"text_encoding": "cp1252"}
+    assert set(patcher.call_args.args[1]) == {
         (100, "¡Saludos, viajero!"),
         (200, "Hola, posadero."),
     }
@@ -144,13 +141,13 @@ def test_area_instances_and_their_inventories_are_patched_in_one_splice():
         "The Skullsplitter": "Раскалыватель черепов",
     }
 
-    result, _cls, patcher = _inject_with_mocked_patcher(
+    result, patcher = _inject_with_mocked_patcher(
         GitExtractor(), Path("area.git"), data, answers, "cp1251"
     )
 
     assert result.items_updated == 12
-    patcher.patch_multiple.assert_called_once()
-    assert set(patcher.patch_multiple.call_args[0][0]) == {
+    patcher.assert_called_once()
+    assert set(patcher.call_args.args[1]) == {
         (222, "Городские ворота"),
         (110, "Сундук"),
         (200, "Футляр"),

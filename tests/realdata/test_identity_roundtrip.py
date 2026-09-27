@@ -33,7 +33,7 @@ def _type_ids_by_resource(mod_path: Path) -> Dict[Tuple[str, str], int]:
     entries = reader.read_entries()
     result: Dict[Tuple[str, str], int] = {}
     for entry in entries:
-        ext = reader.extension_for(entry)
+        ext = entry.extension
         result[(entry.res_ref.lower(), ext)] = entry.res_type
     return result
 

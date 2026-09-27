@@ -330,8 +330,8 @@ def test_known_signature_names_a_resource_of_unknown_type(tmp_path, signature, e
     reader = ERFReader(mod)
     (entry,) = reader.read_entries()
     assert entry.res_type == 6789
-    assert reader.extension_for(entry) == ext
-    assert reader.filename_for(entry) == f"resource{ext}"
+    assert entry.extension == ext
+    assert entry.filename == f"resource{ext}"
     out = reader.extract_all(tmp_path / "out")
     assert [p.name for p in out.iterdir()] == [f"resource{ext}"]
 
@@ -386,7 +386,7 @@ def test_characters_forbidden_on_windows_become_underscores(tmp_path):
     reader = ERFReader(_write(tmp_path / "odd.mod", [("a?b*c", ".dlg", b"DLG DATA")]))
     (entry,) = reader.read_entries()
     assert entry.res_ref == "a?b*c"
-    assert reader.filename_for(entry) == "a_b_c.dlg"
+    assert entry.filename == "a_b_c.dlg"
 
 
 def test_progress_callback_sees_every_entry(tmp_path):

@@ -31,84 +31,32 @@ class NCSPatchError(Exception):
     """Raised when NCS patching fails."""
 
 
-# ---------------------------------------------------------------------------
-# Opcodes and type qualifiers
-# ---------------------------------------------------------------------------
-
-OP_CPDOWNSP = 0x01
-OP_RSADD = 0x02
-OP_CPTOPSP = 0x03
-OP_CONST = 0x04
-OP_ACTION = 0x05
-OP_LOGAND = 0x06
-OP_LOGOR = 0x07
-OP_INCOR = 0x08
-OP_EXCOR = 0x09
-OP_BOOLAND = 0x0A
-OP_EQUAL = 0x0B
-OP_NEQUAL = 0x0C
-OP_GEQ = 0x0D
-OP_GT = 0x0E
-OP_LT = 0x0F
-OP_LEQ = 0x10
-OP_SHLEFT = 0x11
-OP_SHRIGHT = 0x12
-OP_USHRIGHT = 0x13
-OP_ADD = 0x14
-OP_SUB = 0x15
-OP_MUL = 0x16
-OP_DIV = 0x17
-OP_MOD = 0x18
-OP_NEG = 0x19
-OP_COMP = 0x1A
-OP_MOVSP = 0x1B
-OP_STORE_STATEALL = 0x1C
-OP_JMP = 0x1D
-OP_JSR = 0x1E
-OP_JZ = 0x1F
-OP_RETN = 0x20
-OP_DESTRUCT = 0x21
-OP_NOT = 0x22
-OP_DECISP = 0x23
-OP_INCISP = 0x24
-OP_JNZ = 0x25
-OP_CPDOWNBP = 0x26
-OP_CPTOPBP = 0x27
-OP_DECIBP = 0x28
-OP_INCIBP = 0x29
-OP_SAVEBP = 0x2A
-OP_RESTOREBP = 0x2B
-OP_STORE_STATE = 0x2C
-OP_NOP = 0x2D
+# Opcodes 0x01-0x2D, in numeric order.
+OP_CPDOWNSP, OP_RSADD, OP_CPTOPSP, OP_CONST, OP_ACTION = range(0x01, 0x06)
+OP_LOGAND, OP_LOGOR, OP_INCOR, OP_EXCOR, OP_BOOLAND, OP_EQUAL, OP_NEQUAL = range(0x06, 0x0D)
+OP_GEQ, OP_GT, OP_LT, OP_LEQ, OP_SHLEFT, OP_SHRIGHT, OP_USHRIGHT = range(0x0D, 0x14)
+OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_NEG, OP_COMP, OP_MOVSP = range(0x14, 0x1C)
+OP_STORE_STATEALL, OP_JMP, OP_JSR, OP_JZ, OP_RETN, OP_DESTRUCT, OP_NOT = range(0x1C, 0x23)
+OP_DECISP, OP_INCISP, OP_JNZ, OP_CPDOWNBP, OP_CPTOPBP, OP_DECIBP, OP_INCIBP = range(0x23, 0x2A)
+OP_SAVEBP, OP_RESTOREBP, OP_STORE_STATE, OP_NOP = range(0x2A, 0x2E)
 
 # CONST type qualifiers.
-TYPE_INT = 0x03
-TYPE_FLOAT = 0x04
-TYPE_STRING = 0x05
-TYPE_OBJECT = 0x06
+TYPE_INT, TYPE_FLOAT, TYPE_STRING, TYPE_OBJECT = range(0x03, 0x07)
+# Binary qualifier of two strings (ADD, EQUAL, NEQUAL).
+TYPE_STRING_STRING = 0x23
 
 #: Opcodes whose argument is a signed relative jump offset.
 JUMP_OPCODES = frozenset({OP_JMP, OP_JSR, OP_JZ, OP_JNZ})
 
-# Argument bytes after the opcode and type byte; unlisted opcodes have none.
+# Argument bytes after the opcode and type byte; unlisted opcodes have none. The stack
+# copies take an int32 offset + uint16 size, DESTRUCT three int16, ACTION a uint16
+# routine + uint8 argument count, STORE_STATE an int32 BP size + int32 stack size.
 _OPCODE_ARG_SIZES: Dict[int, int] = {
-    OP_CPDOWNSP: 6,  # int32 stack offset + uint16 size
-    OP_CPTOPSP: 6,  # int32 stack offset + uint16 size
-    OP_ACTION: 3,  # uint16 routine number + uint8 argument count
-    OP_MOVSP: 4,
-    OP_STORE_STATEALL: 4,
-    OP_JMP: 4,
-    OP_JSR: 4,
-    OP_JZ: 4,
-    OP_DESTRUCT: 6,  # three int16
-    OP_DECISP: 4,
-    OP_INCISP: 4,
-    OP_JNZ: 4,
-    OP_CPDOWNBP: 6,  # int32 stack offset + uint16 size
-    OP_CPTOPBP: 6,  # int32 stack offset + uint16 size
-    OP_DECIBP: 4,
-    OP_INCIBP: 4,
-    OP_STORE_STATE: 8,  # int32 BP size + int32 stack size
+    **dict.fromkeys((OP_CPDOWNSP, OP_CPTOPSP, OP_CPDOWNBP, OP_CPTOPBP, OP_DESTRUCT), 6),
+    **dict.fromkeys((OP_MOVSP, OP_STORE_STATEALL, OP_DECISP, OP_INCISP, OP_DECIBP), 4),
+    **dict.fromkeys((OP_INCIBP, *JUMP_OPCODES), 4),
+    OP_ACTION: 3,
+    OP_STORE_STATE: 8,
 }
 # EQUAL/NEQUAL of two structures (type 0x24) carry a trailing uint16 size;
 # missing it desyncs the instruction stream.
@@ -191,16 +139,7 @@ class NCSFile:
 def _parse_instruction(
     data: Union[bytes, bytearray], offset: int, source_encoding: Optional[str] = None
 ) -> NCSInstruction:
-    """Parses the instruction at *offset*.
-
-    Args:
-        data: Complete file bytes.
-        offset: Byte offset of the instruction.
-        source_encoding: Declared code page of CONSTS bytes; ``None`` uses the
-            cascade of :func:`~.text_codec.decode_module_text`.
-
-    Returns:
-        The instruction.
+    """Parses the instruction at *offset*; CONSTS bytes are decoded with *source_encoding*.
 
     Raises:
         NCSParseError: If the instruction runs past the end of the data.
@@ -210,26 +149,20 @@ def _parse_instruction(
             f"Unexpected end of file at offset {offset:#x}: "
             f"need 2 bytes for opcode+type, have {len(data) - offset}"
         )
-    opcode = data[offset]
-    type_byte = data[offset + 1]
-
-    string_length = None
-    if opcode == OP_CONST:
-        if type_byte == TYPE_STRING:
-            if offset + 4 > len(data):
-                raise NCSParseError(
-                    f"Unexpected end of file at offset {offset:#x}: "
-                    f"CONSTS needs at least 4 bytes"
-                )
-            string_length = struct.unpack_from(">H", data, offset + 2)[0]
-            arg_size = 2 + string_length
-        else:
-            arg_size = _CONST_ARG_SIZES.get(type_byte, 4)
+    opcode, type_byte = data[offset], data[offset + 1]
+    is_string = opcode == OP_CONST and type_byte == TYPE_STRING
+    if is_string:
+        if offset + 4 > len(data):
+            raise NCSParseError(
+                f"Unexpected end of file at offset {offset:#x}: CONSTS needs at least 4 bytes"
+            )
+        arg_size = 2 + struct.unpack_from(">H", data, offset + 2)[0]
+    elif opcode == OP_CONST:
+        arg_size = _CONST_ARG_SIZES.get(type_byte, 4)
     elif opcode in _STRUCT_COMPARE_OPCODES and type_byte == _STRUCT_COMPARE_TYPE:
         arg_size = 2
     else:
         arg_size = _OPCODE_ARG_SIZES.get(opcode, 0)
-
     size = 2 + arg_size
     if offset + size > len(data):
         raise NCSParseError(
@@ -237,34 +170,19 @@ def _parse_instruction(
             f"instruction (opcode {opcode:#04x}) needs {size} bytes, "
             f"have {len(data) - offset}"
         )
-    instruction = NCSInstruction(
-        offset=offset,
-        opcode=opcode,
-        type_byte=type_byte,
-        size=size,
-        args=bytes(data[offset + 2 : offset + size]),
-    )
-    if string_length is not None:
-        instruction.string_value = decode_module_text(
-            bytes(data[offset + 4 : offset + 4 + string_length]), source_encoding
-        )
+    args = bytes(data[offset + 2 : offset + size])
+    instruction = NCSInstruction(offset, opcode, type_byte, size, args)
+    if is_string:
+        instruction.string_value = decode_module_text(args[2:], source_encoding)
     elif opcode in JUMP_OPCODES:
-        instruction.jump_offset = struct.unpack_from(">i", data, offset + 2)[0]
+        instruction.jump_offset = struct.unpack_from(">i", args)[0]
     elif opcode == OP_ACTION:
-        instruction.action_routine = struct.unpack_from(">H", data, offset + 2)[0]
-        instruction.action_arg_count = data[offset + 4]
+        instruction.action_routine, instruction.action_arg_count = struct.unpack(">HB", args)
     return instruction
 
 
 def parse_ncs(file_path: Path, source_encoding: Optional[str] = None) -> NCSFile:
-    """Parses an NCS file.
-
-    Args:
-        file_path: The ``.ncs`` file.
-        source_encoding: Declared code page of CONSTS bytes.
-
-    Returns:
-        The parsed script.
+    """Parses an ``.ncs`` file (see :func:`parse_ncs_bytes`).
 
     Raises:
         NCSParseError: If the file is missing or invalid.
@@ -280,7 +198,8 @@ def parse_ncs_bytes(raw: bytes, source_encoding: Optional[str] = None) -> NCSFil
 
     Args:
         raw: Complete file contents.
-        source_encoding: Declared code page of CONSTS bytes.
+        source_encoding: Declared code page of CONSTS bytes; ``None`` uses the cascade of
+            :func:`~.text_codec.decode_module_text`.
 
     Returns:
         The parsed script.
@@ -295,22 +214,15 @@ def parse_ncs_bytes(raw: bytes, source_encoding: Optional[str] = None) -> NCSFil
     header = raw[:NCS_HEADER_SIZE]
     if header != NCS_HEADER:
         raise NCSParseError(f"Invalid NCS header: expected {NCS_HEADER!r}, got {header!r}")
-
     data = bytearray(raw)
     cursor = NCS_HEADER_SIZE
     if len(data) >= NCS_HEADER_SIZE + _PREAMBLE_SIZE and data[cursor] == _PREAMBLE_OPCODE:
         cursor += _PREAMBLE_SIZE
     instructions: List[NCSInstruction] = []
     while cursor < len(data):
-        instruction = _parse_instruction(data, cursor, source_encoding)
-        instructions.append(instruction)
-        cursor += instruction.size
+        instructions.append(_parse_instruction(data, cursor, source_encoding))
+        cursor += instructions[-1].size
     return NCSFile(header=bytes(header), instructions=instructions, raw_bytes=data)
-
-
-# ---------------------------------------------------------------------------
-# Patching
-# ---------------------------------------------------------------------------
 
 
 def patch_ncs_string_replacements(
@@ -321,27 +233,23 @@ def patch_ncs_string_replacements(
 ) -> int:
     """Replaces listed string constants, addressed by offset.
 
-    Each ``(byte_offset, original_text, translated_text)`` must name a CONSTS
-    instruction whose decoded text equals ``original_text``; the same literal
-    at other offsets is left alone. The patched file is re-parsed and its
-    jump targets checked before it is written.
+    Each ``(byte_offset, original_text, translated_text)`` must name a CONSTS instruction
+    whose decoded text equals ``original_text``; the same literal at other offsets is left
+    alone. The patched file is re-parsed and its jump targets checked before it is written.
 
     Args:
         file_path: The ``.ncs`` file.
         replacements: Replacement specs; entries with unchanged text are skipped.
-        text_encoding: Code page of the written string bytes, one of
-            :data:`~.text_codec.MODULE_ENCODINGS`.
-        source_encoding: Code page for decoding the existing strings; must match
-            the one used at extraction or the original-text checks fail.
+        text_encoding: Code page of the written bytes, one of :data:`~.text_codec.MODULE_ENCODINGS`.
+        source_encoding: Code page the strings were decoded with at extraction.
 
     Returns:
         Number of CONSTS instructions patched.
 
     Raises:
-        NCSPatchError: On an unsupported encoding, a duplicate or wrong
-            offset, a text mismatch, an overlong string, or a patched file that
-            no longer parses or jumps outside instruction boundaries; the file
-            is then left unchanged.
+        NCSPatchError: On an unsupported encoding, a duplicate or wrong offset, a text
+            mismatch, an overlong string, or a patched file that no longer parses or jumps
+            outside instruction boundaries; the file is then left unchanged.
     """
     file_path = Path(file_path)
     if not replacements:

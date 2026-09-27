@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from ..extractors.base import TranslatableItem, Translations
-from ..formats.gff import GFFPatcher
+from ..formats.gff import patch_locstrings
 from .base import InjectedContent, changed_translations
 
 
@@ -19,16 +19,9 @@ def inject_gff(
 ) -> InjectedContent:
     """Rewrites the CExoLocString of every translated item in one pass.
 
-    Every GFF resource kind shares this contract: extraction records the
-    field record offset of each item, and only those fields are patched.
-
-    Args:
-        file_path: GFF resource to patch.
-        items: Items extracted from the file; their order is the patch order.
-        translations: Translated text by occurrence.
-        content_type: Content type of the extraction, reported back.
-        text_encoding: Code page of the written strings.
-        source_encoding: Unused: fields are addressed by offset, not by text.
+    Every GFF resource kind shares this contract: extraction records the field record
+    offset of each item, and only those fields are patched, in item order. Fields are
+    addressed by offset, not by text, so *source_encoding* is unused.
 
     Returns:
         The injection result, with metadata ``{"type": content_type}``.
@@ -43,10 +36,5 @@ def inject_gff(
             raise ValueError(f"Missing field record for {item.key}")
         patches.append((offset, translated))
     if patches:
-        GFFPatcher(file_path, text_encoding=text_encoding).patch_multiple(patches)
-    return InjectedContent(
-        source_file=file_path,
-        modified=bool(patches),
-        items_updated=len(patches),
-        metadata={"type": content_type},
-    )
+        patch_locstrings(file_path, patches, text_encoding=text_encoding)
+    return InjectedContent(file_path, bool(patches), len(patches), {"type": content_type})

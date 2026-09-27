@@ -10,8 +10,8 @@ from nwn_translator.formats.gff import (
     LOCSTRING_HEAD,
     SUBSTRING_HEAD,
     GFFHeader,
-    GFFPatcher,
     GFFPatchError,
+    patch_locstrings,
     read_gff,
 )
 from tests.support.gff_writer import write_gff
@@ -25,7 +25,7 @@ _FIELDS = {
 
 
 def _patch(path, patches, encoding="cp1251"):
-    GFFPatcher(path, text_encoding=encoding).patch_multiple(patches)
+    patch_locstrings(path, patches, text_encoding=encoding)
 
 
 def _one_field(path, label="FirstName", value="Hero", strref=-1, struct_type="UTC"):
@@ -145,13 +145,13 @@ def test_invalid_arguments_fail_with_explicit_messages(tmp_path):
     path = tmp_path / "a.utc"
     write_gff(path, {"StructType": "UTC", "Tag": "a"})
     with pytest.raises(GFFPatchError, match="Unsupported module text encoding: 'utf-8'"):
-        GFFPatcher(path, text_encoding="utf-8")
+        patch_locstrings(path, [], text_encoding="utf-8")
     with pytest.raises(GFFPatchError, match="File not found"):
-        GFFPatcher(tmp_path / "absent.utc")
+        patch_locstrings(tmp_path / "absent.utc", [])
     tiny = tmp_path / "tiny.utc"
     tiny.write_bytes(b"UTC V3.2")
     with pytest.raises(GFFPatchError, match="too small"):
-        GFFPatcher(tiny).patch_multiple([(56, "x")])
+        patch_locstrings(tiny, [(56, "x")])
 
 
 def test_locstring_inside_a_direct_struct_field_is_patchable(tmp_path):

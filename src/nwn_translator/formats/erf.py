@@ -14,19 +14,18 @@ ERF V1.0 layout (integers are little-endian DWORDs):
 ResType is a WORD followed by an unused WORD; both are read and written as one
 DWORD, which round-trips the bytes unchanged.
 
-Extraction writes every resource to ``<resref><extension>`` (see
-:meth:`ERFReader.filename_for`); repacking rebuilds the archive from such a
-directory and takes the original type ids from the source archive by the same
-file names.
+Extraction writes every resource to :attr:`ERFEntry.filename`; repacking
+rebuilds the archive from such a directory and takes the original type ids
+from the source archive by the same file names.
 """
 
 import datetime
 import logging
 import os
 import struct
-from dataclasses import astuple, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Dict, List, Optional, Union
+from typing import BinaryIO, Dict, List, NamedTuple, Optional, Union
 
 from tqdm import tqdm
 
@@ -53,66 +52,20 @@ _COPY_CHUNK = 1024 * 1024
 
 #: Resource type id -> file extension: the Aurora ids of BioWare's Key/BIF
 #: specification plus the NWN blueprint, palette and save-game types.
+# fmt: off
 RESOURCE_TYPES: Dict[int, str] = {
-    1: ".bmp",
-    3: ".tga",
-    4: ".wav",
-    6: ".plt",
-    7: ".ini",
-    10: ".txt",
-    2002: ".mdl",
-    2009: ".nss",
-    2010: ".ncs",
-    2011: ".mod",
-    2012: ".are",
-    2013: ".set",
-    2014: ".ifo",
-    2015: ".bic",
-    2016: ".wok",
-    2017: ".2da",
-    2018: ".tlk",
-    2022: ".txi",
-    2023: ".git",
-    2024: ".bti",
-    2025: ".uti",
-    2026: ".btc",
-    2027: ".utc",
-    2029: ".dlg",
-    2030: ".itp",
-    2031: ".btt",
-    2032: ".utt",
-    2033: ".dds",
-    2034: ".bts",
-    2035: ".uts",
-    2036: ".ltr",
-    2037: ".gff",
-    2038: ".fac",
-    2039: ".bte",
-    2040: ".ute",
-    2041: ".btd",
-    2042: ".utd",
-    2043: ".btp",
-    2044: ".utp",
-    2045: ".dft",
-    2046: ".gic",
-    2047: ".gui",
-    2048: ".css",
-    2049: ".ccs",
-    2050: ".btm",
-    2051: ".utm",
-    2052: ".dwk",
-    2053: ".pwk",
-    2054: ".btg",
-    2055: ".utg",
-    2056: ".jrl",
-    2057: ".sav",
-    2058: ".utw",
-    2059: ".4pc",
-    2060: ".ssf",
-    2064: ".ndb",
-    2065: ".ptm",
-    2066: ".ptt",
+    1: ".bmp", 3: ".tga", 4: ".wav", 6: ".plt", 7: ".ini", 10: ".txt", 2002: ".mdl",
+    2009: ".nss", 2010: ".ncs", 2011: ".mod", 2012: ".are", 2013: ".set", 2014: ".ifo",
+    2015: ".bic", 2016: ".wok", 2017: ".2da", 2018: ".tlk", 2022: ".txi", 2023: ".git",
+    2024: ".bti", 2025: ".uti", 2026: ".btc", 2027: ".utc", 2029: ".dlg", 2030: ".itp",
+    2031: ".btt", 2032: ".utt", 2033: ".dds", 2034: ".bts", 2035: ".uts", 2036: ".ltr",
+    2037: ".gff", 2038: ".fac", 2039: ".bte", 2040: ".ute", 2041: ".btd", 2042: ".utd",
+    2043: ".btp", 2044: ".utp", 2045: ".dft", 2046: ".gic", 2047: ".gui", 2048: ".css",
+    2049: ".ccs", 2050: ".btm", 2051: ".utm", 2052: ".dwk", 2053: ".pwk", 2054: ".btg",
+    2055: ".utg", 2056: ".jrl", 2057: ".sav", 2058: ".utw", 2059: ".4pc", 2060: ".ssf",
+    2064: ".ndb", 2065: ".ptm", 2066: ".ptt",
 }
+# fmt: on
 
 #: File extension -> resource type id written for files without a source type.
 TYPE_ID_BY_EXTENSION = {ext: type_id for type_id, ext in RESOURCE_TYPES.items()}
@@ -133,34 +86,12 @@ class ERFError(Exception):
 
 
 def extension_for_type(type_id: int) -> str:
-    """Returns the file extension of a resource type id.
-
-    Args:
-        type_id: ERF resource type id.
-
-    Returns:
-        The extension with a leading dot; ``".<id>"`` for unknown ids.
-    """
+    """Returns the file extension of a resource type id, ``".<id>"`` for unknown ids."""
     return RESOURCE_TYPES.get(type_id, f".{type_id}")
 
 
-@dataclass(frozen=True)
-class ERFHeader:
-    """ERF V1.0 header.
-
-    Attributes:
-        file_type: FileType tag (``b"MOD "``, ``b"ERF "`` or ``b"HAK "``).
-        version: Version tag, always ``b"V1.0"``.
-        language_count: Number of localized description strings.
-        localized_string_size: Byte size of the localized string list.
-        entry_count: Number of resources.
-        offset_to_localized_string: File offset of the localized string list.
-        offset_to_key_list: File offset of the key list.
-        offset_to_resource_list: File offset of the resource list.
-        build_year: Build year minus 1900.
-        build_day: 0-based day of the build year.
-        description_strref: Talk-table StrRef of the description.
-    """
+class ERFHeader(NamedTuple):
+    """ERF V1.0 header: the fields of the module docstring layout, reserved bytes omitted."""
 
     file_type: bytes
     version: bytes
@@ -178,15 +109,8 @@ class ERFHeader:
     def from_bytes(cls, data: bytes) -> "ERFHeader":
         """Parses and validates the first 160 bytes of an archive.
 
-        Args:
-            data: Archive bytes starting at offset 0.
-
-        Returns:
-            The parsed header.
-
         Raises:
-            ERFError: If the data is too short, the file type is unknown or the
-                version is not V1.0.
+            ERFError: If the data is too short, the file type is unknown or the version is not V1.0.
         """
         if len(data) < HEADER.size:
             raise ERFError("Invalid ERF header: too short")
@@ -200,14 +124,6 @@ class ERFHeader:
             )
         return header
 
-    def pack(self) -> bytes:
-        """Serializes the header.
-
-        Returns:
-            The 160-byte header with zeroed reserved bytes.
-        """
-        return HEADER.pack(*astuple(self), b"")
-
 
 @dataclass(frozen=True)
 class ERFEntry:
@@ -219,6 +135,7 @@ class ERFEntry:
         res_type: Resource type id as stored in the key list.
         offset: File offset of the data (:data:`UNUSED_OFFSET` if none).
         size: Data size in bytes.
+        extension: Extension named by the data's signature if known, else by ``res_type``.
     """
 
     res_ref: str
@@ -226,6 +143,12 @@ class ERFEntry:
     res_type: int
     offset: int
     size: int
+    extension: str
+
+    @property
+    def filename(self) -> str:
+        """``<resref><extension>`` with characters Windows forbids replaced by ``_``."""
+        return (self.res_ref + self.extension).translate(_UNSAFE_FILENAME_CHARS)
 
 
 class ERFReader:
@@ -233,19 +156,14 @@ class ERFReader:
 
     Attributes:
         file_path: The archive.
-        progress_callback: Called as ``("extracting", index, total, res_ref)``
-            before each entry during :meth:`extract_all`; without it a tqdm
-            bar is shown.
+        progress_callback: Called as ``("extracting", index, total, res_ref)`` before each
+            entry of :meth:`extract_all`; without it a tqdm bar is shown.
         header: The header, once read.
         entries: The entries, once read by :meth:`read_entries`.
     """
 
     def __init__(self, file_path: Path, progress_callback: Optional[ProgressCallback] = None):
         """Opens an archive for reading.
-
-        Args:
-            file_path: Path of the ``.mod``, ``.erf`` or ``.hak`` file.
-            progress_callback: Extraction progress callback (see the class).
 
         Raises:
             ERFError: If the file does not exist.
@@ -254,19 +172,11 @@ class ERFReader:
         self.progress_callback = progress_callback
         self.header: Optional[ERFHeader] = None
         self.entries: List[ERFEntry] = []
-        # Entry -> extension, filled by read_entries().
-        self._extensions: Dict[ERFEntry, str] = {}
         if not self.file_path.exists():
             raise ERFError(f"File not found: {file_path}")
 
     def read_header(self) -> ERFHeader:
-        """Reads the header and checks that the declared tables fit the file.
-
-        The size check runs before anything is allocated per entry, so a
-        crafted header with a huge entry count fails fast.
-
-        Returns:
-            The header.
+        """Reads the header and checks, before any per-entry work, that its tables fit the file.
 
         Raises:
             ERFError: If the header is invalid or its tables exceed the file.
@@ -288,17 +198,15 @@ class ERFReader:
         """Reads the raw localized string list (the module description).
 
         Returns:
-            The block as stored, or ``b""`` when the header declares none or
-            the declared region does not fit the file.
+            The block, or ``b""`` when the header declares none or it does not fit the file.
 
         Raises:
             ERFError: If the header is invalid.
         """
         header = self.header or self.read_header()
-        size = header.localized_string_size
+        offset, size = header.offset_to_localized_string, header.localized_string_size
         if size == 0:
             return b""
-        offset = header.offset_to_localized_string
         file_size = self.file_path.stat().st_size
         if offset + size > file_size:
             logger.warning(
@@ -319,32 +227,30 @@ class ERFReader:
             The entries in key-list order (also stored in :attr:`entries`).
 
         Raises:
-            ERFError: If an entry's data lies outside the file, or the entries
-                declare more data than the file holds (overlapping entries).
+            ERFError: If an entry's data lies outside the file, or the entries declare more
+                data than the file holds (overlapping entries).
         """
         header = self.header or self.read_header()
         count = header.entry_count
         file_size = self.file_path.stat().st_size
+        entries: List[ERFEntry] = []
+        # ERF stores resources uncompressed, so the data regions of a well-formed archive
+        # cannot add up to more than the file; crafted overlapping entries would otherwise
+        # let a small upload extract to an unbounded volume on disk.
+        total_data_size = 0
         with open(self.file_path, "rb") as f:
             f.seek(header.offset_to_key_list)
             keys = list(KEY.iter_unpack(f.read(count * KEY.size)))
-            # Toolset archives leave an unused gap after the key list, so the
-            # resource list is found by its own offset.
+            # Toolset archives leave a gap after the key list: seek the resource list.
             f.seek(header.offset_to_resource_list)
             resources = list(RESOURCE.iter_unpack(f.read(count * RESOURCE.size)))
-
-            # ERF stores resources uncompressed, so in a well-formed archive the
-            # data regions are disjoint and cannot add up to more than the file;
-            # crafted overlapping entries would otherwise let a small upload
-            # extract to an unbounded volume on disk.
-            entries: List[ERFEntry] = []
-            total_data_size = 0
             for raw_ref, res_id, res_type in keys:
                 res_ref = decode_fixed_ascii(raw_ref)
                 if res_id >= len(resources):
                     logger.warning("Invalid resource ID %s for %s", res_id, res_ref)
                     continue
                 offset, size = resources[res_id]
+                extension = None
                 if offset != UNUSED_OFFSET:
                     if offset + size > file_size:
                         raise ERFError(
@@ -352,52 +258,20 @@ class ERFReader:
                             f"{offset}+{size} exceeds file size {file_size}"
                         )
                     total_data_size += size
-                entries.append(ERFEntry(res_ref, res_id, res_type, offset, size))
-            if total_data_size > file_size:
-                raise ERFError(
-                    f"Corrupt ERF: entries declare {total_data_size} bytes of data "
-                    f"in a {file_size}-byte file (overlapping entries)"
-                )
-
-            self._extensions.clear()
-            for entry in entries:
-                ext = None
-                if entry.offset != UNUSED_OFFSET:
-                    f.seek(entry.offset)
-                    ext = SIGNATURE_EXTENSIONS.get(f.read(4))
-                self._extensions[entry] = ext or extension_for_type(entry.res_type)
+                    f.seek(offset)
+                    extension = SIGNATURE_EXTENSIONS.get(f.read(4))
+                extension = extension or extension_for_type(res_type)
+                entries.append(ERFEntry(res_ref, res_id, res_type, offset, size, extension))
+        if total_data_size > file_size:
+            raise ERFError(
+                f"Corrupt ERF: entries declare {total_data_size} bytes of data "
+                f"in a {file_size}-byte file (overlapping entries)"
+            )
         self.entries = entries
         return entries
 
-    def extension_for(self, entry: ERFEntry) -> str:
-        """Returns the extension of *entry*: from its signature if known, else its type id.
-
-        Args:
-            entry: An entry returned by :meth:`read_entries` of this reader.
-
-        Returns:
-            The extension with a leading dot, e.g. ``".dlg"``.
-        """
-        return self._extensions[entry]
-
-    def filename_for(self, entry: ERFEntry) -> str:
-        """Returns the file name :meth:`extract_all` writes *entry* to.
-
-        Characters Windows forbids in file names become ``_``.
-
-        Args:
-            entry: An entry returned by :meth:`read_entries` of this reader.
-
-        Returns:
-            ``<resref><extension>``, e.g. ``"guard.dlg"``.
-        """
-        return (entry.res_ref + self.extension_for(entry)).translate(_UNSAFE_FILENAME_CHARS)
-
     def extract_all(self, output_dir: Path) -> Path:
-        """Writes every resource with data to *output_dir*.
-
-        Args:
-            output_dir: Target directory, created if missing.
+        """Writes every resource with data to *output_dir* (created if missing).
 
         Returns:
             *output_dir* as a :class:`~pathlib.Path`.
@@ -409,42 +283,34 @@ class ERFReader:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         callback = self.progress_callback
-        total = len(entries)
+        progress = (
+            tqdm(entries, desc="Extracting ERF", disable=None) if callback is None else entries
+        )
         with open(self.file_path, "rb") as f:
-            progress = (
-                tqdm(entries, desc="Extracting ERF", disable=None) if callback is None else entries
-            )
             for index, entry in enumerate(progress):
                 if callback is not None:
-                    callback("extracting", index, total, entry.res_ref)
-                if entry.offset == UNUSED_OFFSET:
-                    continue
-                f.seek(entry.offset)
-                (output_dir / self.filename_for(entry)).write_bytes(f.read(entry.size))
+                    callback("extracting", index, len(entries), entry.res_ref)
+                if entry.offset != UNUSED_OFFSET:
+                    f.seek(entry.offset)
+                    (output_dir / entry.filename).write_bytes(f.read(entry.size))
         return output_dir
 
 
 class ERFWriter:
     """Writer for one ERF archive.
 
-    Resources are kept as bytes or as paths read at :meth:`write` time, so a
-    module is never held in memory whole. They are stored in code-point
-    order of their file names; ``res_id`` is the position in that order.
+    Resources are kept as bytes or as paths read at :meth:`write` time, so a module is
+    never held in memory whole. They are stored in code-point order of their file names;
+    ``res_id`` is the position in that order.
 
     Attributes:
         output_path: Archive to write.
-        type_overrides: File name -> resource type id to write instead of the
-            id derived from the extension.
+        type_overrides: File name -> resource type id written instead of the extension's id.
         file_type: FileType tag, from the output suffix.
     """
 
     def __init__(self, output_path: Path, type_overrides: Optional[Dict[str, int]] = None):
-        """Starts an empty archive.
-
-        Args:
-            output_path: Where :meth:`write` puts the archive.
-            type_overrides: File name -> exact resource type id.
-        """
+        """Starts an empty archive."""
         self.output_path = Path(output_path)
         self.type_overrides: Dict[str, int] = type_overrides or {}
         self.file_type = FILE_TYPES.get(self.output_path.suffix.lower(), b"ERF ")
@@ -465,20 +331,12 @@ class ERFWriter:
         self._resources[f"{res_ref}{res_type.lower()}"] = data
 
     def add_file(self, file_path: Path) -> None:
-        """Adds a file; its content is read only by :meth:`write`.
-
-        Args:
-            file_path: File whose stem is the resref and suffix the type.
-        """
+        """Adds a file (stem = resref, suffix = type); its content is read only by :meth:`write`."""
         file_path = Path(file_path)
         self._resources[f"{file_path.stem}{file_path.suffix.lower()}"] = file_path
 
     def add_directory(self, directory: Path) -> None:
-        """Adds every file under *directory*, recursively.
-
-        Args:
-            directory: Root directory; sub-directories are flattened.
-        """
+        """Adds every file under *directory*, recursively; sub-directories are flattened."""
         for file_path in Path(directory).rglob("*"):
             if file_path.is_file():
                 self.add_file(file_path)
@@ -486,13 +344,7 @@ class ERFWriter:
     def set_localized_strings(
         self, language_count: int, raw_block: bytes, description_strref: int
     ) -> None:
-        """Carries the module description from a source archive.
-
-        Args:
-            language_count: LanguageCount of the source archive.
-            raw_block: Raw localized string list (may be empty).
-            description_strref: DescriptionStrRef of the source archive.
-        """
+        """Carries the module description (LanguageCount, raw block, StrRef) of a source archive."""
         self._language_count = language_count
         self._localized_strings = raw_block
         self._description_strref = description_strref
@@ -500,15 +352,14 @@ class ERFWriter:
     def write(self) -> None:
         """Writes the archive to :attr:`output_path`.
 
-        Tables are built in memory; resource data is streamed into a
-        ``.tmp`` file next to the output, which then replaces the output, so
-        a failed write never destroys a previous archive.
+        Tables are built in memory; resource data is streamed into a ``.tmp`` file next to
+        the output, which then replaces the output, so a failed write never destroys a
+        previous archive.
 
         Raises:
-            ERFError: If a source file cannot be stat'ed or changes size, or a
-                resref exceeds 16 bytes.
-            OSError: If a source file cannot be opened or the archive cannot be
-                written.
+            ERFError: If a source file cannot be stat'ed or changes size, or a resref exceeds
+                16 bytes.
+            OSError: If a source file cannot be opened or the archive cannot be written.
         """
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         resources = sorted(self._resources.items())
@@ -552,7 +403,7 @@ class ERFWriter:
         tmp_path = self.output_path.with_name(self.output_path.name + ".tmp")
         try:
             with open(tmp_path, "wb") as out:
-                out.write(header.pack())
+                out.write(HEADER.pack(*header, b""))
                 out.write(self._localized_strings)
                 out.write(key_list)
                 out.write(resource_list)
@@ -604,9 +455,8 @@ def create_mod_from_directory(
 ) -> None:
     """Packs a directory of extracted resources into an archive.
 
-    With *original_mod*, every file keeps the type id its resource had in
-    that archive (matched by :meth:`ERFReader.filename_for`), and the module
-    description is carried over.
+    With *original_mod*, every file keeps the type id its resource had in that archive
+    (matched by :attr:`ERFEntry.filename`), and the module description is carried over.
 
     Args:
         input_dir: Directory written by :meth:`ERFReader.extract_all`.
@@ -614,8 +464,8 @@ def create_mod_from_directory(
         original_mod: The archive *input_dir* was extracted from.
 
     Raises:
-        ERFError: If *original_mod* cannot be read or :meth:`ERFWriter.write`
-            rejects a resource.
+        ERFError: If *original_mod* cannot be read or :meth:`ERFWriter.write` rejects a
+            resource.
         OSError: If a resource cannot be read or the archive cannot be written.
     """
     writer = ERFWriter(output_path)
@@ -623,9 +473,7 @@ def create_mod_from_directory(
         try:
             reader = ERFReader(original_mod)
             entries = reader.read_entries()
-            writer.type_overrides = {
-                reader.filename_for(entry): entry.res_type for entry in entries
-            }
+            writer.type_overrides = {entry.filename: entry.res_type for entry in entries}
             header = reader.header or reader.read_header()
             localized_strings = reader.read_localized_strings_block()
             writer.set_localized_strings(

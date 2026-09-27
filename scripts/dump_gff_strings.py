@@ -146,7 +146,7 @@ def _extract_resource_bytes(module_path: Path, resource_name: str) -> bytes:
     for entry in reader.read_entries():
         if entry.offset == UNUSED_OFFSET:
             continue
-        if reader.filename_for(entry).lower() != resource_name.lower():
+        if entry.filename.lower() != resource_name.lower():
             continue
         with module_path.open("rb") as handle:
             handle.seek(entry.offset)

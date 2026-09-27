@@ -24,6 +24,9 @@ def strip_json_markdown_fences(raw: str, *, case_sensitive: bool = False) -> str
         raw: Model reply.
         case_sensitive: Recognise only a lower-case ``json`` tag, as
             :func:`load_first_json_object` does; ``JSON`` then stays in the text.
+
+    Returns:
+        The stripped reply.
     """
     flags = 0 if case_sensitive else re.IGNORECASE
     return _CLOSING_FENCE.sub("", re.sub(_OPENING_FENCE, "", raw.strip(), flags=flags))
@@ -40,7 +43,13 @@ def _decode_first_object(cleaned: str) -> Dict[str, Any]:
 
 
 def load_first_json_object(raw: str) -> Dict[str, Any]:
-    """Decodes the first JSON object of a reply (in an optional lower-case fence).
+    """Decodes the first JSON object of a reply, ignoring surrounding text.
+
+    Args:
+        raw: Model reply, optionally wrapped in a lower-case markdown fence.
+
+    Returns:
+        The decoded object.
 
     Raises:
         json.JSONDecodeError: If the reply has no ``{`` ("No JSON object found") or the
@@ -54,6 +63,13 @@ def json_extract_first_object(raw: str) -> Optional[Dict[str, Any]]:
     """Decodes the first JSON object of *raw*, or returns ``None`` when there is none.
 
     Trailing text, further objects and markdown fences in any case are tolerated.
+
+    Args:
+        raw: Model reply.
+
+    Returns:
+        The decoded object, or ``None`` when *raw* holds no ``{`` or the object does not
+        decode.
     """
     try:
         return _decode_first_object(strip_json_markdown_fences(raw))
@@ -65,8 +81,13 @@ def load_brace_span(raw: str) -> Any:
     """Strictly decodes the text from the first ``{`` to the last ``}`` of *raw*.
 
     The span is greedy, so prose around one object is ignored, but text between two
-    objects makes it invalid; raw control characters inside strings are rejected. *raw*
-    is decoded whole when it has no ``{ … }`` span.
+    objects makes it invalid; raw control characters inside strings are rejected.
+
+    Args:
+        raw: Model reply.
+
+    Returns:
+        The decoded value; *raw* is decoded whole when it has no ``{ … }`` span.
 
     Raises:
         json.JSONDecodeError: If the span (or *raw*) is not valid JSON.
@@ -80,7 +101,14 @@ def scan_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
 
     Each ``{`` is tried in turn with ``strict=False`` (raw newlines inside strings are
     accepted), so an unparsable fragment before a valid object is skipped; *raw* is
-    decoded whole as a last resort. ``None`` when that yields a non-object value.
+    decoded whole as a last resort.
+
+    Args:
+        raw: Model reply.
+
+    Returns:
+        The first decodable object, or ``None`` when *raw* has no ``{`` and decodes whole
+        to a non-object value.
 
     Raises:
         json.JSONDecodeError: If no object decodes (the last decoding error).

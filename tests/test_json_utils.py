@@ -92,3 +92,7 @@ def test_scan_first_json_object_skips_broken_fragments() -> None:
     assert scan_first_json_object("[1, 2]") is None
     with pytest.raises(json.JSONDecodeError):
         scan_first_json_object('{"unclosed": ')
+    # None needs a text without "{": a failed "{" is raised even when the whole text
+    # decodes to a non-object.
+    with pytest.raises(json.JSONDecodeError):
+        scan_first_json_object('"{x"')

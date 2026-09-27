@@ -53,7 +53,11 @@ class ModuleTranslator:
         self.metrics_recorder = self.state.metrics_recorder
 
     def translate(self) -> Path:
-        """Runs every stage and returns the translated module."""
+        """Runs every stage.
+
+        Returns:
+            The translated module.
+        """
         return run_pipeline(self.state)
 
     @property

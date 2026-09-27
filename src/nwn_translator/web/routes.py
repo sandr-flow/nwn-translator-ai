@@ -91,7 +91,12 @@ _UNSUPPORTED_LANG_DETAIL = (
 
 
 async def _stream_upload_to_file(upload: UploadFile, dest: Path) -> None:
-    """Copies the upload to *dest* in chunks (the upload middleware has limited its size)."""
+    """Copies the upload to *dest* in chunks (the upload middleware has limited its size).
+
+    Args:
+        upload: Uploaded module.
+        dest: Destination path inside the task workspace.
+    """
     with dest.open("wb") as out:
         while chunk := await upload.read(_READ_CHUNK):
             out.write(chunk)

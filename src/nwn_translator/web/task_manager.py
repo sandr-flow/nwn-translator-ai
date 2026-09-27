@@ -407,7 +407,14 @@ class TaskManager:
 
     @contextmanager
     def _rebuild_lock(self, task_id: str) -> Iterator[None]:
-        """Holds the rebuild lock of *task_id*, kept alive by the rebuilds using it."""
+        """Holds the rebuild lock of *task_id*, kept alive by the rebuilds using it.
+
+        Args:
+            task_id: Task being rebuilt.
+
+        Yields:
+            Control while the lock is held.
+        """
         with self._lock:
             lock = self._rebuild_locks.get(task_id)
             if lock is None:
@@ -564,7 +571,13 @@ class TaskManager:
                     self._orphaned.discard(task.task_id)
 
     def _finish(self, task: TranslationTask, status: str, **fields: Any) -> None:
-        """Moves *task* to terminal *status* in memory and in SQLite, with extra *fields*."""
+        """Moves *task* to terminal *status* in memory and in SQLite.
+
+        Args:
+            task: Task that ends.
+            status: Terminal status.
+            **fields: Extra columns to store with it.
+        """
         task.progress = 1.0
         task.phase = None
         task.current_file = None

@@ -783,7 +783,11 @@ def stage_repack(state: PipelineState) -> Path:
 
 
 def _log_summary(state: PipelineState) -> None:
-    """Logs the processed files, translated items and errors (listed with ``verbose``)."""
+    """Logs the processed files, translated items and errors of the run.
+
+    Args:
+        state: Finished run; the errors are listed only with ``config.verbose``.
+    """
     errors = state.stats["errors"]
     rule = "=" * 50
     logger.info(rule)

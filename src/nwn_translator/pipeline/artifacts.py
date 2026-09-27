@@ -43,7 +43,14 @@ def write_json(path: Path, data: Any, *, sort_keys: bool = False) -> None:
 
 
 def _read_json(path: Path) -> Any:
-    """Reads a UTF-8 JSON file."""
+    """Reads a UTF-8 JSON file.
+
+    Args:
+        path: The file.
+
+    Returns:
+        The decoded value.
+    """
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
@@ -172,7 +179,14 @@ def load_world_context(path: Path) -> WorldContext:
 
 
 def _candidate_to_dict(candidate: EntityCandidate) -> Dict[str, Any]:
-    """Serializes an entity candidate with its curation and evidence."""
+    """Serializes an entity candidate with its curation and evidence.
+
+    Args:
+        candidate: Candidate to serialize.
+
+    Returns:
+        The ``candidates.json`` entry.
+    """
     return {
         "name": candidate.name,
         "normalized_name": candidate.normalized_name,

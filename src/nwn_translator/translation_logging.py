@@ -82,7 +82,11 @@ class NullTranslationLogWriter:
     """Writer that discards every entry (no translation log)."""
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Discards *entry*."""
+        """Discards *entry*.
+
+        Args:
+            entry: Ignored.
+        """
 
 
 def translation_log_writer_for_config(

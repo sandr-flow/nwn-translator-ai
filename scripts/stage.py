@@ -58,13 +58,27 @@ logger = logging.getLogger(__name__)
 
 
 def _progress(phase: str, current: int, total: int, message: Optional[str]) -> None:
-    """Logs one progress event of the stage."""
+    """Logs one progress event of the stage.
+
+    Args:
+        phase: Progress phase.
+        current: Finished units.
+        total: Units of the phase.
+        message: File name or step description.
+    """
     detail = f" {message}" if message else ""
     logger.info("[%s] %s/%s%s", phase, current, total, detail)
 
 
 def _build_state(args: argparse.Namespace) -> PipelineState:
-    """Creates the pipeline state of the command line; a repacked module goes to ``--out``."""
+    """Creates the run settings and the pipeline state of the command line.
+
+    Args:
+        args: Command line.
+
+    Returns:
+        A state whose repacked module goes to ``--out``.
+    """
     # Constructing the provider needs a non-empty key. The deterministic stages never
     # call it; the LLM stages need a real one (--api-key or NWN_TRANSLATE_API_KEY).
     input_file = Path(args.input) if args.input else Path(".")
@@ -117,7 +131,15 @@ def _resolve_extract_dir(args: argparse.Namespace, state: PipelineState, do_extr
 
 
 def _translatable_files(args: argparse.Namespace, state: PipelineState) -> List[Path]:
-    """Lists the translatable files of the extraction directory, filtered by ``--only-ext``."""
+    """Lists the translatable files of the extraction directory, filtered by ``--only-ext``.
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+
+    Returns:
+        The files, in pipeline order.
+    """
     assert state.extract_dir is not None
     files = find_translatable_files(state.extract_dir)
     if args.only_ext:
@@ -127,12 +149,26 @@ def _translatable_files(args: argparse.Namespace, state: PipelineState) -> List[
 
 
 def _extract(args: argparse.Namespace, state: PipelineState) -> ExtractedMap:
-    """Extracts the translatable files selected by the command line."""
+    """Extracts the translatable files selected by the command line.
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+
+    Returns:
+        The extracted files, in pipeline order.
+    """
     return stage_extract(state, _translatable_files(args, state))
 
 
 def _load_world_context(state: PipelineState, art_in: Path, *, scan: bool) -> None:
-    """Loads the world context and its candidates from *art_in*; scans without them if *scan*."""
+    """Loads the world context and its candidates from *art_in*.
+
+    Args:
+        state: Run state; its ``world_context`` is set.
+        art_in: Artifact input directory.
+        scan: Scan the module when *art_in* holds no world context.
+    """
     wc_path = art_in / "world_context.json"
     if wc_path.exists():
         state.world_context = artifacts.load_world_context(wc_path)
@@ -144,14 +180,26 @@ def _load_world_context(state: PipelineState, art_in: Path, *, scan: bool) -> No
 
 
 def _dump_world(state: PipelineState, art_out: Path) -> None:
-    """Writes ``world_context.json`` and ``candidates.json``."""
+    """Writes ``world_context.json`` and ``candidates.json``.
+
+    Args:
+        state: Run state; without a world context both files are written empty.
+        art_out: Artifact output directory.
+    """
     world = state.world_context
     artifacts.dump_world_context(art_out / "world_context.json", world)
     artifacts.dump_candidates(art_out / "candidates.json", world.candidates if world else None)
 
 
 def _cmd_unpack(args: argparse.Namespace, state: PipelineState, _in: Path, out: Path) -> None:
-    """Lists the translatable files of the unpacked archive in ``files.json``."""
+    """Lists the translatable files of the unpacked archive in ``files.json``.
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+        _in: Unused.
+        out: Artifact output directory (``--out``).
+    """
     files = _translatable_files(args, state)
     artifacts.write_json(out / "files.json", [str(f) for f in files])
     logger.info("Unpacked to %s (%d translatable files)", state.extract_dir, len(files))
@@ -159,14 +207,28 @@ def _cmd_unpack(args: argparse.Namespace, state: PipelineState, _in: Path, out: 
 
 
 def _cmd_worldscan(args: argparse.Namespace, state: PipelineState, _in: Path, out: Path) -> None:
-    """Scans the world into ``world_context.json`` and its name candidates, for 'entities'."""
+    """Scans the world into ``world_context.json`` and its name candidates, for 'entities'.
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+        _in: Unused.
+        out: Artifact output directory (``--out``).
+    """
     stage_worldscan(state)
     _dump_world(state, out)
     logger.info("Wrote %s", out / "world_context.json")
 
 
 def _cmd_extract(args: argparse.Namespace, state: PipelineState, _in: Path, out: Path) -> None:
-    """Extracts the translatable items into ``items.jsonl``."""
+    """Extracts the translatable items into ``items.jsonl``.
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+        _in: Unused.
+        out: Artifact output directory (``--out``).
+    """
     contents = [content for _parsed, content in _extract(args, state).values()]
     artifacts.dump_items(out / "items.jsonl", contents)
     items = sum(len(content.items) for content in contents)
@@ -174,7 +236,14 @@ def _cmd_extract(args: argparse.Namespace, state: PipelineState, _in: Path, out:
 
 
 def _cmd_entities(args: argparse.Namespace, state: PipelineState, art_in: Path, out: Path) -> None:
-    """Collects entity candidates into ``candidates.json`` (model requests)."""
+    """Collects entity candidates into ``candidates.json`` (model requests).
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+        art_in: Artifact input directory (``--from``).
+        out: Artifact output directory (``--out``).
+    """
     _load_world_context(state, art_in, scan=True)
     stage_collect_entities(state, _extract(args, state))
     _dump_world(state, out)
@@ -186,6 +255,12 @@ def _cmd_glossary(args: argparse.Namespace, state: PipelineState, art_in: Path, 
 
     Only the entities stage fills ``extracted_names``; the scan's candidates alone
     do not replace it.
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+        art_in: Artifact input directory (``--from``).
+        out: Artifact output directory (``--out``).
     """
     _load_world_context(state, art_in, scan=True)
     if not state.world_context.extracted_names:
@@ -198,7 +273,14 @@ def _cmd_glossary(args: argparse.Namespace, state: PipelineState, art_in: Path, 
 
 
 def _cmd_translate(args: argparse.Namespace, state: PipelineState, art_in: Path, out: Path) -> None:
-    """Translates the extracted items into ``translations.json`` (model requests)."""
+    """Translates the extracted items into ``translations.json`` (model requests).
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+        art_in: Artifact input directory (``--from``).
+        out: Artifact output directory (``--out``).
+    """
     _load_world_context(state, art_in, scan=False)
     glossary_path = art_in / "glossary.json"
     if glossary_path.exists():
@@ -209,21 +291,42 @@ def _cmd_translate(args: argparse.Namespace, state: PipelineState, art_in: Path,
 
 
 def _cmd_inject(args: argparse.Namespace, state: PipelineState, art_in: Path, _out: Path) -> None:
-    """Patches ``translations.json`` into the unpacked files."""
+    """Patches ``translations.json`` into the unpacked files.
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+        art_in: Artifact input directory (``--from``).
+        _out: Unused.
+    """
     translations = artifacts.load_translations(art_in / "translations.json")
     stage_inject(state, _extract(args, state), translations)
     logger.info("Injected %d translations into %s", len(translations), state.extract_dir)
 
 
 def _cmd_repack(_args: argparse.Namespace, state: PipelineState, _in: Path, _out: Path) -> None:
-    """Packs the unpacked files into a module in ``--out``."""
+    """Packs the unpacked files into a module in ``--out``.
+
+    Args:
+        _args: Unused.
+        state: Run state with an extraction directory.
+        _in: Unused.
+        _out: Unused.
+    """
     output_path = stage_repack(state)
     logger.info("Repacked module: %s", output_path)
     print(str(output_path))
 
 
 def _cmd_all(args: argparse.Namespace, state: PipelineState, _in: Path, out: Path) -> None:
-    """Runs every stage in turn, writing every artifact."""
+    """Runs every stage in turn, writing every artifact.
+
+    Args:
+        args: Command line.
+        state: Run state with an extraction directory.
+        _in: Unused.
+        out: Artifact output directory (``--out``).
+    """
     stage_worldscan(state)
     extracted_map = _extract(args, state)
     artifacts.dump_items(out / "items.jsonl", [content for _p, content in extracted_map.values()])
@@ -255,7 +358,11 @@ COMMANDS = {
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Builds the parser of the stage commands and their options."""
+    """Builds the command-line parser.
+
+    Returns:
+        The parser of the stage commands and their options.
+    """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )

@@ -378,9 +378,9 @@ def test_a_lost_tag_is_still_caught(original, dropped, cleanup):
 @pytest.mark.parametrize(
     "text, normalized",
     [
-        ("Сирани́та", "Сиранита"),  # a combining acute is dropped
+        ("Сирани\u0301та", "Сиранита"),  # a combining acute is dropped
         # NFC composes e + U+0301 into a precomposed é instead of dropping it.
-        ("café", "café"),
+        ("cafe\u0301", "caf\u00e9"),
         ("й ё", "й ё"),
     ],
 )
@@ -390,7 +390,7 @@ def test_accent_normalization(text, normalized):
 
 def test_finalizing_strips_combining_accents_and_stays_exact():
     handler, _ = _sanitized("Hello Siranita")
-    result = handler.finalize_translation("Привет, Сирани́та")
+    result = handler.finalize_translation("Привет, Сирани\u0301та")
     assert (result.exact_valid, result.final_text) == (True, "Привет, Сиранита")
 
 

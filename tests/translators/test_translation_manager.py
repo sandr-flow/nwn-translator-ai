@@ -305,7 +305,7 @@ def test_text_without_words_skips_the_model(text):
 
 def test_passthrough_that_does_not_survive_acceptance_is_a_failure():
     # A lone combining mark has nothing to translate; normalization drops it.
-    item = _item("́", "mark", "a.uti")
+    item = _item("\u0301", "mark", "a.uti")
     provider = translation_provider()
 
     result, manager = _run(provider, item)

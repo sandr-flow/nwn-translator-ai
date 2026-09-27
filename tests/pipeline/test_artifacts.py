@@ -12,7 +12,8 @@ from nwn_translator.pipeline import artifacts
 
 
 def test_items_round_trip(tmp_path: Path) -> None:
-    text = "First second\u0085third\r\nfourth"  # not line breaks in JSONL
+    # U+2028 and U+0085 stay unescaped in JSONL; they are not line breaks.
+    text = "First\u2028second\u0085third\r\nfourth"
     contents = [
         ExtractedContent(
             content_type="item",

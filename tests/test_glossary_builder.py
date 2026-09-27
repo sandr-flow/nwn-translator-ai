@@ -228,8 +228,8 @@ def test_overall_timeout_keeps_the_finished_batches(monkeypatch):
         # Short keys survive invisible characters and category suffixes.
         (
             '{"Kit": "\\u041d\\u0430\\u0431\\u043e\\u0440"}',
-            {"Kit​ (item)"},
-            {"Kit​ (item)": "Набор"},
+            {"Kit\u200b (item)"},
+            {"Kit\u200b (item)": "Набор"},
         ),
         # Prose and examples after the object do not poison it.
         (

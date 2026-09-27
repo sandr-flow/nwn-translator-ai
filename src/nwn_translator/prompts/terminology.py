@@ -1,7 +1,8 @@
 """Prompts of the terminology stages: entity extraction, candidate curation, glossary.
 
 Every byte here reaches the model: the system prompts are pinned by the prompt
-snapshot test, the user prompts by ``tests/test_terminology_requests.py``.
+snapshot test, the user prompts by the exact-request tests of the entity
+extractor, the glossary curator and the glossary builder.
 """
 
 from __future__ import annotations

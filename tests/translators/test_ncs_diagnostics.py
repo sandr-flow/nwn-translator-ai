@@ -7,17 +7,7 @@ from nwn_translator.translators.ncs_diagnostics import (
     NcsDiagnostics,
     new_ncs_diagnostics,
 )
-
-
-class _Writer:
-    def __init__(self, fail: bool = False) -> None:
-        self.entries: list = []
-        self.fail = fail
-
-    def write(self, entry) -> None:
-        if self.fail:
-            raise OSError("disk full")
-        self.entries.append(entry)
+from tests.support.fakes import RecordingWriter
 
 
 def _item(index: int) -> TranslatableItem:
@@ -37,7 +27,7 @@ def test_new_block_lists_every_counter_then_samples():
 
 
 def test_samples_are_capped_but_every_outcome_is_counted_and_logged():
-    writer = _Writer()
+    writer = RecordingWriter()
     diagnostics = NcsDiagnostics(new_ncs_diagnostics(), writer)
 
     for index in range(SAMPLE_LIMIT + 10):
@@ -64,14 +54,14 @@ def test_samples_are_capped_but_every_outcome_is_counted_and_logged():
 
 
 def test_log_failure_does_not_lose_the_sample():
-    diagnostics = NcsDiagnostics(new_ncs_diagnostics(), _Writer(fail=True))
+    diagnostics = NcsDiagnostics(new_ncs_diagnostics(), RecordingWriter(fail=True))
     diagnostics.record(_item(1), reason="gate_rejected:no")
     assert diagnostics.block["samples"][0]["reason"] == "gate_rejected:no"
     assert "error" not in diagnostics.block["samples"][0]
 
 
 def test_timeout_and_retry_outcomes_are_counted_samples():
-    diagnostics = NcsDiagnostics(new_ncs_diagnostics(), _Writer())
+    diagnostics = NcsDiagnostics(new_ncs_diagnostics(), RecordingWriter())
 
     diagnostics.timeout(_item(1))
     diagnostics.retry_outcome(_item(1), True)

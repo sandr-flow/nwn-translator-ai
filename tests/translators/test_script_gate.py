@@ -6,14 +6,7 @@ from nwn_translator.config import TranslationConfig
 from nwn_translator.extractors.base import TranslatableItem
 from nwn_translator.translators.ncs_diagnostics import NcsDiagnostics, new_ncs_diagnostics
 from nwn_translator.translators.script_gate import ScriptGate, add_script_context
-
-
-class _Writer:
-    def __init__(self) -> None:
-        self.entries: list = []
-
-    def write(self, entry) -> None:
-        self.entries.append(entry)
+from tests.support.fakes import RecordingWriter
 
 
 def _line(index: int, **meta) -> TranslatableItem:
@@ -27,7 +20,7 @@ def _line(index: int, **meta) -> TranslatableItem:
 
 
 def _gate(provider, **config):
-    writer = _Writer()
+    writer = RecordingWriter()
     diagnostics = NcsDiagnostics(new_ncs_diagnostics(), writer)
     gate = ScriptGate(TranslationConfig(api_key="k", **config), provider, writer, diagnostics)
     return gate, diagnostics, writer

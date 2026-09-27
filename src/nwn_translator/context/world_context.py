@@ -106,11 +106,11 @@ class NPCInfo:
 
     tag: str
     first_name: str
-    last_name: str = ""
-    description: str = ""
-    race: str = ""
-    gender: str = ""
-    conversation: str = ""
+    last_name: str
+    description: str
+    race: str
+    gender: str
+    conversation: str
     kind: str = "creature"
 
     @property
@@ -572,9 +572,16 @@ def _register_dialog_actor(context: WorldContext, data: Dict[str, Any], kind: st
     if kind == "creature":
         actor = NPCInfo.from_creature(data)
     else:
-        name = _local_string(data, "LocName") or _local_string(data, "LocalizedName")
-        conversation = _text_field(data, "Conversation")
-        actor = NPCInfo(_text_field(data, "Tag"), name, conversation=conversation, kind=kind)
+        actor = NPCInfo(
+            tag=_text_field(data, "Tag"),
+            first_name=_local_string(data, "LocName") or _local_string(data, "LocalizedName"),
+            last_name="",
+            description="",
+            race="",
+            gender="",
+            conversation=_text_field(data, "Conversation"),
+            kind=kind,
+        )
     if not (actor.tag or actor.first_name.strip() or actor.last_name.strip()):
         return False
     return context.register_dialog_actor(actor)

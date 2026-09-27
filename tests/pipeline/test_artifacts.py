@@ -96,6 +96,14 @@ def test_world_context_without_actors_and_owners_still_loads(tmp_path: Path) -> 
     assert loaded.script_owners == {}
 
 
+def test_world_context_rejects_an_npc_record_with_missing_fields(tmp_path: Path) -> None:
+    path = tmp_path / "world_context.json"
+    path.write_text('{"npcs": {"A": {"tag": "A", "first_name": "Al"}}}', encoding="utf-8")
+
+    with pytest.raises(TypeError):
+        artifacts.load_world_context(path)
+
+
 def test_candidates_round_trip_with_their_curation(tmp_path: Path) -> None:
     registry = EntityCandidateRegistry()
     registry.add(

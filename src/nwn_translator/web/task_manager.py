@@ -156,11 +156,11 @@ class TranslationTask:
         self._cancel.set()
 
     def is_cancel_requested(self) -> bool:
-        """Tells whether :meth:`request_cancel` was called."""
+        """Returns whether :meth:`request_cancel` was called."""
         return self._cancel.is_set()
 
     def is_finished(self) -> bool:
-        """Tells whether the status is one of ``TERMINAL_STATUSES``."""
+        """Returns whether the status is one of ``TERMINAL_STATUSES``."""
         return self.status in TERMINAL_STATUSES
 
 

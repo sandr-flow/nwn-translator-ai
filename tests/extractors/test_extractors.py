@@ -9,6 +9,7 @@ from pathlib import Path
 
 from nwn_translator.extractors.base import TranslatableItem
 from nwn_translator.extractors.dialog_extractor import DialogExtractor
+from nwn_translator.extractors.git_extractor import GitExtractor
 from nwn_translator.extractors.journal_extractor import JournalExtractor
 from tests.support.dialogs import deep_chain
 
@@ -128,3 +129,36 @@ def test_non_struct_journal_categories_and_entries_are_skipped():
         ("entry_1_1", "Found it."),
     ]
     assert result.metadata == {"category_count": 2}
+
+
+def test_translation_groups_follow_structure_not_shared_tags(tmp_path):
+    creature = {
+        "Tag": "same",
+        "FirstName": _loc("Aria"),
+        "LastName": _loc("the Wise"),
+        "Description": _loc("A wise mage."),
+        "ItemList": [
+            {"LocalizedName": _loc("Silver Sword"), "Description": _loc("A fine blade.")},
+            {"LocalizedName": _loc("WP_START")},
+        ],
+    }
+    area = GitExtractor().extract(tmp_path / "area.git", {"Creature List": [creature, creature]})
+    groups: dict = {}
+    for item in area.items:
+        groups.setdefault(item.metadata["translation_group"], []).append(item.text)
+    assert len(groups) == 4
+    assert groups["Creature List[0]"] == groups["Creature List[1]"]
+    assert "WP_START" not in [i.text for i in area.items]
+
+    categories = [
+        {"Tag": "same", "Name": _loc("A quest"), "EntryList": [{"Text": _loc("Find the sword.")}]}
+    ] * 2
+    journal = JournalExtractor().extract(tmp_path / "quests.jrl", {"Categories": categories})
+    assert [i.metadata["translation_group"] for i in journal.items] == [
+        "category[0]",
+        "category[0]",
+        "category[1]",
+        "category[1]",
+    ]
+    assert "A quest" in journal.items[1].context
+    assert "quest title: 'same'" not in journal.items[1].context

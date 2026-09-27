@@ -119,7 +119,6 @@ def inject_translations_into_file(
     extracted: ExtractedContent,
     translations: Translations,
     *,
-    log_updates: bool = False,
     target_lang: Optional[str] = None,
     source_encoding: Optional[str] = None,
 ) -> Optional[InjectedContent]:
@@ -130,7 +129,6 @@ def inject_translations_into_file(
         parsed_data: Loaded resource; unused, the injectors patch by recorded offsets.
         extracted: Items extracted from the file.
         translations: Translated text by occurrence.
-        log_updates: Log the number of patched items.
         target_lang: Target language; selects the code page of the written text.
         source_encoding: Decode used for *extracted*; script injection compares
             the re-read file against it.
@@ -141,7 +139,7 @@ def inject_translations_into_file(
     kind = RESOURCE_KINDS.get(file_path.suffix.lower())
     if kind is None:
         return None
-    result = kind.inject(
+    return kind.inject(
         file_path,
         extracted.items,
         translations,
@@ -149,9 +147,6 @@ def inject_translations_into_file(
         text_encoding=module_string_encoding_for_target_lang(target_lang),
         source_encoding=source_encoding,
     )
-    if log_updates and result.modified:
-        logger.info("Updated %s: %s items", file_path.name, result.items_updated)
-    return result
 
 
 def _new_run_stats() -> Dict[str, Any]:
@@ -730,7 +725,6 @@ def stage_inject(
             parsed_data,
             extracted,
             translations,
-            log_updates=True,
             target_lang=state.config.target_lang,
             source_encoding=state.source_encoding,
         )
@@ -743,6 +737,8 @@ def stage_inject(
             write_trace(state.trace, {**event, "error": str(error)})
             state.add_error(f"Error injecting {file_path.name}: {error}")
             continue
+        if result and result.modified:
+            logger.info("Updated %s: %s items", file_path.name, result.items_updated)
         metadata = result.metadata if result else {}
         submitted = [
             {"item_id": item.item_id, "translated": translations[item.key]}

@@ -105,18 +105,10 @@ class LLMRequestMetric:
 
 
 #: Metric fields summed per phase, in report order.
-_SUMMED_FIELDS = (
-    "prompt_chars",
-    "stable_chars",
-    "variable_chars",
-    "user_chars",
-    "world_context_chars",
-    "glossary_chars",
-    "estimated_input_tokens",
-    "estimated_output_tokens",
-    "usage_input_tokens",
-    "usage_output_tokens",
-    "latency_ms",
+_SUMMED_FIELDS = tuple(
+    "prompt_chars stable_chars variable_chars user_chars world_context_chars glossary_chars "
+    "estimated_input_tokens estimated_output_tokens usage_input_tokens usage_output_tokens "
+    "latency_ms".split()
 )
 #: Per-phase summary keys in report order; ``avg_latency_ms`` is appended last.
 _PHASE_KEYS = (
@@ -239,20 +231,17 @@ def split_system_prompt_chars(system_prompt: Any) -> tuple[int, int]:
     Returns:
         ``(stable_chars, variable_chars)``; plain text counts as stable.
     """
-    if isinstance(system_prompt, list):
-        stable = 0
-        variable = 0
-        for part in system_prompt:
-            if not isinstance(part, dict):
-                variable += len(str(part))
-                continue
-            text = str(part.get("text", ""))
-            if part.get("cache_control"):
-                stable += len(text)
-            else:
-                variable += len(text)
-        return stable, variable
-    return len(str(system_prompt or "")), 0
+    if not isinstance(system_prompt, list):
+        return len(str(system_prompt or "")), 0
+    stable = variable = 0
+    for part in system_prompt:
+        if not isinstance(part, dict):
+            variable += len(str(part))
+        elif part.get("cache_control"):
+            stable += len(str(part.get("text", "")))
+        else:
+            variable += len(str(part.get("text", "")))
+    return stable, variable
 
 
 def usage_tokens(response: Any) -> tuple[Optional[int], Optional[int]]:

@@ -68,9 +68,6 @@ def _build_state(args: argparse.Namespace) -> PipelineState:
     # Constructing the provider needs a non-empty key. The deterministic stages never
     # call it; the LLM stages need a real one (--api-key or NWN_TRANSLATE_API_KEY).
     input_file = Path(args.input) if args.input else Path(".")
-    concurrency = {}
-    if args.max_concurrent is not None:
-        concurrency["max_concurrent_requests"] = max(1, args.max_concurrent)
     config = TranslationConfig(
         api_key=args.api_key or os.getenv("NWN_TRANSLATE_API_KEY") or "offline-placeholder-key",
         model=args.model,
@@ -83,8 +80,9 @@ def _build_state(args: argparse.Namespace) -> PipelineState:
         reasoning_effort=args.reasoning_effort,
         quiet=True,
         progress_callback=_progress if args.progress else None,
-        **concurrency,
     )
+    if args.max_concurrent is not None:
+        config.max_concurrent_requests = max(1, args.max_concurrent)
     return PipelineState.create(config)
 
 
@@ -261,36 +259,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("command", choices=sorted(COMMANDS), help="Pipeline stage to run")
-    parser.add_argument(
-        "input", nargs="?", default=None, help="Input .mod/.erf/.hak archive or extracted dir"
-    )
-    parser.add_argument(
-        "--out", type=Path, default=Path("workspace/stage"), help="Artifact output dir"
-    )
-    parser.add_argument(
+    add = parser.add_argument
+    add("command", choices=sorted(COMMANDS), help="Pipeline stage to run")
+    add("input", nargs="?", default=None, help="Input .mod/.erf/.hak archive or extracted dir")
+    add("--out", type=Path, default=Path("workspace/stage"), help="Artifact output dir")
+    add(
         "--from", dest="art_in", type=Path, default=None, help="Artifact input dir (default: --out)"
     )
-    parser.add_argument(
-        "--extract-dir", type=Path, default=None, help="Existing extraction directory"
-    )
-    parser.add_argument(
-        "--only-ext", default=None, help="Restrict to one file extension, e.g. .ncs"
-    )
-    parser.add_argument("--env-file", type=Path, default=Path(".env"))
-    parser.add_argument("--api-key", default=None)
-    parser.add_argument(
-        "--model", default=DEFAULT_MODEL, help=f"Model slug (default: {DEFAULT_MODEL})"
-    )
-    parser.add_argument("--source-lang", default="auto")
-    parser.add_argument("--target-lang", default="russian")
+    add("--extract-dir", type=Path, default=None, help="Existing extraction directory")
+    add("--only-ext", default=None, help="Restrict to one file extension, e.g. .ncs")
+    add("--env-file", type=Path, default=Path(".env"))
+    add("--api-key", default=None)
+    add("--model", default=DEFAULT_MODEL, help=f"Model slug (default: {DEFAULT_MODEL})")
+    add("--source-lang", default="auto")
+    add("--target-lang", default="russian")
     # Accepted and ignored so that older command lines still parse.
-    parser.add_argument("--temp-dir", type=Path, default=None, help="Ignored")
-    parser.add_argument("--max-concurrent", type=int, default=None)
-    parser.add_argument("--player-gender", choices=["male", "female"], default="male")
-    parser.add_argument("--reasoning-effort", default=None)
-    parser.add_argument("--progress", action="store_true", help="Log progress callbacks")
-    parser.add_argument("--verbose", action="store_true")
+    add("--temp-dir", type=Path, default=None, help="Ignored")
+    add("--max-concurrent", type=int, default=None)
+    add("--player-gender", choices=["male", "female"], default="male")
+    add("--reasoning-effort", default=None)
+    add("--progress", action="store_true", help="Log progress callbacks")
+    add("--verbose", action="store_true")
     return parser
 
 

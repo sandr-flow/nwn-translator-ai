@@ -230,19 +230,11 @@ GAME_INCOMPATIBLE_TARGET_LANGS = frozenset({"chinese", "japanese", "korean", "tu
 #: Language -> code page of injected strings; a test keeps the values equal to
 #: ``formats.text_codec.MODULE_ENCODINGS``, the pages the patchers accept.
 _LANG_TO_WINDOWS_ENCODING: dict[str, str] = {
-    "russian": "cp1251",
-    "ukrainian": "cp1251",
-    "polish": "cp1250",
-    "czech": "cp1250",
-    "hungarian": "cp1250",
-    "romanian": "cp1250",
-    "german": "cp1252",
-    "french": "cp1252",
-    "spanish": "cp1252",
-    "italian": "cp1252",
-    "portuguese": "cp1252",
-    "dutch": "cp1252",
-    "english": "cp1252",
+    **dict.fromkeys(("russian", "ukrainian"), "cp1251"),
+    **dict.fromkeys(("polish", "czech", "hungarian", "romanian"), "cp1250"),
+    **dict.fromkeys(
+        ("german", "french", "spanish", "italian", "portuguese", "dutch", "english"), "cp1252"
+    ),
 }
 
 

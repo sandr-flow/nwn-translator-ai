@@ -56,41 +56,20 @@ class ModelReasoning:
 #: the live catalog is unavailable.
 FALLBACK: Dict[str, ModelReasoning] = {
     "google/gemini-3.1-flash-lite": ModelReasoning(
-        supported=True,
-        mandatory=False,
-        default_effort="minimal",
-        supported_efforts=("high", "medium", "low", "minimal"),
+        True, False, "minimal", ("high", "medium", "low", "minimal")
     ),
     "google/gemini-3.5-flash-lite": ModelReasoning(
-        supported=True,
-        mandatory=True,
-        default_effort="minimal",
-        supported_efforts=("high", "medium", "low", "minimal"),
+        True, True, "minimal", ("high", "medium", "low", "minimal")
     ),
-    "google/gemini-3.8-flash": ModelReasoning(
-        supported=True,
-        mandatory=True,
-        default_effort="medium",
-        supported_efforts=("high", "medium", "low"),
-    ),
+    "google/gemini-3.8-flash": ModelReasoning(True, True, "medium", ("high", "medium", "low")),
     "openai/gpt-5.6-luna": ModelReasoning(
-        supported=True,
-        mandatory=False,
-        default_effort="medium",
-        supported_efforts=("max", "xhigh", "high", "medium", "low", "none"),
+        True, False, "medium", ("max", "xhigh", "high", "medium", "low", "none")
     ),
 }
 
 
 def is_valid_model_slug(slug: str) -> bool:
-    """Tells whether *slug* looks like an OpenRouter model id.
-
-    Args:
-        slug: Candidate ``author/model`` slug, optionally with a ``:variant`` suffix.
-
-    Returns:
-        ``True`` for a well-formed slug.
-    """
+    """Tells whether *slug* looks like an ``author/model[:variant]`` OpenRouter model id."""
     return bool(slug) and bool(_SLUG_RE.match(slug.strip()))
 
 
@@ -99,32 +78,22 @@ def _parse_entry(entry: dict) -> ModelReasoning:
     raw = entry.get("reasoning")
     if not isinstance(raw, dict):
         return ModelReasoning(supported=False)
-    efforts_raw = raw.get("supported_efforts")
-    efforts: Optional[Tuple[str, ...]]
-    if efforts_raw is None:
-        efforts = None
-    else:
-        efforts = tuple(str(e) for e in efforts_raw)
-    default = raw.get("default_effort")
-    default_effort = str(default) if default else None
+    efforts = raw.get("supported_efforts")
     return ModelReasoning(
         supported=True,
         mandatory=bool(raw.get("mandatory")),
-        default_effort=default_effort,
-        supported_efforts=efforts,
+        default_effort=str(raw["default_effort"]) if raw.get("default_effort") else None,
+        supported_efforts=None if efforts is None else tuple(str(e) for e in efforts),
     )
 
 
 def _parse_catalog(payload: dict) -> Dict[str, ModelReasoning]:
     """Maps every model id of a ``/models`` payload to its reasoning metadata."""
-    parsed: Dict[str, ModelReasoning] = {}
-    for entry in payload.get("data") or []:
-        if not isinstance(entry, dict):
-            continue
-        mid = entry.get("id")
-        if isinstance(mid, str) and mid:
-            parsed[mid] = _parse_entry(entry)
-    return parsed
+    return {
+        entry["id"]: _parse_entry(entry)
+        for entry in payload.get("data") or []
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"]
+    }
 
 
 def reset_catalog_cache() -> None:

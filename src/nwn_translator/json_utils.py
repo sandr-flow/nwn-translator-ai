@@ -22,12 +22,8 @@ def strip_json_markdown_fences(raw: str, *, case_sensitive: bool = False) -> str
 
     Args:
         raw: Model reply.
-        case_sensitive: Recognise the ``json`` tag only in lower case, as
-            :func:`load_first_json_object` does; an upper-case ``JSON`` tag then
-            stays in the text.
-
-    Returns:
-        The stripped reply.
+        case_sensitive: Recognise only a lower-case ``json`` tag, as
+            :func:`load_first_json_object` does; ``JSON`` then stays in the text.
     """
     flags = 0 if case_sensitive else re.IGNORECASE
     return _CLOSING_FENCE.sub("", re.sub(_OPENING_FENCE, "", raw.strip(), flags=flags))
@@ -44,34 +40,20 @@ def _decode_first_object(cleaned: str) -> Dict[str, Any]:
 
 
 def load_first_json_object(raw: str) -> Dict[str, Any]:
-    """Decodes the first JSON object of a provider reply, ignoring surrounding text.
-
-    Args:
-        raw: Model reply, optionally wrapped in a lower-case markdown fence.
-
-    Returns:
-        The decoded object.
+    """Decodes the first JSON object of a reply (in an optional lower-case fence).
 
     Raises:
-        json.JSONDecodeError: If the reply has no ``{`` ("No JSON object found")
-            or the object is malformed or truncated. Positions in the message refer
-            to the fence-stripped text; they reach translation results verbatim.
+        json.JSONDecodeError: If the reply has no ``{`` ("No JSON object found") or the
+            object is malformed or truncated. Positions in the message refer to the
+            fence-stripped text; they reach translation results verbatim.
     """
     return _decode_first_object(strip_json_markdown_fences(raw, case_sensitive=True))
 
 
 def json_extract_first_object(raw: str) -> Optional[Dict[str, Any]]:
-    """Parses the first JSON object from *raw*, tolerating fences and trailing text.
+    """Decodes the first JSON object of *raw*, or returns ``None`` when there is none.
 
-    Handles trailing text after the object (``Extra data`` from :func:`json.loads`),
-    multiple objects (only the first is returned) and markdown fences in any case.
-
-    Args:
-        raw: Model reply.
-
-    Returns:
-        The decoded object, or ``None`` when *raw* holds no ``{`` or the object
-        does not decode.
+    Trailing text, further objects and markdown fences in any case are tolerated.
     """
     try:
         return _decode_first_object(strip_json_markdown_fences(raw))
@@ -82,15 +64,9 @@ def json_extract_first_object(raw: str) -> Optional[Dict[str, Any]]:
 def load_brace_span(raw: str) -> Any:
     """Strictly decodes the text from the first ``{`` to the last ``}`` of *raw*.
 
-    The span is greedy, so prose around one object is ignored, but text between
-    two objects makes the span invalid. Strict decoding rejects raw control
-    characters inside strings.
-
-    Args:
-        raw: Model reply.
-
-    Returns:
-        The decoded value; *raw* is decoded whole when it has no ``{ … }`` span.
+    The span is greedy, so prose around one object is ignored, but text between two
+    objects makes it invalid; raw control characters inside strings are rejected. *raw*
+    is decoded whole when it has no ``{ … }`` span.
 
     Raises:
         json.JSONDecodeError: If the span (or *raw*) is not valid JSON.
@@ -102,16 +78,9 @@ def load_brace_span(raw: str) -> Any:
 def scan_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
     """Returns the first object that decodes at any ``{`` of *raw*, leniently.
 
-    Each ``{`` is tried in turn with ``strict=False`` (raw newlines inside strings
-    are accepted), so an unparsable fragment before a valid object is skipped.
-    *raw* is decoded whole as a last resort.
-
-    Args:
-        raw: Model reply.
-
-    Returns:
-        The first decodable object, or ``None`` when *raw* has no ``{`` and
-        decodes whole to a non-object value.
+    Each ``{`` is tried in turn with ``strict=False`` (raw newlines inside strings are
+    accepted), so an unparsable fragment before a valid object is skipped; *raw* is
+    decoded whole as a last resort. ``None`` when that yields a non-object value.
 
     Raises:
         json.JSONDecodeError: If no object decodes (the last decoding error).

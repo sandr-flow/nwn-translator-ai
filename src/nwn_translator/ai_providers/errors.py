@@ -48,15 +48,11 @@ def _retry_after_candidates(exc: BaseException) -> Iterator[Any]:
 
 
 def retry_after_seconds(exc: BaseException) -> Optional[float]:
-    """Returns the gateway's ``Retry-After`` hint carried by *exc*.
-
-    Args:
-        exc: Exception raised by a request.
+    """Returns the gateway's ``Retry-After`` hint carried by *exc*, if any.
 
     Returns:
         The first positive value among ``RateLimitError.retry_after_seconds``, the
-        ``retry-after`` response header and a "Retry-After: N" phrase in the
-        message; ``None`` when there is none.
+        ``retry-after`` response header and a "Retry-After: N" phrase in the message.
     """
     for raw in _retry_after_candidates(exc):
         try:
@@ -69,17 +65,11 @@ def retry_after_seconds(exc: BaseException) -> Optional[float]:
 
 
 def wait_with_retry_after(retry_state: RetryCallState) -> float:
-    """Returns the backoff before the next attempt.
+    """Returns the seconds to sleep before the next attempt.
 
-    Exponential backoff (2-120 s), floored at the failed attempt's ``Retry-After``
-    hint. A hinted wait gets up to 5 % jitter so that concurrent requests told to
-    wait the same time do not all resume in the same second.
-
-    Args:
-        retry_state: Tenacity state of the failed attempt.
-
-    Returns:
-        Seconds to sleep.
+    Exponential backoff (2-120 s), floored at the failed attempt's ``Retry-After`` hint.
+    A hinted wait gets up to 5 % jitter so that concurrent requests told to wait the same
+    time do not all resume in the same second.
     """
     base = float(_EXPONENTIAL_WAIT(retry_state))
     outcome = retry_state.outcome
@@ -105,16 +95,9 @@ TRANSIENT_RETRY = retry(
 def is_rate_or_budget_error(exc: BaseException) -> bool:
     """Tells whether *exc* reports a rate limit or exhausted in-flight budget.
 
-    The message is searched only when the error carries no HTTP status: a 400 whose
+    HTTP 429/402 are; the message (``rate_limit``, ``429``, ``402``, ``in_flight_budget``
+    in any case) is searched only when the error carries no HTTP status, since a 400 whose
     text merely contains "429" or "402" (a token count) is not a rate limit.
-
-    Args:
-        exc: Exception raised by a request.
-
-    Returns:
-        ``True`` for HTTP 429/402, or for a status-less error whose message
-        contains ``rate_limit``, ``429``, ``402`` or ``in_flight_budget`` in any
-        letter case.
     """
     status = getattr(exc, "status_code", None)
     if status is not None:
@@ -131,9 +114,8 @@ def map_api_error(exc: BaseException, label: str) -> ProviderError:
         label: Provider label for the message (``"OpenRouter"``, ``"POLZA.AI"``).
 
     Returns:
-        A :class:`RateLimitError` carrying the ``Retry-After`` hint for rate-limit
-        and budget errors, an :class:`OpenRouterError` otherwise. The caller raises
-        it ``from exc``.
+        A :class:`RateLimitError` with the ``Retry-After`` hint for rate-limit and budget
+        errors, an :class:`OpenRouterError` otherwise; the caller raises it ``from exc``.
     """
     if is_rate_or_budget_error(exc):
         return RateLimitError(
@@ -143,16 +125,10 @@ def map_api_error(exc: BaseException, label: str) -> ProviderError:
 
 
 def is_reasoning_rejection(error: BadRequestError) -> bool:
-    """Tells whether a 400 says the model does not accept a ``reasoning`` field.
+    """Tells whether a 400 says the model does not accept a ``reasoning`` field at all.
 
     Models that make reasoning mandatory ("cannot be disabled") and errors about a
     particular effort value are not rejections of the field itself.
-
-    Args:
-        error: The HTTP 400 raised for a request that carried reasoning parameters.
-
-    Returns:
-        ``True`` when resending the request without reasoning parameters is correct.
     """
     msg = str(error).lower()
     if "cannot be disabled" in msg or "reasoning is mandatory" in msg:

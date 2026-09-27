@@ -56,15 +56,7 @@ _SINGLE_JSON_ATTEMPTS = 2
 
 
 def parse_single_translation(raw: str) -> str:
-    """Extracts the ``translation`` value of a single-string reply.
-
-    Args:
-        raw: Model reply; text around the first JSON object is ignored.
-
-    Returns:
-        The translation, or ``""`` when the reply has no JSON object, does not
-        decode, or lacks a non-empty string ``translation``.
-    """
+    """Returns the non-empty string ``translation`` of the first JSON object in *raw*, or ``""``."""
     try:
         translated = load_first_json_object(raw).get("translation", "")
     except json.JSONDecodeError:
@@ -83,8 +75,8 @@ def parse_batch_results(
 ) -> List[TranslationResult]:
     """Turns a batch reply into one result per item, addressed by position.
 
-    A ``{"translation": {...}}`` wrapper around the ID map is unwrapped; positions
-    are never inferred from lists, group ids or a combined string.
+    A ``{"translation": {...}}`` wrapper around the ID map is unwrapped; positions are
+    never inferred from lists, group ids or a combined string.
 
     Args:
         raw: Model reply.
@@ -92,9 +84,8 @@ def parse_batch_results(
         model: Model slug recorded in the result metadata.
 
     Returns:
-        One result per item. Every item fails with ``Batch JSON parse error: ...``
-        when the reply does not decode, and individually when its key is missing
-        or empty.
+        One result per item. All fail when the reply does not decode, and each one alone
+        when its key is missing or empty.
     """
     try:
         parsed = load_first_json_object(raw)
@@ -203,21 +194,15 @@ class OpenRouterProvider:
         return f"{self.get_provider_name()}(model={self.model})"
 
     def get_provider_name(self) -> str:
-        """Returns the short provider id recorded in metrics.
-
-        Returns:
-            :attr:`PROVIDER_NAME`.
-        """
+        """Returns :attr:`PROVIDER_NAME`, the short provider id recorded in metrics."""
         return self.PROVIDER_NAME
 
     @property
     def async_client(self) -> AsyncOpenAI:
         """The ``AsyncOpenAI`` client bound to the current thread's running loop.
 
-        The cache key is the loop object itself (a strong reference is kept):
-        comparing ``id(loop)`` values would false-hit when a garbage-collected
-        loop's address is reused by a new one. With the persistent loop of
-        ``run_async`` the same client serves every call of a run.
+        The cache key is the loop object itself: an ``id(loop)`` could be reused by a new
+        loop after the old one is collected.
         """
         try:
             loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
@@ -236,11 +221,7 @@ class OpenRouterProvider:
         return cast(AsyncOpenAI, self._thread_local.async_client)
 
     async def close_async_client(self) -> None:
-        """Closes this thread's client; called before the event loop shuts down.
-
-        A failing close is logged at debug level and otherwise ignored: the run's
-        results do not depend on it.
-        """
+        """Closes this thread's client before its event loop shuts down; failures are logged."""
         client = getattr(self._thread_local, "async_client", None)
         if client is not None:
             try:
@@ -254,12 +235,12 @@ class OpenRouterProvider:
     def make_system_message_content(stable: str, variable: str = "") -> SystemContent:
         """Builds ``messages[0].content`` from a cacheable and a per-call prompt half.
 
-        Without a variable half the content is plain text (maximally compatible
-        with OpenAI-compatible gateways). Otherwise the stable half carries a
-        ``cache_control: ephemeral`` breakpoint: honoured by Anthropic, Gemini and
-        Grok through OpenRouter, ignored by providers that cache prefixes on their
-        own. :data:`~nwn_translator.config.PROMPT_CACHE_BREAKPOINTS_ENABLED` off
-        joins both halves into one string instead.
+        Without a variable half the content is plain text (maximally compatible). Otherwise
+        the stable half carries a ``cache_control: ephemeral`` breakpoint, honoured by
+        Anthropic, Gemini and Grok through OpenRouter and ignored by providers that cache
+        prefixes on their own; with
+        :data:`~nwn_translator.config.PROMPT_CACHE_BREAKPOINTS_ENABLED` off both halves are
+        joined into one string instead.
 
         Args:
             stable: Prompt text that is byte-identical across the calls of a run.
@@ -338,10 +319,9 @@ class OpenRouterProvider:
             The reply text, stripped.
 
         Raises:
-            RateLimitError: If the gateway reports a rate limit or an exhausted budget.
-            OpenRouterError: If any other non-transient API error occurs.
-            APIConnectionError: If the connection fails or times out (transient).
-            InternalServerError: If the gateway answers HTTP >= 500 (transient).
+            ProviderError: A rate limit or exhausted budget (``RateLimitError``), or another
+                non-transient API error (``OpenRouterError``).
+            APIError: A connection failure, timeout or HTTP >= 500 (transient).
         """
         kwargs: Dict[str, Any] = {
             "model": self.model,
@@ -464,10 +444,8 @@ class OpenRouterProvider:
             The translation, or a failed result when no reply parses.
 
         Raises:
-            RateLimitError: If a rate limit or the budget persists after retries.
-            OpenRouterError: If a non-transient API error occurs.
-            APIConnectionError: If the connection fails or times out after retries.
-            InternalServerError: If the gateway answers HTTP >= 500 after retries.
+            ProviderError: A rate limit (``RateLimitError``, after retries) or another API error.
+            APIError: A connection failure, timeout or HTTP >= 500 persisting after retries.
         """
         if not text or not text.strip():
             return TranslationResult(translated="", original=text, success=True)
@@ -536,10 +514,8 @@ class OpenRouterProvider:
             One result per item, in order (see :func:`parse_batch_results`).
 
         Raises:
-            RateLimitError: If a rate limit or the budget persists after retries.
-            OpenRouterError: If a non-transient API error occurs.
-            APIConnectionError: If the connection fails or times out after retries.
-            InternalServerError: If the gateway answers HTTP >= 500 after retries.
+            ProviderError: A rate limit (``RateLimitError``, after retries) or another API error.
+            APIError: A connection failure, timeout or HTTP >= 500 persisting after retries.
         """
         if not items:
             return []
@@ -587,10 +563,8 @@ class OpenRouterProvider:
             The stripped reply text.
 
         Raises:
-            RateLimitError: If a rate limit or the budget persists after retries.
-            OpenRouterError: If a non-transient API error occurs.
-            APIConnectionError: If the connection fails or times out after retries.
-            InternalServerError: If the gateway answers HTTP >= 500 after retries.
+            ProviderError: A rate limit (``RateLimitError``, after retries) or another API error.
+            APIError: A connection failure, timeout or HTTP >= 500 persisting after retries.
         """
         return await self._complete(
             system_prompt,
@@ -627,10 +601,8 @@ class OpenRouterProvider:
             The stripped reply text.
 
         Raises:
-            RateLimitError: If the gateway reports a rate limit or an exhausted budget.
-            OpenRouterError: If a non-transient API error occurs.
-            APIConnectionError: If the connection fails or times out.
-            InternalServerError: If the gateway answers HTTP >= 500.
+            ProviderError: A rate limit (``RateLimitError``) or another API error.
+            APIError: A connection failure, timeout or HTTP >= 500.
         """
         return await self._complete_once(
             system_prompt,
@@ -660,10 +632,8 @@ class OpenRouterProvider:
             :func:`~nwn_translator.ai_providers.ncs_gate.classify_with_recovery`).
 
         Raises:
-            RateLimitError: If a rate limit or the budget persists after retries.
-            OpenRouterError: If a non-transient API error occurs.
-            APIConnectionError: If the connection fails or times out after retries.
-            InternalServerError: If the gateway answers HTTP >= 500 after retries.
+            ProviderError: A rate limit (``RateLimitError``, after retries) or another API error.
+            APIError: A connection failure, timeout or HTTP >= 500 persisting after retries.
         """
 
         async def request(user_prompt: str, max_tokens: int, batch_size: int) -> str:

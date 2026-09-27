@@ -211,12 +211,6 @@ INSTANCE_FIELDS: Dict[str, Tuple[GitField, ...]] = {
     ),
 }
 
-#: GFF instance list label -> translatable field labels. Only the tests read this
-#: projection; the extractor walks :data:`INSTANCE_FIELDS`.
-INSTANCE_LISTS: Dict[str, List[str]] = {
-    list_key: [field.name for field in fields] for list_key, fields in INSTANCE_FIELDS.items()
-}
-
 #: Instance list label -> nested item lists (loose inventory, equipped gear).
 #: Store instances instead nest their stock in ``ItemList`` rows of recursive
 #: ``StoreList`` shelves.

@@ -367,7 +367,8 @@ def _run_mode(
 def _load_result_map(path: Path) -> Dict[str, Dict[str, Any]]:
     """Reads a ``*_results.jsonl`` file into rows by item id."""
     rows = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    # JSONL keeps U+2028/U+0085 unescaped inside strings: split on newlines only.
+    for line in path.read_text(encoding="utf-8").split("\n"):
         if not line.strip():
             continue
         row = json.loads(line)

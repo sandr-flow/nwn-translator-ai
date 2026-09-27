@@ -11,7 +11,7 @@ import pytest
 from nwn_translator.extractors import git_fields
 from nwn_translator.extractors.git_extractor import GitExtractor
 from nwn_translator.extractors.git_fields import (
-    INSTANCE_LISTS,
+    INSTANCE_FIELDS,
     npc_possessive_hint,
     should_translate_git_string,
 )
@@ -174,9 +174,10 @@ def test_player_visible_instance_strings_are_extracted():
 
 
 def test_instance_lists_include_description_fields():
+    names = {key: {field.name for field in fields} for key, fields in INSTANCE_FIELDS.items()}
     for name in ("Placeable List", "Door List", "StoreList"):
-        assert "Description" in INSTANCE_LISTS[name]
-    assert {"LocName", "LocalizedName"} <= set(INSTANCE_LISTS["StoreList"])
+        assert "Description" in names[name]
+    assert {"LocName", "LocalizedName"} <= names["StoreList"]
 
 
 def test_door_instance_names_come_from_locname(tmp_path):

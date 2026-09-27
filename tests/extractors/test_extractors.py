@@ -12,22 +12,19 @@ from nwn_translator.extractors.dialog_extractor import DialogExtractor
 from nwn_translator.extractors.git_extractor import GitExtractor
 from nwn_translator.extractors.journal_extractor import JournalExtractor
 from tests.support.dialogs import deep_chain
-
-
-def _loc(text: str) -> dict:
-    return {"StrRef": -1, "Value": text}
+from tests.support.gff_writer import loc
 
 
 def _entry(text, reply_indices=(), speaker=""):
     return {
-        "Text": _loc(text),
+        "Text": loc(text),
         "Speaker": speaker,
         "RepliesList": [{"Index": i} for i in reply_indices],
     }
 
 
 def _reply(text, entry_indices=()):
-    return {"Text": _loc(text), "EntriesList": [{"Index": i} for i in entry_indices]}
+    return {"Text": loc(text), "EntriesList": [{"Index": i} for i in entry_indices]}
 
 
 def _tree(entries, replies, starts=(0,)):
@@ -48,8 +45,8 @@ def test_items_and_text_checks():
     result = DialogExtractor().extract(
         Path("test.dlg"),
         {
-            "EntryList": [{"Text": _loc("Hello there!"), "Speaker": "Guard"}],
-            "ReplyList": [{"Text": _loc("Just passing through.")}],
+            "EntryList": [{"Text": loc("Hello there!"), "Speaker": "Guard"}],
+            "ReplyList": [{"Text": loc("Just passing through.")}],
         },
     )
     assert (result.content_type, result.source_file) == ("dialog", Path("test.dlg"))
@@ -118,7 +115,7 @@ def test_non_struct_journal_categories_and_entries_are_skipped():
     parsed = {
         "Categories": [
             7,
-            {"Name": _loc("Side Quest"), "EntryList": [3, {"ID": 1, "Text": _loc("Found it.")}]},
+            {"Name": loc("Side Quest"), "EntryList": [3, {"ID": 1, "Text": loc("Found it.")}]},
         ]
     }
 
@@ -134,12 +131,12 @@ def test_non_struct_journal_categories_and_entries_are_skipped():
 def test_translation_groups_follow_structure_not_shared_tags(tmp_path):
     creature = {
         "Tag": "same",
-        "FirstName": _loc("Aria"),
-        "LastName": _loc("the Wise"),
-        "Description": _loc("A wise mage."),
+        "FirstName": loc("Aria"),
+        "LastName": loc("the Wise"),
+        "Description": loc("A wise mage."),
         "ItemList": [
-            {"LocalizedName": _loc("Silver Sword"), "Description": _loc("A fine blade.")},
-            {"LocalizedName": _loc("WP_START")},
+            {"LocalizedName": loc("Silver Sword"), "Description": loc("A fine blade.")},
+            {"LocalizedName": loc("WP_START")},
         ],
     }
     area = GitExtractor().extract(tmp_path / "area.git", {"Creature List": [creature, creature]})
@@ -151,7 +148,7 @@ def test_translation_groups_follow_structure_not_shared_tags(tmp_path):
     assert "WP_START" not in [i.text for i in area.items]
 
     categories = [
-        {"Tag": "same", "Name": _loc("A quest"), "EntryList": [{"Text": _loc("Find the sword.")}]}
+        {"Tag": "same", "Name": loc("A quest"), "EntryList": [{"Text": loc("Find the sword.")}]}
     ] * 2
     journal = JournalExtractor().extract(tmp_path / "quests.jrl", {"Categories": categories})
     assert [i.metadata["translation_group"] for i in journal.items] == [

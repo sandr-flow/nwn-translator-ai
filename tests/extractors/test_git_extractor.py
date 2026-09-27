@@ -16,19 +16,15 @@ from nwn_translator.extractors.git_fields import (
     should_translate_git_string,
 )
 from nwn_translator.formats.gff import read_gff
-from tests.support.gff_writer import write_gff
-
-
-def _loc(value: str, strref: int = -1) -> Dict[str, Any]:
-    return {"StrRef": strref, "Value": value}
+from tests.support.gff_writer import loc, write_gff
 
 
 def _item(name: str, desc: str = "", ident: str = "", **fields: Any) -> Dict[str, Any]:
     return {
         **fields,
-        "LocalizedName": _loc(name),
-        "Description": _loc(desc),
-        "DescIdentified": _loc(ident),
+        "LocalizedName": loc(name),
+        "Description": loc(desc),
+        "DescIdentified": loc(ident),
     }
 
 
@@ -38,9 +34,9 @@ DOOR_TAGS = ["Beta_to_Bearpit", "LL_EXIT", "HouseToBasement", "NW_Door"]
 AREA: Dict[str, Any] = {
     "Creature List": [
         {
-            "FirstName": _loc("Grandma"),
-            "LastName": _loc(""),
-            "Description": _loc(""),
+            "FirstName": loc("Grandma"),
+            "LastName": loc(""),
+            "Description": loc(""),
             "Equip_ItemList": [
                 _item("Family Axe", "Heavy."),
                 _item("Grandma's Armor", "Worn by Grandma.", "Sturdy family armor."),
@@ -51,65 +47,65 @@ AREA: Dict[str, Any] = {
         }
     ],
     "Placeable List": [
-        {"LocName": _loc("Old Wooden Chest"), "Description": _loc("")},
-        {"LocName": _loc("Chest"), "ItemList": [_item("Scroll Case", "Holds scrolls.")]},
-        {"Description": _loc("*The lever is stuck*")},
+        {"LocName": loc("Old Wooden Chest"), "Description": loc("")},
+        {"LocName": loc("Chest"), "ItemList": [_item("Scroll Case", "Holds scrolls.")]},
+        {"Description": loc("*The lever is stuck*")},
     ],
-    "Door List": [{"Tag": f"door{i}", "LocName": _loc(tag)} for i, tag in enumerate(DOOR_TAGS)]
-    + [{"Tag": "door_ok", "LocName": _loc("Wooden Door")}],
+    "Door List": [{"Tag": f"door{i}", "LocName": loc(tag)} for i, tag in enumerate(DOOR_TAGS)]
+    + [{"Tag": "door_ok", "LocName": loc("Wooden Door")}],
     "StoreList": [
-        {"LocName": _loc("Bazaar"), "Description": _loc(""), "ItemList": [_item("Rope")]},
+        {"LocName": loc("Bazaar"), "Description": loc(""), "ItemList": [_item("Rope")]},
         # Merchant shelves: a nested StoreList with its own ItemList (Penultima's coffee bar).
         {
-            "LocName": _loc("Tavern"),
+            "LocName": loc("Tavern"),
             "StoreList": [{}, {}, {"ItemList": [_item("Coffee"), _item("Cappuchino")]}],
         },
-        {"LocName": _loc("Coffee Merchant"), "Description": _loc("")},
+        {"LocName": loc("Coffee Merchant"), "Description": loc("")},
         {
-            "LocalizedName": _loc("Arms Dealer"),
-            "Description": _loc(""),
+            "LocalizedName": loc("Arms Dealer"),
+            "Description": loc(""),
             "ItemList": [_item("Iron Longsword", "A sturdy blade.")],
         },
     ],
     # Real .git files use the key ``TriggerList``, not ``Trigger List``.
     "TriggerList": [
-        {"TrapFlag": 1, "LocalizedName": _loc("Market Square"), "Description": _loc("")},
+        {"TrapFlag": 1, "LocalizedName": loc("Market Square"), "Description": loc("")},
         # Non-trap triggers carry area-transition tooltips and names that scripts
         # show through SpeakString / FloatingText.
         {
             "Tag": "at_CastleToSewers",
             "Type": 1,
             "TrapFlag": 0,
-            "LocalizedName": _loc("To the Sewers"),
+            "LocalizedName": loc("To the Sewers"),
         },
         {
             "Tag": "Telios",
             "Type": 0,
             "TrapFlag": 0,
-            "LocalizedName": _loc('"My lovely boots are getting mud on them!"'),
+            "LocalizedName": loc('"My lovely boots are getting mud on them!"'),
         },
-        {"Tag": "tr_vico", "Type": 0, "TrapFlag": 0, "LocalizedName": _loc("tr_vico")},
+        {"Tag": "tr_vico", "Type": 0, "TrapFlag": 0, "LocalizedName": loc("tr_vico")},
         {
             "Tag": "Comment",
             "Type": 0,
             "TrapFlag": 0,
-            "LocalizedName": _loc(
+            "LocalizedName": loc(
                 "[Strange. There was something that looked like an eye reflected in the water.]"
             ),
         },
-        {"LocalizedName": _loc("*gasp*")},
-        {"LocalizedName": _loc("*whispers* There is such rage among these ruins...")},
+        {"LocalizedName": loc("*gasp*")},
+        {"LocalizedName": loc("*whispers* There is such rage among these ruins...")},
         # A scripter comment stored in a trigger name is never translated.
-        {"LocalizedName": _loc("// * * * SCENE: Drinking dwarves  * * *")},
+        {"LocalizedName": loc("// * * * SCENE: Drinking dwarves  * * *")},
     ]
-    + [{"Type": 1, "TrapFlag": 0, "LocalizedName": _loc(label)} for label in ROUTE_LABELS],
+    + [{"Type": 1, "TrapFlag": 0, "LocalizedName": loc(label)} for label in ROUTE_LABELS],
     "WaypointList": [
-        {"LocalizedName": _loc("WP_CityGate"), "MapNote": _loc("City Gate")},
-        {"LocalizedName": _loc("WP_Spawn"), "Description": _loc("")},
+        {"LocalizedName": loc("WP_CityGate"), "MapNote": loc("City Gate")},
+        {"LocalizedName": loc("WP_Spawn"), "Description": loc("")},
     ],
     "Encounter List": [
-        {"LocalizedName": _loc("Human, Bandit Group")},
-        {"LocalizedName": _loc("enc_internal_tag")},
+        {"LocalizedName": loc("Human, Bandit Group")},
+        {"LocalizedName": loc("enc_internal_tag")},
     ],
     # Items dropped on the ground in the toolset.
     "List": [
@@ -186,12 +182,12 @@ def test_instance_lists_include_description_fields():
 def test_door_instance_names_come_from_locname(tmp_path):
     path = tmp_path / "keep.git"
     doors = [
-        {"Tag": "KeepGate", "LocName": _loc("Iron Gate"), "Description": _loc("Rusty.")},
-        {"Tag": "CellarDoor", "LocName": _loc("Cellar Door")},
+        {"Tag": "KeepGate", "LocName": loc("Iron Gate"), "Description": loc("Rusty.")},
+        {"Tag": "CellarDoor", "LocName": loc("Cellar Door")},
         # StrRef-only names resolve from the player's dialog.tlk.
-        {"Tag": "TlkDoor", "LocName": _loc("", strref=1234)},
+        {"Tag": "TlkDoor", "LocName": loc("", strref=1234)},
         # The fallback label, in case a toolset writes it instead of LocName.
-        {"Tag": "OldDoor", "LocalizedName": _loc("Old Door")},
+        {"Tag": "OldDoor", "LocalizedName": loc("Old Door")},
     ]
     write_gff(path, {"StructType": "GIT", "Door List": doors}, file_type="GIT")
     parsed = read_gff(path)
@@ -217,9 +213,9 @@ def test_door_instance_names_come_from_locname(tmp_path):
 def test_area_properties_struct_does_not_change_the_extraction(tmp_path):
     """The parser expands the AreaProperties struct; its values are not strings to translate."""
     creature = {
-        "FirstName": _loc("Old fisherman"),
-        "LastName": _loc(""),
-        "Description": _loc("A weathered old man."),
+        "FirstName": loc("Old fisherman"),
+        "LastName": loc(""),
+        "Description": loc("A weathered old man."),
         "Race": 6,
         "Gender": 0,
     }
@@ -259,14 +255,14 @@ def test_blueprint_names_rescue_camel_case_creature_names(tmp_path, monkeypatch,
     _blueprints(
         monkeypatch,
         tmp_path,
-        {"FirstName": _loc("McGee"), "LastName": _loc("DeVir")},
+        {"FirstName": loc("McGee"), "LastName": loc("DeVir")},
         # Blank and missing names add nothing.
-        {"FirstName": _loc(" ")},
+        {"FirstName": loc(" ")},
     )
     area = {
-        "Creature List": [{"FirstName": _loc("McGee"), "LastName": _loc("DeVir")}],
+        "Creature List": [{"FirstName": loc("McGee"), "LastName": loc("DeVir")}],
         # Camel-case junk with no blueprint counterpart stays blocked.
-        "Placeable List": [{"LocName": _loc("WorkBench")}],
+        "Placeable List": [{"LocName": loc("WorkBench")}],
     }
 
     texts = {item.text for item in GitExtractor().extract(tmp_path / "area.git", area).items}
@@ -276,7 +272,7 @@ def test_blueprint_names_rescue_camel_case_creature_names(tmp_path, monkeypatch,
 
 
 def test_camel_case_names_without_blueprints_stay_blocked(tmp_path, oracle_cache):
-    area = {"Creature List": [{"FirstName": _loc("McGee")}]}
+    area = {"Creature List": [{"FirstName": loc("McGee")}]}
     assert GitExtractor().extract(tmp_path / "area.git", area).items == []
     assert not should_translate_git_string("McGee", "creature_first_name")
     assert should_translate_git_string("McGee", "creature_first_name", frozenset({"mcgee"}))
@@ -286,9 +282,9 @@ def test_oracle_keeps_the_original_names_after_blueprints_are_patched(
     tmp_path, monkeypatch, oracle_cache
 ):
     """By rebuild time the .utc files may carry translated names already."""
-    _blueprints(monkeypatch, tmp_path, {"FirstName": _loc("McGee")})
+    _blueprints(monkeypatch, tmp_path, {"FirstName": loc("McGee")})
     assert "mcgee" in git_fields.get_module_creature_names(tmp_path)
-    _blueprints(monkeypatch, tmp_path, {"FirstName": _loc("МакГи")})
+    _blueprints(monkeypatch, tmp_path, {"FirstName": loc("МакГи")})
     assert "mcgee" in git_fields.get_module_creature_names(tmp_path)
 
 

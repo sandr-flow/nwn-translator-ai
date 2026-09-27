@@ -12,17 +12,13 @@ from nwn_translator.main import (
     load_parsed_and_extracted,
     rebuild_module,
 )
-from tests.support.gff_writer import write_gff
+from tests.support.gff_writer import loc, write_gff
 from tests.support.ncs import action, consts, retn, write_ncs
-
-
-def _loc(text: str) -> dict:
-    return {"StrRef": -1, "Value": text}
 
 
 def _creature(path: Path, tag: str, first_name: str) -> None:
     write_gff(
-        path, {"StructType": "UTC", "Tag": tag, "FirstName": _loc(first_name)}, file_type="UTC"
+        path, {"StructType": "UTC", "Tag": tag, "FirstName": loc(first_name)}, file_type="UTC"
     )
 
 
@@ -136,7 +132,7 @@ def test_rebuild_reads_only_the_files_with_edits(extract_dir, monkeypatch):
 
 def test_rebuild_edits_one_of_two_identical_dialog_lines(extract_dir):
     dlg = extract_dir / "a.dlg"
-    entries = [{"Text": _loc("Привет."), "Speaker": ""} for _ in range(2)]
+    entries = [{"Text": loc("Привет."), "Speaker": ""} for _ in range(2)]
     write_gff(dlg, {"StructType": "DLG", "EntryList": entries, "ReplyList": []}, file_type="DLG")
 
     _rebuild(extract_dir, {"a.dlg": {"a:entry:1": "Здорово."}})
@@ -150,14 +146,14 @@ def test_rebuild_edits_one_of_two_identical_dialog_lines(extract_dir):
 @pytest.mark.parametrize(
     "extension, data",
     [
-        ("utc", {"Tag": "same", "FirstName": _loc("Shared"), "LastName": _loc("Shared")}),
-        ("dlg", {"EntryList": [{"Text": _loc("Shared")}, {"Text": _loc("Shared")}]}),
-        ("git", {"Creature List": [{"FirstName": _loc("Shared")}, {"FirstName": _loc("Shared")}]}),
+        ("utc", {"Tag": "same", "FirstName": loc("Shared"), "LastName": loc("Shared")}),
+        ("dlg", {"EntryList": [{"Text": loc("Shared")}, {"Text": loc("Shared")}]}),
+        ("git", {"Creature List": [{"FirstName": loc("Shared")}, {"FirstName": loc("Shared")}]}),
         (
             "jrl",
-            {"Categories": [{"Name": _loc("Shared"), "EntryList": [{"Text": _loc("Shared")}]}]},
+            {"Categories": [{"Name": loc("Shared"), "EntryList": [{"Text": loc("Shared")}]}]},
         ),
-        ("uti", {"Description": _loc("Shared"), "DescIdentified": _loc("Shared")}),
+        ("uti", {"Description": loc("Shared"), "DescIdentified": loc("Shared")}),
     ],
 )
 def test_identical_fields_are_injected_and_rebuilt_independently(extract_dir, extension, data):

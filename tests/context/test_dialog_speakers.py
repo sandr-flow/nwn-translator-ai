@@ -15,7 +15,7 @@ from nwn_translator.context.dialog_speakers import (
 from nwn_translator.context.world_context import NPCInfo, WorldContext, WorldScanner
 from nwn_translator.extractors.base import DialogNode
 from nwn_translator.prompts.dialog import speakers_block
-from tests.support.gff_writer import write_gff
+from tests.support.gff_writer import loc, write_gff
 
 PLAYER = {"kind": "player", "name": "", "tag": ""}
 OWNER_UNKNOWN = {"kind": "owner_unknown", "name": "", "tag": ""}
@@ -25,15 +25,11 @@ DWARF, HUMAN = 0, 6
 MALE, FEMALE = 0, 1
 
 
-def _loc(text: str) -> dict:
-    return {"StrRef": -1, "Value": text}
-
-
 def _creature(tag: str, first: str, conversation: str = "", **fields) -> dict:
     return {
         "Tag": tag,
-        "FirstName": _loc(first),
-        "LastName": _loc(fields.pop("last", "")),
+        "FirstName": loc(first),
+        "LastName": loc(fields.pop("last", "")),
         "Race": fields.pop("race", HUMAN),
         "Gender": fields.pop("gender", MALE),
         "Conversation": conversation,
@@ -43,7 +39,7 @@ def _creature(tag: str, first: str, conversation: str = "", **fields) -> dict:
 
 def _thing(tag: str, name: str, conversation: str = "") -> dict:
     """A placeable or door struct: its name is ``LocName``."""
-    return {"Tag": tag, "LocName": _loc(name), "Conversation": conversation}
+    return {"Tag": tag, "LocName": loc(name), "Conversation": conversation}
 
 
 def _npc(tag, first="", last="", conversation="", race="Human", gender="Female", **kw):
@@ -151,7 +147,7 @@ def test_door_names_fall_back_to_localized_name_and_nameless_objects_are_skipped
     world = _scan(
         tmp_path,
         **{
-            "Door List": [{"Tag": "D", "LocalizedName": _loc("Trapdoor"), "Conversation": "d"}],
+            "Door List": [{"Tag": "D", "LocalizedName": loc("Trapdoor"), "Conversation": "d"}],
             "Placeable List": [{"Tag": "", "Conversation": "x"}],
         },
     )
@@ -160,7 +156,7 @@ def test_door_names_fall_back_to_localized_name_and_nameless_objects_are_skipped
 
 
 def test_creature_without_race_is_described_as_a_creature(tmp_path):
-    creature = {"Tag": "BLOB", "FirstName": _loc("Blob"), "Gender": MALE, "Conversation": "b"}
+    creature = {"Tag": "BLOB", "FirstName": loc("Blob"), "Gender": MALE, "Conversation": "b"}
     world = _scan(tmp_path, **{"Creature List": [creature]})
     assert _lines(world, "b", _entry(0)) == [
         "- In b.dlg, lines marked [NPC]: spoken by Blob (Creature, Male)"

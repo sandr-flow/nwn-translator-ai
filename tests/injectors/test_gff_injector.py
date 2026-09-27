@@ -9,11 +9,7 @@ from nwn_translator.formats.gff import read_gff
 from nwn_translator.injectors.gff_injector import inject_gff
 from nwn_translator.main import rebuild_module
 from nwn_translator.pipeline.stages import inject_translations_into_file, load_parsed_and_extracted
-from tests.support.gff_writer import write_gff
-
-
-def _loc(value: str) -> dict:
-    return {"StrRef": -1, "Value": value}
+from tests.support.gff_writer import loc, write_gff
 
 
 def _inject_with_mocked_patcher(extractor, path, data, answers, encoding):
@@ -38,12 +34,12 @@ def test_dialog_lines_are_patched_at_their_record_offsets():
         "StructType": "DLG",
         "EntryList": [
             {
-                "Text": _loc("Greetings, traveler."),
+                "Text": loc("Greetings, traveler."),
                 "Speaker": "Innkeeper",
                 "_record_offsets": {"Text": 100},
             }
         ],
-        "ReplyList": [{"Text": _loc("Hello, innkeeper."), "_record_offsets": {"Text": 200}}],
+        "ReplyList": [{"Text": loc("Hello, innkeeper."), "_record_offsets": {"Text": 200}}],
     }
     answers = {"Greetings, traveler.": "¡Saludos, viajero!", "Hello, innkeeper.": "Hola, posadero."}
     path = Path("test_dialog.dlg")
@@ -65,18 +61,18 @@ def test_area_instances_and_their_inventories_are_patched_in_one_splice():
     data = {
         "WaypointList": [
             {
-                "LocalizedName": _loc("WP_CityGate"),
-                "MapNote": _loc("City Gate"),
+                "LocalizedName": loc("WP_CityGate"),
+                "MapNote": loc("City Gate"),
                 "_record_offsets": {"LocalizedName": 0, "MapNote": 222},
             }
         ],
         "Placeable List": [
             {
-                "LocName": _loc("Chest"),
+                "LocName": loc("Chest"),
                 "_record_offsets": {"LocName": 110, "Description": 0},
                 "ItemList": [
                     {
-                        "LocalizedName": _loc("Scroll Case"),
+                        "LocalizedName": loc("Scroll Case"),
                         "_record_offsets": {"LocalizedName": 200},
                     }
                 ],
@@ -84,22 +80,22 @@ def test_area_instances_and_their_inventories_are_patched_in_one_splice():
         ],
         "StoreList": [
             {
-                "LocalizedName": _loc("Arms Dealer"),
+                "LocalizedName": loc("Arms Dealer"),
                 "_record_offsets": {"LocalizedName": 300, "Description": 0},
                 "ItemList": [
                     {
-                        "LocalizedName": _loc("Iron Longsword"),
+                        "LocalizedName": loc("Iron Longsword"),
                         "_record_offsets": {"LocalizedName": 400},
                     }
                 ],
             },
             {
-                "LocName": _loc("Coffee Merchant"),
+                "LocName": loc("Coffee Merchant"),
                 "_record_offsets": {"LocName": 310, "LocalizedName": 0, "Description": 0},
                 "ItemList": [],
             },
             {
-                "LocName": _loc("Bar"),
+                "LocName": loc("Bar"),
                 "_record_offsets": {"LocName": 50, "LocalizedName": 0, "Description": 0},
                 "StoreList": [
                     {},
@@ -107,7 +103,7 @@ def test_area_instances_and_their_inventories_are_patched_in_one_splice():
                     {
                         "ItemList": [
                             {
-                                "LocalizedName": _loc("Coffee"),
+                                "LocalizedName": loc("Coffee"),
                                 "_record_offsets": {"LocalizedName": 900},
                             }
                         ]
@@ -117,16 +113,16 @@ def test_area_instances_and_their_inventories_are_patched_in_one_splice():
         ],
         "Creature List": [
             {
-                "FirstName": _loc("Grandma"),
+                "FirstName": loc("Grandma"),
                 "_record_offsets": {"FirstName": 100},
                 "Equip_ItemList": [
                     {
-                        "LocalizedName": _loc("Grandma's Armor"),
-                        "Description": _loc("Worn by Grandma."),
+                        "LocalizedName": loc("Grandma's Armor"),
+                        "Description": loc("Worn by Grandma."),
                         "_record_offsets": {"LocalizedName": 500, "Description": 600},
                     },
                     {
-                        "LocalizedName": _loc("The Skullsplitter"),
+                        "LocalizedName": loc("The Skullsplitter"),
                         "_record_offsets": {"LocalizedName": 700},
                     },
                 ],
@@ -174,8 +170,8 @@ def test_door_instance_names_are_patched_and_rebuilt(tmp_path):
     extract_dir = tmp_path / "extract"
     path = extract_dir / "keep.git"
     doors = [
-        {"Tag": "KeepGate", "LocName": _loc("Iron Gate"), "Description": _loc("Rusty.")},
-        {"Tag": "CellarDoor", "LocName": _loc("Cellar Door")},
+        {"Tag": "KeepGate", "LocName": loc("Iron Gate"), "Description": loc("Rusty.")},
+        {"Tag": "CellarDoor", "LocName": loc("Cellar Door")},
     ]
     write_gff(path, {"StructType": "GIT", "Door List": doors}, file_type="GIT")
 

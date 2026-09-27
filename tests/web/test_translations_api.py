@@ -12,14 +12,10 @@ from nwn_translator.formats.gff import read_gff
 from nwn_translator.pipeline.stages import PipelineState, stage_extract, stage_translate
 from nwn_translator.web import database as db
 from tests.support.fakes import DialogProvider, make_config
-from tests.support.gff_writer import write_gff
+from tests.support.gff_writer import loc, write_gff
 
 PLAYER = {"kind": "player", "name": "", "tag": ""}
 OWNER_UNKNOWN = {"kind": "owner_unknown", "name": "", "tag": ""}
-
-
-def _loc(text: str) -> dict:
-    return {"StrRef": -1, "Value": text}
 
 
 def _task(tmp_path: Path, extract_dir: Path = None, rows=(), filename: str = "") -> str:
@@ -57,7 +53,7 @@ def _files(client, task_id: str) -> dict:
 
 
 def _creature(path: Path, tag: str, name: str) -> None:
-    write_gff(path, {"StructType": "UTC", "Tag": tag, "FirstName": _loc(name)}, file_type="UTC")
+    write_gff(path, {"StructType": "UTC", "Tag": tag, "FirstName": loc(name)}, file_type="UTC")
 
 
 def _first_names(*paths: Path) -> list:
@@ -66,7 +62,7 @@ def _first_names(*paths: Path) -> list:
 
 def _area(extract_dir: Path, names) -> list:
     """An area with a creature per name; return the item ids of their first names."""
-    creatures = [{"Tag": f"NPC{i}", "FirstName": _loc(name)} for i, name in enumerate(names)]
+    creatures = [{"Tag": f"NPC{i}", "FirstName": loc(name)} for i, name in enumerate(names)]
     write_gff(
         extract_dir / "area.git", {"StructType": "GIT", "Creature List": creatures}, file_type="GIT"
     )
@@ -184,7 +180,7 @@ def test_fixed_failed_line_merges_into_a_clean_row(owner_client, tmp_path, extra
 
 
 def test_edit_of_a_dialog_line_does_not_reach_identical_lines(owner_client, tmp_path, extract_dir):
-    entries = [{"Text": _loc("Hi."), "Speaker": ""} for _ in range(2)]
+    entries = [{"Text": loc("Hi."), "Speaker": ""} for _ in range(2)]
     write_gff(
         extract_dir / "a.dlg",
         {"StructType": "DLG", "EntryList": entries, "ReplyList": []},
@@ -335,13 +331,13 @@ def test_a_translated_dialog_reaches_the_editor_with_its_speakers(owner_client, 
             {
                 "StructType": "UTC",
                 "Tag": tag,
-                "FirstName": _loc(name),
+                "FirstName": loc(name),
                 "Conversation": conversation,
             },
             file_type="UTC",
         )
     dlg_path = extract_dir / "severina.dlg"
-    hello = _loc("Hello.")
+    hello = loc("Hello.")
     dialog = {
         "StructType": "DLG",
         "StartingList": [{"Index": 0}],

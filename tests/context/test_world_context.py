@@ -9,11 +9,7 @@ import pytest
 
 from nwn_translator.context.world_context import NPCInfo, WorldContext, WorldScanner
 from nwn_translator.extractors.base import TranslatableItem
-from tests.support.gff_writer import write_gff
-
-
-def _loc(text: str) -> dict:
-    return {"StrRef": -1, "Value": text}
+from tests.support.gff_writer import loc, write_gff
 
 
 def _npc(tag, first, last="", description="", race="Human", gender="Female", conversation=""):
@@ -34,14 +30,14 @@ def _world() -> WorldContext:
 
 
 def test_scan_registers_tagged_areas_items_and_quests_with_their_evidence(tmp_path, caplog):
-    write_gff(tmp_path / "harbor.are", {"Tag": "HARBOR", "Name": _loc("Old Harbor")}, "ARE")
-    write_gff(tmp_path / "void.are", {"Name": _loc("Nowhere")}, "ARE")
-    write_gff(tmp_path / "sword.uti", {"Tag": "SWORD", "LocalizedName": _loc("Sunblade")}, "UTI")
-    write_gff(tmp_path / "blank.uti", {"Tag": "BLANK", "LocalizedName": _loc("")}, "UTI")
+    write_gff(tmp_path / "harbor.are", {"Tag": "HARBOR", "Name": loc("Old Harbor")}, "ARE")
+    write_gff(tmp_path / "void.are", {"Name": loc("Nowhere")}, "ARE")
+    write_gff(tmp_path / "sword.uti", {"Tag": "SWORD", "LocalizedName": loc("Sunblade")}, "UTI")
+    write_gff(tmp_path / "blank.uti", {"Tag": "BLANK", "LocalizedName": loc("")}, "UTI")
     categories = [
-        {"Tag": "q_main", "Name": _loc("The Lost Heir")},
-        {"Name": _loc("Untagged Quest")},
-        {"Tag": "q_side", "Name": _loc("Rats in the Cellar")},
+        {"Tag": "q_main", "Name": loc("The Lost Heir")},
+        {"Name": loc("Untagged Quest")},
+        {"Tag": "q_side", "Name": loc("Rats in the Cellar")},
     ]
     write_gff(tmp_path / "module.jrl", {"Categories": categories}, "JRL")
     caplog.set_level(logging.INFO, logger="nwn_translator.context.world_context")

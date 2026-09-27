@@ -21,14 +21,10 @@ from nwn_translator.formats.gff import (
     parse_gff,
     read_gff,
 )
-from tests.support.gff_writer import write_gff, write_gff_bytes
+from tests.support.gff_writer import loc, write_gff, write_gff_bytes
 
 # Header DWORD offsets (GFF v3.2).
 _STRUCT_COUNT, _FIELD_COUNT, _LABEL_COUNT, _FIELDDATA_SIZE = 12, 20, 28, 36
-
-
-def _loc(text: str, strref: int = -1) -> dict:
-    return {"StrRef": strref, "Value": text}
 
 
 def _item_gff(path):
@@ -37,7 +33,7 @@ def _item_gff(path):
         {
             "StructType": "UTI",
             "Tag": "some_item",
-            "LocalizedName": _loc("Plain Dagger"),
+            "LocalizedName": loc("Plain Dagger"),
             "Charges": 3,
         },
     )
@@ -72,16 +68,16 @@ def _dialog_graph() -> dict:
         "StartingList": [{"Index": 0}, {"Index": 2}],
         "EntryList": [
             {
-                "Text": _loc("Hello."),
+                "Text": loc("Hello."),
                 "Speaker": "",
                 "RepliesList": [{"Index": 0, "IsChild": 0}, {"Index": 1, "IsChild": 0}],
             },
-            {"Text": _loc("Farewell."), "Speaker": "bob_tag", "RepliesList": []},
-            {"Text": _loc("Back again?"), "Speaker": "", "RepliesList": [{"Index": 1}]},
+            {"Text": loc("Farewell."), "Speaker": "bob_tag", "RepliesList": []},
+            {"Text": loc("Back again?"), "Speaker": "", "RepliesList": [{"Index": 1}]},
         ],
         "ReplyList": [
-            {"Text": _loc("Who are you?"), "EntriesList": [{"Index": 1, "IsChild": 0}]},
-            {"Text": _loc("Bye."), "EntriesList": []},
+            {"Text": loc("Who are you?"), "EntriesList": [{"Index": 1, "IsChild": 0}]},
+            {"Text": loc("Bye."), "EntriesList": []},
         ],
     }
 
@@ -187,7 +183,7 @@ def test_direct_struct_field_expands_to_a_patchable_nested_dict(tmp_path):
         {
             "StructType": "UTI",
             "Tag": "outer_tag",
-            "Wrapper": {"LocalizedName": _loc("Ancient Blade"), "Charges": 3},
+            "Wrapper": {"LocalizedName": loc("Ancient Blade"), "Charges": 3},
         },
     )
     parsed = read_gff(path)
@@ -250,7 +246,7 @@ def test_writer_header_and_file(tmp_path):
     assert (raw[0:4], raw[4:8]) == (b"DLG ", b"V3.2")
     assert len(raw) >= 160
     out = tmp_path / "journal.jrl"
-    write_gff(out, {"StructType": "JRL", "Categories": [], "LocalizedName": _loc("Helm")})
+    write_gff(out, {"StructType": "JRL", "Categories": [], "LocalizedName": loc("Helm")})
     assert out.stat().st_size > 160
     assert read_gff(out)["StructType"] == "JRL"
 
@@ -265,14 +261,14 @@ def test_writer_header_and_file(tmp_path):
             "Penalty": -5,
             "Speed": 1.5,
             "Description": "A long description text.",
-            "LocalizedName": _loc("Longsword"),
-            "Unicode": _loc("Меч огня"),
-            "Unnamed": _loc("", strref=1234),
+            "LocalizedName": loc("Longsword"),
+            "Unicode": loc("Меч огня"),
+            "Unnamed": loc("", strref=1234),
         },
-        {"StructType": "DLG", "EntryList": [{"Text": _loc("A"), "RepliesList": [{"Index": 0}]}]},
+        {"StructType": "DLG", "EntryList": [{"Text": loc("A"), "RepliesList": [{"Index": 0}]}]},
         {
             "StructType": "DLG",
-            "EntryList": [{"Text": _loc("A")}, {"Text": _loc("B"), "RepliesList": []}],
+            "EntryList": [{"Text": loc("A")}, {"Text": loc("B"), "RepliesList": []}],
         },
         {
             "StructType": "GIT",
@@ -292,10 +288,10 @@ def test_written_values_read_back_unchanged(tmp_path, data):
 
 
 def test_non_dict_list_elements_are_skipped(tmp_path):
-    data = {"StructType": "DLG", "EntryList": [{"Text": _loc("A")}, 7, {"Text": _loc("B")}]}
+    data = {"StructType": "DLG", "EntryList": [{"Text": loc("A")}, 7, {"Text": loc("B")}]}
     assert _fields_only(_roundtrip(tmp_path, data)["EntryList"]) == [
-        {"Text": _loc("A")},
-        {"Text": _loc("B")},
+        {"Text": loc("A")},
+        {"Text": loc("B")},
     ]
 
 
@@ -336,7 +332,7 @@ def test_parsed_field_types_and_struct_ids_are_kept(tmp_path):
     field = parse_gff(out).structs[0].fields["Conversation"]
     assert (field.type, field.value) == (GFFType.CExoString, "bob")
 
-    write_gff(out, {"StructType": "DLG", "EntryList": [{"_struct_id": 5, "Text": _loc("A")}]})
+    write_gff(out, {"StructType": "DLG", "EntryList": [{"_struct_id": 5, "Text": loc("A")}]})
     gff = parse_gff(out)
     entry = gff.structs[gff.structs[0].fields["EntryList"].value[0]]
     assert entry.struct_id == 5

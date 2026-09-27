@@ -206,6 +206,19 @@ def _int32(value: int) -> int:
     return struct.unpack("<I", struct.pack("<i", clamped))[0]
 
 
+def loc(text: str, strref: int = -1) -> Dict[str, Any]:
+    """A CExoLocString value shaped like the output of ``read_gff()``.
+
+    Args:
+        text: The embedded string.
+        strref: The ``dialog.tlk`` reference; -1 for none.
+
+    Returns:
+        The ``{"StrRef": ..., "Value": ...}`` dict.
+    """
+    return {"StrRef": strref, "Value": text}
+
+
 def write_gff_bytes(data: Dict[str, Any], file_type: Optional[str] = None) -> bytes:
     """Serialise *data* to GFF V3.2 bytes.
 

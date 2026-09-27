@@ -28,7 +28,7 @@ _PROVIDER_BY_PREFIX: Dict[str, Type[OpenRouterProvider]] = {
 
 
 def _provider_class_for_key(api_key: Optional[str]) -> Type[OpenRouterProvider]:
-    """Pick the provider class for *api_key*; OpenRouter when no prefix matches."""
+    """Picks the provider class for *api_key*; OpenRouter when no prefix matches."""
     key = (api_key or "").strip()
     for prefix, cls in _PROVIDER_BY_PREFIX.items():
         if key.startswith(prefix):
@@ -37,7 +37,7 @@ def _provider_class_for_key(api_key: Optional[str]) -> Type[OpenRouterProvider]:
 
 
 def detect_provider_from_key(api_key: Optional[str]) -> str:
-    """Return the provider name inferred from an API key, without network access.
+    """Returns the provider name inferred from an API key, without network access.
 
     Args:
         api_key: API key or ``None``.
@@ -51,7 +51,7 @@ def detect_provider_from_key(api_key: Optional[str]) -> str:
 
 
 def provider_label(name: str) -> str:
-    """Return the human-readable label of a provider name.
+    """Returns the human-readable label of a provider name.
 
     Args:
         name: Provider name as returned by :func:`detect_provider_from_key`.
@@ -66,7 +66,7 @@ def provider_label(name: str) -> str:
 
 
 def create_provider(api_key: str, model: Optional[str] = None, **kwargs: Any) -> OpenRouterProvider:
-    """Create the provider that matches the API key prefix.
+    """Creates the provider that matches the API key prefix.
 
     Args:
         api_key: OpenRouter (``sk-or-...``) or POLZA.AI (``pza...``) API key.
@@ -83,7 +83,7 @@ def create_provider(api_key: str, model: Optional[str] = None, **kwargs: Any) ->
 def create_provider_for_config(
     config: TranslationConfig, metrics_recorder: Optional[RunMetricsRecorder] = None
 ) -> OpenRouterProvider:
-    """Create the provider for the API key, model and prompt settings of a run.
+    """Creates the provider for the API key, model and prompt settings of a run.
 
     Args:
         config: Run settings (API key, model, player gender, reasoning effort).

@@ -33,6 +33,11 @@ class _TermMatcher:
     """
 
     def __init__(self, keys: Iterable[str]) -> None:
+        """Compiles one pattern per source form.
+
+        Args:
+            keys: Source forms to search for.
+        """
         self._patterns = {
             key: (key.lower(), re.compile(r"(?<!\w)" + re.escape(key) + r"(?!\w)", re.IGNORECASE))
             for key in keys
@@ -40,7 +45,14 @@ class _TermMatcher:
         self._memo: Dict[str, FrozenSet[str]] = {}
 
     def keys_in(self, text: str) -> FrozenSet[str]:
-        """Return the forms that occur in *text* as whole words."""
+        """Returns the forms that occur in *text* as whole words.
+
+        Args:
+            text: One source text.
+
+        Returns:
+            The matching source forms.
+        """
         found = self._memo.get(text)
         if found is None:
             lowered = text.lower()
@@ -75,7 +87,7 @@ class Glossary:
     )
 
     def matching_entries(self, texts: Iterable[str]) -> Dict[str, str]:
-        """Return the entries whose source form occurs in *texts*, with their alias families.
+        """Returns the entries whose source form occurs in *texts*, with their alias families.
 
         Only explicit aliases share an entity; a shared word does not.
 
@@ -99,7 +111,7 @@ class Glossary:
         }
 
     def to_prompt_block(self, texts: Optional[Iterable[str]] = None) -> str:
-        """Render the GLOSSARY prompt block.
+        """Renders the GLOSSARY prompt block.
 
         Args:
             texts: Restrict the block to :meth:`matching_entries` of these texts;
@@ -128,7 +140,7 @@ _NO_GLOSSARY = Glossary()
 
 
 def terminology_block(texts: Iterable[str], target_lang: str, glossary: Optional[Glossary]) -> str:
-    """Render the terminology a translation prompt needs for *texts*.
+    """Renders the terminology a translation prompt needs for *texts*.
 
     The glossary is merged with the static race terms of *target_lang*, which
     win over glossary entries with the same casefolded source form. The merged
@@ -157,7 +169,7 @@ def terminology_block(texts: Iterable[str], target_lang: str, glossary: Optional
 
 
 def restore_wrapping_quotes(key: str, value: str) -> str:
-    """Give *value* back the quotation marks *key* is wrapped in.
+    """Gives *value* back the quotation marks *key* is wrapped in.
 
     A translation replaces the whole game string, so a name the module author
     wrote as ``"Thesis Paper Room"`` must keep its quotes in the patched module,

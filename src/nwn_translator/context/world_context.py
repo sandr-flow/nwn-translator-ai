@@ -1,10 +1,11 @@
 """World registry of NPCs, areas, quests and items for contextual translation.
 
-:class:`WorldScanner` reads the module's creature, area, journal, item and
-placement files once before translation. :class:`WorldContext` holds what it
-found: the glossary takes its names, dialog speaker resolution its actors, NCS
-translation its script owners, and every dialog prompt the WORLD CONTEXT block
-of the entities that dialog mentions.
+:class:`WorldScanner` reads the module's creature, placeable and door
+blueprints, areas, journals, items and area placements once before
+translation. :class:`WorldContext` holds what it found: the glossary takes its
+names, dialog speaker resolution its actors, NCS translation its script owners,
+and every dialog prompt the WORLD CONTEXT block of the entities that dialog
+mentions.
 """
 
 import logging
@@ -31,7 +32,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Entry budget of a relevance-filtered WORLD CONTEXT block.
 WORLD_CONTEXT_MAX_ENTRIES = 30
+#: Approximate character budget of a relevance-filtered WORLD CONTEXT block.
 WORLD_CONTEXT_MAX_CHARS = 12000
 
 #: Area instance lists (.git) whose objects can own or speak in a dialog.
@@ -94,7 +97,7 @@ UTC_SCRIPT_FIELDS: Tuple[str, ...] = (
 
 
 def _local_string(struct: Dict[str, Any], key: str) -> str:
-    """Embedded text of the CExoLocString field *key*, or ``""``."""
+    """Returns the embedded text of the CExoLocString field *key*, or ``""``."""
     return extract_local_string(struct.get(key, {})) or ""
 
 
@@ -131,7 +134,7 @@ class NPCInfo:
 
     @classmethod
     def from_creature(cls, data: Dict[str, Any], description: str = "") -> "NPCInfo":
-        """Summarize a creature struct: a ``.utc`` blueprint or a ``.git`` placement.
+        """Summarizes a creature struct: a ``.utc`` blueprint or a ``.git`` placement.
 
         Args:
             data: Parsed creature struct.
@@ -183,7 +186,7 @@ class WorldContext:
     dialog_actors_by_tag: Dict[str, List[NPCInfo]] = field(default_factory=dict)
 
     def register_dialog_actor(self, actor: NPCInfo) -> bool:
-        """Index *actor* by its Conversation and its tag for dialog speaker lookup.
+        """Indexes *actor* by its Conversation and its tag for dialog speaker lookup.
 
         Identical placements of one blueprint are indexed once.
 
@@ -208,7 +211,7 @@ class WorldContext:
         return added
 
     def register_script_owner(self, resref: object, npc: NPCInfo) -> None:
-        """Record that *npc* runs *resref* as an event script (OBJECT_SELF).
+        """Records that *npc* runs *resref* as an event script (OBJECT_SELF).
 
         Args:
             resref: Script ResRef; empty and ``****``/``nw_`` placeholders are ignored.
@@ -223,7 +226,7 @@ class WorldContext:
         owners.append(npc)
 
     def speaker_hint_for_script(self, script_stem: object) -> Optional[str]:
-        """Compact speaker metadata for NCS translation of *script_stem*.
+        """Returns a compact speaker hint for the script strings of *script_stem*.
 
         Shared blueprints (many goblins → one bark script) summarize race and
         gender instead of listing every name.
@@ -266,7 +269,7 @@ class WorldContext:
         return "Speaker (OBJECT_SELF): " + ", ".join(summary_parts)
 
     def enrich_ncs_item_context(self, item: TranslatableItem) -> None:
-        """Append the speaker hint of its script to an ``ncs_string`` item's context.
+        """Appends the speaker hint of its script to an ``ncs_string`` item's context.
 
         Args:
             item: Extracted item; other item types and scripts without an
@@ -286,7 +289,7 @@ class WorldContext:
         item.context = f"{current} {hint}".strip() if current else hint
 
     def get_all_names(self) -> List[Tuple[str, str]]:
-        """Collect every known name for the glossary, uncurated.
+        """Collects every known name for the glossary, uncurated.
 
         Returns:
             ``(name, category)`` pairs: NPC full names (``character``), then
@@ -317,7 +320,7 @@ class WorldContext:
         return out
 
     def get_glossary_names(self) -> List[Tuple[str, str]]:
-        """Return the curated glossary candidates, else every known name.
+        """Returns the curated glossary candidates, else every known name.
 
         Returns:
             The eligible candidates' ``(name, category)`` pairs, or
@@ -335,11 +338,13 @@ class WorldContext:
         target_lang: Optional[str] = None,
         source_texts: Optional[Iterable[str]] = None,
     ) -> str:
-        """Format the world context as a concise text block for the system prompt.
+        """Formats the world context as a concise text block for the system prompt.
 
         Args:
-            glossary: If set, append canonical translations next to matching English names.
-            target_lang: Short label for those hints (e.g. ``russian`` → ``RUS``).
+            glossary: Glossary whose canonical translations are appended next
+                to matching names.
+            target_lang: Target language, shortened to the label of those
+                translations (e.g. ``russian`` → ``RUS``).
             source_texts: When provided, only entities relevant to the source
                 corpus are emitted (see :mod:`.relevance`), ranked and capped
                 at :data:`WORLD_CONTEXT_MAX_ENTRIES` entries and about
@@ -361,10 +366,12 @@ class WorldContext:
         entries = glossary.entries if glossary else {}
 
         def gloss(name: str) -> str:
+            """Returns the inline glossary hint of *name*, or ``""``."""
             translation = entries.get(name.strip())
             return f" [{label}: {translation}]" if translation else ""
 
         def name_rows(mapping: Dict[str, str]) -> List[_Row]:
+            """Returns the rows of a tag -> name section, sorted by tag."""
             return [
                 (name, tag, f"  * {name} (Tag: {tag}){gloss(name)}")
                 for tag, name in sorted(mapping.items())
@@ -405,7 +412,7 @@ class WorldContext:
 
 
 def _target_lang_label(target_lang: Optional[str]) -> str:
-    """Short label for inline glossary hints: ``RUS`` for russian, ``TL`` when unknown."""
+    """Returns the label of inline glossary hints: ``RUS`` for russian, ``TL`` when unknown."""
     if not target_lang or not str(target_lang).strip():
         return "TL"
     t = str(target_lang).strip()
@@ -418,6 +425,12 @@ class _Selection:
     """Relevance filter and shared budget of one WORLD CONTEXT block."""
 
     def __init__(self, texts: List[str], hierarchy_names: List[str]) -> None:
+        """Indexes the source corpus and starts the shared budget.
+
+        Args:
+            texts: Source texts of the prompt.
+            hierarchy_names: Area, quest and item names, for the hierarchy check.
+        """
         self._index = SourceTokenIndex(tokenize_corpus(texts))
         self._joined = "\n".join(str(t) for t in texts if t).casefold()
         self._common = common_hierarchy_components(hierarchy_names)
@@ -425,7 +438,7 @@ class _Selection:
         self._chars_left = WORLD_CONTEXT_MAX_CHARS
 
     def select(self, category: str, rows: List[_Row]) -> List[str]:
-        """Return the lines of the relevant *rows*, best first, within the remaining budget.
+        """Returns the lines of the relevant *rows*, best first, within the remaining budget.
 
         Args:
             category: Entity category of the section (``character``, ``location``,
@@ -456,7 +469,7 @@ class _Selection:
         return selected
 
     def _keep(self, name: str, tag: str, category: str) -> bool:
-        """Whether the entry is evidenced by the source corpus."""
+        """Tells whether the entry is evidenced by the source corpus."""
         joined = " ".join(c for c in (name, tag) if c)
         if not joined:
             return False
@@ -474,7 +487,7 @@ class _Selection:
         return True
 
     def _score(self, name: str, tag: str, category: str) -> int:
-        """Rank a kept entry: literal name and tag hits first, deprioritized labels last."""
+        """Ranks a kept entry: literal name and tag hits first, deprioritized labels last."""
         decision = classify_entity_candidate(name, category).decision
         if decision == "drop":
             return -1000
@@ -491,7 +504,7 @@ class _Selection:
 
 
 class WorldScanner:
-    """Scans an extracted module directory to build a :class:`WorldContext`."""
+    """Scanner that builds a :class:`WorldContext` from an extracted module directory."""
 
     def scan_directory(
         self,
@@ -500,12 +513,12 @@ class WorldScanner:
         progress_callback: Optional[ProgressCallback] = None,
         source_encoding: Optional[str] = None,
     ) -> WorldContext:
-        """Scan the directory and build world context.
+        """Scans the directory and builds the world context.
 
         Args:
-            extract_dir: Path to directory containing extracted module files.
-            gff_cache: Optional shared parse cache (same object as ModuleTranslator).
-                Must be read with the same *source_encoding* everywhere it is shared.
+            extract_dir: Directory of the extracted module files.
+            gff_cache: Parse cache shared by the run's stages, if any. Must be
+                read with the same *source_encoding* everywhere it is shared.
             progress_callback: Optional progress reporter (every 20 files).
             source_encoding: Declared code page for module string bytes.
 
@@ -567,7 +580,7 @@ class WorldScanner:
 
 
 def _scan_creature(context: WorldContext, data: Dict[str, Any], resource: str) -> bool:
-    """Register a creature blueprint (.utc): script owner, NPC and name candidate.
+    """Registers a creature blueprint (.utc): script owner, NPC and name candidate.
 
     Only creatures with a conversation, a description or a first name become
     NPCs, so the prompt is not flooded with generic monsters.
@@ -609,7 +622,7 @@ def _scan_creature(context: WorldContext, data: Dict[str, Any], resource: str) -
 def _register_named(
     context: WorldContext, struct: Dict[str, Any], spec: _NamedSpec, resource: str
 ) -> bool:
-    """Register a tagged, named entity (area, item or quest) and its name candidate.
+    """Registers a tagged, named entity (area, item or quest) and its name candidate.
 
     Args:
         context: World context to populate.
@@ -632,7 +645,7 @@ def _register_named(
 
 
 def _scan_placements(context: WorldContext, data: Dict[str, Any]) -> int:
-    """Register the creatures, placeables and doors placed in an area (.git).
+    """Registers the creatures, placeables and doors placed in an area (.git).
 
     A placed instance can rename its blueprint or give it another
     Conversation, so dialog owners are looked up among the placements too.
@@ -656,7 +669,7 @@ def _scan_placements(context: WorldContext, data: Dict[str, Any]) -> int:
 
 
 def _register_dialog_actor(context: WorldContext, data: Dict[str, Any], kind: str) -> bool:
-    """Register one creature, placeable or door struct as a dialog actor.
+    """Registers one creature, placeable or door struct as a dialog actor.
 
     Args:
         context: World context to populate.

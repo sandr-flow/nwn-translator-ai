@@ -7,6 +7,7 @@ sources can be stale and identical literals can have different consumers.
 from pathlib import Path
 from typing import Optional, Set, Tuple
 
+#: ``(routine, zero-based argument)`` pairs whose string is shown to the player.
 PLAYER_ARG_POSITIONS: Set[Tuple[str, int]] = {
     ("SpeakString", 0),
     ("ActionSpeakString", 0),
@@ -22,6 +23,8 @@ PLAYER_ARG_POSITIONS: Set[Tuple[str, int]] = {
     ("CopyArea", 2),
 }
 
+#: ``(routine, zero-based argument)`` pairs whose string names something
+#: (tag, resref, variable, database, …) and must stay untranslated.
 INTERNAL_ARG_POSITIONS: Set[Tuple[str, int]] = {
     ("PrintString", 0),
     ("WriteTimestampedLogEntry", 0),
@@ -94,7 +97,7 @@ _NSS_SNIPPET_CHAR_CAP = 2000
 
 
 def classify_engine_arg(func: str, arg: int) -> Optional[str]:
-    """Classify a string passed as argument *arg* of engine routine *func*.
+    """Classifies a string passed as argument *arg* of engine routine *func*.
 
     Args:
         func: Engine routine name.
@@ -102,7 +105,7 @@ def classify_engine_arg(func: str, arg: int) -> Optional[str]:
 
     Returns:
         ``"player"`` (shown to the player), ``"internal"`` (tag, resref,
-        variable name, …) or None when the argument is not a known consumer.
+        variable name, …) or ``None`` when the argument is not a known consumer.
     """
     if (func, arg) in PLAYER_ARG_POSITIONS:
         return "player"
@@ -116,7 +119,7 @@ def classify_engine_arg(func: str, arg: int) -> Optional[str]:
 
 
 def snippet_with_position(text: str, nss_content: str) -> tuple[Optional[str], Optional[int]]:
-    """Return the source lines around the first quoted occurrence of *text*.
+    """Returns the source lines around the first quoted occurrence of *text*.
 
     The excerpt gives the model gate enough source context to decide whether
     a literal is player-facing: 20 lines on each side of the hit, trimmed to
@@ -163,7 +166,7 @@ def snippet_with_position(text: str, nss_content: str) -> tuple[Optional[str], O
 
 
 def read_script_source(file_path: Path, encoding: str) -> str:
-    """Read the ``.nss`` source next to a compiled script.
+    """Reads the ``.nss`` source next to a compiled script.
 
     Only the matching script is read; context is never borrowed from another
     file.

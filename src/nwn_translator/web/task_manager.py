@@ -49,6 +49,7 @@ from .schemas import RebuildEdit
 
 logger = logging.getLogger(__name__)
 
+#: Age (seconds) after which a finished task's workspace is purged.
 DEFAULT_TASK_TTL_SECONDS = 24 * 3600
 
 #: Seconds between two runs of :meth:`TaskManager.purge_expired`.
@@ -107,7 +108,7 @@ class JobParams:
 
 
 def _optional_path(value: Optional[str]) -> Optional[Path]:
-    """Path of a stored path column, ``None`` when empty."""
+    """Returns the path of a stored path column, ``None`` when empty."""
     return Path(value) if value else None
 
 
@@ -158,7 +159,7 @@ class TranslationTask:
 
     @classmethod
     def from_row(cls, row: Dict[str, Any]) -> "TranslationTask":
-        """Rebuild a task from its SQLite row (progress fields are not restored).
+        """Rebuilds a task from its SQLite row (progress fields are not restored).
 
         Args:
             row: Row of the ``tasks`` table.
@@ -183,20 +184,28 @@ class TranslationTask:
         )
 
     def request_cancel(self) -> None:
-        """Ask the worker to stop at its next cancellation checkpoint."""
+        """Asks the worker to stop at its next cancellation checkpoint."""
         self._cancel.set()
 
     def is_cancel_requested(self) -> bool:
-        """Whether cancellation has been requested."""
+        """Tells whether cancellation has been requested.
+
+        Returns:
+            ``True`` once :meth:`request_cancel` was called.
+        """
         return self._cancel.is_set()
 
     def is_finished(self) -> bool:
-        """Whether the task has reached a terminal status."""
+        """Tells whether the task has reached a terminal status.
+
+        Returns:
+            ``True`` for a status in ``TERMINAL_STATUSES``.
+        """
         return self.status in TERMINAL_STATUSES
 
 
 class TaskManager:
-    """Runs translation jobs and rebuilds, and owns the in-memory task registry.
+    """Service that runs translation jobs and rebuilds and owns the in-memory task registry.
 
     Attributes:
         workspace_root: Directory holding one workspace per task.
@@ -208,7 +217,7 @@ class TaskManager:
         workspace_root: Optional[Path] = None,
         task_ttl_seconds: float = DEFAULT_TASK_TTL_SECONDS,
     ) -> None:
-        """Create the manager and mark tasks orphaned by a previous process.
+        """Creates the manager and marks tasks orphaned by a previous process.
 
         Args:
             workspace_root: Workspace directory; ``workspace/web`` by default.
@@ -233,7 +242,7 @@ class TaskManager:
         self._reconcile_interrupted()
 
     def _reconcile_interrupted(self) -> None:
-        """Flip tasks left unfinished by a dead worker to ``interrupted``.
+        """Flips tasks left unfinished by a dead worker to ``interrupted``.
 
         A process restart leaves DB rows in a non-terminal status with no live
         worker. They are marked ``interrupted`` (a terminal status) so clients
@@ -245,7 +254,7 @@ class TaskManager:
             self._tasks[row["task_id"]] = TranslationTask.from_row({**row, "status": "interrupted"})
 
     def workspace_for_task(self, task_id: str) -> Path:
-        """Return the task's workspace directory, creating it if needed.
+        """Returns the task's workspace directory, creating it if needed.
 
         Args:
             task_id: Task UUID.
@@ -258,7 +267,7 @@ class TaskManager:
         return path
 
     def get(self, task_id: str) -> Optional[TranslationTask]:
-        """Return the in-memory task.
+        """Returns the in-memory task.
 
         Args:
             task_id: Task UUID.
@@ -270,7 +279,7 @@ class TaskManager:
             return self._tasks.get(task_id)
 
     def find(self, task_id: str) -> Optional[TranslationTask]:
-        """Return the task from memory, else rebuilt from its SQLite row.
+        """Returns the task from memory, else rebuilt from its SQLite row.
 
         Tasks that finished under an earlier process exist only in the
         database; the ones it left unfinished are loaded as ``interrupted`` at
@@ -289,25 +298,28 @@ class TaskManager:
         return TranslationTask.from_row(row) if row else None
 
     def active_task_count(self) -> int:
-        """Return how many tasks have not reached a terminal status.
+        """Returns how many tasks have not reached a terminal status.
 
         Deleted tasks whose worker is still running count too. Exposed via
         ``/api/health`` so the deploy can wait for an idle service before
         recreating the container: a restart kills every worker thread, and there
         is no resume.
+
+        Returns:
+            The number of unfinished and orphaned tasks.
         """
         with self._lock:
             unfinished = sum(1 for t in self._tasks.values() if not t.is_finished())
             return unfinished + len(self._orphaned)
 
     def _slot_holder(self, ip: str) -> Optional[str]:
-        """Return the unfinished task holding *ip*'s slot; the caller holds ``_lock``."""
+        """Returns the unfinished task holding *ip*'s slot; the caller holds ``_lock``."""
         tid = self._active_by_ip.get(ip)
         task = self._tasks.get(tid) if tid else None
         return tid if task is not None and not task.is_finished() else None
 
     def active_task_id_for_ip(self, ip: str) -> Optional[str]:
-        """Return the unfinished task occupying *ip*'s slot.
+        """Returns the unfinished task occupying *ip*'s slot.
 
         Args:
             ip: Client IP address.
@@ -327,7 +339,7 @@ class TaskManager:
         source_lang: Optional[str] = None,
         model: Optional[str] = None,
     ) -> TranslationTask:
-        """Create a ``pending`` task in memory and in SQLite.
+        """Creates a ``pending`` task in memory and in SQLite.
 
         Args:
             client_ip: Originating client IP address.
@@ -364,7 +376,7 @@ class TaskManager:
         return task
 
     def try_register_active(self, client_ip: str, task_id: str) -> bool:
-        """Atomically register *task_id* for *client_ip* unless one is already active.
+        """Atomically registers *task_id* for *client_ip* unless one is already active.
 
         The check and the registration happen in one critical section, so two
         concurrent requests from the same IP cannot both pass the one-job-per-IP
@@ -385,7 +397,7 @@ class TaskManager:
             return True
 
     def release_active(self, client_ip: str, task_id: str) -> None:
-        """Free *client_ip*'s slot if *task_id* holds it.
+        """Frees *client_ip*'s slot if *task_id* holds it.
 
         Args:
             client_ip: Client IP address.
@@ -396,7 +408,7 @@ class TaskManager:
                 del self._active_by_ip[client_ip]
 
     def cancel(self, task: TranslationTask) -> None:
-        """Ask a running task to stop and free its client's slot at once.
+        """Asks a running task to stop and frees its client's slot at once.
 
         ``cancelling`` is persisted immediately so history and resume do not show
         a live job while the worker waits on an in-flight provider call; the
@@ -412,7 +424,7 @@ class TaskManager:
         self.release_active(task.client_ip, task.task_id)
 
     def delete(self, task_id: str) -> None:
-        """Delete a task with its workspace, database row and translations.
+        """Deletes a task with its workspace, database row and translations.
 
         A running job is cancelled and its client's slot freed at once. Its
         workspace goes when the worker exits, because the job may still be
@@ -438,7 +450,7 @@ class TaskManager:
     def rebuild(
         self, task: TranslationTask, edits: Sequence[RebuildEdit], target_lang: Optional[str]
     ) -> None:
-        """Re-inject the task's translations plus *edits* and repack its module.
+        """Re-injects the task's translations plus *edits* and repacks its module.
 
         No provider calls are made. An edit addresses one ``(file, item_id)`` and
         reaches every identical line its editor row stands for. The edits are
@@ -475,7 +487,7 @@ class TaskManager:
 
     @contextmanager
     def _rebuild_lock(self, task_id: str) -> Iterator[None]:
-        """Hold the rebuild lock of *task_id*.
+        """Holds the rebuild lock of *task_id*.
 
         The registry keeps the lock only weakly: each rebuild holding or awaiting
         it keeps it alive, and it disappears with the last one.
@@ -494,7 +506,7 @@ class TaskManager:
             yield
 
     def _make_progress_callback(self, task: TranslationTask) -> Callable[..., None]:
-        """Create the pipeline progress callback of *task*.
+        """Creates the pipeline progress callback of *task*.
 
         The callback updates the task's phase, status and monotonic weighted
         progress, and mirrors them into SQLite.
@@ -512,6 +524,7 @@ class TaskManager:
             total: int,
             message: Optional[str] = None,
         ) -> None:
+            """Records one progress event of the pipeline on *task*."""
             task.phase = phase
             # Do not clobber ``cancelling`` with a phase name: SQLite would look
             # "still translating" and the client would resume onto the progress
@@ -529,7 +542,7 @@ class TaskManager:
         return callback
 
     def _persist_progress(self, task: TranslationTask, phase: str, message: Optional[str]) -> None:
-        """Mirror in-flight progress into SQLite.
+        """Mirrors in-flight progress into SQLite.
 
         A phase change is written at once, other updates at most every
         :data:`PROGRESS_PERSIST_INTERVAL_SECONDS`. The history list reads the
@@ -555,7 +568,7 @@ class TaskManager:
             )
 
     def start(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
-        """Run the job of *task* on a worker thread of its own.
+        """Runs the job of *task* on a worker thread of its own.
 
         Jobs run for minutes to hours, so they must not occupy asyncio's default
         executor, which the endpoints using ``asyncio.to_thread`` share.
@@ -576,14 +589,14 @@ class TaskManager:
         worker.start()
 
     def join_workers(self) -> None:
-        """Wait until every running job has finished."""
+        """Waits until every running job has finished."""
         with self._lock:
             workers = list(self._workers.values())
         for worker in workers:
             worker.join()
 
     def _run_job(self, task: TranslationTask, job: JobParams, input_path: Path) -> None:
-        """Translate the uploaded module of *task* and record the outcome.
+        """Translates the uploaded module of *task* and records the outcome.
 
         The task ends ``completed``, ``cancelled`` or ``failed``, its IP slot is
         released, its trace file is closed and the worker is unregistered.
@@ -631,7 +644,7 @@ class TaskManager:
             task.extract_dir = translator.extract_dir
             task.stats = translator.get_statistics()
             # Editor rows of every file, dialogs and rejected lines included;
-            # ``items_translated`` counts only accepted non-dialog items.
+            # ``items_translated`` counts only accepted batch-pass requests.
             try:
                 task.stats["texts_translated"] = count_translations(task.task_id)
             except sqlite3.Error as e:
@@ -668,7 +681,7 @@ class TaskManager:
                     self._orphaned.discard(task.task_id)
 
     def _finish(self, task: TranslationTask, status: str, **fields: Any) -> None:
-        """Move *task* to terminal *status* in memory and in SQLite.
+        """Moves *task* to terminal *status* in memory and in SQLite.
 
         Args:
             task: Finished task.
@@ -690,7 +703,7 @@ class TaskManager:
         )
 
     def purge_expired(self) -> None:
-        """Evict finished tasks older than the TTL from memory and disk.
+        """Evicts finished tasks older than the TTL from memory and disk.
 
         Workspace directories (uploaded module, extraction temp, result) are
         deleted; DB rows and translations are kept, so the client history and
@@ -725,7 +738,7 @@ class TaskManager:
                 logger.warning("Failed to purge workspace %s: %s", task_dir, e)
 
     async def purge_periodically(self, interval_seconds: float = PURGE_INTERVAL_SECONDS) -> None:
-        """Run :meth:`purge_expired` every *interval_seconds* until cancelled.
+        """Runs :meth:`purge_expired` every *interval_seconds* until cancelled.
 
         Args:
             interval_seconds: Pause between two purges.
@@ -739,9 +752,12 @@ _manager: Optional[TaskManager] = None
 
 
 def get_task_manager() -> TaskManager:
-    """Return the process-wide :class:`TaskManager`, creating it on first use.
+    """Returns the process-wide :class:`TaskManager`, creating it on first use.
 
     The workspace root comes from ``NWN_WEB_TASK_ROOT``.
+
+    Returns:
+        The shared manager.
     """
     global _manager
     if _manager is None:
@@ -751,6 +767,10 @@ def get_task_manager() -> TaskManager:
 
 
 def set_task_manager(manager: Optional[TaskManager]) -> None:
-    """Replace the process-wide manager (tests); ``None`` resets it."""
+    """Replaces the process-wide manager (tests).
+
+    Args:
+        manager: The new manager; ``None`` makes the next use create one.
+    """
     global _manager
     _manager = manager

@@ -18,10 +18,10 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-# Non-European scripts (CJK, Hebrew, Arabic, Devanagari, Thai). Target
-# languages are European, so a translation containing these characters when
-# the source does not is a model glitch: the injector would silently drop
-# them, garbling the text (observed: Chinese and Thai chars inside Russian).
+#: Non-European scripts (CJK, Hebrew, Arabic, Devanagari, Thai). Target
+#: languages are European, so a translation containing these characters when
+#: the source does not is a model glitch: the injector would silently drop
+#: them, garbling the text (observed: Chinese and Thai chars inside Russian).
 FOREIGN_SCRIPT_PATTERN = re.compile(
     "[\\u0590-\\u06ff\\u0900-\\u097f\\u0e00-\\u0e7f"
     "\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff]"
@@ -55,7 +55,7 @@ _WRAPPERS = (("__", "__"), (r"\[\[", r"\]\]"), (r"<<\[", r"\]>>"), (r"<\[", r"\]
 
 
 def _wrapped(core: str) -> str:
-    """Return an alternation of *core* inside every placeholder wrapper."""
+    """Returns an alternation of *core* inside every placeholder wrapper."""
     return "|".join(left + core + right for left, right in _WRAPPERS)
 
 
@@ -79,7 +79,7 @@ _EXACT_PLACEHOLDER_RE = re.compile(_wrapped(r"(?:NWN_INLINE|NWN_TOKEN)_[0-9a-f]{
 
 
 def normalize_translated_text(text: str) -> str:
-    """NFC-normalize model output and drop stray combining marks.
+    """NFC-normalizes model output and drops stray combining marks.
 
     Models occasionally emit combining accents (e.g. U+0301 in ``Тиндало́са``)
     that no single-byte NWN code page can encode. NFC runs first so precomposed
@@ -101,7 +101,7 @@ def normalize_translated_text(text: str) -> str:
 
 
 def has_translatable_content(sanitized: str) -> bool:
-    """Return whether a sanitized string holds anything to translate.
+    """Tells whether a sanitized string holds anything to translate.
 
     Placeholders written by :meth:`TokenHandler.sanitize` are removed first;
     whitespace, punctuation and underscores do not count.
@@ -110,7 +110,7 @@ def has_translatable_content(sanitized: str) -> bool:
         sanitized: Output of :func:`sanitize_text`.
 
     Returns:
-        True when a Unicode letter or digit remains.
+        ``True`` when a Unicode letter or digit remains.
     """
     if not sanitized:
         return False
@@ -182,7 +182,7 @@ class TokenProcessingResult:
 
 
 def _classify(raw: str, preserve_tokens: bool) -> Optional[str]:
-    """Return the artifact kind of a token-like fragment, or None to keep it as text."""
+    """Returns the artifact kind of a token-like fragment, or ``None`` to keep it as text."""
     if _INLINE_TAG_RE.fullmatch(raw):
         return "inline_tag"
     if _ENGINE_TOKEN_RE.fullmatch(raw):
@@ -193,7 +193,7 @@ def _classify(raw: str, preserve_tokens: bool) -> Optional[str]:
 
 
 def _scan(text: str, preserve_tokens: bool) -> List[Tuple[int, int, str]]:
-    """Locate the protected artifacts of *text*.
+    """Locates the protected artifacts of *text*.
 
     A dialog (``<<…>>``) or dash (``-…-``) action contributes its two markers, so
     the action text between them stays translatable; tokens and inline tags nested
@@ -228,7 +228,7 @@ def _scan(text: str, preserve_tokens: bool) -> List[Tuple[int, int, str]]:
 
 
 def _compare(expected: List[str], actual: List[str]) -> TokenMismatchReport:
-    """Classify how the *actual* artifact sequence differs from *expected*."""
+    """Classifies how the *actual* artifact sequence differs from *expected*."""
     if expected == actual:
         mismatch_type = "exact_match"
     elif len(expected) != len(actual):
@@ -246,12 +246,12 @@ def _compare(expected: List[str], actual: List[str]) -> TokenMismatchReport:
 
 
 def _strip_placeholder_noise(text: str) -> str:
-    """Remove wrapped and bare placeholder cores that map to no artifact."""
+    """Removes wrapped and bare placeholder cores that map to no artifact."""
     return _BARE_PLACEHOLDER_NOISE_RE.sub("", _PLACEHOLDER_NOISE_RE.sub("", text))
 
 
 def _has_unbalanced_action_tags(text: str) -> bool:
-    """Return True when ``<Start…>``/``</Start>`` tags do not nest properly."""
+    """Tells whether the ``<Start…>``/``</Start>`` tags of *text* fail to nest properly."""
     depth = 0
     for tag in _INLINE_TAG_RE.findall(text):
         depth += -1 if tag.startswith("</") else 1
@@ -261,7 +261,7 @@ def _has_unbalanced_action_tags(text: str) -> bool:
 
 
 def _normalize_cleanup_whitespace(text: str) -> str:
-    """Minimally normalize whitespace left behind by removed artifacts."""
+    """Minimally normalizes the whitespace left behind by removed artifacts."""
     normalized = re.sub(r"[ \t]+\n", "\n", text)
     normalized = re.sub(r"\n[ \t]+", "\n", normalized)
     normalized = re.sub(r"[ \t]{2,}", " ", normalized)
@@ -272,7 +272,7 @@ def _normalize_cleanup_whitespace(text: str) -> str:
 
 
 class TokenHandler:
-    """Placeholders of one source text: sanitize, restore, validate, clean up.
+    """Placeholder handler of one source text: sanitizing, restoring, validating, cleaning up.
 
     Attributes:
         preserve_tokens: Protect engine tokens (``<FirstName>``); inline tags,
@@ -281,7 +281,7 @@ class TokenHandler:
     """
 
     def __init__(self, preserve_tokens: bool = True):
-        """Create a handler.
+        """Creates a handler.
 
         Args:
             preserve_tokens: Protect engine tokens as well as inline markup.
@@ -294,7 +294,7 @@ class TokenHandler:
         self._originals: Dict[str, str] = {}
 
     def sanitize(self, text: str) -> SanitizedText:
-        """Replace the protected artifacts of *text* with placeholders.
+        """Replaces the protected artifacts of *text* with placeholders.
 
         Placeholders are deterministic: equal texts sanitize to equal strings, so
         they share one deduplicated request.
@@ -321,7 +321,7 @@ class TokenHandler:
         return SanitizedText(sanitized_text="".join(parts), artifacts=list(self.artifacts))
 
     def restore(self, text: str) -> str:
-        """Put the protected artifacts back in place of their placeholders.
+        """Puts the protected artifacts back in place of their placeholders.
 
         Unknown or mangled placeholders are dropped; Start-tags are dropped as well
         when the answer no longer nests them and differs from the source's tags.
@@ -340,7 +340,7 @@ class TokenHandler:
         return self._drop_deviating_action_tags(restored)
 
     def validate_text(self, restored: str) -> TokenMismatchReport:
-        """Compare the artifacts of a restored answer with the source's.
+        """Compares the artifacts of a restored answer with the source's.
 
         Args:
             restored: Output of :meth:`restore`.
@@ -357,7 +357,7 @@ class TokenHandler:
         *,
         allow_cleanup: bool = False,
     ) -> TokenProcessingResult:
-        """Restore a model answer, validate it and optionally clean it up.
+        """Restores a model answer, validates it and optionally cleans it up.
 
         An answer that brings in a foreign script the source lacks is invalid even
         when its artifacts match.
@@ -402,7 +402,7 @@ class TokenHandler:
         )
 
     def cleanup_mismatched_artifacts(self, restored: str) -> str:
-        """Keep the source's artifacts in order and drop every other token-like fragment.
+        """Keeps the source's artifacts in order and drops every other token-like fragment.
 
         Args:
             restored: Output of :meth:`restore` that failed validation.
@@ -429,11 +429,15 @@ class TokenHandler:
         return _normalize_cleanup_whitespace(self._drop_deviating_action_tags(cleaned))
 
     def get_expected_artifact_sequence(self) -> List[str]:
-        """Return the source's artifacts, in order, as written in the source."""
+        """Returns the artifacts the restored answer must carry.
+
+        Returns:
+            The source's artifacts, in order, as written in the source.
+        """
         return [artifact.original for artifact in self.artifacts]
 
     def _protect(self, original: str, kind: str) -> str:
-        """Register one artifact and return its placeholder."""
+        """Registers one artifact and returns its placeholder."""
         prefix = "NWN_INLINE" if kind in _INLINE_KINDS else "NWN_TOKEN"
         core = f"{prefix}_{self._nonce}_{len(self.artifacts)}"
         placeholder = f"__{core}__"
@@ -443,12 +447,12 @@ class TokenHandler:
         return placeholder
 
     def _original_for(self, match: re.Match) -> str:
-        """Return the artifact of a placeholder match, or "" for an unknown core."""
+        """Returns the artifact of a placeholder match, or "" for an unknown core."""
         core = next((group for group in match.groups() if group), "")
         return self._originals.get(core.lower(), "")
 
     def _drop_deviating_action_tags(self, text: str) -> str:
-        """Drop all Start-tags when they are malformed and differ from the source's.
+        """Drops all Start-tags when they are malformed and differ from the source's.
 
         Sources may legitimately carry unpaired Start-tags: modules pair
         ``</Start>`` with an engine token opener (``<CUSTOM1004>(sigh)</Start>``) or
@@ -468,7 +472,7 @@ class TokenHandler:
 
 
 def sanitize_text(text: str, preserve_tokens: bool = True) -> Tuple[str, TokenHandler]:
-    """Sanitize *text* with a new handler.
+    """Sanitizes *text* with a new handler.
 
     Args:
         text: Source text.

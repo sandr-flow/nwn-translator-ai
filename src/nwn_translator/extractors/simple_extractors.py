@@ -39,7 +39,7 @@ class FieldSpec:
 def _name_and_description(
     label: str, kind: str, name_fields: Tuple[str, ...] = ("LocalizedName",)
 ) -> Tuple[FieldSpec, FieldSpec]:
-    """Return the name and description specs shared by the blueprint kinds."""
+    """Returns the name and description specs shared by the blueprint kinds."""
     return (
         FieldSpec(
             name_fields,
@@ -54,7 +54,7 @@ def _name_and_description(
 
 
 class SimpleLocalizedExtractor(BaseExtractor):
-    """Extract the fields listed in :attr:`FIELD_SPECS` from the root struct.
+    """Extractor of the fields listed in :attr:`FIELD_SPECS` from the root struct.
 
     Attributes:
         CONTENT_TYPE: ``ExtractedContent.content_type`` of the resource kind.
@@ -68,11 +68,11 @@ class SimpleLocalizedExtractor(BaseExtractor):
     FIELD_SPECS: ClassVar[Sequence[FieldSpec]]
 
     def _should_extract(self, parsed_data: Dict[str, Any]) -> bool:
-        """Return whether the resource carries player-visible text at all."""
+        """Tells whether the resource carries player-visible text at all."""
         return True
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract one item per spec whose field holds embedded text.
+        """Extracts one item per spec whose field holds embedded text.
 
         Args:
             file_path: Path of the resource.
@@ -126,7 +126,7 @@ class TriggerExtractor(SimpleLocalizedExtractor):
     FIELD_SPECS = _name_and_description("Trigger", "trigger")
 
     def _should_extract(self, parsed_data: Dict[str, Any]) -> bool:
-        # Only trap triggers show their name; scripting triggers are invisible.
+        """Tells whether the trigger is a trap: scripting triggers are invisible."""
         return bool(parsed_data.get("TrapFlag"))
 
 

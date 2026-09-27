@@ -133,7 +133,7 @@ class ERFError(Exception):
 
 
 def extension_for_type(type_id: int) -> str:
-    """Return the file extension of a resource type id.
+    """Returns the file extension of a resource type id.
 
     Args:
         type_id: ERF resource type id.
@@ -176,7 +176,7 @@ class ERFHeader:
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "ERFHeader":
-        """Parse and validate the first 160 bytes of an archive.
+        """Parses and validates the first 160 bytes of an archive.
 
         Args:
             data: Archive bytes starting at offset 0.
@@ -201,7 +201,11 @@ class ERFHeader:
         return header
 
     def pack(self) -> bytes:
-        """Return the 160-byte header with zeroed reserved bytes."""
+        """Serializes the header.
+
+        Returns:
+            The 160-byte header with zeroed reserved bytes.
+        """
         return HEADER.pack(*astuple(self), b"")
 
 
@@ -237,7 +241,7 @@ class ERFReader:
     """
 
     def __init__(self, file_path: Path, progress_callback: Optional[ProgressCallback] = None):
-        """Open an archive for reading.
+        """Opens an archive for reading.
 
         Args:
             file_path: Path of the ``.mod``, ``.erf`` or ``.hak`` file.
@@ -256,7 +260,7 @@ class ERFReader:
             raise ERFError(f"File not found: {file_path}")
 
     def read_header(self) -> ERFHeader:
-        """Read the header and check that the declared tables fit the file.
+        """Reads the header and checks that the declared tables fit the file.
 
         The size check runs before anything is allocated per entry, so a
         crafted header with a huge entry count fails fast.
@@ -281,7 +285,7 @@ class ERFReader:
         return header
 
     def read_localized_strings_block(self) -> bytes:
-        """Read the raw localized string list (the module description).
+        """Reads the raw localized string list (the module description).
 
         Returns:
             The block as stored, or ``b""`` when the header declares none or
@@ -309,7 +313,7 @@ class ERFReader:
             return f.read(size)
 
     def read_entries(self) -> List[ERFEntry]:
-        """Read the key and resource lists and detect each entry's extension.
+        """Reads the key and resource lists and detects each entry's extension.
 
         Returns:
             The entries in key-list order (also stored in :attr:`entries`).
@@ -366,7 +370,7 @@ class ERFReader:
         return entries
 
     def extension_for(self, entry: ERFEntry) -> str:
-        """Return the extension of *entry*: from its signature if known, else its type id.
+        """Returns the extension of *entry*: from its signature if known, else its type id.
 
         Args:
             entry: An entry returned by :meth:`read_entries` of this reader.
@@ -377,7 +381,7 @@ class ERFReader:
         return self._extensions[entry.res_id]
 
     def filename_for(self, entry: ERFEntry) -> str:
-        """Return the file name :meth:`extract_all` writes *entry* to.
+        """Returns the file name :meth:`extract_all` writes *entry* to.
 
         Characters Windows forbids in file names become ``_``.
 
@@ -390,7 +394,7 @@ class ERFReader:
         return (entry.res_ref + self.extension_for(entry)).translate(_UNSAFE_FILENAME_CHARS)
 
     def extract_all(self, output_dir: Path) -> Path:
-        """Write every resource with data to *output_dir*.
+        """Writes every resource with data to *output_dir*.
 
         Args:
             output_dir: Target directory, created if missing.
@@ -435,7 +439,7 @@ class ERFWriter:
     """
 
     def __init__(self, output_path: Path, type_overrides: Optional[Dict[str, int]] = None):
-        """Start an empty archive.
+        """Starts an empty archive.
 
         Args:
             output_path: Where :meth:`write` puts the archive.
@@ -451,7 +455,7 @@ class ERFWriter:
         self._description_strref = NO_STRREF
 
     def add_resource(self, res_ref: str, res_type: str, data: bytes) -> None:
-        """Add a resource from memory.
+        """Adds a resource from memory.
 
         Args:
             res_ref: Resource name without extension (at most 16 ASCII chars).
@@ -461,7 +465,7 @@ class ERFWriter:
         self._resources[f"{res_ref}{res_type.lower()}"] = data
 
     def add_file(self, file_path: Path) -> None:
-        """Add a file; its content is read only by :meth:`write`.
+        """Adds a file; its content is read only by :meth:`write`.
 
         Args:
             file_path: File whose stem is the resref and suffix the type.
@@ -470,7 +474,7 @@ class ERFWriter:
         self._resources[f"{file_path.stem}{file_path.suffix.lower()}"] = file_path
 
     def add_directory(self, directory: Path) -> None:
-        """Add every file under *directory*, recursively.
+        """Adds every file under *directory*, recursively.
 
         Args:
             directory: Root directory; sub-directories are flattened.
@@ -482,7 +486,7 @@ class ERFWriter:
     def set_localized_strings(
         self, language_count: int, raw_block: bytes, description_strref: int
     ) -> None:
-        """Carry the module description from a source archive.
+        """Carries the module description from a source archive.
 
         Args:
             language_count: LanguageCount of the source archive.
@@ -494,15 +498,17 @@ class ERFWriter:
         self._description_strref = description_strref
 
     def write(self) -> None:
-        """Write the archive to :attr:`output_path`.
+        """Writes the archive to :attr:`output_path`.
 
         Tables are built in memory; resource data is streamed into a
         ``.tmp`` file next to the output, which then replaces the output, so
         a failed write never destroys a previous archive.
 
         Raises:
-            ERFError: If a source file cannot be read or changes size, or a
+            ERFError: If a source file cannot be stat'ed or changes size, or a
                 resref exceeds 16 bytes.
+            OSError: If a source file cannot be opened or the archive cannot be
+                written.
         """
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         resources = sorted(self._resources.items())
@@ -571,7 +577,7 @@ class ERFWriter:
 
 
 def _resref_bytes(res_ref: str) -> bytes:
-    """Encode a resref for the key list; non-ASCII characters become ``?``."""
+    """Encodes a resref for the key list; non-ASCII characters become ``?``."""
     raw = res_ref.encode("ascii", errors="replace")
     if len(raw) > 16:
         raise ERFError(
@@ -581,7 +587,7 @@ def _resref_bytes(res_ref: str) -> bytes:
 
 
 def _copy_into(out: BinaryIO, src: Union[bytes, Path]) -> int:
-    """Append one resource's data to *out* and return the number of bytes written."""
+    """Appends one resource's data to *out* and returns the number of bytes written."""
     if isinstance(src, bytes):
         out.write(src)
         return len(src)
@@ -596,7 +602,7 @@ def _copy_into(out: BinaryIO, src: Union[bytes, Path]) -> int:
 def create_mod_from_directory(
     input_dir: Path, output_path: Path, original_mod: Optional[Path] = None
 ) -> None:
-    """Pack a directory of extracted resources into an archive.
+    """Packs a directory of extracted resources into an archive.
 
     With *original_mod*, every file keeps the type id its resource had in
     that archive (matched by :meth:`ERFReader.filename_for`), and the module
@@ -608,7 +614,9 @@ def create_mod_from_directory(
         original_mod: The archive *input_dir* was extracted from.
 
     Raises:
-        ERFError: If *original_mod* cannot be read or the write fails.
+        ERFError: If *original_mod* cannot be read or :meth:`ERFWriter.write`
+            rejects a resource.
+        OSError: If a resource cannot be read or the archive cannot be written.
     """
     writer = ERFWriter(output_path)
     if original_mod and original_mod.exists():

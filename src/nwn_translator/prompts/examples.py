@@ -37,9 +37,11 @@ _LOW_INT_SOURCES = (
     "You big fat liar. Me no follow you.",
     "Ha ha! Me no crawl. Me here to point and laugh!",
 )
+#: Node ids of the dialog output example.
 _DIALOG_NODE_IDS = ("E0", "R1", "E2")
 #: The glossary prompt shows the personal names without this one.
 _NOT_IN_GLOSSARY = "Talias Allenthel"
+#: Keys a language may leave out of its forms.
 _OPTIONAL_KEYS = ("glossary_nicknames", "declension_note", "speech_normal_counterexample")
 
 #: Target-language forms, in the order of the English sources above:
@@ -452,7 +454,14 @@ _FORMS: Dict[str, Dict[str, Any]] = {
 
 
 def _expand(forms: Dict[str, Any]) -> Dict[str, Any]:
-    """Pair a language's forms with the English sources."""
+    """Pairs a language's forms with the English sources.
+
+    Args:
+        forms: One language's entry of :data:`_FORMS`.
+
+    Returns:
+        The examples dict described in the module docstring.
+    """
     proper = [
         (src, good, bad) for src, (good, bad) in zip(_PROPER_NAME_SOURCES, forms["proper_names"])
     ]
@@ -481,7 +490,7 @@ LANGUAGES: Tuple[str, ...] = tuple(_EXAMPLES)
 
 
 def get_examples(target_lang: str) -> Dict[str, Any]:
-    """Return the examples of *target_lang*.
+    """Returns the examples of *target_lang*.
 
     Args:
         target_lang: Target language name (case and surrounding spaces ignored).

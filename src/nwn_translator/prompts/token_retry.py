@@ -21,7 +21,7 @@ PRESERVE_INLINE_MARKUP = (
 
 
 def expected_artifacts_line(expected: Sequence[str]) -> List[str]:
-    """Return the line listing the artifacts the restored text must contain.
+    """Returns the line listing the artifacts the restored text must contain.
 
     Args:
         expected: Artifacts in source order.
@@ -35,7 +35,7 @@ def expected_artifacts_line(expected: Sequence[str]) -> List[str]:
 
 
 def previous_mismatch_lines(report: Optional["TokenMismatchReport"]) -> List[str]:
-    """Describe how the previous answer broke the artifacts.
+    """Describes how the previous answer broke the artifacts.
 
     Args:
         report: Validation report of the previous answer, if any.

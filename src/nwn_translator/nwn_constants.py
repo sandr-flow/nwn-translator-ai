@@ -128,7 +128,7 @@ _BASE_ITEM_MAP = {
 
 
 def race_label(race_id: int) -> str:
-    """Return the racialtypes.2da label of a race.
+    """Returns the racialtypes.2da label of a race.
 
     Args:
         race_id: ``Race`` field of a creature.
@@ -140,7 +140,7 @@ def race_label(race_id: int) -> str:
 
 
 def gender_label(gender_id: int) -> str:
-    """Return the gender.2da label of a gender.
+    """Returns the gender.2da label of a gender.
 
     Args:
         gender_id: ``Gender`` field of a creature.
@@ -152,7 +152,7 @@ def gender_label(gender_id: int) -> str:
 
 
 def base_item_label(base_item_id: int) -> str:
-    """Return the baseitems.2da label of an item type.
+    """Returns the baseitems.2da label of an item type.
 
     Args:
         base_item_id: ``BaseItem`` field of an item.

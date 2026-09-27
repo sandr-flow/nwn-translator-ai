@@ -11,12 +11,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Union
 
+#: Address of one extracted string: ``(resource file name, item_id)``.
 Occurrence = tuple[str, str]
+#: Translated text by occurrence.
 Translations = Dict[Occurrence, str]
 
 
 def occurrence_key(resource: Union[str, Path], item_id: str) -> Occurrence:
-    """Address an archive resource occurrence, independently of its text or Tag.
+    """Addresses an archive resource occurrence, independently of its text or Tag.
 
     Args:
         resource: Resource path or file name.
@@ -47,16 +49,17 @@ class ExtractedContent:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Fills in the location of every item that has none."""
         for item in self.items:
             if not item.location:
                 item.location = str(self.source_file)
 
     def __len__(self) -> int:
-        """Return the number of extracted items."""
+        """Returns the number of extracted items."""
         return len(self.items)
 
     def __iter__(self) -> Iterator["TranslatableItem"]:
-        """Iterate over the extracted items."""
+        """Iterates over the extracted items."""
         return iter(self.items)
 
 
@@ -80,11 +83,16 @@ class TranslatableItem:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Replaces a ``None`` metadata with an empty dict."""
         if self.metadata is None:
             self.metadata = {}
 
     def has_text(self) -> bool:
-        """Return whether the item holds non-blank text."""
+        """Tells whether the item holds non-blank text.
+
+        Returns:
+            ``True`` when :attr:`text` is a string with a non-whitespace character.
+        """
         return bool(self.text and isinstance(self.text, str) and self.text.strip())
 
     @property
@@ -106,8 +114,9 @@ class DialogNode:
     Attributes:
         node_id: Index of the node in ``EntryList`` or ``ReplyList``.
         text: Node text (empty when the node has none).
-        speaker: Speaker tag for entries, ``"Player"`` for replies.
-        is_entry: True for NPC entries, False for player replies.
+        speaker: Speaker tag for entries (empty for the dialog owner),
+            ``"Player"`` for replies.
+        is_entry: ``True`` for NPC entries, ``False`` for player replies.
         replies: Child nodes (replies of an entry, entries following a reply).
     """
 
@@ -119,7 +128,7 @@ class DialogNode:
 
 
 def extract_local_string(text_data: Any) -> Optional[str]:
-    """Return the embedded text of a CExoLocString.
+    """Returns the embedded text of a CExoLocString.
 
     The embedded ``Value`` wins even when a StrRef is also set, as in the NWN
     toolset. StrRef-only strings are left to the player's ``dialog.tlk``.
@@ -128,7 +137,7 @@ def extract_local_string(text_data: Any) -> Optional[str]:
         text_data: Parsed CExoLocString (``{"StrRef": …, "Value": …}``).
 
     Returns:
-        The non-empty ``Value``, or None when there is none or *text_data* is
+        The non-empty ``Value``, or ``None`` when there is none or *text_data* is
         not a CExoLocString.
     """
     if not isinstance(text_data, dict):
@@ -138,7 +147,7 @@ def extract_local_string(text_data: Any) -> Optional[str]:
 
 
 def record_offset(struct: Dict[str, Any], field_name: str) -> int:
-    """Return the file offset of *field_name*'s field record in *struct*.
+    """Returns the file offset of *field_name*'s field record in *struct*.
 
     Args:
         struct: Parsed GFF struct carrying ``_record_offsets``.
@@ -152,7 +161,7 @@ def record_offset(struct: Dict[str, Any], field_name: str) -> int:
 
 
 def list_field(struct: Any, key: str) -> List[Any]:
-    """Return the list stored under *key*, or an empty list.
+    """Returns the list stored under *key*, or an empty list.
 
     Args:
         struct: Parsed GFF struct (anything else yields ``[]``).
@@ -167,11 +176,11 @@ def list_field(struct: Any, key: str) -> List[Any]:
 
 
 class BaseExtractor(ABC):
-    """Select the translatable strings of one resource kind."""
+    """Base class of the extractors: selects the translatable strings of one resource kind."""
 
     @abstractmethod
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract translatable content from a resource.
+        """Extracts translatable content from a resource.
 
         Args:
             file_path: Path of the resource.

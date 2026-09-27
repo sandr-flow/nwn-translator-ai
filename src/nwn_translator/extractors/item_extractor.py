@@ -24,7 +24,7 @@ _DESCRIPTION_LABELS = {
 
 
 def item_description_context(field_name: str, base_item: str, name: str) -> str:
-    """Return the prompt context of an item description.
+    """Returns the prompt context of an item description.
 
     Args:
         field_name: ``"Description"`` or ``"DescIdentified"``.
@@ -46,7 +46,7 @@ class ItemExtractor(BaseExtractor):
     """Item blueprint (``.uti``): name, description and identified description."""
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract the name and descriptions of an item blueprint.
+        """Extracts the name and descriptions of an item blueprint.
 
         Args:
             file_path: Path of the ``.uti`` resource.

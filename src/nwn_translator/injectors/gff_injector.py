@@ -1,4 +1,4 @@
-"""Patch the GFF field records of extracted items."""
+"""GFF injector: patches the field records of extracted items."""
 
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -17,7 +17,7 @@ def inject_gff(
     text_encoding: str,
     source_encoding: Optional[str] = None,
 ) -> InjectedContent:
-    """Rewrite the CExoLocString of every translated item in one pass.
+    """Rewrites the CExoLocString of every translated item in one pass.
 
     Every GFF resource kind shares this contract: extraction records the
     field record offset of each item, and only those fields are patched.

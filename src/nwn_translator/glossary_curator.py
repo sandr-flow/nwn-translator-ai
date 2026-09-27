@@ -40,7 +40,7 @@ _STAGE = LlmStage(
 
 
 class GlossaryCurator:
-    """Curate candidates so glossary building starts from a cleaner set."""
+    """Curator of the entity candidates, so glossary building starts from a cleaner set."""
 
     def curate(
         self,
@@ -49,7 +49,7 @@ class GlossaryCurator:
         config: "TranslationConfig",
         progress_callback: Optional[ProgressCallback] = None,
     ) -> EntityCandidateRegistry:
-        """Apply the deterministic decisions, then the model's, to *registry* in place.
+        """Applies the deterministic decisions, then the model's, to *registry* in place.
 
         Args:
             registry: Candidates to curate.
@@ -88,6 +88,7 @@ class GlossaryCurator:
         async def curate_batch(
             slot: "Slot", number: int, batch: List[EntityCandidate]
         ) -> Dict[str, Dict[str, Any]]:
+            """Curates one batch; names the model leaves out keep their decision."""
             # Runs once the batch holds its slot, so the progress names the
             # batch the model is curating.
             if progress_callback:
@@ -98,13 +99,14 @@ class GlossaryCurator:
                     f"Curating glossary candidates {number}/{len(batches)}",
                 )
             by_name = {candidate.name: candidate for candidate in batch}
-            # Built exactly like this so the retry request and the missing-key
-            # fallback keep their iteration order.
+            # Built exactly like this on purpose: the set's iteration order
+            # decides the order of the answers and of the missing-key fallback.
             remaining: Set[str] = set({candidate.name for candidate in batch})
 
             def prepare(
                 keys: List[str], _accepted: object, _attempt: int
             ) -> Callable[[], Awaitable[str]]:
+                """Builds the curation request of the candidates *keys*."""
                 records = {name: by_name[name].to_curator_record() for name in keys}
                 user_prompt = build_curator_user_prompt(records)
                 return functools.partial(json_request, provider, system_prompt, user_prompt)
@@ -143,7 +145,7 @@ class GlossaryCurator:
 
 
 def _needs_llm_curation(candidate: EntityCandidate) -> bool:
-    """Whether the rules leave *candidate*'s glossary status to the model."""
+    """Tells whether the rules leave *candidate*'s glossary status to the model."""
     if candidate.is_speaker_or_dialog_actor:
         return True
     if candidate.frequency > 1:
@@ -154,7 +156,7 @@ def _needs_llm_curation(candidate: EntityCandidate) -> bool:
 
 
 def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str, Any]]:
-    """Parse a curator reply into decisions for the expected candidate names.
+    """Parses a curator reply into decisions for the expected candidate names.
 
     Keys match exactly, else case-insensitively; values with an unknown
     decision are skipped.
@@ -196,7 +198,7 @@ def _parse_curator_json(raw: str, expected_keys: Set[str]) -> Dict[str, Dict[str
 
 
 def _optional_int(value: Any) -> Optional[int]:
-    """Return *value* as ``int``, or ``None`` when it does not convert.
+    """Returns *value* as ``int``, or ``None`` when it does not convert.
 
     ``json.loads`` reads ``Infinity`` and ``NaN``, which ``int`` rejects.
     """
@@ -207,7 +209,7 @@ def _optional_int(value: Any) -> Optional[int]:
 
 
 def _optional_str(value: Any) -> Optional[str]:
-    """Return *value* as a stripped non-empty string, or ``None``."""
+    """Returns *value* as a stripped non-empty string, or ``None``."""
     if value is None:
         return None
     text = str(value).strip()

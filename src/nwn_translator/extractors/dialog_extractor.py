@@ -34,11 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 def dialog_item_id(stem: str, is_entry: bool, index: object) -> str:
-    """Return the item id of a dialog node.
+    """Returns the item id of a dialog node.
 
     Args:
         stem: Dialog resource name without extension.
-        is_entry: True for an ``EntryList`` node, False for a ``ReplyList`` node.
+        is_entry: ``True`` for an ``EntryList`` node, ``False`` for a ``ReplyList`` node.
         index: Position of the node in its list.
 
     Returns:
@@ -51,7 +51,7 @@ class DialogExtractor(BaseExtractor):
     """Dialog (``.dlg``): every NPC entry and player reply with text."""
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract one item per dialog node with embedded text.
+        """Extracts one item per dialog node with embedded text.
 
         Args:
             file_path: Path of the ``.dlg`` resource.
@@ -105,7 +105,7 @@ class DialogExtractor(BaseExtractor):
         )
 
     def build_dialog_tree(self, parsed_data: Dict[str, Any]) -> List[DialogNode]:
-        """Build the conversation tree reachable from ``StartingList``.
+        """Builds the conversation tree reachable from ``StartingList``.
 
         This tree is the input of contextual dialog translation. Each entry is
         attached once, on the first path that reaches it (depth-first, in link
@@ -127,9 +127,9 @@ class DialogExtractor(BaseExtractor):
         visited_entries: Set[Any] = set()
 
         # Work items: (is_entry, node_id, parent); parent None = root of the tree.
-        # A LIFO stack with children pushed in reverse order reproduces the
-        # depth-first order of the recursive walk, including the visited check
-        # firing only after the previous sibling's subtree is fully built.
+        # A LIFO stack with children pushed in reverse order walks depth-first
+        # in link order, and the visited check fires only after the previous
+        # sibling's subtree is fully built.
         stack: List[Tuple[bool, Any, Optional[DialogNode]]] = [
             (True, link["Index"], None)
             for link in reversed(list_field(parsed_data, "StartingList"))

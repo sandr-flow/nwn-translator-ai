@@ -28,7 +28,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 class UploadLimitMiddleware:
-    """Cap the request body of the upload route while it streams in.
+    """ASGI middleware that caps the request body of the upload route while it streams in.
 
     FastAPI parses the whole multipart body, spooling files to disk, before a
     handler runs, so a handler-side check comes too late. Once the declared or
@@ -43,13 +43,19 @@ class UploadLimitMiddleware:
     """
 
     def __init__(self, app: ASGIApp, path: str, max_bytes: int) -> None:
-        """Wrap *app*, limiting bodies sent to *path* to *max_bytes*."""
+        """Wraps *app*, limiting bodies sent to *path* to *max_bytes*.
+
+        Args:
+            app: ASGI application to wrap.
+            path: Request path the limit applies to.
+            max_bytes: Largest accepted body.
+        """
         self.app = app
         self.path = path
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Handle one ASGI request, limiting the body of the upload path.
+        """Handles one ASGI request, limiting the body of the upload path.
 
         Args:
             scope: ASGI scope.
@@ -70,6 +76,7 @@ class UploadLimitMiddleware:
         received = 0
 
         async def receive_within_limit() -> Message:
+            """Receives one message, failing with 413 once the body is over the limit."""
             nonlocal received
             message = await receive()
             if message["type"] == "http.request":
@@ -87,7 +94,7 @@ class UploadLimitMiddleware:
 
 
 def _parse_cors_origins() -> List[str]:
-    """Parse ``NWN_WEB_CORS_ORIGINS`` into a list of allowed origins.
+    """Parses ``NWN_WEB_CORS_ORIGINS`` into a list of allowed origins.
 
     Defaults to an empty list (no cross-origin access) when unset: the SPA is
     served from the same origin as the API — directly or behind nginx — so CORS
@@ -107,7 +114,7 @@ def _parse_cors_origins() -> List[str]:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Open the database and run the periodic workspace purge while the app lives.
+    """Opens the database and runs the periodic workspace purge while the app lives.
 
     Shutdown waits for running translation jobs, so a graceful stop never cuts
     a job off mid-write.
@@ -129,7 +136,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    """Build the FastAPI app.
+    """Builds the FastAPI app.
 
     Installs the API routes, the upload size limit, CORS, and the SPA from
     ``NWN_WEB_STATIC_DIR`` when that directory exists.

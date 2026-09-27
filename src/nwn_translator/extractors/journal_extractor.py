@@ -17,7 +17,7 @@ class JournalExtractor(BaseExtractor):
     """Journal (``.jrl``): category names and entry texts, grouped per quest."""
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract every quest title followed by its non-blank entries.
+        """Extracts every quest title followed by its non-blank entries.
 
         Args:
             file_path: Path of the ``.jrl`` resource.

@@ -1,4 +1,4 @@
-"""Run the web server: ``python -m nwn_translator.web`` or ``nwn-translate-web``."""
+"""Web server entry point: ``python -m nwn_translator.web`` or ``nwn-translate-web``."""
 
 import os
 import sys
@@ -9,12 +9,18 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def _enable_local_mode_if_loopback(host: str) -> bool:
-    """Mark this process as a local single-user run when bound to loopback.
+    """Marks this process as a local single-user run when bound to loopback.
 
     Only in local mode does ``/api/config`` hand the server's ``.env`` API key to
     the UI for autofill convenience. Any non-loopback bind (``0.0.0.0``, docker,
     a deployed instance) leaves the flag unset, so the key never leaves the
     server. The decision is made once from the bind address, not per request.
+
+    Args:
+        host: Bind address of the server.
+
+    Returns:
+        ``True`` when local mode was enabled.
     """
     if host in _LOOPBACK_HOSTS:
         os.environ["NWN_WEB_LOCAL_MODE"] = "1"
@@ -23,13 +29,13 @@ def _enable_local_mode_if_loopback(host: str) -> bool:
 
 
 def main() -> None:
-    """Load ``.env`` and serve the app with uvicorn.
+    """Loads ``.env`` and serves the app with uvicorn.
 
     ``NWN_WEB_HOST`` (default ``127.0.0.1``), ``NWN_WEB_PORT`` (``8000``) and
     ``NWN_WEB_RELOAD`` configure the server.
 
     Raises:
-        SystemExit: When uvicorn is not installed.
+        SystemExit: If uvicorn is not installed.
     """
     load_dotenv()
     try:

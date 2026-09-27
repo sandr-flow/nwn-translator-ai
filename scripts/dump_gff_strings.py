@@ -1,4 +1,4 @@
-"""Diagnostic tool: dump all CExoLocString fields from a GFF file or module resource.
+"""Diagnostic tool that dumps every CExoLocString field of a GFF file or module resource.
 
 Usage:
     python scripts/dump_gff_strings.py file <path/to/file.utc> [--compare <original>]
@@ -29,7 +29,7 @@ from nwn_translator.formats.text_codec import decode_fixed_ascii, decode_module_
 
 
 def _decode_string(raw_bytes: bytes) -> tuple[str, str]:
-    """Decode *raw_bytes* as the pipeline does; also name the branch taken."""
+    """Decodes *raw_bytes* as the pipeline does; also names the branch taken."""
     try:
         return raw_bytes.decode("utf-8"), "UTF-8"
     except UnicodeDecodeError:
@@ -37,7 +37,7 @@ def _decode_string(raw_bytes: bytes) -> tuple[str, str]:
 
 
 def _parse_labels(data: bytes, label_offset: int, label_count: int) -> list[str]:
-    """Read the label table; labels outside the file become ``<invalid_N>``."""
+    """Reads the label table; labels outside the file become ``<invalid_N>``."""
     labels: list[str] = []
     for i in range(label_count):
         offset = label_offset + i * LABEL.size
@@ -49,7 +49,7 @@ def _parse_labels(data: bytes, label_offset: int, label_count: int) -> list[str]
 
 
 def dump_gff_bytes(data: bytes, name: str, compare_data: bytes | None = None) -> None:
-    """Print every CExoLocString field of a GFF file with its raw substrings.
+    """Prints every CExoLocString field of a GFF file with its raw substrings.
 
     Args:
         data: The GFF file bytes.
@@ -134,14 +134,14 @@ def dump_gff_bytes(data: bytes, name: str, compare_data: bytes | None = None) ->
 
 
 def _load_file_bytes(path: Path) -> bytes:
-    """Read a file, with a clear error when it is missing."""
+    """Reads a file, with a clear error when it is missing."""
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
     return path.read_bytes()
 
 
 def _extract_resource_bytes(module_path: Path, resource_name: str) -> bytes:
-    """Return the bytes of the resource the pipeline would extract as *resource_name*."""
+    """Returns the bytes of the resource the pipeline would extract as *resource_name*."""
     reader = ERFReader(module_path)
     for entry in reader.read_entries():
         if entry.offset == UNUSED_OFFSET:
@@ -155,7 +155,11 @@ def _extract_resource_bytes(module_path: Path, resource_name: str) -> bytes:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser."""
+    """Builds the command-line parser.
+
+    Returns:
+        The parser of the ``file`` and ``module`` commands.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
@@ -172,7 +176,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Run the command line."""
+    """Runs the command line.
+
+    Raises:
+        FileNotFoundError: If a file, the module or a resource is missing.
+    """
     parser = _build_parser()
     args = parser.parse_args()
 

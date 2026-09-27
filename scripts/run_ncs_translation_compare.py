@@ -1,4 +1,4 @@
-"""Run real isolated NCS translation and compare batch vs single-call routing.
+"""Runs real isolated NCS translation and compares batch with single-call routing.
 
 This script extracts/loads only ``.ncs`` resources, runs the same
 ``NcsExtractor`` + ``TranslationManager`` path used by the pipeline, and writes
@@ -40,9 +40,23 @@ logger = logging.getLogger(__name__)
 
 
 class CountingProvider:
-    """Provider wrapper that counts translate calls while delegating to a real provider."""
+    """Provider wrapper that counts translate calls while delegating to a real provider.
+
+    Attributes:
+        wrapped: The real provider.
+        model: Model slug of the real provider.
+        single_calls: ``translate_async`` calls.
+        batch_calls: ``translate_batch_async`` calls.
+        batch_items: Items sent in batches.
+        batch_sizes: Size of every batch, in call order.
+    """
 
     def __init__(self, wrapped: TranslationProvider) -> None:
+        """Wraps *wrapped* with zero counters.
+
+        Args:
+            wrapped: The real provider.
+        """
         self.wrapped = wrapped
         self.model = wrapped.model
         self.single_calls = 0
@@ -51,6 +65,11 @@ class CountingProvider:
         self.batch_sizes: List[int] = []
 
     def get_provider_name(self) -> str:
+        """Returns the real provider's name.
+
+        Returns:
+            The wrapped provider's name.
+        """
         return self.wrapped.get_provider_name()
 
     async def translate_async(
@@ -62,6 +81,19 @@ class CountingProvider:
         glossary_block: Optional[str] = None,
         content_profile: Optional[str] = None,
     ) -> TranslationResult:
+        """Counts one single call and delegates it.
+
+        Args:
+            text: Text to translate.
+            source_lang: Source language name.
+            target_lang: Target language name.
+            context: Context hint for the model.
+            glossary_block: GLOSSARY section of the prompt.
+            content_profile: Prompt profile.
+
+        Returns:
+            The wrapped provider's result.
+        """
         self.single_calls += 1
         return await self.wrapped.translate_async(
             text=text,
@@ -80,6 +112,18 @@ class CountingProvider:
         glossary_block: Optional[str] = None,
         content_profile: Optional[str] = None,
     ) -> List[TranslationResult]:
+        """Counts one batch call and its items, and delegates it.
+
+        Args:
+            items: Items to translate.
+            source_lang: Source language name.
+            target_lang: Target language name.
+            glossary_block: GLOSSARY section of the prompt.
+            content_profile: Prompt profile.
+
+        Returns:
+            The wrapped provider's results.
+        """
         self.batch_calls += 1
         self.batch_items += len(items)
         self.batch_sizes.append(len(items))
@@ -97,17 +141,27 @@ class CountingProvider:
         *,
         source_lang: str,
     ) -> Dict[str, Dict[str, Any]]:
+        """Delegates a gate request.
+
+        Args:
+            entries: Gate entries.
+            source_lang: Source language label.
+
+        Returns:
+            The wrapped provider's verdicts.
+        """
         return await self.wrapped.classify_ncs_translate_gate_batch_async(
             entries,
             source_lang=source_lang,
         )
 
     async def close_async_client(self) -> None:
+        """Closes the real provider's client."""
         await self.wrapped.close_async_client()
 
 
 def _prepare_input(input_path: Path, keep_extract: bool) -> Path:
-    """Return an extracted directory for *input_path*."""
+    """Returns an extracted directory for *input_path*."""
     if input_path.is_dir():
         return input_path
 
@@ -120,7 +174,7 @@ def _prepare_input(input_path: Path, keep_extract: bool) -> Path:
 
 
 def _iter_ncs_files(extract_dir: Path) -> List[Path]:
-    """Return NCS files in stable order."""
+    """Returns NCS files in stable order."""
     return sorted(
         (path for path in extract_dir.rglob("*.ncs") if path.is_file()),
         key=lambda path: str(path.relative_to(extract_dir)).lower(),
@@ -133,7 +187,7 @@ def _load_ncs_contents(
     limit_files: Optional[int],
     limit_items: Optional[int],
 ) -> List[ExtractedContent]:
-    """Parse and extract NCS content, optionally limiting file/item counts."""
+    """Parses and extracts NCS content, optionally limiting file/item counts."""
     contents: List[ExtractedContent] = []
     item_count = 0
     for index, path in enumerate(ncs_files, 1):
@@ -164,7 +218,7 @@ def _load_ncs_contents(
 
 
 def _content_records(content: ExtractedContent) -> List[Dict[str, Any]]:
-    """Return serializable source item records for one extracted content."""
+    """Returns serializable source item records for one extracted content."""
     records = []
     for item in content.items:
         meta = item.metadata or {}
@@ -183,7 +237,7 @@ def _content_records(content: ExtractedContent) -> List[Dict[str, Any]]:
 
 
 def _combine_ncs_contents(contents: List[ExtractedContent], source_file: Path) -> ExtractedContent:
-    """Combine per-file NCS extracted content into one module-level queue."""
+    """Combines per-file NCS extracted content into one module-level queue."""
     items = []
     for content in contents:
         items.extend(content.items)
@@ -196,6 +250,7 @@ def _combine_ncs_contents(contents: List[ExtractedContent], source_file: Path) -
 
 
 def _write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
+    """Writes *rows* as JSONL, creating the parent directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         for row in rows:
@@ -203,6 +258,7 @@ def _write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
 
 
 def _build_config(args: argparse.Namespace, mode: str, output_dir: Path) -> TranslationConfig:
+    """Returns the run settings of one mode, logging into *output_dir*."""
     log_path = output_dir / f"{mode}_translations.jsonl"
     return TranslationConfig(
         api_key=args.api_key or os.getenv("NWN_TRANSLATE_API_KEY", ""),
@@ -226,7 +282,7 @@ def _run_mode(
     args: argparse.Namespace,
     output_dir: Path,
 ) -> Dict[str, Any]:
-    """Run one real NCS translation mode and write per-item results."""
+    """Runs one real NCS translation mode and writes per-item results."""
     config = _build_config(args, mode, output_dir)
     config.get_api_key()
     metrics = RunMetricsRecorder()
@@ -309,6 +365,7 @@ def _run_mode(
 
 
 def _load_result_map(path: Path) -> Dict[str, Dict[str, Any]]:
+    """Reads a ``*_results.jsonl`` file into rows by item id."""
     rows = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -319,7 +376,7 @@ def _load_result_map(path: Path) -> Dict[str, Dict[str, Any]]:
 
 
 def _compare_modes(output_dir: Path) -> Dict[str, Any]:
-    """Compare item-id coverage and translated text between single and batch runs."""
+    """Compares item-id coverage and translated text between single and batch runs."""
     single = _load_result_map(output_dir / "single_results.jsonl")
     batch = _load_result_map(output_dir / "batch_results.jsonl")
     all_ids = sorted(set(single) | set(batch))
@@ -363,6 +420,14 @@ def _compare_modes(output_dir: Path) -> Dict[str, Any]:
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    """Parses the command line.
+
+    Args:
+        argv: Command-line arguments (default: ``sys.argv[1:]``).
+
+    Returns:
+        The parsed options.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="Input .mod/.erf/.hak or extracted directory")
     parser.add_argument(
@@ -385,6 +450,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Extracts the scripts, runs the requested modes and writes their artifacts.
+
+    Args:
+        argv: Command-line arguments (default: ``sys.argv[1:]``).
+
+    Returns:
+        The process exit code.
+    """
     args = parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

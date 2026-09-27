@@ -14,7 +14,8 @@ equal text remain separate occurrences.
 ## Request reuse
 
 The ordinary translation manager may reuse an answer only when text, context,
-provider hint, content profile and relevant terminology match. It explicitly
+shared group context, provider hint, content profile and relevant terminology
+match. It explicitly
 distributes that answer to the participating addresses. It does not fold case
 or punctuation, strip numbers, match name prefixes or seed answers from glossary
 dictionary forms. Contextual dialogue nodes are independent; retrying a partial
@@ -65,8 +66,8 @@ by the `event` field. Provider credentials are not part of these records.
 
 Stage translation artifacts use version 2 with addressed items. Text-only
 translation artifacts must be regenerated; they cannot reliably identify fields.
-Glossary version 2 stores entries and aliases and can also read legacy entry-only
-glossaries.
+Glossary version 2 stores entries and aliases; a glossary file without a version
+is read as a bare entry map.
 
 Structural success means the response was accepted and its tokens validated. It
 does not certify meaning, grammar or verse quality. See the tests under

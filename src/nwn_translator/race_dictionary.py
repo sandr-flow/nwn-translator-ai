@@ -1,5 +1,4 @@
-"""Static cross-language dictionary of canonical D&D/Forgotten Realms race and
-creature translations.
+"""Canonical D&D / Forgotten Realms race and creature names per target language.
 
 :func:`~nwn_translator.glossary.terminology_block` merges :data:`RACE_TERMS`
 into the GLOSSARY block of every translation prompt. When a prompt has no
@@ -533,7 +532,7 @@ _PATTERN = re.compile(
 
 
 def match_race_terms(text: str, target_lang: str) -> str:
-    """Scan *text* for known race/creature terms and return a prompt block.
+    """Scans *text* for known race/creature terms and returns a prompt block.
 
     Only terms that actually appear in *text* (case-insensitive, word-boundary)
     are included.

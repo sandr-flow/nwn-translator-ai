@@ -28,7 +28,7 @@ _NAME_CONTEXTS = {
 
 
 def creature_traits(struct: Dict[str, Any]) -> str:
-    """Return ``"<race>, <gender>"`` of a creature, omitting unknown values.
+    """Returns ``"<race>, <gender>"`` of a creature, omitting unknown values.
 
     Args:
         struct: Creature blueprint or instance struct.
@@ -42,7 +42,7 @@ def creature_traits(struct: Dict[str, Any]) -> str:
 
 
 def name_fields(struct: Dict[str, Any]) -> Dict[str, str]:
-    """Return the embedded first and last name of a creature.
+    """Returns the embedded first and last name of a creature.
 
     Args:
         struct: Creature blueprint or instance struct.
@@ -54,7 +54,7 @@ def name_fields(struct: Dict[str, Any]) -> Dict[str, str]:
 
 
 def name_fields_suffix(fields: Dict[str, str]) -> str:
-    """Return the context suffix that shows the model both name fields.
+    """Returns the context suffix that shows the model both name fields.
 
     Args:
         fields: Result of :func:`name_fields`.
@@ -66,7 +66,7 @@ def name_fields_suffix(fields: Dict[str, str]) -> str:
 
 
 def creature_name_context(field_name: str, qualifier: str) -> str:
-    """Return the prompt context of an NPC first or last name.
+    """Returns the prompt context of an NPC first or last name.
 
     Args:
         field_name: ``"FirstName"`` or ``"LastName"``.
@@ -85,7 +85,7 @@ class CreatureExtractor(BaseExtractor):
     """Creature blueprint (``.utc``): first name, last name and description."""
 
     def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
-        """Extract the names and description of a creature blueprint.
+        """Extracts the names and description of a creature blueprint.
 
         Args:
             file_path: Path of the ``.utc`` resource.

@@ -1,4 +1,4 @@
-"""Select NCS string occurrences using bytecode consumers and source context.
+"""Extractor of NCS string candidates, selected by bytecode consumers and source context.
 
 Extraction produces candidates. Every candidate still needs the translation
 manager's safety gate; sentence shape and source snippets are not proof.
@@ -57,7 +57,7 @@ _DEBUG_PHRASES = (
 def _is_definitely_not_translatable(
     text: str, proven_player: bool = False, player_candidate: bool = False
 ) -> bool:
-    """Apply the shared veto, then cheap candidate heuristics without context.
+    """Applies the shared veto, then cheap candidate heuristics without context.
 
     The veto runs with ``is_concat=True`` for every literal, so sentence
     fragments pass extraction; :func:`ncs_hard_veto_reason` rejects them at
@@ -69,7 +69,7 @@ def _is_definitely_not_translatable(
         player_candidate: A player-facing routine is nearby or was reached.
 
     Returns:
-        True when the string must not become a candidate.
+        ``True`` when the string must not become a candidate.
     """
     if ncs_hard_veto_reason(
         text, proven_player=proven_player, player_candidate=player_candidate, is_concat=True
@@ -81,7 +81,7 @@ def _is_definitely_not_translatable(
 
     # --- soft rules: heuristics for strings with no proven consumer ---
 
-    # Very short strings (single char, two chars)
+    # One or two characters are never a message on their own.
     if len(stripped) <= 2:
         return True
 
@@ -112,7 +112,7 @@ _RE_ALPHABET_DUMP = re.compile(
 
 
 def _contains_code_identifiers(text: str) -> bool:
-    """True if text contains CamelCase identifiers or struct.field patterns."""
+    """Tells whether *text* contains CamelCase identifiers or ``struct.field`` patterns."""
     return bool(_RE_CAMEL_CASE.search(text) or _RE_FUNC_DOT.search(text))
 
 
@@ -123,7 +123,7 @@ def ncs_hard_veto_reason(
     is_concat: bool = False,
     player_candidate: bool = False,
 ) -> Optional[str]:
-    """Return a deterministic reason why an NCS string must never be translated.
+    """Returns a deterministic reason why an NCS string must never be translated.
 
     This is stricter than extraction filtering and is used as a final safety
     net before translation. NCS bytecode can contain script identifiers and
@@ -141,7 +141,7 @@ def ncs_hard_veto_reason(
             without claiming proof. Only use it when that gate is enabled.
 
     Returns:
-        The veto reason, or None when the string may be translated.
+        The veto reason, or ``None`` when the string may be translated.
     """
     stripped = text.strip()
     if not stripped:
@@ -196,13 +196,13 @@ def ncs_hard_veto_reason(
 
 
 def _is_likely_translatable(text: str) -> bool:
-    """Return whether *text* looks like a player-visible sentence or short bark.
+    """Tells whether *text* looks like a player-visible sentence or short bark.
 
     Args:
         text: Literal or merged concat text.
 
     Returns:
-        True for punctuated sentences of three or more words and for short
+        ``True`` for punctuated sentences of three or more words and for short
         barks ending in ``.``, ``!`` or ``?``.
     """
     stripped = text.strip()
@@ -229,7 +229,7 @@ class NcsExtractor(BaseExtractor):
         file_path: Path,
         parsed_data: Dict[str, Any],
     ) -> ExtractedContent:
-        """Extract candidate string constants from a compiled script.
+        """Extracts candidate string constants from a compiled script.
 
         Args:
             file_path: Path of the ``.ncs`` resource; a sibling ``.nss`` source,
@@ -237,7 +237,7 @@ class NcsExtractor(BaseExtractor):
             parsed_data: Loaded script, not a GFF dict:
                 ``_ncs_file`` (:class:`NCSFile`, required),
                 ``_source_encoding`` (code page of the literals and the
-                ``.nss``; None reads the source as cp1252) and, optionally,
+                ``.nss``; ``None`` reads the source as cp1252) and, optionally,
                 ``_ncs_selection_trace`` (a list that receives one record per
                 selection decision, for diagnostics).
 
@@ -257,6 +257,7 @@ class NcsExtractor(BaseExtractor):
         selection_trace = parsed_data.get("_ncs_selection_trace")
 
         def record(stage: str, kept: bool, reason: str, offsets: List[int]) -> None:
+            """Appends one selection decision to the diagnostics trace, if requested."""
             if selection_trace is not None:
                 selection_trace.append(
                     {

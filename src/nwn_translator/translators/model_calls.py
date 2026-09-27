@@ -81,7 +81,7 @@ class SingleRequest:
 
     Attributes:
         context: Prompt context.
-        glossary_block: Glossary block, or None when no term matches.
+        glossary_block: Glossary block, or ``None`` when no term matches.
         content_profile: Prompt profile.
     """
 
@@ -91,7 +91,7 @@ class SingleRequest:
 
 
 def queued_timeout(work_units: int, per_call_timeout: float, concurrency: int) -> float:
-    """Return the time *work_units* calls need when *concurrency* run at once.
+    """Returns the time *work_units* calls need when *concurrency* run at once.
 
     Args:
         work_units: Calls queued behind one semaphore.
@@ -110,7 +110,7 @@ def queued_timeout(work_units: int, per_call_timeout: float, concurrency: int) -
 
 
 class ModelCaller:
-    """Sends the translation requests of one run.
+    """Sender of the translation requests of one run.
 
     Attributes:
         config: Run settings (languages, concurrency, cancellation).
@@ -130,7 +130,7 @@ class ModelCaller:
         terminology: Terminology,
         limits: CallLimits,
     ):
-        """Create a caller for one run.
+        """Creates a caller for one run.
 
         Args:
             config: Run settings (languages, concurrency, cancellation).
@@ -154,7 +154,7 @@ class ModelCaller:
 
     # ── request builders ─────────────────────────────────────────────────
     def plain_request(self, work: WorkItem) -> SingleRequest:
-        """Return the regular request of an item: its context, terms and profile.
+        """Returns the regular request of an item: its context, terms and profile.
 
         Args:
             work: Item to translate.
@@ -169,7 +169,7 @@ class ModelCaller:
         )
 
     def ncs_fallback_request(self, work: WorkItem) -> SingleRequest:
-        """Return the request that retries a script string on its own.
+        """Returns the request that retries a script string on its own.
 
         The context restates where the literal comes from and that code must stay
         untranslated.
@@ -195,7 +195,7 @@ class ModelCaller:
         )
 
     def token_retry_request(self, work: WorkItem, attempt: int) -> SingleRequest:
-        """Return the request that retries an answer which broke tokens or tags.
+        """Returns the request that retries an answer which broke tokens or tags.
 
         The context adds strict preservation rules, the expected artifacts and how
         the previous answer (``work.mismatch``) broke them.
@@ -231,7 +231,7 @@ class ModelCaller:
 
     # ── single requests ──────────────────────────────────────────────────
     def _call(self, work: WorkItem, request: SingleRequest) -> Awaitable[TranslationResult]:
-        """Start one logged ``translate_async`` request for *work*."""
+        """Starts one logged ``translate_async`` request for *work*."""
         return logged_model_call(
             self.log_writer,
             self.provider.translate_async,
@@ -245,12 +245,12 @@ class ModelCaller:
         )
 
     async def _ask(self, work: WorkItem, request: SingleRequest) -> TranslationResult:
-        """Send one request within the item timeout; raises on timeout or error."""
+        """Sends one request within the item timeout; raises on timeout or error."""
         return await asyncio.wait_for(self._call(work, request), timeout=self.limits.item_timeout)
 
     @staticmethod
     def _failed(work: WorkItem, error: str) -> TranslationResult:
-        """Return the unsuccessful result of *work* with *error*."""
+        """Returns the unsuccessful result of *work* with *error*."""
         return TranslationResult(
             translated="", original=work.sanitized, success=False, error=error, metadata={}
         )
@@ -263,7 +263,7 @@ class ModelCaller:
         timeout_error: str,
         error_prefix: str = "",
     ) -> TranslationResult:
-        """Send one request; a timeout or error becomes an unsuccessful result."""
+        """Sends one request; a timeout or error becomes an unsuccessful result."""
         try:
             return await self._ask(work, request)
         except asyncio.TimeoutError:
@@ -274,7 +274,7 @@ class ModelCaller:
     async def translate_one(
         self, sem: asyncio.Semaphore, work: WorkItem, done: Done = None
     ) -> TranslationResult:
-        """Translate one item with its regular request and the timeout retry.
+        """Translates one item with its regular request and the timeout retry.
 
         Args:
             sem: Semaphore of the pass.
@@ -285,7 +285,7 @@ class ModelCaller:
             The result of the request or of its timeout retry.
 
         Raises:
-            TranslationCancelled: The run was cancelled before the request.
+            TranslationCancelled: If the run is cancelled before the request.
         """
         request = self.plain_request(work)
         async with sem:
@@ -308,7 +308,7 @@ class ModelCaller:
     async def _retry_after_timeout(
         self, work: WorkItem, request: SingleRequest
     ) -> TranslationResult:
-        """Retry a timed-out request once; a script string uses its fallback request."""
+        """Retries a timed-out request once; a script string uses its fallback request."""
         timeout = self.limits.item_timeout
         if not work.is_ncs:
             result = await self._ask_or_fail(
@@ -338,7 +338,7 @@ class ModelCaller:
     async def translate_ncs_fallback(
         self, sem: asyncio.Semaphore, work: WorkItem
     ) -> TranslationResult:
-        """Translate a script string that failed in a batch with its fallback request.
+        """Translates a script string that failed in a batch with its fallback request.
 
         Args:
             sem: Semaphore of the pass.
@@ -348,7 +348,7 @@ class ModelCaller:
             The result; a timeout or error becomes an unsuccessful result.
 
         Raises:
-            TranslationCancelled: The run was cancelled before the request.
+            TranslationCancelled: If the run is cancelled before the request.
         """
         async with sem:
             self.config.raise_if_cancelled()
@@ -361,7 +361,7 @@ class ModelCaller:
             )
 
     def ask_token_retry(self, work: WorkItem, attempt: int) -> TranslationResult:
-        """Send one token retry request synchronously, without a timeout retry.
+        """Sends one token retry request synchronously, without a timeout retry.
 
         Args:
             work: Item whose last answer was rejected.
@@ -373,6 +373,7 @@ class ModelCaller:
         request = self.token_retry_request(work, attempt)
 
         async def call() -> TranslationResult:
+            """Sends the retry request."""
             return await self._call(work, request)
 
         try:
@@ -384,7 +385,7 @@ class ModelCaller:
     async def translate_batch(
         self, sem: asyncio.Semaphore, batch: List[WorkItem], done: Done = None
     ) -> List[TranslationResult]:
-        """Translate a batch and narrow its failures by halving.
+        """Translates a batch and narrows its failures by halving.
 
         When two or more results fail, the failed items are split in two halves,
         left first, and each half is sent again the same way. A single failed item
@@ -399,7 +400,7 @@ class ModelCaller:
             One result per item, in batch order.
 
         Raises:
-            TranslationCancelled: The run was cancelled before a request.
+            TranslationCancelled: If the run is cancelled before a request.
         """
         results = await self._ask_batch(sem, batch)
         failed = [index for index, result in enumerate(results) if not result.success]
@@ -418,7 +419,7 @@ class ModelCaller:
     async def _ask_batch(
         self, sem: asyncio.Semaphore, batch: List[WorkItem]
     ) -> List[TranslationResult]:
-        """Send one batch request; returns exactly one result per item."""
+        """Sends one batch request; returns exactly one result per item."""
         items = [work.translation_item() for work in batch]
         glossary_block = batch_terminology(batch, self.terminology)
         profile = content_profile(batch)
@@ -455,7 +456,7 @@ class ModelCaller:
     def run_main_pass(
         self, singles: Sequence[WorkItem], batches: Sequence[List[WorkItem]], done: Done
     ) -> Tuple[List[TranslationResult], List[TranslationResult]]:
-        """Send every single and batch request of the plan concurrently.
+        """Sends every single and batch request of the plan concurrently.
 
         Args:
             singles: Items sent one per request.
@@ -467,11 +468,12 @@ class ModelCaller:
             flattened batch order.
 
         Raises:
-            TranslationCancelled: The run was cancelled.
-            TimeoutError: The pass exceeded its overall budget.
+            TranslationCancelled: If the run is cancelled.
+            TimeoutError: If the pass exceeds its overall budget.
         """
 
         async def run_all() -> Tuple[List[TranslationResult], List[List[TranslationResult]]]:
+            """Runs the singles and the batches under one semaphore."""
             sem = asyncio.Semaphore(self.concurrency)
             single_results, batch_results = await asyncio.gather(
                 asyncio.gather(*[self.translate_one(sem, work, done) for work in singles]),
@@ -492,7 +494,7 @@ class ModelCaller:
     def run_fallback_pass(
         self, work: Sequence[WorkItem], *, scripts: bool
     ) -> List[TranslationResult]:
-        """Send one request per item of *work* concurrently, under half the main budget.
+        """Sends one request per item of *work* concurrently, under half the main budget.
 
         Args:
             work: Failed batch items.
@@ -503,11 +505,12 @@ class ModelCaller:
             One result per item, in order.
 
         Raises:
-            TranslationCancelled: The run was cancelled.
-            TimeoutError: The pass exceeded its overall budget.
+            TranslationCancelled: If the run is cancelled.
+            TimeoutError: If the pass exceeds its overall budget.
         """
 
         async def run_all() -> List[TranslationResult]:
+            """Runs one request per item under one semaphore."""
             sem = asyncio.Semaphore(self.concurrency)
             if scripts:
                 calls = [self.translate_ncs_fallback(sem, w) for w in work]
@@ -539,7 +542,7 @@ class ModelCaller:
         floor: float,
         pad: float,
     ) -> _T:
-        """Run one pass with a budget that covers its queued requests.
+        """Runs one pass with a budget that covers its queued requests.
 
         Args:
             coro: The pass.
@@ -553,8 +556,8 @@ class ModelCaller:
             What the pass returns.
 
         Raises:
-            TranslationCancelled: The run was cancelled.
-            TimeoutError: The pass exceeded its budget.
+            TranslationCancelled: If the run is cancelled.
+            TimeoutError: If the pass exceeds its budget.
         """
         queue = (
             queued_timeout(singles, single_slot, self.concurrency)

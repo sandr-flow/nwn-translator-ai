@@ -114,7 +114,7 @@ _lock = threading.Lock()
 
 
 def _default_db_path() -> Path:
-    """Database file from ``NWN_WEB_DB_PATH``, else ``workspace/web/translations.db``."""
+    """Returns the database file: ``NWN_WEB_DB_PATH``, else ``workspace/web/translations.db``."""
     env = os.environ.get("NWN_WEB_DB_PATH", "").strip()
     if env:
         return Path(env)
@@ -122,7 +122,7 @@ def _default_db_path() -> Path:
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """Bring an older database up to the current schema (idempotent)."""
+    """Brings an older database up to the current schema (idempotent)."""
     existing = {
         table: {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
         for table in ("tasks", "translations")
@@ -134,7 +134,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
-    """Rebuild ``translations`` if it still uses the old UNIQUE(task_id, file, original).
+    """Rebuilds ``translations`` if it still uses the old UNIQUE(task_id, file, original).
 
     Addressing edits by ``item_id`` requires the row identity to be
     ``(task_id, file, item_id)`` so two identical originals in the same file do
@@ -162,7 +162,7 @@ def _migrate_translations_unique_key(conn: sqlite3.Connection) -> None:
 
 
 def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
-    """Open the process-wide connection, creating and migrating the schema.
+    """Opens the process-wide connection, creating and migrating the schema.
 
     Args:
         db_path: Database file; defaults to :func:`_default_db_path`. Ignored when
@@ -189,14 +189,18 @@ def init_db(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
 
 def get_db() -> sqlite3.Connection:
-    """Return the shared connection, opening it with :func:`init_db` on first use."""
+    """Returns the shared connection, opening it with :func:`init_db` on first use.
+
+    Returns:
+        The process-wide connection.
+    """
     if _connection is None:
         return init_db()
     return _connection
 
 
 def close_db() -> None:
-    """Close the shared connection (tests / shutdown); the next use reopens it."""
+    """Closes the shared connection (tests / shutdown); the next use reopens it."""
     global _connection
     with _lock:
         if _connection is not None:
@@ -205,7 +209,7 @@ def close_db() -> None:
 
 
 def _query(sql: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
-    """Run a SELECT under the connection lock.
+    """Runs a SELECT under the connection lock.
 
     Args:
         sql: Statement with ``?`` placeholders.
@@ -222,7 +226,7 @@ def _query(sql: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
 
 
 def _execute(sql: str, params: Sequence[Any] = ()) -> None:
-    """Run one write statement under the connection lock and commit it.
+    """Runs one write statement under the connection lock and commits it.
 
     Args:
         sql: Statement with ``?`` placeholders.
@@ -249,7 +253,7 @@ def create_task_row(
     source_lang: Optional[str] = None,
     model: Optional[str] = None,
 ) -> None:
-    """Insert a new ``pending`` task.
+    """Inserts a new ``pending`` task.
 
     Args:
         task_id: Task UUID.
@@ -278,7 +282,7 @@ def create_task_row(
 
 
 def update_task_row(task_id: str, **fields: Any) -> None:
-    """Set columns of a task row; a missing row is left alone.
+    """Sets columns of a task row; a missing row is left alone.
 
     A ``stats`` dict is stored as JSON.
 
@@ -302,7 +306,7 @@ def update_task_row(task_id: str, **fields: Any) -> None:
 
 
 def decode_stats(raw: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Parse a stored ``tasks.stats`` value.
+    """Parses a stored ``tasks.stats`` value.
 
     Args:
         raw: Column value.
@@ -320,11 +324,11 @@ def decode_stats(raw: Optional[str]) -> Optional[Dict[str, Any]]:
 
 
 def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Return a poll-safe copy of task stats without unbounded error dumps.
+    """Returns a poll-safe copy of task stats without unbounded error dumps.
 
-    Keeps ``total_errors`` and the first few ``errors``, and drops the per-call
-    ``metrics.requests`` telemetry that rows written by older versions carry. The
-    full payload stays in the SQLite ``stats`` column.
+    Keeps ``total_errors`` and the first few ``errors``, and drops any per-call
+    ``metrics.requests`` telemetry a stored row carries. The full payload stays
+    in the SQLite ``stats`` column.
 
     Args:
         stats: Stats dict as stored for the task, or ``None``.
@@ -351,24 +355,41 @@ def compact_stats_for_api(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str,
 
 
 def get_task_row(task_id: str) -> Optional[Dict[str, Any]]:
-    """Return the task row as a dict, or ``None`` if it does not exist."""
+    """Returns one task row.
+
+    Args:
+        task_id: Task UUID.
+
+    Returns:
+        The row as a dict, or ``None`` if it does not exist.
+    """
     rows = _query("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
     return rows[0] if rows else None
 
 
 def list_tasks_by_token(client_token: str) -> List[Dict[str, Any]]:
-    """Return the rows of one client's tasks, newest first."""
+    """Returns the rows of one client's tasks.
+
+    Args:
+        client_token: Anonymous owner token.
+
+    Returns:
+        The rows, newest first.
+    """
     return _query(
         "SELECT * FROM tasks WHERE client_token = ? ORDER BY created_at DESC", (client_token,)
     )
 
 
 def get_unfinished_task_rows() -> List[Dict[str, Any]]:
-    """Return task rows still in a non-terminal state.
+    """Returns task rows still in a non-terminal state.
 
     Used at startup to reconcile tasks whose worker died: anything not in
     :data:`TERMINAL_STATUSES` (``pending``/``extracting``/``translating``/…) has
     no live worker after a restart and must be flipped to ``interrupted``.
+
+    Returns:
+        The unfinished rows.
     """
     return _query(
         f"SELECT * FROM tasks WHERE status NOT IN ({_TERMINAL_PLACEHOLDERS})",  # noqa: S608
@@ -377,7 +398,7 @@ def get_unfinished_task_rows() -> List[Dict[str, Any]]:
 
 
 def get_finished_task_ids_older_than(cutoff: float) -> List[str]:
-    """Return IDs of terminal-status tasks created before *cutoff*.
+    """Returns IDs of terminal-status tasks created before *cutoff*.
 
     Used by workspace TTL cleanup. Reads the DB rather than the in-memory task
     dict because finished tasks are not reloaded into memory after a process
@@ -399,7 +420,7 @@ def get_finished_task_ids_older_than(cutoff: float) -> List[str]:
 
 
 def delete_task_row(task_id: str) -> None:
-    """Delete a task; the foreign key cascades to its translation rows.
+    """Deletes a task; the foreign key cascades to its translation rows.
 
     Args:
         task_id: Task UUID.
@@ -423,7 +444,7 @@ def insert_translation(
     success: bool = True,
     speaker: Optional[Dict[str, str]] = None,
 ) -> None:
-    """Insert or replace the row of one ``(task_id, file, item_id)``.
+    """Inserts or replaces the row of one ``(task_id, file, item_id)``.
 
     Args:
         task_id: Owning task.
@@ -456,7 +477,7 @@ def insert_translation(
 
 
 def update_translation_text(task_id: str, file: str, item_id: str, translated: str) -> None:
-    """Persist an editor edit: set ``translated`` for one ``(task_id, file, item_id)``.
+    """Persists an editor edit: sets *translated* for one ``(task_id, file, item_id)``.
 
     The original text and the row identity are kept, and the line counts as
     translated (the user has reviewed it). An edit of an item with no stored
@@ -476,7 +497,14 @@ def update_translation_text(task_id: str, file: str, item_id: str, translated: s
 
 
 def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
-    """Return the task's translation rows with ``speaker`` decoded (``None`` when absent)."""
+    """Returns the translation rows of a task.
+
+    Args:
+        task_id: Task UUID.
+
+    Returns:
+        The rows, with ``speaker`` decoded (``None`` when absent).
+    """
     rows = _query(
         "SELECT original, translated, context, model, file, item_id, success, speaker "
         "FROM translations WHERE task_id = ?",
@@ -488,17 +516,30 @@ def get_translations_by_task(task_id: str) -> List[Dict[str, Any]]:
 
 
 def count_translations(task_id: str) -> int:
-    """Return how many translation rows the task has, rejected lines included."""
+    """Counts the translation rows of a task.
+
+    Args:
+        task_id: Task UUID.
+
+    Returns:
+        The number of rows, rejected lines included.
+    """
     rows = _query("SELECT COUNT(*) AS n FROM translations WHERE task_id = ?", (task_id,))
     return int(rows[0]["n"])
 
 
 def get_item_translation_map_by_task(task_id: str) -> Dict[str, Dict[str, str]]:
-    """Return ``{file: {item_id: translated}}`` for rows that carry an ``item_id``.
+    """Returns ``{file: {item_id: translated}}`` for rows that carry an ``item_id``.
 
     This is the addressing used by rebuild: a translation is identified by its
     source file plus the stable per-file ``item_id`` the extractor assigned, so
     identical originals in different files (or different nodes) stay distinct.
+
+    Args:
+        task_id: Task UUID.
+
+    Returns:
+        The stored translations by file and item id.
     """
     rows = _query(
         "SELECT file, item_id, translated FROM translations "
@@ -522,7 +563,7 @@ class SqliteTranslationLogWriter:
     """
 
     def __init__(self, task_id: str, trace_path: Optional[Path] = None) -> None:
-        """Create the writer.
+        """Creates the writer.
 
         Args:
             task_id: Task the rows belong to.
@@ -532,7 +573,7 @@ class SqliteTranslationLogWriter:
         self._trace_file = FileTranslationLogWriter(trace_path) if trace_path is not None else None
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Store one log entry.
+        """Stores one log entry.
 
         A failed insert never interrupts the translation. A row of a task
         deleted meanwhile (a foreign key violation) is dropped quietly; any
@@ -566,7 +607,7 @@ class SqliteTranslationLogWriter:
             logger.warning("Failed to store translation row of task %s: %s", self.task_id, e)
 
     def close(self) -> None:
-        """Release the trace file, so the task workspace can be removed.
+        """Releases the trace file, so the task workspace can be removed.
 
         A later diagnostic event opens the file again.
         """

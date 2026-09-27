@@ -14,7 +14,7 @@ from .examples import get_examples
 
 
 def _nickname_examples(target_lang: str) -> List[Tuple[str, str, str, str]]:
-    """Few-shot nickname tuples: (english, good, bad_translit, bad_numeral)."""
+    """Returns the few-shot nickname tuples ``(english, good, bad_translit, bad_numeral)``."""
     raw = get_examples(target_lang).get("glossary_nicknames")
     if not raw:
         raw = get_examples("english")["glossary_nicknames"]
@@ -22,7 +22,7 @@ def _nickname_examples(target_lang: str) -> List[Tuple[str, str, str, str]]:
 
 
 def format_nickname_examples(target_lang: str, *, indent: str = "      ") -> str:
-    """Render the nickname few-shot lines shared by translation and glossary prompts.
+    """Renders the nickname few-shot lines shared by translation and glossary prompts.
 
     Args:
         target_lang: Target language; languages without nickname examples use
@@ -109,7 +109,7 @@ _GLOSSARY_RULE_DIALOG = (
 
 
 def _proper_names_rules(target_lang: str) -> str:
-    """Rules for translating vs. transliterating proper names."""
+    """Returns the rules for translating vs. transliterating proper names."""
     ex = get_examples(target_lang)
     descriptive = ex["proper_names"]
     personal = ex["personal_names"]
@@ -151,7 +151,7 @@ def _proper_names_rules(target_lang: str) -> str:
 
 
 def _speech_style_rules(target_lang: str) -> str:
-    """Rules for preserving speech register (low-INT characters, etc.)."""
+    """Returns the rules for preserving speech register (low-INT characters, etc.)."""
     ex = get_examples(target_lang)
     lines = ex["speech_low_int"]
     pattern = ex["speech_low_int_pattern"]
@@ -181,7 +181,7 @@ def _speech_style_rules(target_lang: str) -> str:
 
 
 def _player_gender_rule(gender: str) -> str:
-    """Rule text: grammatical forms addressing the player agree with *gender*."""
+    """Returns the rule that forms addressing the player agree with *gender*."""
     agreement = "masculine" if gender == "male" else "feminine"
     return (
         f"PLAYER CHARACTER: the protagonist is {gender}. All grammatical forms "
@@ -191,7 +191,7 @@ def _player_gender_rule(gender: str) -> str:
 
 
 def _token_preservation_rule() -> str:
-    """Rule text: helper placeholders and inline NWN tags stay unchanged."""
+    """Returns the rule that helper placeholders and inline NWN tags stay unchanged."""
     return (
         "TAG/TOKEN PRESERVATION (mandatory):\n"
         "- Keep helper placeholders like __NWN_TOKEN_ABC__, __NWN_INLINE_XYZ__ unchanged \u2014 no "
@@ -210,7 +210,7 @@ def _token_preservation_rule() -> str:
 
 
 def _build_default_profile_rules(target_lang: str, gender: str) -> str:
-    """Full RULES body used for narrative / description / dialog-like calls."""
+    """Returns the full RULES body of narrative, description and dialog-like calls."""
     return (
         "RULES:\n"
         "1. Never translate word-for-word. Focus on meaning, emotion, and tone. "
@@ -234,7 +234,7 @@ def _build_default_profile_rules(target_lang: str, gender: str) -> str:
 
 
 def _build_short_label_profile_rules(target_lang: str) -> str:
-    """Compact RULES body for name/label batches (no speech style, no gender rule).
+    """Returns the compact RULES body of name/label batches (no speech style or gender rule).
 
     Dropped vs. default profile:
       * bureaucratic/idiom guidance (irrelevant for labels),
@@ -257,7 +257,7 @@ def _build_short_label_profile_rules(target_lang: str) -> str:
 
 
 def _build_script_message_profile_rules(target_lang: str, gender: str) -> str:
-    """Compact RULES body for short player-visible NCS script messages."""
+    """Returns the compact RULES body of short player-visible NCS script messages."""
     return (
         "RULES:\n"
         "1. Translate player-visible script messages naturally. Preserve meaning, tone, "
@@ -287,7 +287,7 @@ def build_translation_system_prompt_parts(
     content_profile: str = CONTENT_PROFILE_DEFAULT,
     batch_mode: bool = False,
 ) -> Tuple[str, str]:
-    """Return ``(stable, variable)`` halves of the line-by-line / batch system prompt.
+    """Returns ``(stable, variable)`` halves of the line-by-line / batch system prompt.
 
     The *stable* half holds all rules, examples, and output instructions — it
     is byte-identical across calls in a run and can be marked as the
@@ -380,7 +380,7 @@ _BATCH_MODE_RULES = (
 
 
 def build_single_user_prompt(text: str, source_lang: str, context: Optional[str] = None) -> str:
-    """User message of a single-string translation request.
+    """Builds the user message of a single-string translation request.
 
     Args:
         text: Text to translate.
@@ -397,11 +397,12 @@ def build_single_user_prompt(text: str, source_lang: str, context: Optional[str]
 
 
 def build_batch_user_prompt(source_lang: str, payload_json: str) -> str:
-    """User message of a batch translation request.
+    """Builds the user message of a batch translation request.
 
     Args:
         source_lang: Source language name.
-        payload_json: Serialized item map (``batch_payload.serialize_batch_payload``).
+        payload_json: Serialized item map (see
+            :func:`~nwn_translator.ai_providers.batch_payload.serialize_batch_payload`).
 
     Returns:
         The user message.
@@ -418,11 +419,21 @@ def build_dialog_system_prompt_parts(
     world_block: str,
     glossary_block: str = "",
 ) -> Tuple[str, str]:
-    """Return ``(stable, variable)`` halves of the contextual dialog system prompt.
+    """Returns ``(stable, variable)`` halves of the contextual dialog system prompt.
 
-    ``world_block`` is per-batch (filtered to entities the batch actually
-    mentions) and lives in the variable half alongside the glossary, so it
-    does not invalidate the cached stable prefix.
+    *world_block* is per batch (filtered to the entities the batch mentions)
+    and lives in the variable half alongside the glossary, so it does not
+    invalidate the cached stable prefix.
+
+    Args:
+        target_lang: Target language name; selects the few-shot examples.
+        gender: Player character gender (``"male"`` / ``"female"``).
+        world_block: WORLD CONTEXT block of the batch.
+        glossary_block: GLOSSARY block of the batch.
+
+    Returns:
+        ``(stable, variable)``; *variable* joins the non-empty stripped blocks
+        with a blank line, or is ``""``.
     """
     ex = get_examples(target_lang)
     dialog_output = ex["dialog_output"]
@@ -476,7 +487,18 @@ def build_dialog_system_prompt(
     world_block: str,
     glossary_block: str = "",
 ) -> str:
-    """System prompt for contextual whole-dialog translation (concatenated)."""
+    """Builds the contextual dialog system prompt as one string.
+
+    Args:
+        target_lang: Target language name.
+        gender: Player character gender.
+        world_block: WORLD CONTEXT block of the batch.
+        glossary_block: GLOSSARY block of the batch.
+
+    Returns:
+        The stable half, followed by the variable half after a blank line
+        when there is one.
+    """
     stable, variable = build_dialog_system_prompt_parts(
         target_lang, gender, world_block, glossary_block
     )

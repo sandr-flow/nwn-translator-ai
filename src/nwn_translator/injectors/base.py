@@ -26,7 +26,7 @@ class InjectedContent:
 
 
 class Injector(Protocol):
-    """Write the translations of extracted items back into a resource file."""
+    """Callable that writes the translations of extracted items back into a resource file."""
 
     def __call__(
         self,
@@ -38,7 +38,7 @@ class Injector(Protocol):
         text_encoding: str,
         source_encoding: Optional[str],
     ) -> InjectedContent:
-        """Patch *file_path* in place.
+        """Patches *file_path* in place.
 
         Args:
             file_path: Resource to patch.
@@ -47,7 +47,7 @@ class Injector(Protocol):
             content_type: Content type of the extraction, reported back.
             text_encoding: Code page of the written strings.
             source_encoding: Code page used to decode the file at extraction
-                (None when detected).
+                (``None`` when detected).
 
         Returns:
             The injection result.
@@ -57,14 +57,15 @@ class Injector(Protocol):
 def changed_translations(
     items: Sequence[TranslatableItem], translations: Translations
 ) -> Iterator[Tuple[TranslatableItem, str]]:
-    """Yield ``(item, translation)`` for items whose translation changes the text.
+    """Yields ``(item, translation)`` for items whose translation changes the text.
 
     Args:
         items: Extracted items, in extraction order.
         translations: Translated text by occurrence.
 
     Yields:
-        Items with a translation that differs from their source text.
+        ``(item, translation)`` for each item whose translation differs from
+        its source text, in *items* order.
     """
     for item in items:
         translated = translations.get(item.key)

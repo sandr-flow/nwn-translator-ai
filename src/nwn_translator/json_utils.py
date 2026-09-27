@@ -18,7 +18,7 @@ _BRACE_SPAN = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def strip_json_markdown_fences(raw: str, *, case_sensitive: bool = False) -> str:
-    """Remove an optional markdown code fence (with or without a ``json`` tag).
+    """Removes an optional markdown code fence (with or without a ``json`` tag).
 
     Args:
         raw: Model reply.
@@ -34,7 +34,7 @@ def strip_json_markdown_fences(raw: str, *, case_sensitive: bool = False) -> str
 
 
 def _decode_first_object(cleaned: str) -> Dict[str, Any]:
-    """Decode the JSON object that starts at the first ``{`` of *cleaned*."""
+    """Decodes the JSON object that starts at the first ``{`` of *cleaned*."""
     idx = cleaned.find("{")
     if idx == -1:
         raise json.JSONDecodeError("No JSON object found", cleaned, 0)
@@ -44,7 +44,7 @@ def _decode_first_object(cleaned: str) -> Dict[str, Any]:
 
 
 def load_first_json_object(raw: str) -> Dict[str, Any]:
-    """Decode the first JSON object of a provider reply, ignoring surrounding text.
+    """Decodes the first JSON object of a provider reply, ignoring surrounding text.
 
     Args:
         raw: Model reply, optionally wrapped in a lower-case markdown fence.
@@ -53,7 +53,7 @@ def load_first_json_object(raw: str) -> Dict[str, Any]:
         The decoded object.
 
     Raises:
-        json.JSONDecodeError: When the reply has no ``{`` ("No JSON object found")
+        json.JSONDecodeError: If the reply has no ``{`` ("No JSON object found")
             or the object is malformed or truncated. Positions in the message refer
             to the fence-stripped text; they reach translation results verbatim.
     """
@@ -61,7 +61,7 @@ def load_first_json_object(raw: str) -> Dict[str, Any]:
 
 
 def json_extract_first_object(raw: str) -> Optional[Dict[str, Any]]:
-    """Parse the first JSON object from *raw*, tolerating fences and trailing text.
+    """Parses the first JSON object from *raw*, tolerating fences and trailing text.
 
     Handles trailing text after the object (``Extra data`` from :func:`json.loads`),
     multiple objects (only the first is returned) and markdown fences in any case.
@@ -80,7 +80,7 @@ def json_extract_first_object(raw: str) -> Optional[Dict[str, Any]]:
 
 
 def load_brace_span(raw: str) -> Any:
-    """Strictly decode the text from the first ``{`` to the last ``}`` of *raw*.
+    """Strictly decodes the text from the first ``{`` to the last ``}`` of *raw*.
 
     The span is greedy, so prose around one object is ignored, but text between
     two objects makes the span invalid. Strict decoding rejects raw control
@@ -93,14 +93,14 @@ def load_brace_span(raw: str) -> Any:
         The decoded value; *raw* is decoded whole when it has no ``{ … }`` span.
 
     Raises:
-        json.JSONDecodeError: When the span (or *raw*) is not valid JSON.
+        json.JSONDecodeError: If the span (or *raw*) is not valid JSON.
     """
     match = _BRACE_SPAN.search(raw)
     return json.loads(match.group(0) if match else raw)
 
 
 def scan_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
-    """Return the first object that decodes at any ``{`` of *raw*, leniently.
+    """Returns the first object that decodes at any ``{`` of *raw*, leniently.
 
     Each ``{`` is tried in turn with ``strict=False`` (raw newlines inside strings
     are accepted), so an unparsable fragment before a valid object is skipped.
@@ -110,11 +110,11 @@ def scan_first_json_object(raw: str) -> Optional[Dict[str, Any]]:
         raw: Model reply.
 
     Returns:
-        The first decodable object, or ``None`` when *raw* decodes whole to a
-        non-object value.
+        The first decodable object, or ``None`` when *raw* has no ``{`` and
+        decodes whole to a non-object value.
 
     Raises:
-        json.JSONDecodeError: The last decoding error, when no object decodes.
+        json.JSONDecodeError: If no object decodes (the last decoding error).
     """
     decoder = json.JSONDecoder(strict=False)
     last_error: Optional[json.JSONDecodeError] = None

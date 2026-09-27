@@ -21,7 +21,7 @@ _CURRENT_PHASE: ContextVar[Optional[str]] = ContextVar("nwn_llm_phase", default=
 
 
 def current_llm_phase(default: str) -> str:
-    """Return the phase set by the enclosing :func:`llm_phase`, else *default*.
+    """Returns the phase set by the enclosing :func:`llm_phase`, else *default*.
 
     Args:
         default: Phase of the calling task.
@@ -34,7 +34,7 @@ def current_llm_phase(default: str) -> str:
 
 @contextmanager
 def llm_phase(phase: str) -> Iterator[None]:
-    """Tag the provider requests made inside the ``with`` block with *phase*.
+    """Tags the provider requests made inside the ``with`` block with *phase*.
 
     Args:
         phase: Phase label for request metrics.
@@ -139,11 +139,15 @@ class RunMetricsRecorder:
         self._counters: Dict[str, int] = {}
 
     def next_request_id(self) -> str:
-        """Return a new opaque request id."""
+        """Returns a new opaque request id.
+
+        Returns:
+            A random 32-character hex string.
+        """
         return uuid.uuid4().hex
 
     def increment(self, key: str, by: int = 1) -> None:
-        """Add *by* to the run counter *key*.
+        """Adds *by* to the run counter *key*.
 
         Args:
             key: Counter name.
@@ -153,7 +157,7 @@ class RunMetricsRecorder:
             self._counters[key] = int(self._counters.get(key, 0)) + by
 
     def record(self, metric: LLMRequestMetric) -> None:
-        """Append one request metric.
+        """Appends one request metric.
 
         Args:
             metric: The metric to store.
@@ -168,7 +172,7 @@ class RunMetricsRecorder:
             return list(self._requests)
 
     def summary(self) -> Dict[str, Any]:
-        """Aggregate the recorded requests by phase.
+        """Aggregates the recorded requests by phase.
 
         Returns:
             ``total_requests``, ``phases`` (per phase: request counts, summed sizes,
@@ -199,7 +203,7 @@ class RunMetricsRecorder:
         }
 
     def to_json_dict(self) -> Dict[str, Any]:
-        """Return the metrics document.
+        """Returns the metrics document.
 
         Returns:
             ``{"summary": ..., "requests": [...]}`` with one dict per request.
@@ -210,7 +214,7 @@ class RunMetricsRecorder:
         }
 
     def write_json(self, path: Path) -> None:
-        """Write :meth:`to_json_dict` as indented UTF-8 JSON, creating parent directories.
+        """Writes :meth:`to_json_dict` as indented UTF-8 JSON, creating parent directories.
 
         Args:
             path: Output file.
@@ -222,7 +226,7 @@ class RunMetricsRecorder:
 
 
 def estimate_tokens(chars: int) -> int:
-    """Estimate tokens from characters when the API reports no usage.
+    """Estimates tokens from characters when the API reports no usage.
 
     Args:
         chars: Character count.
@@ -234,7 +238,7 @@ def estimate_tokens(chars: int) -> int:
 
 
 def split_system_prompt_chars(system_prompt: Any) -> tuple[int, int]:
-    """Measure the cacheable and per-call parts of a system message.
+    """Measures the cacheable and per-call parts of a system message.
 
     Args:
         system_prompt: Plain text, or content parts in which ``cache_control`` marks
@@ -260,7 +264,7 @@ def split_system_prompt_chars(system_prompt: Any) -> tuple[int, int]:
 
 
 def usage_tokens(response: Any) -> tuple[Optional[int], Optional[int]]:
-    """Read token usage from an OpenAI-compatible response.
+    """Reads token usage from an OpenAI-compatible response.
 
     Args:
         response: Chat completion (``usage`` as object or dict), or ``None``.

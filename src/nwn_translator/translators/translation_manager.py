@@ -1,4 +1,8 @@
-"""Batch translation of every non-dialog string of a module.
+"""Batch translation of the strings of a module.
+
+The manager translates every string except, in context mode, the ``.dlg``
+lines, which :mod:`.context_translator` translates as whole conversations;
+without context it takes the dialog lines too.
 
 :class:`TranslationManager` takes the extracted occurrences of a run, lets the
 script gate decide which script literals may change, sends each distinct request
@@ -44,7 +48,7 @@ class ItemProgress(Protocol):
     """Per-item progress counter of a run."""
 
     def bump(self, by: int = 1, filename: Optional[str] = None) -> None:
-        """Count *by* finished items of *filename*.
+        """Counts *by* finished items of *filename*.
 
         Args:
             by: Items finished.
@@ -53,7 +57,7 @@ class ItemProgress(Protocol):
 
 
 def unescape_literal_newlines(original: str, translated: str) -> str:
-    """Turn ``\\n`` sequences of a model answer into newlines when the source has them.
+    """Turns ``\\n`` sequences of a model answer into newlines when the source has them.
 
     Args:
         original: Source text.
@@ -71,7 +75,7 @@ def unescape_literal_newlines(original: str, translated: str) -> str:
 
 
 class TranslationManager:
-    """Translates occurrences in deduplicated single and batch requests.
+    """Translator of occurrences in deduplicated single and batch requests.
 
     Attributes:
         config: Run settings.
@@ -93,7 +97,7 @@ class TranslationManager:
         glossary: Optional[Glossary] = None,
         log_writer: Optional[TranslationLogWriter] = None,
     ):
-        """Create a manager for one run.
+        """Creates a manager for one run.
 
         Args:
             config: Run settings.
@@ -125,11 +129,13 @@ class TranslationManager:
         content: ExtractedContent,
         item_progress: Optional[ItemProgress] = None,
     ) -> Translations:
-        """Translate every non-blank occurrence of *content*.
+        """Translates every non-blank occurrence of *content*.
 
-        Only requests with equal text, context, profile, hint and terminology share
-        an answer; every answer stays addressed by resource and item id. Rejected
-        requests are recorded in :attr:`stats` and :attr:`failed_items`.
+        Only requests with equal text, context, shared group context, profile,
+        hint and terminology share an answer (see
+        :func:`~nwn_translator.translators.work_plan.dedup_key`); every answer
+        stays addressed by resource and item id. Rejected requests are recorded
+        in :attr:`stats` and :attr:`failed_items`.
 
         Args:
             content: Occurrences to translate (usually of several resources).
@@ -139,15 +145,16 @@ class TranslationManager:
             Accepted translation per occurrence.
 
         Raises:
-            ValueError: An occurrence has no resource or item id.
-            TranslationCancelled: The run was cancelled.
-            TimeoutError: A pass exceeded its overall budget.
+            ValueError: If an occurrence has no resource or item id.
+            TranslationCancelled: If the run is cancelled.
+            TimeoutError: If a pass exceeds its overall budget.
         """
         work = [self._prepare(item) for item in content.items if item.has_text()]
         if not work:
             return {}
 
         def bump(filename: str) -> None:
+            """Counts one finished occurrence of *filename*."""
             if item_progress is not None:
                 item_progress.bump(filename=filename)
 
@@ -190,27 +197,31 @@ class TranslationManager:
         return translations
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Return :attr:`stats` plus ``total_errors``."""
+        """Returns the statistics of the run.
+
+        Returns:
+            A copy of :attr:`stats` plus ``total_errors``.
+        """
         return {**self.stats, "total_errors": len(self.stats["errors"])}
 
     def _prepare(self, item: TranslatableItem) -> WorkItem:
-        """Sanitize one occurrence; its copy names its resource for batch payloads."""
+        """Sanitizes one occurrence; its copy names its resource for batch payloads."""
         sanitized, handler = sanitize_text(item.text, preserve_tokens=self.config.preserve_tokens)
         prepared = replace(item, metadata={**item.metadata, "batch_resource": item.key[0]})
         return WorkItem(item=prepared, sanitized=sanitized, handler=handler)
 
     def _terminology(self, texts: Iterable[Optional[str]]) -> Optional[str]:
-        """Return the glossary block for *texts*, or None when no term matches.
+        """Returns the glossary block for *texts*, or ``None`` when no term matches.
 
-        The provider treats None and an empty string alike (it falls back to the race
-        terms of the text); None is kept so that the logged request arguments stay
-        unchanged. Missing texts (an item without context) match nothing.
+        The provider treats ``None`` and an empty string alike (it falls back to the race
+        terms of the text); ``None`` is used because the request arguments are written to
+        the translation log. Missing texts (an item without context) match nothing.
 
         Args:
-            texts: Texts of one request; None entries are skipped.
+            texts: Texts of one request; ``None`` entries are skipped.
 
         Returns:
-            The glossary block, or None.
+            The glossary block, or ``None``.
         """
         present = (text for text in texts if text)
         return terminology_block(present, self.config.target_lang, self.glossary) or None
@@ -218,7 +229,7 @@ class TranslationManager:
     def _translate_distinct(
         self, work: List[WorkItem], done: Callable[[WorkItem], None]
     ) -> Translations:
-        """Translate distinct requests: passthrough, main pass, then fallbacks.
+        """Translates distinct requests: passthrough, main pass, then fallbacks.
 
         Results are processed in a fixed order: long singles, batch results (failed
         batch items are set aside), failed script strings through their fallback
@@ -296,7 +307,7 @@ class TranslationManager:
     def _retry_failed_scripts(
         self, caller: ModelCaller, failed: List[WorkItem], timed_out: Set[Occurrence]
     ) -> List[TranslationResult]:
-        """Send failed script strings with their fallback request, one per request.
+        """Sends failed script strings with their fallback request, one per request.
 
         Script strings whose batch timed out are recorded as timeouts before the
         pass and as recovered or failed after it.
@@ -325,7 +336,7 @@ class TranslationManager:
         work: WorkItem,
         result: TranslationResult,
     ) -> None:
-        """Accept a model result into *translations*, retrying a broken answer.
+        """Accepts a model result into *translations*, retrying a broken answer.
 
         A request that fails or whose answers are all rejected is recorded as
         rejected instead.
@@ -356,7 +367,7 @@ class TranslationManager:
         model: Optional[str] = None,
         allow_cleanup: bool = False,
     ) -> Optional[str]:
-        """Restore and validate one answer; count and log it when accepted.
+        """Restores and validates one answer; counts and logs it when accepted.
 
         A rejected answer's validation report is kept in ``work.mismatch`` for the
         retry prompt.
@@ -368,7 +379,7 @@ class TranslationManager:
             allow_cleanup: Accept a mismatched answer after removing broken artifacts.
 
         Returns:
-            The final translation, or None when the answer is rejected.
+            The final translation, or ``None`` when the answer is rejected.
         """
         item = work.item
         outcome = work.handler.finalize_translation(answer, allow_cleanup=allow_cleanup)
@@ -413,7 +424,7 @@ class TranslationManager:
     def _retry_token_mismatch(
         self, caller: ModelCaller, work: WorkItem, first_answer: str, model: Optional[str]
     ) -> Optional[str]:
-        """Retry a rejected answer with stricter prompts, then accept a cleaned one.
+        """Retries a rejected answer with stricter prompts, then accepts a cleaned one.
 
         Retries stop early when the model repeats the same broken artifact
         sequence. Requests are sent one at a time, in result order.
@@ -425,7 +436,7 @@ class TranslationManager:
             model: Model that gave it.
 
         Returns:
-            The accepted translation, or None when even the cleaned answer is rejected.
+            The accepted translation, or ``None`` when even the cleaned answer is rejected.
         """
         last_answer = first_answer
         last_model = model or self.config.model
@@ -459,7 +470,7 @@ class TranslationManager:
         return self._accept(work, last_answer, model=last_model, allow_cleanup=True)
 
     def _record_rejected(self, work: WorkItem, error: Optional[str]) -> None:
-        """Record a request that was sent to the model but never accepted."""
+        """Records a request that was sent to the model but never accepted."""
         item = work.item
         error_msg = f"Translation failed for {item.item_id}: {error}"
         if work.is_ncs:

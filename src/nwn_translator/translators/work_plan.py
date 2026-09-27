@@ -43,13 +43,13 @@ SHORT_LABEL_TYPES = frozenset(
 
 
 def is_ncs_item(item: TranslatableItem) -> bool:
-    """Return whether *item* is a string literal of a compiled script.
+    """Tells whether *item* is a string literal of a compiled script.
 
     Args:
         item: Extracted occurrence.
 
     Returns:
-        True for the ``ncs_string`` items of the script extractor.
+        ``True`` for the ``ncs_string`` items of the script extractor.
     """
     return item.metadata.get("type") == "ncs_string"
 
@@ -110,7 +110,11 @@ class WorkItem:
         return content_profile([self])
 
     def translation_item(self) -> TranslationItem:
-        """Return the batch entry for this item."""
+        """Returns the batch entry for this item.
+
+        Returns:
+            The sanitized text with the item's context and metadata.
+        """
         return TranslationItem(self.sanitized, self.item.context, self.item.metadata)
 
 
@@ -130,7 +134,7 @@ class WorkPlan:
 
 
 def content_profile(work: Sequence[WorkItem]) -> str:
-    """Return the prompt profile for a request carrying *work*.
+    """Returns the prompt profile for a request carrying *work*.
 
     The choice depends only on the mix of item types, so every profile keeps a
     stable prompt prefix for provider caches.
@@ -150,10 +154,11 @@ def content_profile(work: Sequence[WorkItem]) -> str:
 
 
 def dedup_key(work: WorkItem, terminology: Terminology) -> Tuple[Hashable, ...]:
-    """Return the key under which equal requests share one answer.
+    """Returns the key under which equal requests share one answer.
 
-    Only identical text with the same context, profile, hint and terminology may
-    share an answer; every occurrence keeps its own address.
+    Only identical text with the same context, shared group context
+    (``shared_context``), profile, hint and terminology may share an answer;
+    every occurrence keeps its own address.
 
     Args:
         work: Prepared item.
@@ -174,34 +179,34 @@ def dedup_key(work: WorkItem, terminology: Terminology) -> Tuple[Hashable, ...]:
 
 
 def is_batchable(work: WorkItem, limits: BatchLimits) -> bool:
-    """Return whether *work* is short enough to share a batch request.
+    """Tells whether *work* is short enough to share a batch request.
 
     Args:
         work: Prepared item.
         limits: Batch budgets.
 
     Returns:
-        True when the sanitized text is within the item limit of its kind.
+        ``True`` when the sanitized text is within the item limit of its kind.
     """
     limit = limits.ncs_item_chars if work.is_ncs else limits.text_chars
     return len(work.sanitized) <= limit
 
 
 def batch_terminology(batch: Sequence[WorkItem], terminology: Terminology) -> Optional[str]:
-    """Return the glossary block of a batch: terms of every text and context in it.
+    """Returns the glossary block of a batch: terms of every text and context in it.
 
     Args:
         batch: Items of one request.
         terminology: Glossary lookup of the run.
 
     Returns:
-        The glossary block, or None when no term matches.
+        The glossary block, or ``None`` when no term matches.
     """
     return terminology(text for w in batch for text in (w.sanitized, w.item.context))
 
 
 def plan_work(work: Sequence[WorkItem], limits: BatchLimits, terminology: Terminology) -> WorkPlan:
-    """Split distinct strings into passthrough, single and batch requests.
+    """Splits distinct strings into passthrough, single and batch requests.
 
     Batchable strings are grouped by structural group (``translation_group``
     within a resource; ungrouped strings stand alone) in first-seen order; script
@@ -241,7 +246,7 @@ def plan_work(work: Sequence[WorkItem], limits: BatchLimits, terminology: Termin
 def pack_groups(
     groups: Sequence[List[WorkItem]], limits: BatchLimits, terminology: Terminology
 ) -> List[List[WorkItem]]:
-    """Pack structural groups into batches, keeping a group whole when it fits.
+    """Packs structural groups into batches, keeping a group whole when it fits.
 
     A group that does not fit an empty batch is split into units: its name
     fields together first (an NPC's first and last name stay in one request),
@@ -258,6 +263,7 @@ def pack_groups(
     """
 
     def fits(batch: List[WorkItem]) -> bool:
+        """Tells whether *batch* stays within every budget of *limits*."""
         return (
             len(batch) <= limits.max_items
             and sum(len(w.sanitized) for w in batch) <= limits.text_chars

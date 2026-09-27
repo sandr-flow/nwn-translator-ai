@@ -27,7 +27,7 @@ _ROMANIAN_COMMA_BELOW_TO_CEDILLA = str.maketrans(
 
 
 def decode_module_text(raw: bytes, source_encoding: Optional[str] = None) -> str:
-    """Decode a module string payload (GFF CExoString/CExoLocString, NCS CONSTS).
+    """Decodes a module string payload (GFF CExoString/CExoLocString, NCS CONSTS).
 
     NWN:EE may store UTF-8, so a strict UTF-8 attempt always goes first. A
     declared *source_encoding* (from the module's source language) is tried
@@ -65,7 +65,7 @@ def decode_module_text(raw: bytes, source_encoding: Optional[str] = None) -> str
 
 
 def encode_module_text(text: str, encoding: str) -> bytes:
-    """Encode translated text for a module string payload.
+    """Encodes translated text for a module string payload.
 
     Dashes become ``-`` on every page, Romanian comma-below letters become
     their cedilla forms on cp1250, and every other character the page cannot
@@ -85,7 +85,7 @@ def encode_module_text(text: str, encoding: str) -> bytes:
 
 
 def decode_fixed_ascii(raw: bytes) -> str:
-    """Decode a NUL-padded fixed-width ASCII name (ERF resref, GFF label).
+    """Decodes a NUL-padded fixed-width ASCII name (ERF resref, GFF label).
 
     Args:
         raw: The fixed-width field bytes.

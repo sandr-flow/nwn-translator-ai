@@ -36,7 +36,7 @@ class OpenRouterError(ProviderError):
 
 
 def _retry_after_candidates(exc: BaseException) -> Iterator[Any]:
-    """Yield raw ``Retry-After`` values of *exc*, most authoritative first."""
+    """Yields raw ``Retry-After`` values of *exc*, most authoritative first."""
     if isinstance(exc, RateLimitError):
         yield exc.retry_after_seconds
     headers = getattr(getattr(exc, "response", None), "headers", None)
@@ -48,7 +48,7 @@ def _retry_after_candidates(exc: BaseException) -> Iterator[Any]:
 
 
 def retry_after_seconds(exc: BaseException) -> Optional[float]:
-    """Return the gateway's ``Retry-After`` hint carried by *exc*.
+    """Returns the gateway's ``Retry-After`` hint carried by *exc*.
 
     Args:
         exc: Exception raised by a request.
@@ -69,7 +69,7 @@ def retry_after_seconds(exc: BaseException) -> Optional[float]:
 
 
 def wait_with_retry_after(retry_state: RetryCallState) -> float:
-    """Return the backoff before the next attempt.
+    """Returns the backoff before the next attempt.
 
     Exponential backoff (2-120 s), floored at the failed attempt's ``Retry-After``
     hint. A hinted wait gets up to 5 % jitter so that concurrent requests told to
@@ -103,7 +103,7 @@ TRANSIENT_RETRY = retry(
 
 
 def is_rate_or_budget_error(exc: BaseException) -> bool:
-    """Tell whether *exc* reports a rate limit or exhausted in-flight budget.
+    """Tells whether *exc* reports a rate limit or exhausted in-flight budget.
 
     The message is searched only when the error carries no HTTP status: a 400 whose
     text merely contains "429" or "402" (a token count) is not a rate limit.
@@ -124,7 +124,7 @@ def is_rate_or_budget_error(exc: BaseException) -> bool:
 
 
 def map_api_error(exc: BaseException, label: str) -> ProviderError:
-    """Translate a non-transient request exception into a provider error.
+    """Translates a non-transient request exception into a provider error.
 
     Args:
         exc: Exception raised by the API client.
@@ -143,7 +143,7 @@ def map_api_error(exc: BaseException, label: str) -> ProviderError:
 
 
 def is_reasoning_rejection(error: BadRequestError) -> bool:
-    """Tell whether a 400 says the model does not accept a ``reasoning`` field.
+    """Tells whether a 400 says the model does not accept a ``reasoning`` field.
 
     Models that make reasoning mandatory ("cannot be disabled") and errors about a
     particular effort value are not rejections of the field itself.

@@ -1,10 +1,12 @@
-"""Prompt construction for AI translation.
+"""Prompt texts of every model request.
 
 The package exports the translation, dialog, entity-extraction and glossary
-system-prompt builders. Content profiles and the translation and dialog
-prompts live in :mod:`._builder`, the entity, curation and glossary prompts in
-:mod:`.terminology`, the NCS gate prompts in :mod:`.ncs_gate` and the
-per-language few-shot examples in :mod:`.examples`.
+system-prompt builders. :mod:`._builder` holds the content profiles, the
+translation prompts and the dialog system prompt; :mod:`.dialog` the dialog
+user, repair and retry messages; :mod:`.token_retry` the retry text shared by
+both translators; :mod:`.terminology` the entity, curation and glossary
+prompts; :mod:`.ncs_gate` the NCS gate prompts; and :mod:`.examples` the
+per-language few-shot examples.
 """
 
 from ._builder import (

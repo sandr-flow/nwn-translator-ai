@@ -32,7 +32,11 @@ _TEXT_PREFIX_CHARS = 120
 
 
 def new_ncs_diagnostics() -> Dict[str, Any]:
-    """Return a diagnostics block with zero counters and no samples."""
+    """Returns an empty diagnostics block.
+
+    Returns:
+        Every counter of :data:`NCS_COUNTERS` at zero and an empty ``samples`` list.
+    """
     return {**{name: 0 for name in NCS_COUNTERS}, "samples": []}
 
 
@@ -41,7 +45,7 @@ def add_sample(
     sample: Dict[str, Any],
     count_field: Optional[str] = None,
 ) -> None:
-    """Count an outcome and keep its sample while the block has room.
+    """Counts an outcome and keeps its sample while the block has room.
 
     Args:
         diagnostics: Block from :func:`new_ncs_diagnostics`.
@@ -55,14 +59,14 @@ def add_sample(
 
 
 class NcsDiagnostics:
-    """Records the outcomes of script strings into one diagnostics block.
+    """Recorder of the outcomes of script strings in one diagnostics block.
 
     Attributes:
         block: The diagnostics block being filled.
     """
 
     def __init__(self, block: Dict[str, Any], log_writer: TranslationLogWriter):
-        """Record into *block* and log every sample to *log_writer*.
+        """Creates a recorder that fills *block* and logs every sample to *log_writer*.
 
         Args:
             block: Block from :func:`new_ncs_diagnostics`.
@@ -72,7 +76,7 @@ class NcsDiagnostics:
         self._log_writer = log_writer
 
     def count(self, field: str, by: int = 1) -> None:
-        """Add *by* to one counter without a sample.
+        """Adds *by* to one counter without a sample.
 
         Args:
             field: Counter name from :data:`NCS_COUNTERS`.
@@ -88,7 +92,7 @@ class NcsDiagnostics:
         count_field: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
-        """Record one outcome of a script string.
+        """Records one outcome of a script string.
 
         Args:
             item: The script string.
@@ -111,7 +115,7 @@ class NcsDiagnostics:
         write_trace(self._log_writer, {"event": "ncs_diagnostic", **sample})
 
     def timeout(self, item: TranslatableItem) -> None:
-        """Record that the request of a script string timed out and will be retried.
+        """Records that the request of a script string timed out and will be retried.
 
         Args:
             item: The script string.
@@ -121,7 +125,7 @@ class NcsDiagnostics:
     def retry_outcome(
         self, item: TranslatableItem, success: bool, error: Optional[str] = None
     ) -> None:
-        """Record whether the retry after a :meth:`timeout` recovered a script string.
+        """Records whether the retry after a :meth:`timeout` recovered a script string.
 
         Args:
             item: The script string.

@@ -18,7 +18,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, Union
 
 from ..context.string_filters import should_skip_entity_source_text
 from ..formats.gff import read_gff
@@ -286,7 +286,7 @@ def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
     Returns:
         The casefolded, stripped names.
     """
-    names = set()
+    names: Set[str] = set()
     try:
         utc_files = sorted(root.glob("*.utc"))
     except OSError:
@@ -297,9 +297,8 @@ def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
         except Exception:  # pylint: disable=broad-except
             logger.debug("Skipping unreadable blueprint %s", utc_path, exc_info=True)
             continue
-        for field_name in ("FirstName", "LastName"):
-            value = extract_local_string(data.get(field_name))
-            if isinstance(value, str) and value.strip():
+        for value in name_fields(data).values():
+            if value.strip():
                 names.add(value.strip().casefold())
     return frozenset(names)
 

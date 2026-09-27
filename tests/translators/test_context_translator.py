@@ -23,6 +23,7 @@ from tests.support.fakes import DialogProvider, RecordingWriter, make_config
 RECOVERY = TRANSLATION_MAX_TOKENS + 1000
 FIRST = TRANSLATION_MAX_TOKENS
 HELLO = {("test.dlg", "test:entry:1"): "Привет"}
+HELLO_WHO = {**HELLO, ("test.dlg", "test:reply:2"): "Кто ты?"}
 REPAIR = "The previous answer for test.dlg was not valid JSON or was truncated."
 TOKEN_RETRY = "changed, dropped, or omitted preserved NWN tags/tokens"
 
@@ -161,10 +162,7 @@ def test_truncated_pending_retry_is_asked_again_with_the_recovery_budget(caplog)
     caplog.set_level(logging.WARNING)
     manager, provider = _manager(['{"E1":"Привет"}', '{"R2":"Кто т', '{"R2":"Кто ты?"}'])
 
-    assert _translate(manager, "test.dlg", _hello_who()) == {
-        ("test.dlg", "test:entry:1"): "Привет",
-        ("test.dlg", "test:reply:2"): "Кто ты?",
-    }
+    assert _translate(manager, "test.dlg", _hello_who()) == HELLO_WHO
     assert _budgets(provider)[1:] == [FIRST, RECOVERY]
     _first, retry, again = _prompts(provider)
     assert retry == again and TOKEN_RETRY in retry
@@ -191,10 +189,7 @@ def test_answers_read_only_the_keys_that_were_asked(one_key_chunks):
         translation_log_writer=writer,
     )
 
-    assert _translate(manager, "test.dlg", _hello_who()) == {
-        ("test.dlg", "test:entry:1"): "Привет",
-        ("test.dlg", "test:reply:2"): "Кто ты?",
-    }
+    assert _translate(manager, "test.dlg", _hello_who()) == HELLO_WHO
     assert len(provider.calls) == 2
     assert [row["translated"] for row in writer.rows()] == ["Привет", "Кто ты?"]
 
@@ -205,7 +200,7 @@ def test_pending_retry_answer_keeps_the_lines_accepted_earlier():
         ['{"E1":"Привет"}', '{"R2":"Кто ты?", "E1":"OVERWRITE"}'], translation_log_writer=writer
     )
 
-    assert len(_translate(manager, "test.dlg", _hello_who())) == 2
+    assert _translate(manager, "test.dlg", _hello_who()) == HELLO_WHO
     assert "keys exactly R2" in _prompts(provider)[1]
     assert [row["translated"] for row in writer.rows()] == ["Привет", "Кто ты?"]
 
@@ -243,7 +238,7 @@ def test_large_dialog_is_translated_in_chunks_with_context_neighbours(one_key_ch
 def test_missing_keys_of_the_chunks_are_retried_after_the_merge(one_key_chunks):
     manager, provider = _manager(['{"E1":"Привет"}', "{}", '{"R2":"Кто ты?"}'])
 
-    assert len(_translate(manager, "test.dlg", _hello_who())) == 2
+    assert _translate(manager, "test.dlg", _hello_who()) == HELLO_WHO
     first, second, retry = _prompts(provider)
     assert "[E1]" in first and "[R2]" in second
     assert TOKEN_RETRY in retry and "keys exactly R2" in retry

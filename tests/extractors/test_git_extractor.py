@@ -247,14 +247,22 @@ def oracle_cache():
     git_fields.clear_creature_name_cache()
 
 
-def _blueprint_names(monkeypatch, first: str, last: str = "") -> None:
-    names = {"FirstName": _loc(first), **({"LastName": _loc(last)} if last else {})}
-    monkeypatch.setattr(git_fields, "read_gff", lambda path, **kwargs: names)
+def _blueprints(monkeypatch, directory, *records: dict) -> None:
+    """Place one .utc per record in *directory*; reading it returns the record."""
+    by_name = {f"npc{i}.utc": record for i, record in enumerate(records)}
+    for name in by_name:
+        (directory / name).write_bytes(b"")
+    monkeypatch.setattr(git_fields, "read_gff", lambda path, **kwargs: by_name[path.name])
 
 
 def test_blueprint_names_rescue_camel_case_creature_names(tmp_path, monkeypatch, oracle_cache):
-    (tmp_path / "npc_mcgee.utc").write_bytes(b"")
-    _blueprint_names(monkeypatch, "McGee", "DeVir")
+    _blueprints(
+        monkeypatch,
+        tmp_path,
+        {"FirstName": _loc("McGee"), "LastName": _loc("DeVir")},
+        # Blank and missing names add nothing.
+        {"FirstName": _loc(" ")},
+    )
     area = {
         "Creature List": [{"FirstName": _loc("McGee"), "LastName": _loc("DeVir")}],
         # Camel-case junk with no blueprint counterpart stays blocked.
@@ -264,6 +272,7 @@ def test_blueprint_names_rescue_camel_case_creature_names(tmp_path, monkeypatch,
     texts = {item.text for item in GitExtractor().extract(tmp_path / "area.git", area).items}
 
     assert texts == {"McGee", "DeVir"}
+    assert git_fields.get_module_creature_names(tmp_path) == {"mcgee", "devir"}
 
 
 def test_camel_case_names_without_blueprints_stay_blocked(tmp_path, oracle_cache):
@@ -277,10 +286,9 @@ def test_oracle_keeps_the_original_names_after_blueprints_are_patched(
     tmp_path, monkeypatch, oracle_cache
 ):
     """By rebuild time the .utc files may carry translated names already."""
-    (tmp_path / "npc.utc").write_bytes(b"")
-    _blueprint_names(monkeypatch, "McGee")
+    _blueprints(monkeypatch, tmp_path, {"FirstName": _loc("McGee")})
     assert "mcgee" in git_fields.get_module_creature_names(tmp_path)
-    _blueprint_names(monkeypatch, "МакГи")
+    _blueprints(monkeypatch, tmp_path, {"FirstName": _loc("МакГи")})
     assert "mcgee" in git_fields.get_module_creature_names(tmp_path)
 
 

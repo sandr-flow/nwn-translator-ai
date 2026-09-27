@@ -306,18 +306,31 @@ def collect_blueprint_creature_names(root: Path) -> FrozenSet[str]:
 
 _creature_name_cache: "OrderedDict[Path, FrozenSet[str]]" = OrderedDict()
 _CREATURE_NAME_CACHE_MAX = 4
-# Held while an oracle is built, so concurrent extraction workers wait for a single .utc
-# scan instead of each running their own.
+# Guards the cache and the per-directory build locks below; never held during a scan.
 _creature_name_cache_lock = threading.Lock()
+# One lock per directory whose oracle is being built, so concurrent extraction workers
+# wait for a single .utc scan instead of each running their own, while lookups and
+# builds for other directories go ahead.
+_creature_name_build_locks: Dict[Path, threading.Lock] = {}
+
+
+def _cached_creature_names(key: Path) -> Optional[FrozenSet[str]]:
+    """Returns the cached oracle for *key* and marks it recently used."""
+    with _creature_name_cache_lock:
+        names = _creature_name_cache.get(key)
+        if names is not None:
+            _creature_name_cache.move_to_end(key)
+        return names
 
 
 def get_module_creature_names(root: Path) -> FrozenSet[str]:
     """Returns the blueprint creature-name oracle of a module directory.
 
-    The oracle is built once per directory and cached for the process. The cached entry
-    is deliberately reused by later lookups: rebuild re-extracts ``.git`` files after the
-    ``.utc`` files on disk were patched with translated names, and a fresh oracle would no
-    longer match the original ``.git`` text.
+    The oracle is built once per directory and cached for the process, even when
+    extraction workers ask for it concurrently. The cached entry is deliberately reused by
+    later lookups: rebuild re-extracts ``.git`` files after the ``.utc`` files on disk
+    were patched with translated names, and a fresh oracle would no longer match the
+    original ``.git`` text.
 
     Args:
         root: Module extraction directory.
@@ -326,16 +339,22 @@ def get_module_creature_names(root: Path) -> FrozenSet[str]:
         The casefolded blueprint first and last names.
     """
     key = root.resolve()
+    names = _cached_creature_names(key)
+    if names is not None:
+        return names
     with _creature_name_cache_lock:
-        names = _creature_name_cache.get(key)
+        build_lock = _creature_name_build_locks.setdefault(key, threading.Lock())
+    with build_lock:
+        names = _cached_creature_names(key)
         if names is not None:
-            _creature_name_cache.move_to_end(key)
             return names
         names = collect_blueprint_creature_names(root)
         logger.debug("Blueprint name oracle for %s: %d names", root, len(names))
-        _creature_name_cache[key] = names
-        while len(_creature_name_cache) > _CREATURE_NAME_CACHE_MAX:
-            _creature_name_cache.popitem(last=False)
+        with _creature_name_cache_lock:
+            _creature_name_cache[key] = names
+            while len(_creature_name_cache) > _CREATURE_NAME_CACHE_MAX:
+                _creature_name_cache.popitem(last=False)
+            _creature_name_build_locks.pop(key, None)
     return names
 
 

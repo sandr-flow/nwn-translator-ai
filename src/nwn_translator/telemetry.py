@@ -105,10 +105,18 @@ class LLMRequestMetric:
 
 
 #: Metric fields summed per phase, in report order.
-_SUMMED_FIELDS = tuple(
-    "prompt_chars stable_chars variable_chars user_chars world_context_chars glossary_chars "
-    "estimated_input_tokens estimated_output_tokens usage_input_tokens usage_output_tokens "
-    "latency_ms".split()
+_SUMMED_FIELDS = (
+    "prompt_chars",
+    "stable_chars",
+    "variable_chars",
+    "user_chars",
+    "world_context_chars",
+    "glossary_chars",
+    "estimated_input_tokens",
+    "estimated_output_tokens",
+    "usage_input_tokens",
+    "usage_output_tokens",
+    "latency_ms",
 )
 #: Per-phase summary keys in report order; ``avg_latency_ms`` is appended last.
 _PHASE_KEYS = (

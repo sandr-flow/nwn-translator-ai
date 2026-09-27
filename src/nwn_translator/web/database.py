@@ -85,9 +85,25 @@ _ADDED_COLUMNS: Tuple[Tuple[str, str, str], ...] = (
 
 #: Columns :func:`update_task_row` may set; the names are interpolated into SQL.
 _TASK_COLUMNS = frozenset(
-    "client_token client_ip created_at status progress phase current_file input_filename "
-    "result_path extract_dir input_path error stats target_lang source_lang model "
-    "updated_at".split()
+    {
+        "client_token",
+        "client_ip",
+        "created_at",
+        "status",
+        "progress",
+        "phase",
+        "current_file",
+        "input_filename",
+        "result_path",
+        "extract_dir",
+        "input_path",
+        "error",
+        "stats",
+        "target_lang",
+        "source_lang",
+        "model",
+        "updated_at",
+    }
 )
 
 #: Max error strings returned on status/history polls (full list stays in SQLite).

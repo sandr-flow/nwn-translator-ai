@@ -75,10 +75,19 @@ _PHASE_WEIGHTS = {
 #: Phases that also become the task status shown in history and polling.
 _STATUS_PHASES = frozenset({"extracting", "scanning", "translating", "building"})
 
-#: Columns a task takes over from its row; the progress fields start afresh.
-_ROW_FIELDS = tuple(
-    "task_id client_ip client_token created_at status input_filename target_lang source_lang "
-    "error".split()
+#: How :meth:`TranslationTask.from_row` reads a ``tasks`` row: it copies the
+#: ``_ROW_FIELDS`` columns as they are, turns the ``_ROW_PATHS`` columns into paths
+#: (an empty one into ``None``) and decodes ``stats``; the progress fields start afresh.
+_ROW_FIELDS = (
+    "task_id",
+    "client_ip",
+    "client_token",
+    "created_at",
+    "status",
+    "input_filename",
+    "target_lang",
+    "source_lang",
+    "error",
 )
 _ROW_PATHS = ("result_path", "extract_dir", "input_path")
 

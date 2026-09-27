@@ -309,13 +309,28 @@ def _hello_line(text):
     return text.replace("Hello", "Привет")
 
 
-def test_failing_pending_retry_still_retries_lines_one_by_one():
-    manager, provider = _manager(["{}", RuntimeError("provider down")], translate_line=_hello_line)
+@pytest.mark.parametrize("pending_answer", [RuntimeError("provider down"), "{}"])
+def test_failing_or_empty_pending_retry_still_retries_lines_one_by_one(pending_answer):
+    manager, provider = _manager(["{}", pending_answer], translate_line=_hello_line)
 
     assert _translate(manager, "test.dlg", _hello()) == {
         ("test.dlg", "test:entry:1"): "Привет there"
     }
     assert (len(provider.calls), len(provider.line_calls)) == (2, 1)
+    assert manager.failed_items == set()
+
+
+def test_failing_line_retry_falls_back_to_the_cleaned_last_answer(caplog):
+    def line_down(_text):
+        raise RuntimeError("line down")
+
+    caplog.set_level(logging.WARNING)
+    manager, _provider = _manager(['{"E1":"Привет."}'] * 2, translate_line=line_down)
+
+    result = _translate(manager, "test.dlg", _node(1, "Hello <FirstName>."))
+
+    assert result == {("test.dlg", "test:entry:1"): "Привет."}
+    assert "individual dialog retry failed for E1: line down" in caplog.text
     assert manager.failed_items == set()
 
 

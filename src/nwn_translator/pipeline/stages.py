@@ -257,7 +257,7 @@ class PipelineState:
             add_sample(run_ncs, sample)
 
     def output_path(self) -> Path:
-        """Returns ``config.output_file``, else a path next to the input named after the language."""
+        """Returns ``config.output_file``, else the input's path named after the language."""
         return self.config.output_file or create_output_path(
             self.config.input_file, self.config.target_lang
         )

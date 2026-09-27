@@ -1,10 +1,9 @@
 """Library entry points of the NWN module translator.
 
-:func:`translate_module` translates a module end to end;
-:func:`run_translation_pipeline` does the same and also returns the
-:class:`ModuleTranslator` with the statistics of the run. :func:`rebuild_module`
-writes edited translations into the unpacked files of a finished run without
-model requests. The stages themselves live in :mod:`nwn_translator.pipeline.stages`.
+:func:`translate_module` translates a module end to end; :func:`run_translation_pipeline`
+also returns the :class:`ModuleTranslator` with the statistics of the run.
+:func:`rebuild_module` writes edited translations into the unpacked files of a
+finished run without model requests. The stages live in :mod:`nwn_translator.pipeline.stages`.
 """
 
 import logging
@@ -24,14 +23,7 @@ from .pipeline.stages import (
     run_pipeline,
 )
 
-__all__ = [
-    "ModuleTranslator",
-    "rebuild_module",
-    "translate_module",
-    "run_translation_pipeline",
-    "load_parsed_and_extracted",
-    "inject_translations_into_file",
-]
+__all__ = ["ModuleTranslator", "rebuild_module", "translate_module", "run_translation_pipeline"]
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +53,7 @@ class ModuleTranslator:
         self.metrics_recorder = self.state.metrics_recorder
 
     def translate(self) -> Path:
-        """Runs every stage.
-
-        Returns:
-            The translated module.
-        """
+        """Runs every stage and returns the translated module."""
         return run_pipeline(self.state)
 
     @property
@@ -89,11 +77,7 @@ class ModuleTranslator:
         return self.state.glossary
 
     def get_statistics(self) -> Dict[str, Any]:
-        """Returns the run statistics.
-
-        Returns:
-            The statistics of :meth:`PipelineState.get_statistics`.
-        """
+        """Returns the run statistics (see :meth:`PipelineState.get_statistics`)."""
         return self.state.get_statistics()
 
 
@@ -106,24 +90,23 @@ def rebuild_module(
 ) -> Path:
     """Re-injects translations and reassembles a .mod without model requests.
 
-    Translations are addressed by ``item_id``, not by original text: the
-    extracted files on disk already hold the first-pass translation. Only files
-    with an addressed translation are re-extracted, for their current field
-    offsets, and patched; the others are packed as they are. The web passes
-    every stored translation of the task, so it re-extracts each file that has one.
+    Translations are addressed by ``item_id``, not by original text: the files on
+    disk already hold the first-pass translation. Only files with an addressed
+    translation are re-extracted (for their current field offsets) and patched;
+    the others are packed as they are.
 
     Args:
         extract_dir: Directory with previously extracted files.
         translations_by_item_id: ``{filename: {item_id: translated}}``.
         output_path: Where to write the rebuilt .mod file.
-        original_mod_path: Path to the original .mod (needed for ERF header info).
+        original_mod_path: The original .mod (its ERF header is copied).
         target_lang: Target language (drives GFF/NCS string encoding).
 
     Returns:
         Path to the rebuilt .mod file.
     """
-    # The files already hold first-pass translations, so both re-extraction and
-    # the injectors' re-reads decode with the target code page.
+    # The files hold first-pass translations, so re-extraction and the
+    # injectors' re-reads both decode with the target code page.
     encoding = module_string_encoding_for_target_lang(target_lang)
     translations = {
         occurrence_key(filename, item_id): text
@@ -142,17 +125,16 @@ def rebuild_module(
         except Exception as e:
             logger.warning("Failed to read %s during rebuild: %s", file_path.name, e)
             continue
-        if loaded is None:
-            continue
-        parsed_data, extracted = loaded
-        inject_translations_into_file(
-            file_path,
-            parsed_data,
-            extracted,
-            translations,
-            target_lang=target_lang,
-            source_encoding=encoding,
-        )
+        if loaded is not None:
+            parsed_data, extracted = loaded
+            inject_translations_into_file(
+                file_path,
+                parsed_data,
+                extracted,
+                translations,
+                target_lang=target_lang,
+                source_encoding=encoding,
+            )
 
     create_mod_from_directory(extract_dir, output_path, original_mod_path)
     logger.info("Rebuild complete: %s", output_path)
@@ -172,21 +154,17 @@ def translate_module(config: TranslationConfig) -> Path:
         ValueError: If the input is missing or not an archive, or no API key is set.
         TranslationCancelled: If the run is cancelled.
     """
-    result_path, _translator = run_translation_pipeline(config)
-    return result_path
+    return run_translation_pipeline(config)[0]
 
 
 def run_translation_pipeline(config: TranslationConfig) -> Tuple[Path, ModuleTranslator]:
     """Validates *config*, translates the module and returns the translator too.
 
-    The library entry point and the web task runner share this startup path.
-
     Args:
         config: Run settings.
 
     Returns:
-        The translated module and the :class:`ModuleTranslator` of the run
-        (statistics, unpacked module).
+        The translated module and the :class:`ModuleTranslator` of the run.
 
     Raises:
         ValueError: If the input is missing or not an archive, or no API key is set.

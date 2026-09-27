@@ -15,37 +15,28 @@ __author__ = "Open Source Community"
 
 from .config import ProgressCallback, TranslationConfig, create_output_path
 
+#: Entry points imported on first use: the pipeline imports every extractor and the
+#: provider SDK, which ``import nwn_translator`` (and ``nwn_translator.config``) avoid.
+_LAZY = ("translate_module", "ModuleTranslator")
+
 
 def __getattr__(name):
-    """Imports the pipeline entry points on first use.
-
-    Keeps ``import nwn_translator`` (and ``nwn_translator.config``) light: the
-    pipeline imports every extractor and the provider SDK.
+    """Imports ``translate_module`` or ``ModuleTranslator`` from :mod:`.main` on first use.
 
     Args:
         name: Attribute looked up on the package.
 
     Returns:
-        ``translate_module`` or ``ModuleTranslator`` from :mod:`nwn_translator.main`.
+        The entry point.
 
     Raises:
         AttributeError: If *name* is neither of them.
     """
-    if name == "translate_module":
-        from .main import translate_module
+    if name in _LAZY:
+        from . import main
 
-        return translate_module
-    if name == "ModuleTranslator":
-        from .main import ModuleTranslator
-
-        return ModuleTranslator
+        return getattr(main, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = [
-    "ProgressCallback",
-    "TranslationConfig",
-    "create_output_path",
-    "translate_module",
-    "ModuleTranslator",
-]
+__all__ = ["ProgressCallback", "TranslationConfig", "create_output_path", *_LAZY]

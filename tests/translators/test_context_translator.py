@@ -567,6 +567,70 @@ def test_an_interrupted_caller_still_waits_for_the_workers(single_files, monkeyp
     assert interrupted and _dialog_workers() == []
 
 
+def test_a_non_exception_escaping_a_job_is_raised_after_the_other_jobs(single_files, monkeypatch):
+    real_speakers = context_translator.speaker_lines
+
+    def speakers(world, stem, *args, **kwargs):
+        if stem == "a":
+            raise _Interrupt
+        return real_speakers(world, stem, *args, **kwargs)
+
+    monkeypatch.setattr(context_translator, "speaker_lines", speakers)
+    manager, provider = _manager(THREE_ANSWERS, max_concurrent_requests=2)
+
+    with pytest.raises(_Interrupt):
+        manager.translate_dialogs(THREE_FILES)
+    assert len(provider.calls) == 2  # b.dlg and c.dlg were still requested
+    assert _dialog_workers() == []
+
+
+def test_translations_merge_in_job_order_whatever_finishes_first(single_files):
+    class _GoodbyeFirstProvider(DialogProvider):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.goodbye_answered = threading.Event()
+
+        async def complete_json_chat_async(self, system_prompt, user_prompt, **kwargs):
+            for _ in range(500):
+                if "Hello" not in user_prompt or self.goodbye_answered.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            answer = await super().complete_json_chat_async(system_prompt, user_prompt, **kwargs)
+            if "Goodbye" in user_prompt:
+                self.goodbye_answered.set()
+            return answer
+
+    provider = _GoodbyeFirstProvider(THREE_ANSWERS)
+    manager = ContextualTranslationManager(
+        make_config(max_concurrent_requests=2), provider, WorldContext()
+    )
+
+    translations, errors = manager.translate_dialogs(THREE_FILES[:2])
+
+    assert errors == [] and provider.goodbye_answered.is_set()
+    assert list(translations) == [("a.dlg", "a:entry:1"), ("b.dlg", "b:entry:2")]
+
+
+def test_errors_are_listed_in_job_order_whatever_fails_first(single_files, monkeypatch):
+    b_failed = threading.Event()
+    boom_a, boom_b = RuntimeError("a exploded"), RuntimeError("b exploded")
+
+    def speakers(_world, stem, *_args, **_kwargs):
+        if stem == "a":
+            b_failed.wait(5)
+            raise boom_a
+        b_failed.set()
+        raise boom_b
+
+    monkeypatch.setattr(context_translator, "speaker_lines", speakers)
+    manager, provider = _manager({}, max_concurrent_requests=2)
+
+    translations, errors = manager.translate_dialogs(THREE_FILES[:2])
+
+    assert (translations, provider.calls) == ({}, [])
+    assert [(path.name, exc) for path, exc in errors] == [("a.dlg", boom_a), ("b.dlg", boom_b)]
+
+
 def test_files_without_lines_report_their_budget(single_files):
     manager, provider = _manager({})
     progress = _CountingProgress()

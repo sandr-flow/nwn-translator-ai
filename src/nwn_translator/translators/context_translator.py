@@ -64,8 +64,8 @@ logger = logging.getLogger(__name__)
 #: the recovery budget higher again.
 _RECOVERY_MAX_TOKENS = 32768
 
-#: Result of one pool job: its translations and ``(file, error)`` pairs.
-_JobResult = Tuple[Translations, List[Tuple[Path, Exception]]]
+#: Translations and ``(file, error)`` pairs, of one pool job or of all of them.
+_Result = Tuple[Translations, List[Tuple[Path, Exception]]]
 
 
 #: Recovery requests after an unparseable answer: one per warning (``%s`` is the
@@ -231,7 +231,7 @@ class ContextualTranslationManager:
         self,
         dialog_files: Sequence[Tuple[Path, Dict[str, Any], int]],
         item_progress: Optional[ItemProgress] = None,
-    ) -> _JobResult:
+    ) -> Tuple[Translations, List[Tuple[Path, Exception]]]:
         """Translates dialog files on a pool of ``max_concurrent_requests`` threads.
 
         Small dialogs share grouped requests; a file whose part of a grouped
@@ -284,39 +284,46 @@ class ContextualTranslationManager:
 
     def _run_pool(
         self, jobs: List[List[PreparedDialog]], progress: Optional[ItemProgress]
-    ) -> _JobResult:
+    ) -> _Result:
         """Translates *jobs* in queue order on up to ``max_concurrent_requests`` threads.
 
         A job is one dialog on its own or a group of two or more small ones.
         ``run_async`` keeps one event loop per thread, and the provider one HTTP
         client per loop, so a worker reuses them for all its jobs and closes them
-        before it ends. An exception escaping a job fails all of its files; a
-        cancelled job stops the workers from starting queued ones.
+        before it ends. The pool returns only once every worker has ended, even
+        when the calling thread is interrupted while it waits, and merges the
+        results in job order, whatever order the jobs finish in.
+
+        Args:
+            jobs: Jobs in queue order.
+            progress: Progress sink, if any.
+
+        Returns:
+            The translations and ``(file_path, error)`` pairs of all jobs.
 
         Raises:
-            TranslationCancelled: If a job was cancelled.
+            TranslationCancelled: If the run is cancelled. Every job checks for
+                cancellation before its first request, so the queued jobs end at once.
+            BaseException: The first one in job order that escaped a job and is
+                not an ``Exception`` (such as ``KeyboardInterrupt``), after every
+                other job has run.
         """
         queue = deque(enumerate(jobs))
-        outcomes: List[Any] = [None] * len(jobs)
-        cancelled = threading.Event()
+        results: List[_Result] = [({}, []) for _ in jobs]
+        aborted: Dict[int, BaseException] = {}
 
         def work() -> None:
-            """Runs queued jobs until none is left or one was cancelled."""
+            """Runs queued jobs until none is left."""
             try:
-                while not cancelled.is_set():
+                while True:
                     try:
                         index, files = queue.popleft()
                     except IndexError:
                         return
                     try:
-                        if len(files) > 1:
-                            outcomes[index] = self._translate_group(files, progress)
-                        else:
-                            outcomes[index] = self._translate_file(_FileRun(files[0], progress)), []
+                        results[index] = self._run_job(files, progress)
                     except BaseException as exc:
-                        outcomes[index] = exc
-                        if isinstance(exc, TranslationCancelled):
-                            cancelled.set()
+                        aborted[index] = exc
             finally:
                 close_thread_resources(self.provider)
 
@@ -335,17 +342,36 @@ class ContextualTranslationManager:
             for worker in workers:
                 worker.join()
             raise
+        if aborted:
+            raise aborted[min(aborted)]
         translations: Translations = {}
         errors: List[Tuple[Path, Exception]] = []
-        for files, outcome in zip(jobs, outcomes):
-            if isinstance(outcome, tuple):
-                translations.update(outcome[0])
-                errors.extend(outcome[1])
-            elif isinstance(outcome, Exception) and not isinstance(outcome, TranslationCancelled):
-                errors.extend((dialog.file_path, outcome) for dialog in files)
-            elif outcome is not None:
-                raise outcome
+        for job_translations, job_errors in results:
+            translations.update(job_translations)
+            errors.extend(job_errors)
         return translations, errors
+
+    def _run_job(self, files: List[PreparedDialog], progress: Optional[ItemProgress]) -> _Result:
+        """Translates one pool job; an exception escaping it fails all of its files.
+
+        Args:
+            files: One dialog, or a group of small ones.
+            progress: Progress sink, if any.
+
+        Returns:
+            The job's translations and ``(file_path, error)`` pairs.
+
+        Raises:
+            TranslationCancelled: If the run is cancelled.
+        """
+        try:
+            if len(files) > 1:
+                return self._translate_group(files, progress)
+            return self._translate_file(_FileRun(files[0], progress)), []
+        except TranslationCancelled:
+            raise
+        except Exception as exc:
+            return {}, [(dialog.file_path, exc) for dialog in files]
 
     def _translate_file(self, run: _FileRun) -> Translations:
         """Requests the lines of a file not accepted yet, then reports its whole budget.
@@ -556,7 +582,7 @@ class ContextualTranslationManager:
 
     def _translate_group(
         self, group: List[PreparedDialog], progress: Optional[ItemProgress]
-    ) -> _JobResult:
+    ) -> _Result:
         """Translates small dialogs in one request and splits the answer.
 
         A file whose part is missing, incomplete or has a rejected line falls

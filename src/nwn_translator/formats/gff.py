@@ -97,7 +97,14 @@ class GFFHeader(NamedTuple):
 
     @classmethod
     def read(cls, data: Union[bytes, bytearray]) -> "GFFHeader":
-        """Unpacks the header at the start of *data* (at least 56 bytes)."""
+        """Unpacks the header at the start of *data*.
+
+        Args:
+            data: File bytes, at least 56 of them.
+
+        Returns:
+            The header.
+        """
         return cls._make(HEADER.unpack_from(data))
 
 

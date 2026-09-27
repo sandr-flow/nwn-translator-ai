@@ -53,7 +53,15 @@ class GitField:
     context: Union[str, GitContext]
 
     def context_for(self, instance: Dict[str, Any], npc_index: NpcIndex) -> str:
-        """Returns the prompt context of this field on *instance* (see :func:`build_npc_index`)."""
+        """Returns the prompt context of this field on *instance*.
+
+        Args:
+            instance: Instance struct holding the field.
+            npc_index: NPC index of the area (see :func:`build_npc_index`).
+
+        Returns:
+            The fixed context, or the one computed from *instance*.
+        """
         if isinstance(self.context, str):
             return self.context
         return self.context(instance, npc_index)

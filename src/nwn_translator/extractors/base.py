@@ -18,7 +18,12 @@ Translations = Dict[Occurrence, str]
 
 
 def occurrence_key(resource: Union[str, Path], item_id: str) -> Occurrence:
-    """Returns ``(file name, item_id)``: an occurrence address independent of text or Tag."""
+    """Returns ``(file name, item_id)``: an occurrence address independent of text or Tag.
+
+    Args:
+        resource: Resource path or file name.
+        item_id: Extractor-assigned id, unique within the resource.
+    """
     return Path(resource).name, item_id
 
 
@@ -106,10 +111,17 @@ class DialogNode:
 
 
 def extract_local_string(text_data: Any) -> Optional[str]:
-    """Returns the embedded ``Value`` of a parsed CExoLocString, or ``None`` when empty.
+    """Returns the embedded ``Value`` of a parsed CExoLocString.
 
     The embedded text wins even when a StrRef is also set, as in the NWN toolset;
     StrRef-only strings are left to the player's ``dialog.tlk``.
+
+    Args:
+        text_data: Parsed CExoLocString (``{"StrRef": …, "Value": …}``).
+
+    Returns:
+        The non-empty ``Value``, or ``None`` when it is empty or *text_data* is not a
+        CExoLocString.
     """
     if not isinstance(text_data, dict):
         return None
@@ -117,13 +129,23 @@ def extract_local_string(text_data: Any) -> Optional[str]:
 
 
 def record_offset(struct: Dict[str, Any], field_name: str) -> int:
-    """Returns the file offset of *field_name*'s field record in *struct*, 0 when unknown."""
+    """Returns the file offset of *field_name*'s field record in *struct*, 0 when unknown.
+
+    Args:
+        struct: Parsed GFF struct carrying ``_record_offsets``.
+        field_name: GFF field label.
+    """
     offset: int = struct.get("_record_offsets", {}).get(field_name, 0)
     return offset
 
 
 def list_field(struct: Any, key: str) -> List[Any]:
-    """Returns the list under *key* of a parsed struct; ``[]`` for anything else."""
+    """Returns the list under *key* of a parsed struct; ``[]`` for anything else.
+
+    Args:
+        struct: Parsed GFF struct; any other value yields ``[]``.
+        key: GFF list field label.
+    """
     value = struct.get(key, []) if isinstance(struct, dict) else []
     return value if isinstance(value, list) else []
 
@@ -138,4 +160,7 @@ class BaseExtractor(ABC):
         Args:
             file_path: Path of the resource.
             parsed_data: The parsed GFF dict, or for scripts the dict of the NCS loader.
+
+        Returns:
+            The extracted items.
         """

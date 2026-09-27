@@ -61,6 +61,11 @@ def load_ncs(
 ) -> Optional[Dict[str, Any]]:
     """Parses a compiled script into the dict :class:`NcsExtractor` expects.
 
+    Args:
+        path: Script file.
+        _gff_cache: Unused; scripts are not GFF.
+        source_encoding: Code page of the string literals (``None`` to detect).
+
     Returns:
         ``{"_ncs_file": NCSFile, "_source_encoding": source_encoding}``, or ``None`` when
         the script cannot be parsed.

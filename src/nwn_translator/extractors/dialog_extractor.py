@@ -24,7 +24,13 @@ logger = logging.getLogger(__name__)
 
 
 def dialog_item_id(stem: str, is_entry: bool, index: object) -> str:
-    """Returns ``{stem}:entry:{index}`` or ``{stem}:reply:{index}``, a dialog node's item id."""
+    """Returns ``{stem}:entry:{index}`` or ``{stem}:reply:{index}``, a dialog node's item id.
+
+    Args:
+        stem: Dialog resource name without extension.
+        is_entry: ``True`` for an ``EntryList`` node, ``False`` for a ``ReplyList`` node.
+        index: Position of the node in its list.
+    """
     return f"{stem}:{'entry' if is_entry else 'reply'}:{index}"
 
 

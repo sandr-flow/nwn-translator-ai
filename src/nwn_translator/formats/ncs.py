@@ -195,7 +195,16 @@ class NCSFile:
 def _parse_instruction(
     data: Union[bytes, bytearray], offset: int, source_encoding: Optional[str] = None
 ) -> NCSInstruction:
-    """Parses the instruction at *offset*; CONSTS bytes are decoded with *source_encoding*.
+    """Parses the instruction at *offset*.
+
+    Args:
+        data: Complete file bytes.
+        offset: Byte offset of the instruction.
+        source_encoding: Declared code page of CONSTS bytes; ``None`` uses the cascade of
+            :func:`~.text_codec.decode_module_text`.
+
+    Returns:
+        The instruction.
 
     Raises:
         NCSParseError: If the instruction runs past the end of the data.
@@ -238,7 +247,14 @@ def _parse_instruction(
 
 
 def parse_ncs(file_path: Path, source_encoding: Optional[str] = None) -> NCSFile:
-    """Parses an ``.ncs`` file (see :func:`parse_ncs_bytes`).
+    """Parses an ``.ncs`` file.
+
+    Args:
+        file_path: The ``.ncs`` file.
+        source_encoding: Declared code page of CONSTS bytes (see :func:`parse_ncs_bytes`).
+
+    Returns:
+        The parsed script.
 
     Raises:
         NCSParseError: If the file is missing or invalid.

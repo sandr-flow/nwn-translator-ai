@@ -155,6 +155,12 @@ class ERFHeader(NamedTuple):
     def from_bytes(cls, data: bytes) -> "ERFHeader":
         """Parses and validates the first 160 bytes of an archive.
 
+        Args:
+            data: Archive bytes starting at offset 0.
+
+        Returns:
+            The parsed header.
+
         Raises:
             ERFError: If the data is too short, the file type is unknown or the version is not V1.0.
         """
@@ -211,6 +217,10 @@ class ERFReader:
     def __init__(self, file_path: Path, progress_callback: Optional[ProgressCallback] = None):
         """Opens an archive for reading.
 
+        Args:
+            file_path: Path of the ``.mod``, ``.erf`` or ``.hak`` file.
+            progress_callback: Extraction progress callback (see the class).
+
         Raises:
             ERFError: If the file does not exist.
         """
@@ -223,6 +233,9 @@ class ERFReader:
 
     def read_header(self) -> ERFHeader:
         """Reads the header and checks, before any per-entry work, that its tables fit the file.
+
+        Returns:
+            The header.
 
         Raises:
             ERFError: If the header is invalid or its tables exceed the file.
@@ -317,7 +330,10 @@ class ERFReader:
         return entries
 
     def extract_all(self, output_dir: Path) -> Path:
-        """Writes every resource with data to *output_dir* (created if missing).
+        """Writes every resource with data to *output_dir*.
+
+        Args:
+            output_dir: Target directory, created if missing.
 
         Returns:
             *output_dir* as a :class:`~pathlib.Path`.
@@ -356,7 +372,12 @@ class ERFWriter:
     """
 
     def __init__(self, output_path: Path, type_overrides: Optional[Dict[str, int]] = None):
-        """Starts an empty archive."""
+        """Starts an empty archive.
+
+        Args:
+            output_path: Where :meth:`write` puts the archive.
+            type_overrides: File name -> exact resource type id.
+        """
         self.output_path = Path(output_path)
         self.type_overrides: Dict[str, int] = type_overrides or {}
         self.file_type = FILE_TYPES.get(self.output_path.suffix.lower(), b"ERF ")
@@ -390,7 +411,13 @@ class ERFWriter:
     def set_localized_strings(
         self, language_count: int, raw_block: bytes, description_strref: int
     ) -> None:
-        """Carries the module description (LanguageCount, raw block, StrRef) of a source archive."""
+        """Carries the module description of a source archive.
+
+        Args:
+            language_count: LanguageCount of the source archive.
+            raw_block: Raw localized string list (may be empty).
+            description_strref: DescriptionStrRef of the source archive.
+        """
         self._language_count = language_count
         self._localized_strings = raw_block
         self._description_strref = description_strref

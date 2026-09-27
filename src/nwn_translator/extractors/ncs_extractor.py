@@ -156,6 +156,9 @@ def ncs_hard_veto_reason(
 def _is_likely_translatable(text: str) -> bool:
     """Tells whether *text* looks like a player-visible sentence or short bark.
 
+    Args:
+        text: Literal or merged concat text.
+
     Returns:
         ``True`` for punctuated sentences of three or more words and for short barks
         ("Mommy." "Help!" "Sir?", often SpeakString) of up to four words ending in

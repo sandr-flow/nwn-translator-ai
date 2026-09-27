@@ -80,7 +80,11 @@ class ConcatChain:
         return [p for p in self.parts if isinstance(p, ConcatLit)]
 
     def to_metadata(self) -> List[Dict[str, Any]]:
-        """Serializes the parts for ``metadata["concat_parts"]``: ``offset``/``text`` or ``var``."""
+        """Serializes the parts for ``metadata["concat_parts"]``.
+
+        Returns:
+            ``{"offset", "text"}`` per literal and ``{"var"}`` per runtime slot, in source order.
+        """
         return [
             {"offset": p.offset, "text": p.text} if isinstance(p, ConcatLit) else {"var": p.index}
             for p in self.parts
@@ -105,12 +109,26 @@ _VAR = object()
 
 
 def merged_text(chain: ConcatChain) -> str:
-    """Joins the literals of a chain, with ``<VAR1>``, ``<VAR2>``, … for the runtime slots."""
+    """Joins the parts of a chain into the text the model translates.
+
+    Args:
+        chain: A concat chain.
+
+    Returns:
+        The literals joined, with ``<VAR1>``, ``<VAR2>``, … for the runtime slots.
+    """
     return "".join(p.text if isinstance(p, ConcatLit) else f"<VAR{p.index}>" for p in chain.parts)
 
 
 def parts_from_metadata(raw: Sequence[Mapping[str, Any]]) -> List[ConcatPart]:
-    """Rebuilds concat parts, in source order, from :meth:`ConcatChain.to_metadata` output."""
+    """Rebuilds concat parts from extractor metadata.
+
+    Args:
+        raw: Output of :meth:`ConcatChain.to_metadata`.
+
+    Returns:
+        The parts in source order.
+    """
     return [
         (
             ConcatVar(int(cell["var"]))

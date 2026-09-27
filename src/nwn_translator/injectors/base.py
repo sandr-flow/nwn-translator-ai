@@ -48,13 +48,21 @@ class Injector(Protocol):
             text_encoding: Code page of the written strings.
             source_encoding: Code page the file was decoded with at extraction (``None``
                 when detected).
+
+        Returns:
+            The injection result.
         """
 
 
 def changed_translations(
     items: Sequence[TranslatableItem], translations: Translations
 ) -> Iterator[Tuple[TranslatableItem, str]]:
-    """Yields ``(item, translation)``, in *items* order, where the translation changes the text."""
+    """Yields ``(item, translation)``, in *items* order, where the translation changes the text.
+
+    Args:
+        items: Extracted items, in extraction order.
+        translations: Translated text by occurrence.
+    """
     for item in items:
         translated = translations.get(item.key)
         if translated is not None and translated != item.text:

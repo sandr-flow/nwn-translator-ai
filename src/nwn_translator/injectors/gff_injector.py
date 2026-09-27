@@ -20,8 +20,15 @@ def inject_gff(
     """Rewrites the CExoLocString of every translated item in one pass.
 
     Every GFF resource kind shares this contract: extraction records the field record
-    offset of each item, and only those fields are patched, in item order. Fields are
-    addressed by offset, not by text, so *source_encoding* is unused.
+    offset of each item, and only those fields are patched.
+
+    Args:
+        file_path: GFF resource to patch.
+        items: Items extracted from the file; their order is the patch order.
+        translations: Translated text by occurrence.
+        content_type: Content type of the extraction, reported back.
+        text_encoding: Code page of the written strings.
+        source_encoding: Unused: fields are addressed by offset, not by text.
 
     Returns:
         The injection result, with metadata ``{"type": content_type}``.

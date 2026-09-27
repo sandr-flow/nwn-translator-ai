@@ -650,6 +650,60 @@ def test_group_rate_limit_fails_the_files_without_a_fallback():
     assert progress.total == 5
 
 
+def test_failed_group_request_falls_back_to_single_files(caplog):
+    caplog.set_level(logging.WARNING)
+    manager, provider = _manager(
+        [RuntimeError("group exploded"), '{"E1": "Привет"}', '{"E2": "Прощай"}']
+    )
+    progress = _CountingProgress()
+
+    translations, errors = manager.translate_dialogs(TWO_FILES, item_progress=progress)
+
+    assert (translations, errors) == (_expected(TWO_FILES, TWO_ANSWERS), [])
+    assert "request failed (group exploded); falling back to single files" in caplog.text
+    assert [("=== FILE:" in prompt) for prompt in _prompts(provider)] == [True, False, False]
+    assert progress.total == 2
+
+
+def test_a_raising_group_fallback_is_reported_per_file(monkeypatch):
+    boom = RuntimeError("speakers exploded")
+
+    def broken_speakers(*_args, **_kwargs):
+        raise boom
+
+    monkeypatch.setattr(context_translator, "speaker_lines", broken_speakers)
+    manager, provider = _manager([])
+
+    translations, errors = manager.translate_dialogs(TWO_FILES)
+
+    assert translations == {}
+    assert [(path.name, exc) for path, exc in errors] == [("a.dlg", boom), ("b.dlg", boom)]
+    assert provider.calls == []
+
+
+def test_an_exception_escaping_a_single_file_job_fails_that_file(single_files, monkeypatch):
+    boom = RuntimeError("speakers exploded")
+    real_speakers = context_translator.speaker_lines
+
+    def speakers(world, stem, *args, **kwargs):
+        if stem == "bad":
+            raise boom
+        return real_speakers(world, stem, *args, **kwargs)
+
+    monkeypatch.setattr(context_translator, "speaker_lines", speakers)
+    manager, _provider = _manager(THREE_ANSWERS)
+    files = [
+        _file("a.dlg", 1, "Hello"),
+        _file("bad.dlg", 2, "Goodbye"),
+        _file("c.dlg", 3, "Thanks"),
+    ]
+
+    translations, errors = manager.translate_dialogs(files)
+
+    assert translations == _expected([files[0], files[2]], {"Hello": "Привет", "Thanks": "Спасибо"})
+    assert [(path.name, exc) for path, exc in errors] == [("bad.dlg", boom)]
+
+
 def test_large_file_stays_single_while_small_files_group():
     big_text = "Long line of dialog text. " * 60  # longer than SMALL_DIALOG_CHARS
     manager, provider = _manager(

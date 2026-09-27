@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .nss_index import classify_engine_arg
 from ..formats.ncs import (
+    ENGINE_TYPES,
     NCSInstruction,
     OP_ADD,
     OP_COMP,
@@ -36,7 +37,11 @@ from ..formats.ncs import (
     OP_RSADD,
     OP_STORE_STATE,
     TYPE_FLOAT,
+    TYPE_FLOAT_FLOAT,
+    TYPE_FLOAT_INT,
     TYPE_INT,
+    TYPE_INT_FLOAT,
+    TYPE_INT_INT,
     TYPE_OBJECT,
     TYPE_STRING,
     TYPE_STRING_STRING,
@@ -152,6 +157,8 @@ ACTION_SIGNATURES: Dict[int, Tuple[str, str, int]] = {
 
 _TRACE_WINDOW = 64
 _SCALAR_TYPES = {TYPE_INT, TYPE_FLOAT, TYPE_STRING, TYPE_OBJECT}
+# Operand pairs of the numeric binary operators (LOGAND..MOD).
+_NUMERIC_PAIR_TYPES = (TYPE_INT_INT, TYPE_FLOAT_FLOAT, TYPE_INT_FLOAT, TYPE_FLOAT_INT)
 
 #: Routines with at least one player-facing argument. A routine can have both
 #: player and internal arguments (PostString/CreateArea): this set describes the
@@ -236,7 +243,7 @@ def trace_string_consumer(
             return bool(removed)
 
         if instr.opcode in (OP_CONST, OP_RSADD) and (
-            instr.type_byte in _SCALAR_TYPES or 0x10 <= instr.type_byte <= 0x17
+            instr.type_byte in _SCALAR_TYPES or instr.type_byte in ENGINE_TYPES
         ):
             if idx == instr_index:
                 tokens.add(sp)
@@ -281,7 +288,7 @@ def trace_string_consumer(
                 )
                 return context
             sp += 4
-        elif OP_LOGAND <= instr.opcode <= OP_MOD and instr.type_byte in (0x20, 0x21, 0x25, 0x26):
+        elif OP_LOGAND <= instr.opcode <= OP_MOD and instr.type_byte in _NUMERIC_PAIR_TYPES:
             if pop(8):
                 incomplete = True
                 continue

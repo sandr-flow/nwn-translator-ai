@@ -31,19 +31,66 @@ class NCSPatchError(Exception):
     """Raised when NCS patching fails."""
 
 
-# Opcodes 0x01-0x2D, in numeric order.
-OP_CPDOWNSP, OP_RSADD, OP_CPTOPSP, OP_CONST, OP_ACTION = range(0x01, 0x06)
-OP_LOGAND, OP_LOGOR, OP_INCOR, OP_EXCOR, OP_BOOLAND, OP_EQUAL, OP_NEQUAL = range(0x06, 0x0D)
-OP_GEQ, OP_GT, OP_LT, OP_LEQ, OP_SHLEFT, OP_SHRIGHT, OP_USHRIGHT = range(0x0D, 0x14)
-OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_NEG, OP_COMP, OP_MOVSP = range(0x14, 0x1C)
-OP_STORE_STATEALL, OP_JMP, OP_JSR, OP_JZ, OP_RETN, OP_DESTRUCT, OP_NOT = range(0x1C, 0x23)
-OP_DECISP, OP_INCISP, OP_JNZ, OP_CPDOWNBP, OP_CPTOPBP, OP_DECIBP, OP_INCIBP = range(0x23, 0x2A)
-OP_SAVEBP, OP_RESTOREBP, OP_STORE_STATE, OP_NOP = range(0x2A, 0x2E)
+OP_CPDOWNSP = 0x01
+OP_RSADD = 0x02
+OP_CPTOPSP = 0x03
+OP_CONST = 0x04
+OP_ACTION = 0x05
+OP_LOGAND = 0x06
+OP_LOGOR = 0x07
+OP_INCOR = 0x08
+OP_EXCOR = 0x09
+OP_BOOLAND = 0x0A
+OP_EQUAL = 0x0B
+OP_NEQUAL = 0x0C
+OP_GEQ = 0x0D
+OP_GT = 0x0E
+OP_LT = 0x0F
+OP_LEQ = 0x10
+OP_SHLEFT = 0x11
+OP_SHRIGHT = 0x12
+OP_USHRIGHT = 0x13
+OP_ADD = 0x14
+OP_SUB = 0x15
+OP_MUL = 0x16
+OP_DIV = 0x17
+OP_MOD = 0x18
+OP_NEG = 0x19
+OP_COMP = 0x1A
+OP_MOVSP = 0x1B
+OP_STORE_STATEALL = 0x1C
+OP_JMP = 0x1D
+OP_JSR = 0x1E
+OP_JZ = 0x1F
+OP_RETN = 0x20
+OP_DESTRUCT = 0x21
+OP_NOT = 0x22
+OP_DECISP = 0x23
+OP_INCISP = 0x24
+OP_JNZ = 0x25
+OP_CPDOWNBP = 0x26
+OP_CPTOPBP = 0x27
+OP_DECIBP = 0x28
+OP_INCIBP = 0x29
+OP_SAVEBP = 0x2A
+OP_RESTOREBP = 0x2B
+OP_STORE_STATE = 0x2C
+OP_NOP = 0x2D
 
-# CONST type qualifiers.
-TYPE_INT, TYPE_FLOAT, TYPE_STRING, TYPE_OBJECT = range(0x03, 0x07)
-# Binary qualifier of two strings (ADD, EQUAL, NEQUAL).
+# Type qualifiers of one value (CONST, RSADD, unary operators).
+TYPE_INT = 0x03
+TYPE_FLOAT = 0x04
+TYPE_STRING = 0x05
+TYPE_OBJECT = 0x06
+#: Type qualifiers of the engine structures (effect, event, location, talent, ...).
+ENGINE_TYPES = range(0x10, 0x18)
+# Type qualifiers of the two operands of a binary operator.
+TYPE_INT_INT = 0x20
+TYPE_FLOAT_FLOAT = 0x21
 TYPE_STRING_STRING = 0x23
+TYPE_STRUCT_STRUCT = 0x24
+TYPE_INT_FLOAT = 0x25
+TYPE_FLOAT_INT = 0x26
 
 #: Opcodes whose argument is a signed relative jump offset.
 JUMP_OPCODES = frozenset({OP_JMP, OP_JSR, OP_JZ, OP_JNZ})
@@ -53,14 +100,23 @@ JUMP_OPCODES = frozenset({OP_JMP, OP_JSR, OP_JZ, OP_JNZ})
 # routine + uint8 argument count, STORE_STATE an int32 BP size + int32 stack size.
 _OPCODE_ARG_SIZES: Dict[int, int] = {
     **dict.fromkeys((OP_CPDOWNSP, OP_CPTOPSP, OP_CPDOWNBP, OP_CPTOPBP, OP_DESTRUCT), 6),
-    **dict.fromkeys((OP_MOVSP, OP_STORE_STATEALL, OP_DECISP, OP_INCISP, OP_DECIBP), 4),
-    **dict.fromkeys((OP_INCIBP, *JUMP_OPCODES), 4),
+    **dict.fromkeys(
+        (
+            OP_MOVSP,
+            OP_STORE_STATEALL,
+            OP_DECISP,
+            OP_INCISP,
+            OP_DECIBP,
+            OP_INCIBP,
+            *JUMP_OPCODES,
+        ),
+        4,
+    ),
     OP_ACTION: 3,
     OP_STORE_STATE: 8,
 }
-# EQUAL/NEQUAL of two structures (type 0x24) carry a trailing uint16 size;
-# missing it desyncs the instruction stream.
-_STRUCT_COMPARE_TYPE = 0x24
+# EQUAL/NEQUAL of two structures carry a trailing uint16 size; missing it desyncs the
+# instruction stream.
 _STRUCT_COMPARE_OPCODES = frozenset({OP_EQUAL, OP_NEQUAL})
 # CONST argument sizes by type; strings are a uint16 length plus the bytes, and
 # an unknown type is assumed to be 4 bytes like the others.
@@ -159,7 +215,7 @@ def _parse_instruction(
         arg_size = 2 + struct.unpack_from(">H", data, offset + 2)[0]
     elif opcode == OP_CONST:
         arg_size = _CONST_ARG_SIZES.get(type_byte, 4)
-    elif opcode in _STRUCT_COMPARE_OPCODES and type_byte == _STRUCT_COMPARE_TYPE:
+    elif opcode in _STRUCT_COMPARE_OPCODES and type_byte == TYPE_STRUCT_STRUCT:
         arg_size = 2
     else:
         arg_size = _OPCODE_ARG_SIZES.get(opcode, 0)

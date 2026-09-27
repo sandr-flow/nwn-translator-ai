@@ -68,12 +68,18 @@ _RECOVERY_MAX_TOKENS = 32768
 _Result = Tuple[Translations, List[Tuple[Path, Exception]]]
 
 
-#: Recovery requests after an unparseable answer: one per warning (``%s`` is the
-#: request label), keyed by whether the answer looks cut off mid-string. The first
-#: request re-sends a cut-off prompt with :data:`_RECOVERY_MAX_TOKENS`, or asks to
-#: repair other invalid JSON within the first budget; a later one repairs with
-#: :data:`_RECOVERY_MAX_TOKENS`. The repair prompt is built once, from the answer
-#: before the first repair request.
+#: Recovery requests after an unparseable answer, keyed by whether the answer looks
+#: cut off mid-string: the warning logged before each request (``%s`` is the
+#: request label). One rule of :meth:`ContextualTranslationManager._request_json`
+#: gives each request its prompt and budget from its position:
+#:
+#: - the first request after a cut-off answer re-sends the original prompt with
+#:   :data:`_RECOVERY_MAX_TOKENS`;
+#: - the first request after other invalid JSON sends the repair prompt with
+#:   ``TRANSLATION_MAX_TOKENS``;
+#: - every later request sends the repair prompt with :data:`_RECOVERY_MAX_TOKENS`.
+#:
+#: The repair prompt is built once, from the answer before the first repair request.
 _Recovery = Dict[bool, Tuple[str, ...]]
 
 _CHUNK_RECOVERY: _Recovery = {
@@ -693,7 +699,7 @@ class ContextualTranslationManager:
             system: System message content.
             user: User prompt.
             repair: Builds the repair prompt from an answer; required when
-                *recovery* has repair requests.
+                *recovery* has a repair request.
             trace: Context of the requests in the translation log.
             label: Name of the request in log messages.
 
@@ -702,17 +708,21 @@ class ContextualTranslationManager:
         """
         raw = self._call_json(system, user, TRANSLATION_MAX_TOKENS, trace)
         parsed = _parse_answer(raw, label)
-        truncated = parsed is None and _looks_truncated(raw)
+        if parsed is not None:
+            return parsed
+        truncated = _looks_truncated(raw)
         repaired: Optional[str] = None
-        for index, warning in enumerate(recovery[truncated] if parsed is None else ()):
+        for index, warning in enumerate(recovery[truncated]):
             logger.warning(warning, label)
+            resend_original = index == 0 and truncated
+            recovery_budget = index > 0 or truncated
             prompt = user
-            if index or not truncated:
+            if not resend_original:
                 assert repair is not None
                 if repaired is None:
                     repaired = repair(raw)
                 prompt = repaired
-            budget = _RECOVERY_MAX_TOKENS if index or truncated else TRANSLATION_MAX_TOKENS
+            budget = _RECOVERY_MAX_TOKENS if recovery_budget else TRANSLATION_MAX_TOKENS
             raw = self._call_json(system, prompt, budget, trace)
             parsed = _parse_answer(raw, label)
             if parsed is not None:

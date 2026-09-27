@@ -52,7 +52,7 @@ _STAGE = LlmStage(
 #: Keys a model may nest the whole name map under.
 _WRAPPER_KEYS = ("glossary", "translations", "entries", "names", "result", "data")
 
-_ZERO_WIDTH_RE = re.compile(r"[​‌‍﻿]")
+_ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 _SPACE_RUN_RE = re.compile(r"\s+")
 _CATEGORY_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
 

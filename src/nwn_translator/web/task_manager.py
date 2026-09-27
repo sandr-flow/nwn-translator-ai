@@ -299,11 +299,11 @@ class TaskManager:
         with self._lock:
             self._tasks[task.task_id] = task
         create_task_row(
-            task.task_id,
-            client_token,
-            client_ip,
-            task.created_at,
-            input_filename,
+            task_id=task.task_id,
+            client_token=client_token,
+            client_ip=client_ip,
+            created_at=task.created_at,
+            input_filename=input_filename,
             target_lang=target_lang,
             source_lang=source_lang,
             model=model,
@@ -517,7 +517,7 @@ class TaskManager:
             task.task_id, trace_path=base / "translation_trace.jsonl"
         )
         try:
-            temp_dir = self.workspace_for_task(task.task_id) / "temp"
+            temp_dir = base / "temp"
             temp_dir.mkdir(parents=True, exist_ok=True)
             logger.info(
                 "Task %s: target_lang=%r source_lang=%r module_encoding=%s",

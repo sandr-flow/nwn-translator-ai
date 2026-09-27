@@ -286,8 +286,13 @@ class WorldContext:
         return out
 
     def get_glossary_names(self) -> List[Tuple[str, str]]:
-        """Returns the eligible candidates' ``(name, category)`` pairs, else every known name."""
-        return (self.candidates.glossary_pairs() if self.candidates else []) or self.get_all_names()
+        """Returns the curated glossary candidates, else every known name.
+
+        Returns:
+            The eligible candidates' ``(name, category)`` pairs, or
+            :meth:`get_all_names` when no candidate is eligible.
+        """
+        return self.candidates.glossary_pairs() or self.get_all_names()
 
     def to_prompt_block(
         self,

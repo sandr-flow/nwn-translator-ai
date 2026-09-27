@@ -92,7 +92,7 @@ class GlossaryBuilder:
         if not categories:
             return Glossary()
         registry = world_context.candidates
-        aliases = registry.resolved_aliases() if registry else {}
+        aliases = registry.resolved_aliases()
         for candidate in registry.values():
             if candidate.alias_of and candidate.name not in aliases:
                 categories.pop(candidate.name, None)

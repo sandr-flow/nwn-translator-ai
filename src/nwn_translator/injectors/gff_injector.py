@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from ..extractors.base import TranslatableItem, Translations
-from ..formats.gff import GFFPatcher
+from ..formats.gff import patch_locstrings
 from .base import InjectedContent, changed_translations
 
 
@@ -19,8 +19,8 @@ def inject_gff(
 ) -> InjectedContent:
     """Rewrites the CExoLocString of every translated item in one pass.
 
-    Every GFF resource kind shares this contract: extraction records the
-    field record offset of each item, and only those fields are patched.
+    Every GFF resource kind shares this contract: extraction records the field record
+    offset of each item, and only those fields are patched.
 
     Args:
         file_path: GFF resource to patch.
@@ -43,9 +43,9 @@ def inject_gff(
             raise ValueError(f"Missing field record for {item.key}")
         patches.append((offset, translated))
     if patches:
-        GFFPatcher(file_path, text_encoding=text_encoding).patch_multiple(patches)
+        patch_locstrings(file_path, patches, text_encoding=text_encoding)
     return InjectedContent(
-        source_file=file_path,
+        file_path,
         modified=bool(patches),
         items_updated=len(patches),
         metadata={"type": content_type},

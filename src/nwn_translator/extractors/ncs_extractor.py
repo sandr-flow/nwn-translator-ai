@@ -15,43 +15,27 @@ from .ncs_concat import find_concat_chains, merged_text
 from .ncs_context import trace_string_consumer
 from .nss_index import read_script_source, snippet_with_position
 
-# ---------------------------------------------------------------------------
-# Pattern-based heuristics
-# ---------------------------------------------------------------------------
-
-# Identifiers: snake_case, UPPER_CASE, CamelCase without spaces
+# Identifier shapes: snake_case, UPPER_CASE and resref-like words (at most 16 chars).
 _RE_SNAKE_CASE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
 _RE_UPPER_CONST = re.compile(r"^[A-Z_][A-Z0-9_]*$")
-_RE_RESREF = re.compile(r"^[a-zA-Z0-9_]{1,16}$")  # max 16 chars, no spaces
+_RE_RESREF = re.compile(r"^[a-zA-Z0-9_]{1,16}$")
 # Single word with an interior [A-Z][a-z] hump (BJArrested, oAssignedHorse):
 # identifier convention — spoken one-worders are Titlecase or lowercase.
 _RE_MIXED_CASE_WORD = re.compile(r"^[A-Za-z][A-Za-z0-9]*[A-Z][a-z][A-Za-z0-9]*$")
+# CamelCase identifiers and ``struct.field`` patterns anywhere in the text.
+_RE_CAMEL_CASE = re.compile(r"[a-z][a-zA-Z]*[A-Z][a-zA-Z]*")
+_RE_FUNC_DOT = re.compile(r"\b\w+\.\w+")
+_RE_ALPHABET_DUMP = re.compile(
+    r"^(?:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ|"
+    r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz)$"
+)
 
 # Known non-translatable prefixes: the shared engine tag families plus script
 # resref prefixes that only ever name compiled scripts.
-_SKIP_PREFIXES = ENGINE_TAG_PREFIXES + (
-    "x0_",
-    "x2_",
-    "x3_",
-    "k_act_",
-    "k_def_",
-    "k_hb_",
-    "nwnx_",
-    "dmfi_",
-    "aps_",
-    "hc_",
-    "zep_",
-    "prc_",
+_SKIP_PREFIXES = ENGINE_TAG_PREFIXES + tuple(
+    "x0_ x2_ x3_ k_act_ k_def_ k_hb_ nwnx_ dmfi_ aps_ hc_ zep_ prc_".split()
 )
-
-
-_DEBUG_PHRASES = (
-    "report as bug",
-    "report this bug",
-    "please report",
-    "debug string",
-    "error:",
-)
+_DEBUG_PHRASES = ("report as bug", "report this bug", "please report", "debug string", "error:")
 
 
 def _is_definitely_not_translatable(
@@ -59,9 +43,8 @@ def _is_definitely_not_translatable(
 ) -> bool:
     """Applies the shared veto, then cheap candidate heuristics without context.
 
-    The veto runs with ``is_concat=True`` for every literal, so sentence
-    fragments pass extraction; :func:`ncs_hard_veto_reason` rejects them at
-    the translation gate.
+    The veto runs with ``is_concat=True`` for every literal, so sentence fragments pass
+    extraction; :func:`ncs_hard_veto_reason` rejects them at the translation gate.
 
     Args:
         text: Literal or merged concat text.
@@ -77,43 +60,18 @@ def _is_definitely_not_translatable(
         return True
     if proven_player or player_candidate:
         return False
+    # Without a proven consumer: one or two characters, separator lines (half or more
+    # of "*#-=", or framed by them) and ALL-CAPS debug shouts. Only letter-only tokens
+    # count as a shout, so "I'm okay, sir. I think." is not one.
     stripped = text.strip()
-
-    # --- soft rules: heuristics for strings with no proven consumer ---
-
-    # One or two characters are never a message on their own.
     if len(stripped) <= 2:
         return True
-
-    # Separator / decoration lines: ≥50% asterisks/hashes/dashes,
-    # OR starts AND ends with decoration characters
-    decoration_chars = sum(1 for ch in stripped if ch in "*#-=")
-    if len(stripped) >= 3 and (
-        decoration_chars / len(stripped) >= 0.5
-        or (stripped[0] in "*#-=" and stripped[-1] in "*#-=")
+    if sum(ch in "*#-=" for ch in stripped) / len(stripped) >= 0.5 or (
+        stripped[0] in "*#-=" and stripped[-1] in "*#-="
     ):
         return True
-
-    # ALL-CAPS debug shouts — only letter-only tokens, so normal dialogue with
-    # "okay," / "sir." is not mistaken for a shout (see "I'm okay, sir. I think.").
     alpha_tokens = re.findall(r"[A-Za-z]+", stripped)
-    if len(alpha_tokens) >= 3 and all(t.isupper() for t in alpha_tokens):
-        return True
-
-    return False
-
-
-_RE_CAMEL_CASE = re.compile(r"[a-z][a-zA-Z]*[A-Z][a-zA-Z]*")
-_RE_FUNC_DOT = re.compile(r"\b\w+\.\w+")
-_RE_ALPHABET_DUMP = re.compile(
-    r"^(?:abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ|"
-    r"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz)$"
-)
-
-
-def _contains_code_identifiers(text: str) -> bool:
-    """Tells whether *text* contains CamelCase identifiers or ``struct.field`` patterns."""
-    return bool(_RE_CAMEL_CASE.search(text) or _RE_FUNC_DOT.search(text))
+    return len(alpha_tokens) >= 3 and all(t.isupper() for t in alpha_tokens)
 
 
 def ncs_hard_veto_reason(
@@ -186,7 +144,7 @@ def ncs_hard_veto_reason(
         if not ((proven_player or player_candidate) and stripped.isalpha()):
             return "resref_like_identifier"
 
-    if not proven_player and _contains_code_identifiers(stripped):
+    if not proven_player and (_RE_CAMEL_CASE.search(stripped) or _RE_FUNC_DOT.search(stripped)):
         return "code_identifier"
 
     if not proven_player and any(phrase in lower for phrase in _DEBUG_PHRASES):
@@ -202,33 +160,26 @@ def _is_likely_translatable(text: str) -> bool:
         text: Literal or merged concat text.
 
     Returns:
-        ``True`` for punctuated sentences of three or more words and for short
-        barks ending in ``.``, ``!`` or ``?``.
+        ``True`` for punctuated sentences of three or more words and for short barks
+        ("Mommy." "Help!" "Sir?", often SpeakString) of up to four words ending in
+        ``.``, ``!`` or ``?``.
     """
     stripped = text.strip()
     words = stripped.split()
-    has_punctuation = " " in text and any(ch in text for ch in ".!?,:;")
-    has_enough_words = len(words) >= 3
-
-    if has_punctuation and has_enough_words:
+    if " " in text and any(ch in text for ch in ".!?,:;") and len(words) >= 3:
         return True
-
-    # One-word / short barks: "Mommy." "Help!" "Sir?" — often SpeakString / floaty
-    if len(stripped) >= 3 and stripped[-1] in ".!?":
-        if len(words) <= 4 and any(any(c.isalpha() for c in w) for w in words):
-            return True
-
-    return False
+    return (
+        len(stripped) >= 3
+        and stripped[-1] in ".!?"
+        and len(words) <= 4
+        and any(c.isalpha() for c in stripped)
+    )
 
 
 class NcsExtractor(BaseExtractor):
     """Compiled NWScript (``.ncs``): string constants that may reach the player."""
 
-    def extract(
-        self,
-        file_path: Path,
-        parsed_data: Dict[str, Any],
-    ) -> ExtractedContent:
+    def extract(self, file_path: Path, parsed_data: Dict[str, Any]) -> ExtractedContent:
         """Extracts candidate string constants from a compiled script.
 
         Args:
@@ -251,9 +202,8 @@ class NcsExtractor(BaseExtractor):
         items: List[TranslatableItem] = []
         chains = find_concat_chains(ncs_file)
         chain_lit_offsets = {part.offset for chain in chains.values() for part in chain.lits()}
-        const_index_by_offset = {
-            instr.offset: i for i, instr in enumerate(ncs_file.string_constants)
-        }
+        constants = ncs_file.string_constants
+        const_index_by_offset = {instr.offset: i for i, instr in enumerate(constants)}
         selection_trace = parsed_data.get("_ncs_selection_trace")
 
         def record(stage: str, kept: bool, reason: str, offsets: List[int]) -> None:
@@ -357,7 +307,7 @@ class NcsExtractor(BaseExtractor):
             items=items,
             source_file=file_path,
             metadata={
-                "total_strings": len(ncs_file.string_constants),
+                "total_strings": len(constants),
                 "translatable_strings": len(items),
             },
         )

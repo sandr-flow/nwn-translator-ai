@@ -313,6 +313,33 @@ def test_oracle_is_built_once_under_concurrency(tmp_path, monkeypatch, oracle_ca
     assert results[0] == frozenset({"mcgee"})
 
 
+def test_oracle_scan_holds_up_no_other_directory(tmp_path, monkeypatch, oracle_cache):
+    """Two modules' scans run at once, and a cached module answers while both are running."""
+    first, second, cached = (tmp_path / name for name in ("first", "second", "cached"))
+    monkeypatch.setattr(
+        git_fields, "collect_blueprint_creature_names", lambda root: frozenset({root.name})
+    )
+    git_fields.get_module_creature_names(cached)
+    scans_started = threading.Semaphore(0)
+    # Both scans and the test meet here; a scan that has to run alone breaks the barrier.
+    scans_meet = threading.Barrier(3, timeout=5)
+
+    def slow_collect(root):
+        scans_started.release()
+        scans_meet.wait()
+        return frozenset({root.name})
+
+    monkeypatch.setattr(git_fields, "collect_blueprint_creature_names", slow_collect)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        builds = [
+            pool.submit(git_fields.get_module_creature_names, root) for root in (first, second)
+        ]
+        assert all(scans_started.acquire(timeout=5) for _ in builds)
+        assert git_fields.get_module_creature_names(cached) == {"cached"}
+        scans_meet.wait()
+        assert [build.result() for build in builds] == [{"first"}, {"second"}]
+
+
 @pytest.mark.parametrize(
     "text, npcs, hint",
     [

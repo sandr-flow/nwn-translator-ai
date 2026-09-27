@@ -2,7 +2,7 @@
 
 import pytest
 
-from nwn_translator.formats.gff import GFFPatcher, read_gff
+from nwn_translator.formats.gff import patch_locstrings, read_gff
 from nwn_translator.formats.ncs import parse_ncs, parse_ncs_bytes, patch_ncs_string_replacements
 from nwn_translator.formats.text_codec import (
     decode_fixed_ascii,
@@ -65,7 +65,7 @@ def test_gff_reader_threads_the_hint_down_to_locstrings(tmp_path):
     path = tmp_path / "sample.utp"
     write_gff(path, {"LocalizedName": {"StrRef": -1, "Value": "Placeholder"}})
     offset = read_gff(path)["_record_offsets"]["LocalizedName"]
-    GFFPatcher(path, text_encoding="cp1252").patch_multiple([(offset, FRENCH)])
+    patch_locstrings(path, [(offset, FRENCH)], text_encoding="cp1252")
 
     assert read_gff(path, source_encoding="cp1252")["LocalizedName"]["Value"] == FRENCH
     # The legacy detection the hint exists to fix.

@@ -229,14 +229,34 @@ def test_constants_are_encoded_with_the_module_codec(tmp_path):
 
 
 def test_invalid_patches_fail_before_writing(tmp_path):
-    path = write_ncs(tmp_path, "enc.ncs", consts("Hi"), retn())
+    path = write_ncs(tmp_path, "enc.ncs", consts("Hi"), consti(1), retn())
     before = path.read_bytes()
     # Only the module code pages are writable, as for GFF strings.
     with pytest.raises(NCSPatchError, match="Unsupported module text encoding: 'utf-8'"):
         patch_ncs_string_replacements(path, [(8, "Hi", "Hello")], text_encoding="utf-8")
-    with pytest.raises(NCSPatchError, match="Duplicate replacement"):
-        patch_ncs_string_replacements(path, [(8, "Hi", "First"), (8, "Hi", "Second")])
+    for replacements, message in [
+        ([(8, "Hi", "First"), (8, "Hi", "Second")], "Duplicate replacement"),
+        ([(9, "Hi", "Hello")], "No instruction at offset 0x9 in enc.ncs"),
+        ([(14, "1", "2")], "Instruction at offset 0xe is not a string constant"),
+        ([(8, "Bye", "Hello")], "String mismatch at offset 0x8 in enc.ncs: expected 'Bye'"),
+        ([(8, "Hi", "x" * 70_000)], "Translated string too long \\(70000 bytes\\)"),
+    ]:
+        with pytest.raises(NCSPatchError, match=message):
+            patch_ncs_string_replacements(path, replacements)
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        (b"\x04", "need 2 bytes for opcode\\+type, have 1"),
+        (b"\x04\x05\x00", "CONSTS needs at least 4 bytes"),
+        (b"\x04\x05\x00\x09ab", "instruction \\(opcode 0x04\\) needs 13 bytes, have 6"),
+    ],
+)
+def test_truncated_instructions_are_rejected(body, message):
+    with pytest.raises(NCSParseError, match=message):
+        parse_ncs_bytes(NCS_HEADER + body)
 
 
 @pytest.mark.parametrize("old, new", [("Hi", "Hello there"), ("Hello there", "Hi"), ("Hi", "Yo")])

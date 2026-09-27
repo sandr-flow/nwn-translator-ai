@@ -28,52 +28,28 @@ _NAME_CONTEXTS = {
 
 
 def creature_traits(struct: Dict[str, Any]) -> str:
-    """Returns ``"<race>, <gender>"`` of a creature, omitting unknown values.
-
-    Args:
-        struct: Creature blueprint or instance struct.
-
-    Returns:
-        The known traits joined by ``", "`` (empty when none is known).
-    """
+    """Returns ``"<race>, <gender>"`` of a creature struct, omitting unknown values."""
     race = race_label(struct.get("Race", -1))
     gender = gender_label(struct.get("Gender", -1))
     return ", ".join(filter(None, [race, gender]))
 
 
 def name_fields(struct: Dict[str, Any]) -> Dict[str, str]:
-    """Returns the embedded first and last name of a creature.
-
-    Args:
-        struct: Creature blueprint or instance struct.
-
-    Returns:
-        ``{"FirstName": …, "LastName": …}``, empty strings for missing names.
-    """
+    """Returns ``{"FirstName": …, "LastName": …}`` of a creature struct, ``""`` when missing."""
     return {field: extract_local_string(struct.get(field, {})) or "" for field in NAME_FIELDS}
 
 
 def name_fields_suffix(fields: Dict[str, str]) -> str:
-    """Returns the context suffix that shows the model both name fields.
-
-    Args:
-        fields: Result of :func:`name_fields`.
-
-    Returns:
-        ``" NPC name fields: {json}"``.
-    """
+    """Returns ``" NPC name fields: {json}"``, the context suffix showing both names."""
     return " NPC name fields: " + json.dumps(fields, ensure_ascii=False)
 
 
 def creature_name_context(field_name: str, qualifier: str) -> str:
-    """Returns the prompt context of an NPC first or last name.
+    """Returns the context of an NPC ``FirstName`` or ``LastName``, without the name suffix.
 
     Args:
         field_name: ``"FirstName"`` or ``"LastName"``.
         qualifier: Parenthesised detail (traits, placement); omitted when empty.
-
-    Returns:
-        The context string, without the name-fields suffix.
     """
     label, instruction = _NAME_CONTEXTS[field_name]
     if qualifier:

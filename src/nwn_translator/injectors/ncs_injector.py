@@ -1,7 +1,4 @@
-"""NCS injector: patches translated string constants into compiled scripts (``.ncs``).
-
-Delegates the actual binary patching to :mod:`~nwn_translator.formats.ncs`.
-"""
+"""NCS injector: patches translated string constants into compiled scripts (``.ncs``)."""
 
 import logging
 from pathlib import Path
@@ -26,24 +23,22 @@ def inject_ncs(
 ) -> InjectedContent:
     """Replaces the translated literals of a script in one patch.
 
-    A concat chain is split back into its literals; a chain whose translation
-    cannot be split keeps its original text and is reported as a failure.
+    A concat chain is split back into its literals; a chain whose translation cannot be
+    split keeps its original text and is reported as a failure.
 
     Args:
         file_path: Script to patch.
-        items: Items extracted from the script (``offset`` or ``concat_parts``
-            in their metadata).
+        items: Items extracted from the script (``offset`` or ``concat_parts`` metadata).
         translations: Translated text by occurrence.
         content_type: Content type of the extraction, reported back.
         text_encoding: Code page of the written strings.
-        source_encoding: Code page used to decode the literals at extraction;
-            the patcher re-reads the file and compares with it.
+        source_encoding: Code page the literals were decoded with at extraction; the
+            patcher re-reads the file and compares with it.
 
     Returns:
-        The injection result. Its metadata carries ``error`` and
-        ``ncs_patch_failed`` when the patch or a concat split failed, and
-        ``concat_split_failed`` (item ids) when splits failed but the patch
-        of the other literals did not.
+        The injection result. Its metadata carries ``error`` and ``ncs_patch_failed`` when
+        the patch or a concat split failed, and ``concat_split_failed`` (item ids) when
+        splits failed but the patch of the other literals did not.
     """
     replacements: List[Tuple[int, str, str]] = []
     split_failed: List[str] = []
@@ -60,8 +55,8 @@ def inject_ncs(
                 file_path.name,
             )
             split_failed.append(str(item.item_id))
-            continue
-        replacements.extend(split)
+        else:
+            replacements.extend(split)
 
     metadata: Dict[str, Any] = {"type": content_type}
     if split_failed:
@@ -70,26 +65,18 @@ def inject_ncs(
             ncs_patch_failed=True,
             concat_split_failed=split_failed,
         )
-    if not replacements:
-        return InjectedContent(
-            source_file=file_path, modified=False, items_updated=0, metadata=metadata
-        )
-
-    try:
-        patched_count = patch_ncs_string_replacements(
-            file_path, replacements, text_encoding=text_encoding, source_encoding=source_encoding
-        )
-    except NCSPatchError as e:
-        logger.error("Failed to patch NCS file %s: %s", file_path.name, e)
-        return InjectedContent(
-            source_file=file_path,
-            modified=False,
-            items_updated=0,
-            metadata={"type": content_type, "error": str(e), "ncs_patch_failed": True},
-        )
+    patched_count = 0
+    if replacements:
+        try:
+            patched_count = patch_ncs_string_replacements(
+                file_path,
+                replacements,
+                text_encoding=text_encoding,
+                source_encoding=source_encoding,
+            )
+        except NCSPatchError as e:
+            logger.error("Failed to patch NCS file %s: %s", file_path.name, e)
+            metadata = {"type": content_type, "error": str(e), "ncs_patch_failed": True}
     return InjectedContent(
-        source_file=file_path,
-        modified=patched_count > 0,
-        items_updated=patched_count,
-        metadata=metadata,
+        file_path, modified=patched_count > 0, items_updated=patched_count, metadata=metadata
     )

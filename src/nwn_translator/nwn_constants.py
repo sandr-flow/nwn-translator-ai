@@ -1,14 +1,9 @@
-"""Shared NWN constant mappings for race, gender, and base item types.
+"""Labels of the standard rows of racialtypes.2da, gender.2da and baseitems.2da.
 
-NWN 2DA tables (racialtypes.2da, gender.2da, baseitems.2da) are extensible —
-module authors can add custom entries with IDs beyond the standard range.
-The lookup helpers return ``""`` for unknown IDs so callers can build clean
-context strings without special-casing.
+Modules may add custom rows beyond the standard range; the lookups return ``""``
+for them so callers can build context strings without special-casing.
 """
 
-# ---------------------------------------------------------------------------
-# racialtypes.2da — standard rows
-# ---------------------------------------------------------------------------
 _RACE_MAP = {
     0: "Dwarf",
     1: "Elf",
@@ -37,20 +32,9 @@ _RACE_MAP = {
     24: "Ooze",
 }
 
-# ---------------------------------------------------------------------------
-# gender.2da — standard rows
-# ---------------------------------------------------------------------------
-_GENDER_MAP = {
-    0: "Male",
-    1: "Female",
-    2: "Both",
-    3: "Other",
-    4: "None",
-}
+_GENDER_MAP = {0: "Male", 1: "Female", 2: "Both", 3: "Other", 4: "None"}
 
-# ---------------------------------------------------------------------------
-# baseitems.2da — standard rows (NWN 1.69 and NWN:EE)
-# ---------------------------------------------------------------------------
+# NWN 1.69 and NWN:EE.
 _BASE_ITEM_MAP = {
     0: "Shortsword",
     1: "Longsword",
@@ -128,36 +112,15 @@ _BASE_ITEM_MAP = {
 
 
 def race_label(race_id: int) -> str:
-    """Returns the racialtypes.2da label of a race.
-
-    Args:
-        race_id: ``Race`` field of a creature.
-
-    Returns:
-        The label, or ``""`` for unknown or custom rows.
-    """
+    """Returns the label of a creature's ``Race``, or ``""`` for unknown or custom rows."""
     return _RACE_MAP.get(race_id, "")
 
 
 def gender_label(gender_id: int) -> str:
-    """Returns the gender.2da label of a gender.
-
-    Args:
-        gender_id: ``Gender`` field of a creature.
-
-    Returns:
-        The label, or ``""`` for unknown or custom rows.
-    """
+    """Returns the label of a creature's ``Gender``, or ``""`` for unknown or custom rows."""
     return _GENDER_MAP.get(gender_id, "")
 
 
 def base_item_label(base_item_id: int) -> str:
-    """Returns the baseitems.2da label of an item type.
-
-    Args:
-        base_item_id: ``BaseItem`` field of an item.
-
-    Returns:
-        The label, or ``""`` for unknown or custom rows.
-    """
+    """Returns the label of an item's ``BaseItem``, or ``""`` for unknown or custom rows."""
     return _BASE_ITEM_MAP.get(base_item_id, "")

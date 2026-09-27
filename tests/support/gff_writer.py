@@ -1,6 +1,6 @@
 """GFF V3.2 serialiser for building test fixtures.
 
-Turns a dict shaped like the output of :func:`nwn_translator.formats.gff.gff_to_dict`
+Turns a dict shaped like the output of :func:`nwn_translator.formats.gff.parse_gff`
 back into a GFF binary; the translator itself only byte-patches fields. The
 56-byte header is padded to 160 bytes, followed by structs, fields, labels,
 field data, field indices and list indices. Strings are written as UTF-8.

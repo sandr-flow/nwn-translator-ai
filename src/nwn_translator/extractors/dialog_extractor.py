@@ -1,19 +1,9 @@
 """Extractor for dialogs (``.dlg``): flat node items and the conversation tree.
 
-NWN .dlg GFF structure:
-    Root fields:
-        StartingList  — list of starting entry indices (roots of conversation)
-        EntryList     — flat list of all NPC lines  (speaker set per entry)
-        ReplyList     — flat list of all player lines
-
-    Each entry in EntryList:
-        Text          — CExoLocString with the NPC text
-        Speaker       — tag of the speaker creature (empty = owner)
-        RepliesList   — list of reply link structs; each has an Index into ReplyList
-
-    Each entry in ReplyList:
-        Text          — CExoLocString with the player text
-        EntriesList   — list of entry link structs; each has an Index into EntryList
+``EntryList`` holds the NPC lines (``Text``, the ``Speaker`` tag, empty for the owner,
+and ``RepliesList`` links into ``ReplyList``); ``ReplyList`` holds the player lines
+(``Text`` and ``EntriesList`` links into ``EntryList``). Every link struct carries the
+``Index`` of its target; ``StartingList`` links the roots of the conversation.
 """
 
 import logging
@@ -34,15 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 def dialog_item_id(stem: str, is_entry: bool, index: object) -> str:
-    """Returns the item id of a dialog node.
+    """Returns ``{stem}:entry:{index}`` or ``{stem}:reply:{index}``, a dialog node's item id.
 
     Args:
         stem: Dialog resource name without extension.
         is_entry: ``True`` for an ``EntryList`` node, ``False`` for a ``ReplyList`` node.
         index: Position of the node in its list.
-
-    Returns:
-        ``{stem}:entry:{index}`` or ``{stem}:reply:{index}``.
     """
     return f"{stem}:{'entry' if is_entry else 'reply'}:{index}"
 

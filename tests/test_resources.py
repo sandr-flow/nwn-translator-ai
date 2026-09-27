@@ -25,12 +25,8 @@ from nwn_translator.pipeline.stages import (
     inject_translations_into_file,
     load_parsed_and_extracted,
 )
-from nwn_translator.resources import (
-    RESOURCE_KINDS,
-    TRANSLATABLE_TYPES,
-    load_gff,
-    load_ncs,
-)
+from nwn_translator.formats.gff import read_gff
+from nwn_translator.resources import RESOURCE_KINDS, TRANSLATABLE_TYPES, load_ncs
 from tests.support.ncs import action, consts, retn, write_ncs
 
 EXPECTED_EXTRACTORS = {
@@ -61,7 +57,7 @@ def test_each_extension_has_its_extractor_loader_and_injector(ext):
     if ext == ".ncs":
         assert (kind.load, kind.inject) == (load_ncs, inject_ncs)
     else:
-        assert (kind.load, kind.inject) == (load_gff, inject_gff)
+        assert (kind.load, kind.inject) == (read_gff, inject_gff)
 
 
 def _speech_script(tmp_path: Path) -> Path:

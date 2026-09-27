@@ -10,13 +10,7 @@ from typing import Any, Dict, Optional, Type
 
 from ..config import TranslationConfig
 from ..telemetry import RunMetricsRecorder
-from .base import (
-    ProviderError,
-    RateLimitError,
-    TranslationItem,
-    TranslationProvider,
-    TranslationResult,
-)
+from .base import TranslationItem, TranslationProvider, TranslationResult
 from .openrouter_provider import OpenRouterProvider
 from .polza_provider import PolzaProvider
 
@@ -30,39 +24,21 @@ _PROVIDER_BY_PREFIX: Dict[str, Type[OpenRouterProvider]] = {
 def _provider_class_for_key(api_key: Optional[str]) -> Type[OpenRouterProvider]:
     """Picks the provider class for *api_key*; OpenRouter when no prefix matches."""
     key = (api_key or "").strip()
-    for prefix, cls in _PROVIDER_BY_PREFIX.items():
-        if key.startswith(prefix):
-            return cls
-    return OpenRouterProvider
+    matches = (cls for prefix, cls in _PROVIDER_BY_PREFIX.items() if key.startswith(prefix))
+    return next(matches, OpenRouterProvider)
 
 
 def detect_provider_from_key(api_key: Optional[str]) -> str:
-    """Returns the provider name inferred from an API key, without network access.
-
-    Args:
-        api_key: API key or ``None``.
-
-    Returns:
-        ``""`` for a blank key, otherwise ``"openrouter"`` or ``"polza"``.
-    """
-    if not (api_key or "").strip():
-        return ""
-    return _provider_class_for_key(api_key).PROVIDER_NAME
+    """Returns ``"openrouter"`` or ``"polza"`` for an API key, ``""`` for a blank one."""
+    return _provider_class_for_key(api_key).PROVIDER_NAME if (api_key or "").strip() else ""
 
 
 def provider_label(name: str) -> str:
-    """Returns the human-readable label of a provider name.
-
-    Args:
-        name: Provider name as returned by :func:`detect_provider_from_key`.
-
-    Returns:
-        ``"OpenRouter"``, ``"POLZA.AI"``, or ``""`` for an unknown name.
-    """
-    for cls in _PROVIDER_BY_PREFIX.values():
-        if cls.PROVIDER_NAME == name:
-            return cls.PROVIDER_LABEL
-    return ""
+    """Returns ``"OpenRouter"`` or ``"POLZA.AI"`` for a provider name, ``""`` if unknown."""
+    labels = (
+        cls.PROVIDER_LABEL for cls in _PROVIDER_BY_PREFIX.values() if cls.PROVIDER_NAME == name
+    )
+    return next(labels, "")
 
 
 def create_provider(api_key: str, model: Optional[str] = None, **kwargs: Any) -> OpenRouterProvider:
@@ -71,8 +47,7 @@ def create_provider(api_key: str, model: Optional[str] = None, **kwargs: Any) ->
     Args:
         api_key: OpenRouter (``sk-or-...``) or POLZA.AI (``pza...``) API key.
         model: Model slug; the provider's default when ``None``.
-        **kwargs: Keyword arguments of :class:`OpenRouterProvider`
-            (``player_gender``, ``reasoning_effort``, ``metrics_recorder``).
+        **kwargs: Keyword arguments of :class:`OpenRouterProvider`.
 
     Returns:
         An :class:`OpenRouterProvider` or :class:`PolzaProvider`.
@@ -99,18 +74,3 @@ def create_provider_for_config(
         reasoning_effort=config.reasoning_effort,
         metrics_recorder=metrics_recorder,
     )
-
-
-__all__ = [
-    "TranslationProvider",
-    "TranslationItem",
-    "TranslationResult",
-    "ProviderError",
-    "RateLimitError",
-    "OpenRouterProvider",
-    "PolzaProvider",
-    "create_provider",
-    "create_provider_for_config",
-    "detect_provider_from_key",
-    "provider_label",
-]

@@ -12,6 +12,7 @@ chains (store via CPDOWNSP, then a later ADD). Those are not merged.
 
 from __future__ import annotations
 
+import itertools
 import re
 import struct
 from dataclasses import dataclass
@@ -25,11 +26,9 @@ from ..formats.ncs import (
     OP_CPTOPSP,
     OP_CPTOPBP,
     OP_RSADD,
+    TYPE_STRING_STRING,
 )
 from .ncs_context import ACTION_SIGNATURES
-
-# ADD type qualifier for string+string (community / Torlack SS).
-TYPE_ADD_STRING_STRING = 0x23
 
 _VAR_RE = re.compile(r"<VAR(\d+)>")
 
@@ -77,27 +76,19 @@ class ConcatChain:
     last_instr_index: int
 
     def lits(self) -> List[ConcatLit]:
-        """Returns the CONSTS operands.
-
-        Returns:
-            The literals in left-to-right order.
-        """
+        """Returns the CONSTS operands, left to right."""
         return [p for p in self.parts if isinstance(p, ConcatLit)]
 
     def to_metadata(self) -> List[Dict[str, Any]]:
-        """Serializes the parts for ``TranslatableItem.metadata['concat_parts']``.
+        """Serializes the parts for ``metadata["concat_parts"]``.
 
         Returns:
-            ``{"offset", "text"}`` per literal and ``{"var"}`` per runtime slot,
-            in source order.
+            ``{"offset", "text"}`` per literal and ``{"var"}`` per runtime slot, in source order.
         """
-        out: List[Dict[str, Any]] = []
-        for part in self.parts:
-            if isinstance(part, ConcatLit):
-                out.append({"offset": part.offset, "text": part.text})
-            else:
-                out.append({"var": part.index})
-        return out
+        return [
+            {"offset": p.offset, "text": p.text} if isinstance(p, ConcatLit) else {"var": p.index}
+            for p in self.parts
+        ]
 
 
 @dataclass
@@ -126,13 +117,7 @@ def merged_text(chain: ConcatChain) -> str:
     Returns:
         The literals joined, with ``<VAR1>``, ``<VAR2>``, … for the runtime slots.
     """
-    bits: List[str] = []
-    for part in chain.parts:
-        if isinstance(part, ConcatLit):
-            bits.append(part.text)
-        else:
-            bits.append(f"<VAR{part.index}>")
-    return "".join(bits)
+    return "".join(p.text if isinstance(p, ConcatLit) else f"<VAR{p.index}>" for p in chain.parts)
 
 
 def parts_from_metadata(raw: Sequence[Mapping[str, Any]]) -> List[ConcatPart]:
@@ -144,38 +129,24 @@ def parts_from_metadata(raw: Sequence[Mapping[str, Any]]) -> List[ConcatPart]:
     Returns:
         The parts in source order.
     """
-    parts: List[ConcatPart] = []
-    for cell in raw:
-        if "var" in cell:
-            parts.append(ConcatVar(int(cell["var"])))
-        else:
-            parts.append(ConcatLit(int(cell["offset"]), str(cell.get("text", ""))))
-    return parts
+    return [
+        (
+            ConcatVar(int(cell["var"]))
+            if "var" in cell
+            else ConcatLit(int(cell["offset"]), str(cell.get("text", "")))
+        )
+        for cell in raw
+    ]
 
 
 def _finalize(parts: Sequence[Union[ConcatLit, object]], end_index: int) -> Optional[ConcatChain]:
     """Numbers the runtime slots of *parts*; ``None`` unless a literal and 2+ parts."""
-    numbered: List[ConcatPart] = []
-    var_n = 0
-    has_lit = False
-    for part in parts:
-        if isinstance(part, ConcatLit):
-            numbered.append(part)
-            has_lit = True
-        else:
-            var_n += 1
-            numbered.append(ConcatVar(var_n))
-    if not has_lit or len(numbered) < 2:
+    slots = itertools.count(1)
+    numbered = tuple(p if isinstance(p, ConcatLit) else ConcatVar(next(slots)) for p in parts)
+    lits = [p for p in numbered if isinstance(p, ConcatLit)]
+    if not lits or len(numbered) < 2:
         return None
-    first_offset = next(p.offset for p in numbered if isinstance(p, ConcatLit))
-    return ConcatChain(parts=tuple(numbered), first_offset=first_offset, last_instr_index=end_index)
-
-
-def _flatten(node: Union[_Cat, ConcatLit, object]) -> List[Union[ConcatLit, object]]:
-    """Returns the parts a stack node contributes to an enclosing concat."""
-    if isinstance(node, _Cat):
-        return list(node.parts)
-    return [node]
+    return ConcatChain(numbered, lits[0].offset, end_index)
 
 
 def find_concat_chains(ncs: NCSFile) -> Dict[int, ConcatChain]:
@@ -227,10 +198,15 @@ def find_concat_chains(ncs: NCSFile) -> Dict[int, ConcatChain]:
             stack.extend([_VAR] * (size // 4))
             continue
 
-        if instr.opcode == OP_ADD and instr.type_byte == TYPE_ADD_STRING_STRING:
+        if instr.opcode == OP_ADD and instr.type_byte == TYPE_STRING_STRING:
             right = stack.pop() if stack else _VAR
             left = stack.pop() if stack else _VAR
-            stack.append(_Cat(_flatten(left) + _flatten(right), idx))
+            parts = [
+                part
+                for node in (left, right)
+                for part in (node.parts if isinstance(node, _Cat) else [node])
+            ]
+            stack.append(_Cat(parts, idx))
             continue
 
         if instr.opcode == OP_ACTION:
@@ -281,38 +257,22 @@ def split_concat_translation(
         literals received non-empty text.
     """
     expected_vars = [p.index for p in parts if isinstance(p, ConcatVar)]
-    found = list(_VAR_RE.finditer(translated))
-    found_idxs = [int(m.group(1)) for m in found]
-    if found_idxs != expected_vars:
+    if [int(m.group(1)) for m in _VAR_RE.finditer(translated)] != expected_vars:
         return None
-
-    segs: List[str] = []
-    pos = 0
-    for match in found:
-        segs.append(translated[pos : match.start()])
-        pos = match.end()
-    segs.append(translated[pos:])
-
-    groups: List[List[ConcatLit]] = []
-    current: List[ConcatLit] = []
+    # The pattern's group puts each slot number between two segments.
+    segments = _VAR_RE.split(translated)[::2]
+    groups: List[List[ConcatLit]] = [[]]
     for part in parts:
         if isinstance(part, ConcatVar):
-            groups.append(current)
-            current = []
+            groups.append([])
         else:
-            current.append(part)
-    groups.append(current)
-
-    if len(segs) != len(groups):
-        return None
-
+            groups[-1].append(part)
     replacements: List[Tuple[int, str, str]] = []
-    for segment, lits in zip(segs, groups):
+    for segment, lits in zip(segments, groups):
         if not lits:
-            if segment != "":
+            if segment:
                 return None
             continue
         replacements.append((lits[0].offset, lits[0].text, segment))
-        for lit in lits[1:]:
-            replacements.append((lit.offset, lit.text, ""))
+        replacements.extend((lit.offset, lit.text, "") for lit in lits[1:])
     return replacements

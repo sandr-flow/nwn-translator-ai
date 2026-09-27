@@ -30,9 +30,6 @@ def item_description_context(field_name: str, base_item: str, name: str) -> str:
         field_name: ``"Description"`` or ``"DescIdentified"``.
         base_item: Base item label (empty when unknown).
         name: Item name (empty when the item has none).
-
-    Returns:
-        The context string.
     """
     typed_label, generic_label = _DESCRIPTION_LABELS[field_name]
     if base_item and name:

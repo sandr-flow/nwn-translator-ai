@@ -153,12 +153,5 @@ def serialize_batch_payload(items: List[TranslationItem]) -> str:
 
 
 def batch_payload_chars(items: List[TranslationItem]) -> int:
-    """Measures the serialized batch payload (a size budget proxy, not a token count).
-
-    Args:
-        items: Batch items.
-
-    Returns:
-        Length of :func:`serialize_batch_payload`.
-    """
+    """Returns the length of :func:`serialize_batch_payload`, a size budget proxy."""
     return len(serialize_batch_payload(items))

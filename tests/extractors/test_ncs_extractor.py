@@ -4,19 +4,14 @@ import struct
 
 import pytest
 
-from nwn_translator.extractors.ncs_context import (
-    ACTION_SIGNATURES,
-    PLAYER_FACING_ACTIONS,
-    TYPE_STRING_STRING,
-)
+from nwn_translator.extractors.ncs_context import ACTION_SIGNATURES, PLAYER_FACING_ACTIONS
 from nwn_translator.extractors.ncs_extractor import (
-    _contains_code_identifiers,
     _is_definitely_not_translatable,
     _is_likely_translatable,
     ncs_hard_veto_reason,
 )
 from nwn_translator.extractors.nss_index import classify_engine_arg
-from nwn_translator.formats.ncs import OP_EQUAL
+from nwn_translator.formats.ncs import OP_EQUAL, TYPE_STRING_STRING
 from tests.support.ncs import action, consti, consto, consts, extract_script, movsp, retn
 
 #: Any veto reason.
@@ -133,7 +128,7 @@ def test_likely_translatable(text, likely):
     ],
 )
 def test_code_identifiers(text, found):
-    assert _contains_code_identifiers(text) is found
+    assert (ncs_hard_veto_reason(text, is_concat=True) == "code_identifier") is found
 
 
 @pytest.mark.parametrize(

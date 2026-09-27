@@ -15,8 +15,8 @@ class InjectedContent:
         source_file: Patched resource.
         modified: Whether the file was changed.
         items_updated: Number of patched occurrences.
-        metadata: ``{"type": content type}`` plus failure details; it is
-            recorded in the ``injection_result`` translation-log event.
+        metadata: ``{"type": content type}`` plus failure details; recorded in the
+            ``injection_result`` translation-log event.
     """
 
     source_file: Path
@@ -46,8 +46,8 @@ class Injector(Protocol):
             translations: Translated text by occurrence.
             content_type: Content type of the extraction, reported back.
             text_encoding: Code page of the written strings.
-            source_encoding: Code page used to decode the file at extraction
-                (``None`` when detected).
+            source_encoding: Code page the file was decoded with at extraction (``None``
+                when detected).
 
         Returns:
             The injection result.
@@ -57,15 +57,11 @@ class Injector(Protocol):
 def changed_translations(
     items: Sequence[TranslatableItem], translations: Translations
 ) -> Iterator[Tuple[TranslatableItem, str]]:
-    """Yields ``(item, translation)`` for items whose translation changes the text.
+    """Yields ``(item, translation)``, in *items* order, where the translation changes the text.
 
     Args:
         items: Extracted items, in extraction order.
         translations: Translated text by occurrence.
-
-    Yields:
-        ``(item, translation)`` for each item whose translation differs from
-        its source text, in *items* order.
     """
     for item in items:
         translated = translations.get(item.key)

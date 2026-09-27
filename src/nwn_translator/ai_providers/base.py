@@ -16,16 +16,11 @@ class RateLimitError(ProviderError):
     """Rate limit or in-flight budget exceeded (HTTP 429 / 402).
 
     Attributes:
-        retry_after_seconds: The gateway's ``Retry-After`` hint in seconds, if any;
-            the retry policy waits at least this long.
+        retry_after_seconds: The gateway's ``Retry-After`` hint in seconds, if any; the
+            retry policy waits at least this long.
     """
 
-    def __init__(
-        self,
-        message: str = "",
-        *,
-        retry_after_seconds: Optional[float] = None,
-    ) -> None:
+    def __init__(self, message: str = "", *, retry_after_seconds: Optional[float] = None):
         """Creates the error.
 
         Args:
@@ -74,10 +69,9 @@ class TranslationResult:
 class TranslationProvider(Protocol):
     """The model operations the pipeline uses.
 
-    The five task methods keep their names and keyword arguments: the translation
-    log records ``method.__name__`` and the call arguments of every request. The
-    errors each method raises, and the details of its prompts, are documented on
-    the implementation,
+    The five task methods keep their names and keyword arguments: the translation log
+    records ``method.__name__`` and the call arguments of every request. The errors each
+    method raises, and the details of its prompts, are documented on the implementation,
     :class:`~nwn_translator.ai_providers.openrouter_provider.OpenRouterProvider`.
 
     Attributes:
@@ -87,11 +81,7 @@ class TranslationProvider(Protocol):
     model: str
 
     def get_provider_name(self) -> str:
-        """Returns the short provider id recorded in metrics.
-
-        Returns:
-            ``"openrouter"`` or ``"polza"``.
-        """
+        """Returns the short provider id recorded in metrics."""
 
     def make_system_message_content(self, stable: str, variable: str = "") -> SystemContent:
         """Builds ``messages[0].content`` from a cacheable and a per-call prompt half.
@@ -121,8 +111,7 @@ class TranslationProvider(Protocol):
             target_lang: Target language name.
             context: Context hint for the model.
             glossary_block: GLOSSARY section of the prompt.
-            content_profile: Prompt profile (``default``, ``short_label``,
-                ``script_message``).
+            content_profile: Prompt profile (``default``, ``short_label``, ``script_message``).
 
         Returns:
             The translation, or a failed result when no reply parses.

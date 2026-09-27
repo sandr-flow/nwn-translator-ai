@@ -7,6 +7,7 @@ import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, List
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
+@dataclass
 class UploadLimitMiddleware:
     """ASGI middleware that caps the request body of the upload route while it streams in.
 
@@ -41,17 +43,9 @@ class UploadLimitMiddleware:
         max_bytes: Largest accepted body.
     """
 
-    def __init__(self, app: ASGIApp, path: str, max_bytes: int) -> None:
-        """Wraps *app*, limiting bodies sent to *path* to *max_bytes*.
-
-        Args:
-            app: ASGI application to wrap.
-            path: Request path the limit applies to.
-            max_bytes: Largest accepted body.
-        """
-        self.app = app
-        self.path = path
-        self.max_bytes = max_bytes
+    app: ASGIApp
+    path: str
+    max_bytes: int
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Handles one ASGI request, limiting the body of the upload path.

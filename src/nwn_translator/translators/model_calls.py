@@ -181,7 +181,9 @@ class ModelCaller:
     def plain_request(self, work: WorkItem) -> SingleRequest:
         """Returns the regular request of an item: its context, terms and profile."""
         return SingleRequest(
-            work.item.context, self.terminology([work.sanitized, work.item.context]), work.profile
+            context=work.item.context,
+            glossary_block=self.terminology([work.sanitized, work.item.context]),
+            content_profile=work.profile,
         )
 
     def ncs_fallback_request(self, work: WorkItem) -> SingleRequest:
@@ -200,7 +202,9 @@ class ModelCaller:
             + (item.context or "")
         )
         return SingleRequest(
-            context, self.terminology([item.text, item.context]), CONTENT_PROFILE_SCRIPT_MESSAGE
+            context=context,
+            glossary_block=self.terminology([item.text, item.context]),
+            content_profile=CONTENT_PROFILE_SCRIPT_MESSAGE,
         )
 
     def token_retry_request(self, work: WorkItem, attempt: int) -> SingleRequest:

@@ -216,7 +216,12 @@ def _compare(expected: List[str], actual: List[str]) -> TokenMismatchReport:
         mismatch_type = "order_mismatch"
     else:
         mismatch_type = "value_mismatch"
-    return TokenMismatchReport(expected == actual, mismatch_type, expected, actual)
+    return TokenMismatchReport(
+        is_exact_match=expected == actual,
+        mismatch_type=mismatch_type,
+        expected_sequence=expected,
+        actual_sequence=actual,
+    )
 
 
 def _strip_placeholder_noise(text: str) -> str:
@@ -343,13 +348,20 @@ class TokenHandler:
         if foreign_script and report.is_exact_match:
             report = replace(report, is_exact_match=False, mismatch_type="foreign_script")
         if report.is_exact_match or not allow_cleanup:
-            return TokenProcessingResult(restored, report.is_exact_match, False, report)
+            return TokenProcessingResult(
+                final_text=restored,
+                exact_valid=report.is_exact_match,
+                used_cleanup=False,
+                mismatch_report=report,
+            )
         cleaned = restored
         if report.mismatch_type != "foreign_script":
             cleaned = self.cleanup_mismatched_artifacts(restored)
         if foreign_script:
             cleaned = FOREIGN_SCRIPT_PATTERN.sub("", cleaned)
-        return TokenProcessingResult(cleaned, False, True, report)
+        return TokenProcessingResult(
+            final_text=cleaned, exact_valid=False, used_cleanup=True, mismatch_report=report
+        )
 
     def cleanup_mismatched_artifacts(self, restored: str) -> str:
         """Keeps the source's artifacts in order and drops every other token-like fragment.

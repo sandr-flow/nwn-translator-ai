@@ -646,7 +646,9 @@ class ContextualTranslationManager:
                 dialog.handlers[key].get_expected_artifact_sequence(),
                 previous.report if previous else None,
             )
-            request = SingleRequest(context, glossary_block, None)
+            request = SingleRequest(
+                context=context, glossary_block=glossary_block, content_profile=None
+            )
             try:
                 result = run_async(
                     send_single(

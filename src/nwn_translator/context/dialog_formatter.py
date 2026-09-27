@@ -1,10 +1,9 @@
 """Dialog trees rendered as the numbered scripts sent to the model.
 
 A node is addressed by its key: ``E{i}`` for NPC entry *i* and ``R{i}`` for
-player reply *i*, where *i* is the node's index in ``EntryList`` /
-``ReplyList``. Each node becomes a block with its key, speaker, text between
-``<<<`` and ``>>>`` and the keys it leads to; the model answers with a JSON
-object keyed the same way.
+player reply *i* (the node's index in ``EntryList`` / ``ReplyList``). Each node
+becomes a block with its key, speaker, text between ``<<<`` and ``>>>`` and the
+keys it leads to; the model answers with a JSON object keyed the same way.
 """
 
 from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple
@@ -16,25 +15,25 @@ _CONTEXT_PREVIEW_CHARS = 600
 
 
 def node_key(node: DialogNode) -> str:
-    """Returns the script key of a node: ``E3`` for entry 3, ``R0`` for reply 0.
+    """Returns the script key of a node.
 
     Args:
         node: A dialog node.
 
     Returns:
-        The key.
+        ``E3`` for entry 3, ``R0`` for reply 0.
     """
     return f"{'E' if node.is_entry else 'R'}{node.node_id}"
 
 
 def speaker_label(node: DialogNode) -> str:
-    """Returns the speaker shown for a node: its tag, else ``NPC`` or ``Player``.
+    """Returns the speaker shown for a node.
 
     Args:
         node: A dialog node.
 
     Returns:
-        The label.
+        Its speaker tag, else ``NPC`` or ``Player``.
     """
     return node.speaker or ("NPC" if node.is_entry else "Player")
 
@@ -42,10 +41,9 @@ def speaker_label(node: DialogNode) -> str:
 def iter_nodes(tree: List[DialogNode]) -> Iterator[Tuple[str, DialogNode]]:
     """Walks a dialog tree depth-first in pre-order, yielding each node key once.
 
-    The first occurrence of a key is yielded and its subtree walked; later
-    occurrences (a reply linked from several entries) are skipped with their
-    subtrees. The walk is iterative, so chains longer than the recursion limit
-    work.
+    A later occurrence of a key (a reply linked from several entries) is skipped
+    with its subtree. The walk is iterative, so chains longer than the recursion
+    limit work.
 
     Args:
         tree: Root nodes (from ``DialogExtractor.build_dialog_tree``).
@@ -60,11 +58,10 @@ def iter_nodes(tree: List[DialogNode]) -> Iterator[Tuple[str, DialogNode]]:
     while stack:
         node = stack.pop()
         key = node_key(node)
-        if key in seen:
-            continue
-        seen.add(key)
-        yield key, node
-        stack.extend(reversed(node.replies))
+        if key not in seen:
+            seen.add(key)
+            yield key, node
+            stack.extend(reversed(node.replies))
 
 
 def _render_blocks(
@@ -99,13 +96,13 @@ def format_dialog_tree(
 ) -> str:
     """Renders every node of a dialog tree, in :func:`iter_nodes` order.
 
-    Nodes without text are rendered too (``<<<>>>``) so that every routing
-    hint points at a block.
+    Nodes without text are rendered too (``<<<>>>``), so every routing hint
+    points at a block.
 
     Args:
         tree: Root nodes (from ``DialogExtractor.build_dialog_tree``).
-        text_overrides: Key to text used instead of ``node.text`` (the
-            sanitized texts, so the nodes themselves stay untouched).
+        text_overrides: Key to text used instead of ``node.text`` (the sanitized
+            texts, so the nodes themselves stay untouched).
 
     Returns:
         The script; empty for an empty tree.
@@ -120,10 +117,9 @@ def format_nodes(
 ) -> str:
     """Renders selected nodes, followed by their neighbours as context only.
 
-    The neighbours are the selected nodes' children and parents that are not
-    selected themselves: children in block order first, then parents in
-    *node_map* order. They are listed after a header telling the model not to
-    translate them, with their text cut to 600 characters.
+    The neighbours are the unselected children (in block order) and parents (in
+    *node_map* order) of the selected nodes, listed after a header telling the
+    model not to translate them, with their text cut to 600 characters.
 
     Args:
         keys: Keys of the nodes to translate, in output order.
@@ -147,10 +143,10 @@ def format_nodes(
             neighbours[key] = node
     if neighbours:
         lines.append("Adjacent nodes (context only; do not return translations for these IDs):")
-        for key, node in neighbours.items():
-            text = overrides.get(key, node.text or "")
-            preview = text[:_CONTEXT_PREVIEW_CHARS]
-            if len(text) > _CONTEXT_PREVIEW_CHARS:
-                preview += "…"
-            lines.append(f"Context {key} ({speaker_label(node)}): {preview}")
+    for key, node in neighbours.items():
+        text = overrides.get(key, node.text or "")
+        preview = text[:_CONTEXT_PREVIEW_CHARS] + (
+            "…" if len(text) > _CONTEXT_PREVIEW_CHARS else ""
+        )
+        lines.append(f"Context {key} ({speaker_label(node)}): {preview}")
     return "\n".join(lines).strip()

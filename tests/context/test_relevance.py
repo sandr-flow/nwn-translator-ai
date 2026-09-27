@@ -1,8 +1,11 @@
 """The token-based name matcher that selects relevant context for a batch."""
 
+import itertools
+
 import pytest
 
 from nwn_translator.context.relevance import (
+    SourceTokenIndex,
     _damerau_levenshtein_le_1,
     is_relevant,
     tokenize,
@@ -52,6 +55,31 @@ def test_damerau_levenshtein_distance_at_most_one(a, b, expected):
     assert _damerau_levenshtein_le_1(a, b) is expected
 
 
+def _one_edit_away(word: str, alphabet: str) -> set:
+    """Every string at most one deletion, insertion, substitution or adjacent swap from *word*."""
+    splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
+    return {
+        word,
+        *(left + right[1:] for left, right in splits if right),
+        *(left + right[1] + right[0] + right[2:] for left, right in splits if len(right) > 1),
+        *(left + char + right[1:] for left, right in splits if right for char in alphabet),
+        *(left + char + right for left, right in splits for char in alphabet),
+    }
+
+
+def test_damerau_levenshtein_matches_the_edit_enumeration():
+    alphabet = "abc"
+    words = [""] + [
+        "".join(chars)
+        for size in (1, 2, 3, 4)
+        for chars in itertools.product(alphabet, repeat=size)
+    ]
+    for a in words:
+        near = _one_edit_away(a, alphabet)
+        for b in words:
+            assert _damerau_levenshtein_le_1(a, b) is (b in near), (a, b)
+
+
 @pytest.mark.parametrize(
     "entity, text, relevant",
     [
@@ -75,8 +103,8 @@ def test_damerau_levenshtein_distance_at_most_one(a, b, expected):
     ],
 )
 def test_is_relevant(entity, text, relevant):
-    assert is_relevant(entity, tokenize(text)) is relevant
+    assert is_relevant(entity, SourceTokenIndex(tokenize(text))) is relevant
 
 
 def test_nothing_is_relevant_to_an_empty_corpus():
-    assert not is_relevant("Anything", set())
+    assert not is_relevant("Anything", SourceTokenIndex(set()))

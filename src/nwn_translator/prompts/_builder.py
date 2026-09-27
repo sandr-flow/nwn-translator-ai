@@ -1,44 +1,16 @@
 """Translation and dialog prompts, and the rule fragments they share.
 
-The translation rules common to line-by-line, batch and contextual dialog
-prompts live here once. Few-shot examples come from :mod:`.examples`, so the
-demonstrations match the target language.
+The rules common to line-by-line, batch and contextual dialog prompts live here
+once; the few-shot examples come from :mod:`.examples`, so the demonstrations
+match the target language.
 """
 
 from __future__ import annotations
 
 import json
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 from .examples import get_examples
-
-
-def _nickname_examples(target_lang: str) -> List[Tuple[str, str, str, str]]:
-    """Returns the few-shot nickname tuples ``(english, good, bad_translit, bad_numeral)``."""
-    raw = get_examples(target_lang).get("glossary_nicknames")
-    if not raw:
-        raw = get_examples("english")["glossary_nicknames"]
-    return [(str(a), str(b), str(c), str(d)) for a, b, c, d in raw]
-
-
-def format_nickname_examples(target_lang: str, *, indent: str = "      ") -> str:
-    """Renders the nickname few-shot lines shared by translation and glossary prompts.
-
-    Args:
-        target_lang: Target language; languages without nickname examples use
-            the English ones.
-        indent: Prefix of every line.
-
-    Returns:
-        One ``- "english" -> "good" (GOOD) — NOT ...`` line per example.
-    """
-    lines = [
-        f'{indent}- "{eng}" -> "{good}" (GOOD) \u2014 NOT "{bad_t}" '
-        f'(transliteration) \u2014 NOT "{bad_n}" (numeral calque of "-one")'
-        for eng, good, bad_t, bad_n in _nickname_examples(target_lang)
-    ]
-    return "\n".join(lines)
-
 
 #: Content profiles of :func:`build_translation_system_prompt_parts`: ``default`` (full
 #: rules), ``short_label`` (names and labels: no speech-style or player-gender rules, a
@@ -46,15 +18,27 @@ def format_nickname_examples(target_lang: str, *, indent: str = "      ") -> str
 CONTENT_PROFILE_DEFAULT = "default"
 CONTENT_PROFILE_SHORT_LABEL = "short_label"
 CONTENT_PROFILE_SCRIPT_MESSAGE = "script_message"
-_VALID_CONTENT_PROFILES = frozenset(
-    {CONTENT_PROFILE_DEFAULT, CONTENT_PROFILE_SHORT_LABEL, CONTENT_PROFILE_SCRIPT_MESSAGE}
-)
 
-# ---------------------------------------------------------------------------
-# Static glossary-usage rules (always included in STABLE prefix so providers
-# can prefix-cache the prompt; the actual entries live in the VARIABLE suffix).
-# ---------------------------------------------------------------------------
 
+def format_nickname_examples(target_lang: str, *, indent: str = "      ") -> str:
+    """Renders the nickname few-shot lines shared by translation and glossary prompts.
+
+    Args:
+        target_lang: Target language.
+        indent: Prefix of every line.
+
+    Returns:
+        One ``- "english" -> "good" (GOOD) — NOT ...`` line per example.
+    """
+    return "\n".join(
+        f'{indent}- "{eng}" -> "{good}" (GOOD) \u2014 NOT "{bad_t}" '
+        f'(transliteration) \u2014 NOT "{bad_n}" (numeral calque of "-one")'
+        for eng, good, bad_t, bad_n in get_examples(target_lang)["glossary_nicknames"]
+    )
+
+
+#: How to use a glossary: the rules stay in the cached stable prefix, the entries
+#: come in the variable suffix.
 _GLOSSARY_RULE_BODY = (
     "GLOSSARY USAGE \u2014 if a GLOSSARY section follows the rules, use it "
     "as a consistency reference, NOT as a substitution table:\n"
@@ -80,9 +64,6 @@ _GLOSSARY_RULE_BODY = (
     "as forms of address MUST be translated consistently across all lines.\n"
 )
 
-_GLOSSARY_RULE_TRANSLATION_DEFAULT = f"7. {_GLOSSARY_RULE_BODY}"
-_GLOSSARY_RULE_TRANSLATION_SHORT = f"6. {_GLOSSARY_RULE_BODY}"
-
 _GLOSSARY_RULE_DIALOG = (
     "5. GLOSSARY USAGE (if a GLOSSARY section follows the rules) \u2014 the "
     "glossary is a consistency reference, NOT a substitution table:\n"
@@ -103,27 +84,16 @@ _GLOSSARY_RULE_DIALOG = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Fragment builders (internal)
-# ---------------------------------------------------------------------------
-
-
 def _proper_names_rules(target_lang: str) -> str:
     """Returns the rules for translating vs. transliterating proper names."""
     ex = get_examples(target_lang)
-    descriptive = ex["proper_names"]
-    personal = ex["personal_names"]
-
     desc_lines = "\n".join(
         f'      - "{eng}" -> "{good}" (GOOD) \u2014 NOT "{bad}" (BAD)'
-        for eng, good, bad in descriptive
+        for eng, good, bad in ex["proper_names"]
     )
-    pers_lines = "\n".join(f'      - "{eng}" -> "{tr}"' for eng, tr in personal)
+    pers_lines = "\n".join(f'      - "{eng}" -> "{tr}"' for eng, tr in ex["personal_names"])
     nick_lines = format_nickname_examples(target_lang)
-
-    declension_note = ex.get("declension_note", "")
-    declension_block = f"   {declension_note}" if declension_note else ""
-
+    declension_block = f"   {ex['declension_note']}" if ex["declension_note"] else ""
     return (
         "PROPER NAMES \u2014 translating vs. transliterating:\n"
         "   a) Descriptive/meaningful names: TRANSLATE the meaning. "
@@ -153,17 +123,13 @@ def _proper_names_rules(target_lang: str) -> str:
 def _speech_style_rules(target_lang: str) -> str:
     """Returns the rules for preserving speech register (low-INT characters, etc.)."""
     ex = get_examples(target_lang)
-    lines = ex["speech_low_int"]
     pattern = ex["speech_low_int_pattern"]
-    counterexample = ex.get("speech_normal_counterexample", "")
-
     example_block = "\n".join(
         f'    - "{eng}" -> "{good}" (GOOD, broken) \u2014 NOT "{bad}" (BAD, normalized)'
-        for eng, good, bad in lines
+        for eng, good, bad in ex["speech_low_int"]
     )
-
+    counterexample = ex["speech_normal_counterexample"]
     counter_block = f"\n    {counterexample}" if counterexample else ""
-
     return (
         "PRESERVE SPEECH STYLE AND REGISTER.\n"
         "    Apply broken/primitive style ONLY when the ORIGINAL English itself is "
@@ -190,23 +156,17 @@ def _player_gender_rule(gender: str) -> str:
     )
 
 
-def _token_preservation_rule() -> str:
-    """Returns the rule that helper placeholders and inline NWN tags stay unchanged."""
-    return (
-        "TAG/TOKEN PRESERVATION (mandatory):\n"
-        "- Keep helper placeholders like __NWN_TOKEN_ABC__, __NWN_INLINE_XYZ__ unchanged \u2014 no "
-        "translating, reordering, duplicating, inventing, or deleting.\n"
-        "- Keep inline NWN markup tags exactly as in source, especially "
-        "<StartAction>, <StartCheck>, <StartHighlight>, and </Start>.\n"
-        "- Translate only normal prose and text inside square brackets; never "
-        "rename or rewrite the NWN tag names themselves.\n"
-        "- Never output helper placeholders like [[NWN_INLINE_*]] or [[NWN_TOKEN_*]].\n"
-    )
-
-
-# ---------------------------------------------------------------------------
-# RULES bodies of the translation content profiles
-# ---------------------------------------------------------------------------
+#: The rule that helper placeholders and inline NWN tags stay unchanged.
+_TOKEN_PRESERVATION_RULE = (
+    "TAG/TOKEN PRESERVATION (mandatory):\n"
+    "- Keep helper placeholders like __NWN_TOKEN_ABC__, __NWN_INLINE_XYZ__ unchanged \u2014 no "
+    "translating, reordering, duplicating, inventing, or deleting.\n"
+    "- Keep inline NWN markup tags exactly as in source, especially "
+    "<StartAction>, <StartCheck>, <StartHighlight>, and </Start>.\n"
+    "- Translate only normal prose and text inside square brackets; never "
+    "rename or rewrite the NWN tag names themselves.\n"
+    "- Never output helper placeholders like [[NWN_INLINE_*]] or [[NWN_TOKEN_*]].\n"
+)
 
 
 def _build_default_profile_rules(target_lang: str, gender: str) -> str:
@@ -218,7 +178,7 @@ def _build_default_profile_rules(target_lang: str, gender: str) -> str:
         "(Chancellery/\u041a\u0430\u043d\u0446\u0435\u043b\u044f\u0440\u0438\u0442). "
         "Adapt idioms to natural target-language equivalents.\n"
         "2. Preserve all formatting, line breaks, and special characters.\n"
-        f"3. {_token_preservation_rule()}"
+        f"3. {_TOKEN_PRESERVATION_RULE}"
         "4. The translated text MUST be grammatically correct, strictly preserving "
         "gender and case agreements. Exception: see rule 9 for intentionally "
         "broken speech.\n"
@@ -227,32 +187,29 @@ def _build_default_profile_rules(target_lang: str, gender: str) -> str:
         "the translation of the given text. Do NOT add the other part of the name "
         "from context \u2014 the game engine concatenates FirstName + LastName "
         "automatically.\n"
-        f"{_GLOSSARY_RULE_TRANSLATION_DEFAULT}"
+        f"7. {_GLOSSARY_RULE_BODY}"
         f"8. {_player_gender_rule(gender)}"
         f"9. {_speech_style_rules(target_lang)}"
     )
 
 
 def _build_short_label_profile_rules(target_lang: str) -> str:
-    """Returns the compact RULES body of name/label batches (no speech style or gender rule).
+    """Returns the compact RULES body of name and label batches.
 
-    Dropped vs. default profile:
-      * bureaucratic/idiom guidance (irrelevant for labels),
-      * broken-speech examples block (~500 tokens, never applies),
-      * player-gender agreement (names have no verbs to inflect),
-      * exception cross-reference to the broken-speech rule.
+    Labels need no idiom guidance, broken-speech examples or player-gender
+    agreement (names have no verbs to inflect).
     """
     return (
         "RULES:\n"
         "1. Preserve all formatting, line breaks, and special characters.\n"
-        f"2. {_token_preservation_rule()}"
+        f"2. {_TOKEN_PRESERVATION_RULE}"
         "3. The translated text MUST be grammatically correct.\n"
         f"4. {_proper_names_rules(target_lang)}"
         "5. When translating a creature's first name or last name field, output ONLY "
         "the translation of the given text. Do NOT add the other part of the name "
         "from context \u2014 the game engine concatenates FirstName + LastName "
         "automatically.\n"
-        f"{_GLOSSARY_RULE_TRANSLATION_SHORT}"
+        f"6. {_GLOSSARY_RULE_BODY}"
     )
 
 
@@ -264,7 +221,7 @@ def _build_script_message_profile_rules(target_lang: str, gender: str) -> str:
         "narrative person, formatting, line breaks, punctuation, and special characters. "
         "Use the supplied script context to understand connected speech or verse; "
         "translate only the requested string.\n"
-        f"2. {_token_preservation_rule()}"
+        f"2. {_TOKEN_PRESERVATION_RULE}"
         "3. Translate only natural-language text shown to the player. Never translate, "
         "rename, or rewrite identifiers, tags, resrefs, variables, script names, debug "
         "logs, constants, or code-like fragments.\n"
@@ -275,7 +232,7 @@ def _build_script_message_profile_rules(target_lang: str, gender: str) -> str:
         "in-game message.\n"
         f"6. {_proper_names_rules(target_lang)}"
         f"7. {_player_gender_rule(gender)}"
-        f"{_GLOSSARY_RULE_TRANSLATION_SHORT}"
+        f"6. {_GLOSSARY_RULE_BODY}"
     )
 
 
@@ -289,31 +246,24 @@ def build_translation_system_prompt_parts(
 ) -> Tuple[str, str]:
     """Returns ``(stable, variable)`` halves of the line-by-line / batch system prompt.
 
-    The *stable* half holds all rules, examples, and output instructions — it
-    is byte-identical across calls in a run and can be marked as the
-    cache-breakpoint boundary for providers that support prompt caching
-    (Anthropic, Gemini, Grok) and also qualifies as a stable prefix for
-    automatic caches (OpenAI, DeepSeek). The *variable* half holds the GLOSSARY
-    section (may include per-call race-term hints) and is the only portion that
-    changes between calls.
+    The *stable* half (rules, examples, output instructions) is byte-identical
+    across the calls of a run, so providers can cache it as a prefix; only the
+    *variable* half, the GLOSSARY section, changes between calls.
 
     Args:
         target_lang: Target language name; selects the few-shot examples.
         gender: Player character gender (``"male"`` / ``"female"``).
         glossary_block: GLOSSARY section for the variable half.
         content_profile: :data:`CONTENT_PROFILE_DEFAULT`,
-            :data:`CONTENT_PROFILE_SHORT_LABEL` or :data:`CONTENT_PROFILE_SCRIPT_MESSAGE`;
-            unknown values fall back to the default. It must depend only on the
-            content-type mix of the caller's batch, otherwise cache hits are lost.
+            :data:`CONTENT_PROFILE_SHORT_LABEL` or :data:`CONTENT_PROFILE_SCRIPT_MESSAGE`
+            (unknown values mean the default); it must depend only on the content
+            types of the batch, or cache hits are lost.
         batch_mode: Ask for a flat ID map instead of a single ``translation`` key
             and close the stable half with the BATCH MODE rules.
 
     Returns:
         ``(stable, variable)``; *variable* is the stripped glossary block or ``""``.
     """
-    if content_profile not in _VALID_CONTENT_PROFILES:
-        content_profile = CONTENT_PROFILE_DEFAULT
-
     if content_profile == CONTENT_PROFILE_SHORT_LABEL:
         rules_body = _build_short_label_profile_rules(target_lang)
     elif content_profile == CONTENT_PROFILE_SCRIPT_MESSAGE:
@@ -344,8 +294,7 @@ def build_translation_system_prompt_parts(
     )
     if batch_mode:
         stable += _BATCH_MODE_RULES
-    variable = glossary_block.strip() if glossary_block and glossary_block.strip() else ""
-    return stable, variable
+    return stable, (glossary_block or "").strip()
 
 
 #: Batch-only rules closing the stable half of the batch prompt, so every batch
@@ -421,9 +370,8 @@ def build_dialog_system_prompt_parts(
 ) -> Tuple[str, str]:
     """Returns ``(stable, variable)`` halves of the contextual dialog system prompt.
 
-    *world_block* is per batch (filtered to the entities the batch mentions)
-    and lives in the variable half alongside the glossary, so it does not
-    invalidate the cached stable prefix.
+    *world_block* is filtered per batch, so it goes into the variable half with
+    the glossary and leaves the cached stable prefix intact.
 
     Args:
         target_lang: Target language name; selects the few-shot examples.
@@ -435,9 +383,9 @@ def build_dialog_system_prompt_parts(
         ``(stable, variable)``; *variable* joins the non-empty stripped blocks
         with a blank line, or is ``""``.
     """
-    ex = get_examples(target_lang)
-    dialog_output = ex["dialog_output"]
-    output_example = json.dumps(dialog_output, ensure_ascii=False, indent=2)
+    output_example = json.dumps(
+        get_examples(target_lang)["dialog_output"], ensure_ascii=False, indent=2
+    )
 
     stable = (
         "You are an elite translator for the game Neverwinter Nights.\n"
@@ -472,36 +420,7 @@ def build_dialog_system_prompt_parts(
         f"{output_example}\n\n"
         "Do NOT include any markdown code blocks outside the JSON."
     )
-    variable_parts: List[str] = []
-    if world_block and world_block.strip():
-        variable_parts.append(world_block.strip())
-    if glossary_block and glossary_block.strip():
-        variable_parts.append(glossary_block.strip())
-    variable = "\n\n".join(variable_parts)
-    return stable, variable
-
-
-def build_dialog_system_prompt(
-    target_lang: str,
-    gender: str,
-    world_block: str,
-    glossary_block: str = "",
-) -> str:
-    """Builds the contextual dialog system prompt as one string.
-
-    Args:
-        target_lang: Target language name.
-        gender: Player character gender.
-        world_block: WORLD CONTEXT block of the batch.
-        glossary_block: GLOSSARY block of the batch.
-
-    Returns:
-        The stable half, followed by the variable half after a blank line
-        when there is one.
-    """
-    stable, variable = build_dialog_system_prompt_parts(
-        target_lang, gender, world_block, glossary_block
+    variable = "\n\n".join(
+        block.strip() for block in (world_block, glossary_block) if block and block.strip()
     )
-    if variable:
-        return f"{stable}\n\n{variable}"
-    return stable
+    return stable, variable

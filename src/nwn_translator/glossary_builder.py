@@ -21,7 +21,7 @@ from .config import (
     GLOSSARY_TEMPERATURE,
     ProgressCallback,
 )
-from .glossary import QUOTE_CHARS, Glossary, restore_wrapping_quotes
+from .glossary import Glossary, is_quoted, restore_wrapping_quotes
 from .json_utils import scan_first_json_object
 from .llm_batches import RUN_TIMEOUT_CAP, LlmStage
 from .prompts.terminology import (
@@ -81,87 +81,65 @@ class GlossaryBuilder:
             progress_callback: Optional progress reporter.
 
         Returns:
-            The glossary of the finished batches (a batch still running when
-            the overall budget runs out counts as failed); empty, with a
-            warning, when no usable entry survives.
+            The glossary of the finished batches (a batch still running when the
+            overall budget runs out counts as failed); empty, with a warning,
+            when no usable entry survives.
         """
-        pairs = world_context.get_glossary_names()
-        if not pairs:
+        categories: Dict[str, str] = {}  # the first category of a name wins
+        for name, category in world_context.get_glossary_names():
+            if (name or "").strip():
+                categories.setdefault(name.strip(), category)
+        if not categories:
             return Glossary()
-
-        # The first category of a name wins.
-        seen: Dict[str, str] = {}
-        for name, category in pairs:
-            n = (name or "").strip()
-            if not n or n in seen:
-                continue
-            seen[n] = category
-
-        if not seen:
-            return Glossary()
-
         registry = world_context.candidates
-        aliases = registry.resolved_aliases() if registry else {}
-        if registry:
-            for candidate in registry.values():
-                if candidate.alias_of and candidate.name not in aliases:
-                    seen.pop(candidate.name, None)
-        sorted_names = sorted(seen, key=str.lower)
-        batches = _pack_alias_families(sorted_names, aliases, _STAGE.batch_size)
-        logger.info(
-            "Building glossary: %d names in %d batch(es)…",
-            len(sorted_names),
-            len(batches),
-        )
+        aliases = registry.resolved_aliases()
+        for candidate in registry.values():
+            if candidate.alias_of and candidate.name not in aliases:
+                categories.pop(candidate.name, None)
+        names = sorted(categories, key=str.lower)
+        batches = _pack_alias_families(names, aliases, _STAGE.batch_size)
+        logger.info("Building glossary: %d names in %d batch(es)…", len(names), len(batches))
 
         started = time.monotonic()
-        hints = _NameHints(world_context)
+        line = _name_line_builder(world_context, categories)
         system_prompt = build_glossary_system_prompt(config.target_lang)
 
-        async def translate_batch(
-            slot: "Slot", number: int, batch_names: List[str]
-        ) -> Dict[str, str]:
+        async def translate_batch(slot: "Slot", number: int, batch: List[str]) -> Dict[str, str]:
             """Translates one batch of names, retrying the names left out."""
             label = f"batch {number}/{len(batches)}" if len(batches) > 1 else "glossary"
-            batch = {name: seen[name] for name in batch_names}
             logger.info("Glossary %s: translating %d names…", label, len(batch))
+
+            def report(message: str) -> None:
+                """Reports the progress of the batch."""
+                if progress_callback:
+                    progress_callback("scanning", number - 1, len(batches), message)
 
             def prepare(
                 keys: List[str], accepted: Dict[str, str], attempt: int
             ) -> Callable[[], Awaitable[str]]:
                 """Reports the attempt and builds its glossary request."""
-                if progress_callback:
-                    progress_callback(
-                        "scanning",
-                        number - 1,
-                        len(batches),
-                        f"Glossary {label} (attempt {attempt}/{_STAGE.max_attempts})…",
-                    )
-                lines = [hints.line(name, batch[name]) for name in keys]
+                report(f"Glossary {label} (attempt {attempt}/{_STAGE.max_attempts})…")
                 return functools.partial(
                     provider.complete_glossary_chat_async,
                     system_prompt,
-                    build_glossary_user_prompt(lines, accepted),
+                    build_glossary_user_prompt([line(name) for name in keys], accepted),
                     glossary_keys=keys,
                     max_tokens=GLOSSARY_MAX_TOKENS,
                     temperature=GLOSSARY_TEMPERATURE,
                 )
 
-            # Built from the batch dict on purpose: the set's iteration order
-            # decides the order of the answers, and so of the "Already accepted
-            # forms" JSON a retry sends (see LlmStage.fill_keys).
-            remaining = set(batch.keys())
+            # Built exactly like this on purpose: the set's iteration order (it depends
+            # on the hash seed, see KI-008) decides the order of the answers, and so of
+            # the "Already accepted forms" JSON a retry sends (see LlmStage.fill_keys).
+            remaining = set(batch)
 
-            def report(attempt: int, answered: int) -> None:
+            def on_attempt(attempt: int, answered: int) -> None:
                 """Reports the progress of the batch after one attempt."""
-                if not progress_callback:
-                    return
                 if answered:
                     done = len(batch) - len(remaining)
-                    message = f"Glossary {label}: {done}/{len(batch)} names done"
+                    report(f"Glossary {label}: {done}/{len(batch)} names done")
                 else:
-                    message = f"Glossary {label}: attempt {attempt} failed, retrying…"
-                progress_callback("scanning", number - 1, len(batches), message)
+                    report(f"Glossary {label}: attempt {attempt} failed, retrying…")
 
             entries = await _STAGE.fill_keys(
                 slot,
@@ -169,7 +147,7 @@ class GlossaryBuilder:
                 prepare,
                 parse_glossary_json,
                 name=f"Glossary {label}",
-                on_attempt=report,
+                on_attempt=on_attempt,
             )
             if not entries:
                 logger.error(
@@ -185,15 +163,13 @@ class GlossaryBuilder:
         failed_batches = 0
         for number, result in enumerate(results, 1):
             if isinstance(result, BaseException):
-                failed_batches += 1
                 logger.warning(
                     "Glossary batch %d/%d failed with exception: %s", number, len(batches), result
                 )
             elif result:
                 all_entries.update(result)
-            else:
-                failed_batches += 1
-
+                continue
+            failed_batches += 1
         logger.info("Glossary build completed in %.1fs", time.monotonic() - started)
 
         if not all_entries:
@@ -202,19 +178,17 @@ class GlossaryBuilder:
                 "continuing without a glossary."
             )
             return Glossary()
-
-        missing = len(sorted_names) - len(all_entries)
+        missing = len(names) - len(all_entries)
         if missing > 0:
             logger.warning(
                 "Glossary incomplete: %d/%d names translated (%d missing, %d batch(es) failed)",
                 len(all_entries),
-                len(sorted_names),
+                len(names),
                 missing,
                 failed_batches,
             )
         else:
             logger.info("Glossary built with %d entries", len(all_entries))
-
         return Glossary(entries=all_entries, aliases=aliases)
 
 
@@ -223,8 +197,8 @@ def _pack_alias_families(
 ) -> List[List[str]]:
     """Packs *names* into batches of up to *size*, keeping each alias family in one batch.
 
-    Families keep the order of their first name; a family larger than *size*
-    gets a batch of its own.
+    Families keep the order of their first name; a family larger than *size* gets
+    a batch of its own.
 
     Args:
         names: Names in request order.
@@ -232,7 +206,7 @@ def _pack_alias_families(
         size: Maximum batch length for families that fit.
 
     Returns:
-        The batches, each a list of names.
+        The batches.
     """
     families: Dict[str, List[str]] = {}
     for name in names:
@@ -245,85 +219,59 @@ def _pack_alias_families(
     return batches
 
 
-class _NameHints:
-    """World-context facts that annotate the names of a glossary request."""
+def _name_line_builder(
+    world_context: "WorldContext", categories: Dict[str, str]
+) -> Callable[[str], str]:
+    """Returns the builder of a name's request line with its candidate and NPC hints.
 
-    def __init__(self, world_context: "WorldContext") -> None:
-        """Indexes the candidates by name and the NPCs by each of their names.
+    Args:
+        world_context: World context of the run.
+        categories: Glossary category of each requested name.
 
-        Args:
-            world_context: World context of the run.
-        """
-        self._candidates = {c.name: c for c in world_context.candidates.values()}
-        self._npcs: Dict[str, List["NPCInfo"]] = {}
-        for npc in world_context.npcs.values():
-            for key in dict.fromkeys((npc.first_name, npc.last_name, npc.display_name)):
-                self._npcs.setdefault(key, []).append(npc)
-
-    def line(self, name: str, category: str) -> str:
-        """Renders the request line of *name* with its candidate and NPC hints.
-
-        Args:
-            name: Requested name.
-            category: Glossary category of the name.
-
-        Returns:
-            The line for the glossary user prompt.
-        """
-        return build_glossary_name_line(
-            name, category, self._candidates.get(name), self._npcs.get(name, ())
-        )
+    Returns:
+        A function from a requested name to its line of the glossary user prompt.
+    """
+    candidates = {c.name: c for c in world_context.candidates.values()}
+    npcs: Dict[str, List["NPCInfo"]] = {}
+    for npc in world_context.npcs.values():
+        for key in dict.fromkeys((npc.first_name, npc.last_name, npc.display_name)):
+            npcs.setdefault(key, []).append(npc)
+    return lambda name: build_glossary_name_line(
+        name, categories[name], candidates.get(name), npcs.get(name, ())
+    )
 
 
 def glossary_key_variants(key: str) -> List[str]:
     """Returns the normalized forms under which a glossary key may be matched.
 
-    The key is NFKC-normalized with zero-width characters removed and
-    whitespace collapsed; further variants drop quotation marks wrapping the
-    whole key and a trailing parenthesized category hint.
+    The key is NFKC-normalized with zero-width characters removed and whitespace
+    collapsed; further variants drop quotation marks wrapping the whole key (a
+    model cannot echo them back in a JSON key unescaped) and a trailing
+    parenthesized category hint.
 
     Args:
         key: A requested name or a key of a model reply.
 
     Returns:
-        Distinct variants, the plain normalized form first.
+        Distinct non-empty variants, the plain normalized form first.
     """
     normalized = unicodedata.normalize("NFKC", str(key))
-    normalized = _ZERO_WIDTH_RE.sub("", normalized)
-    normalized = _SPACE_RUN_RE.sub(" ", normalized).strip()
-
-    variants: List[str] = []
-
-    def add(value: str) -> None:
-        """Appends a non-empty variant not seen yet."""
-        if value and value not in variants:
-            variants.append(value)
-
-    add(normalized)
-
-    # Some modules put quotation marks inside the game string itself, e.g. an
-    # area literally named ``"Thesis Paper Room"``. A model cannot echo that
-    # back as a JSON key without escaping, so it answers with the bare name.
-    if len(normalized) >= 2 and normalized[0] in QUOTE_CHARS and normalized[-1] in QUOTE_CHARS:
-        add(normalized[1:-1].strip())
-
-    for value in list(variants):
-        add(_CATEGORY_SUFFIX_RE.sub("", value).strip())
-
-    return variants
+    normalized = _SPACE_RUN_RE.sub(" ", _ZERO_WIDTH_RE.sub("", normalized)).strip()
+    variants = [normalized, normalized[1:-1].strip()] if is_quoted(normalized) else [normalized]
+    variants += [_CATEGORY_SUFFIX_RE.sub("", value).strip() for value in variants]
+    return [value for value in dict.fromkeys(variants) if value]
 
 
 def parse_glossary_json(raw: str, expected_keys: Set[str]) -> Dict[str, str]:
     """Parses a glossary reply, keeping only the requested names.
 
-    Tolerates a single wrapper object (``{"glossary": {…}}``), category suffixes
-    and quotation marks in the keys, stray whitespace and case differences (for
-    each variant, an exact match wins over a casefolded one). Values regain the
-    quotation marks their key is wrapped in.
+    Tolerates a single wrapper object (``{"glossary": {…}}``) and the key
+    differences of :func:`glossary_key_variants`; for each variant an exact
+    match wins over a casefolded one. Values regain the quotation marks their
+    key is wrapped in.
 
     Args:
-        raw: Model reply, decoded with
-            :func:`~nwn_translator.json_utils.scan_first_json_object`.
+        raw: Model reply, decoded with :func:`~nwn_translator.json_utils.scan_first_json_object`.
         expected_keys: Requested names; iterated to build the result.
 
     Returns:
@@ -336,34 +284,25 @@ def parse_glossary_json(raw: str, expected_keys: Set[str]) -> Dict[str, str]:
         return {}
     if data is None:
         return {}
-
     if len(data) == 1:
-        only = next(iter(data.values()))
-        if isinstance(only, dict) and str(next(iter(data))).strip().lower() in _WRAPPER_KEYS:
+        [(wrapper, only)] = data.items()
+        if isinstance(only, dict) and str(wrapper).strip().lower() in _WRAPPER_KEYS:
             data = only
 
-    normalised_to_val: Dict[str, str] = {}
-    casefolded_to_val: Dict[str, str] = {}
-    for k, v in data.items():
-        if v is None:
-            continue
-        sv = str(v).strip()
-        if not sv:
-            continue
-        for key in glossary_key_variants(str(k)):
-            normalised_to_val.setdefault(key, sv)
-            casefolded_to_val.setdefault(key.casefold(), sv)
+    exact: Dict[str, str] = {}
+    folded: Dict[str, str] = {}
+    for reply_key, value in data.items():
+        text = "" if value is None else str(value).strip()
+        if text:
+            for key in glossary_key_variants(str(reply_key)):
+                exact.setdefault(key, text)
+                folded.setdefault(key.casefold(), text)
 
     out: Dict[str, str] = {}
-    for ek in expected_keys:
-        value = None
-        for key in glossary_key_variants(ek):
-            value = normalised_to_val.get(key)
-            if value is None:
-                value = casefolded_to_val.get(key.casefold())
-            if value is not None:
+    for expected in expected_keys:
+        for key in glossary_key_variants(expected):
+            value = exact.get(key) or folded.get(key.casefold())
+            if value:
+                out[expected] = restore_wrapping_quotes(expected, value)
                 break
-        if value is None:
-            continue
-        out[ek] = restore_wrapping_quotes(ek, value)
     return out
